@@ -1,0 +1,37 @@
+[package]
+name = "decree"
+version = "0.1.0"
+edition = "2021"
+description = "Specification-driven project execution framework"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+inquire = "0.7"
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false }
+indicatif = "0.17"
+chrono = "0.4"
+anyhow = "1"
+thiserror = "2"
+dirs = "6"
+walkdir = "2"
+sha2 = "0.10"
+similar = "2"
+ignore = "0.4"
+base64 = "0.22"
+llama-cpp-2 = "0.1"
+encoding_rs = "0.8"
+signal-hook = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+
+[features]
+default = []
+vulkan = ["llama-cpp-2/vulkan"]
+cuda = ["llama-cpp-2/cuda"]
+metal = ["llama-cpp-2/metal"]

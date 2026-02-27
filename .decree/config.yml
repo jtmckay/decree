@@ -1,0 +1,11 @@
+ai:
+  model_path: ~/.decree/models/qwen2.5-1.5b-instruct-q5_k_m.gguf
+  n_gpu_layers: 0
+commands:
+  planning: claude -p {prompt}
+  planning_continue: claude --continue
+  router: claude -p {prompt}
+max_retries: 3
+max_depth: 10
+default_routine: develop
+notebook_support: true

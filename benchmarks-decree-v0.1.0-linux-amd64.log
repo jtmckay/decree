@@ -1,0 +1,54 @@
+# AMD Ryzen 9 5950X
+# RTX 4080 Super
+
+────────────────────────────────────────────────────────
+Model:    /home/taylor/.decree/models/qwen2.5-1.5b-instruct-q5_k_m.gguf
+Build:    CPU
+GPU:      none (CPU-only build)
+Ctx:      4096 tokens
+Prompt:   "The answer to life, the universe, and everythin..." (~30 tokens)
+Max gen:  200 tokens / run
+
+   run      init   prefill       gen     tok/s
+     1     1.30s     0.39s     1.09s      31.3  <- cold (model loading included)
+     2     0.00s     0.37s     1.02s      33.3
+     3     0.00s     0.38s     1.01s      33.6
+
+Output:   "The answer to life, the universe, and everything is 42, according to the Hitc..."
+
+avg prefill (warm): 0.38s   avg tok/s (warm): 33.4
+────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────
+Model:    /home/taylor/.decree/models/qwen2.5-1.5b-instruct-q5_k_m.gguf
+Build:    CUDA
+GPU:      none (n_gpu_layers = 0)
+Ctx:      4096 tokens
+Prompt:   "The answer to life, the universe, and everythin..." (~30 tokens)
+Max gen:  200 tokens / run
+
+   run      init   prefill       gen     tok/s
+     1     0.97s     0.03s     0.26s     259.6  <- cold (model loading included)
+     2     0.00s     0.00s     0.25s     268.4
+     3     0.00s     0.00s     0.25s     264.0
+
+Output:   "The answer to the famous riddle "The answer to life, the universe, and everyt..."
+
+avg prefill (warm): 0.00s   avg tok/s (warm): 266.2
+────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────
+Model:    /home/taylor/.decree/models/qwen2.5-1.5b-instruct-q5_k_m.gguf
+Build:    Vulkan
+GPU:      none (n_gpu_layers = 0)
+Ctx:      4096 tokens
+Prompt:   "The answer to life, the universe, and everythin..." (~30 tokens)
+Max gen:  200 tokens / run
+
+   run      init   prefill       gen     tok/s
+     1     0.93s     1.49s     0.48s     139.4  <- cold (model loading included)
+     2     0.00s     0.00s     0.27s     249.2
+     3     0.00s     0.00s     0.27s     248.3
+
+Output:   "The answer to the famous riddle "The answer to life, the universe, and everyt..."
+
+avg prefill (warm): 0.00s   avg tok/s (warm): 248.7
+────────────────────────────────────────────────────────

@@ -1,0 +1,11 @@
+01-init-config-and-cli.spec.md
+02-default-templates.spec.md
+03-embedded-ai-and-bench.spec.md
+04-checkpoint-system.spec.md
+05-message-format-and-normalization.spec.md
+06-routine-system.spec.md
+07-run-process-and-pipeline.spec.md
+08-daemon-and-cron.spec.md
+09-interactive-planning.spec.md
+10-change-review-diff-and-apply.spec.md
+11-post-cleanup.spec.md
