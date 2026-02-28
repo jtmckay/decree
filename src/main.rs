@@ -5,7 +5,7 @@ use decree::error;
 
 
 #[derive(Parser)]
-#[command(name = "decree", about = "Specification-driven project execution framework")]
+#[command(name = "decree", about = "AI orchestrator for structured, reproducible workflows")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,

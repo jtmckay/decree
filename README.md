@@ -1,8 +1,8 @@
 # Decree
 
-Specification-driven project execution framework. Specs go in, tested implementations come out, every change is checkpointed and reversible.
+AI orchestrator for structured, reproducible workflows. Write specs, let AI execute them, review the diffs.
 
-Decree is a self-contained Rust CLI that turns structured specification files into executed, verified code changes via AI-powered routines. It brings CI/CD rigor to AI-assisted development — with automatic retries, dead-lettering, change tracking, and optional scheduled execution.
+Decree is a self-contained Rust CLI that orchestrates AI agents through a message-driven pipeline. You describe work as spec files, Decree routes each one to the right AI-powered routine, checkpoints your repo before and after, retries on failure, and collects the results for your review. Think CI/CD for AI-assisted development.
 
 ## How It Works
 
@@ -14,10 +14,11 @@ specs/           .decree/routines/       .decree/runs/
 ```
 
 1. You write **spec files** describing work to be done
-2. `decree process` feeds each spec to a **routine** (shell script or Jupyter notebook) that delegates to AI, builds, and tests
+2. Decree **routes** each spec to an AI-powered **routine** (shell script or Jupyter notebook) that implements, builds, and tests the change
 3. Every execution is **checkpointed** — full file manifests before and after, unified diffs of all changes
 4. Failures **retry** up to 3 times (partial work preserved on early retries, clean revert with failure context on final attempt), then dead-letter
 5. You **review** diffs and **selectively apply** changes to your working tree
+6. Routines can **chain** follow-up messages, enabling multi-step AI workflows within a single execution
 
 ## Commands
 
@@ -47,25 +48,25 @@ decree diff        # review what changed
 decree apply --all # apply changes to working tree
 ```
 
-## AI Providers
+## AI Backends
 
-Decree supports three AI backends, selected during `init`:
+Decree orchestrates any AI that can run from the command line. Three backends are supported out of the box, selected during `init`:
 
 - **Claude CLI** — `claude -p {prompt}`
 - **GitHub Copilot CLI** — `copilot -p {prompt}`
 - **Embedded** — Qwen 2.5 1.5B-Instruct via llama.cpp (~1.1 GB download, no account required)
 
-The embedded model handles routing and interactive chat. External CLIs handle heavier implementation tasks. Mix and match via `.decree/config.yml`.
+The embedded model handles routing and interactive planning. External CLIs handle heavier implementation work. Mix and match per command slot via `.decree/config.yml`.
 
 ## Key Concepts
 
-**Specs** are immutable markdown files with optional YAML frontmatter. Once processed, they're never modified — corrections require new specs. See [sow.md](sow.md) for the full scope and design rationale.
+**Specs** are immutable markdown files with optional YAML frontmatter. They're the input to the orchestrator — each spec describes a unit of work for AI to execute. Once processed, they're never modified; corrections require new specs.
 
-**Routines** are executable templates (`.sh` or `.ipynb`) in `.decree/routines/` that receive spec content and AI commands as parameters. Shell scripts take precedence over notebooks.
+**Routines** are the AI execution templates (`.sh` or `.ipynb`) in `.decree/routines/`. Each routine defines how an AI agent should handle a task — what tools to invoke, what checks to run, what constitutes success. Decree routes specs to routines automatically or via frontmatter.
 
-**Messages** are the unit of execution. Specs become messages, `decree run` creates messages, cron jobs create messages. Each message gets its own run directory with checkpoints, diffs, and logs.
+**Messages** are the unit of orchestration. Specs become messages, `decree run` creates messages, cron jobs create messages. Each message gets its own isolated run directory with checkpoints, diffs, and logs.
 
-**Chains** let routines spawn follow-up messages (depth-limited to 10), enabling multi-step workflows within a single execution.
+**Chains** let routines spawn follow-up messages (depth-limited to 10), enabling multi-step agentic workflows — one AI action can trigger the next.
 
 ## Project Structure
 
