@@ -2,7 +2,7 @@
 name = "decree"
 version = "0.1.0"
 edition = "2021"
-description = "Specification-driven project execution framework"
+description = "AI orchestrator for structured, reproducible workflows"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
