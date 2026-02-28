@@ -84,6 +84,14 @@ specs/
 └── processed-spec.md # Tracking file
 ```
 
+## Examples
+
+The `examples/` directory contains self-contained projects demonstrating different Decree patterns:
+
+- **[historical-portraits](examples/historical-portraits/)** — Chain-based pipeline. Each spec triggers a 3-step chain (research → prompt-craft → generate) to produce AI art portraits of historical figures via ComfyUI. Demonstrates message chaining, custom parameters, and inter-step data sharing.
+
+- **[business-eval](examples/business-eval/)** — Chain-based analysis pipeline. Each spec is a different business idea that triggers a 4-step chain (market analysis → competitive landscape → financial model → executive summary). Demonstrates accumulated context through chains and multiple independent businesses processed in sequence.
+
 ## GPU Acceleration
 
 ```bash
