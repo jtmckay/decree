@@ -1,119 +1,15 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::config::Config;
-use crate::error::DecreeError;
-use crate::routine::{self, RoutineInfo};
+use chrono::Utc;
+use serde_yaml::Value;
 
-/// A parsed message ID: `<chain>-<seq>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MessageId {
-    pub chain: String,
-    pub seq: u32,
-}
+use crate::error::{DecreeError, Result};
+use crate::migration::split_frontmatter;
 
-impl std::fmt::Display for MessageId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}-{}", self.chain, self.seq)
-    }
-}
-
-impl MessageId {
-    pub fn new(chain: &str, seq: u32) -> Self {
-        Self {
-            chain: chain.to_string(),
-            seq,
-        }
-    }
-
-    /// Parse a full message ID like `2025022514320000-2`.
-    pub fn parse(s: &str) -> Option<Self> {
-        let (chain, seq_str) = s.rsplit_once('-')?;
-        let seq: u32 = seq_str.parse().ok()?;
-        if chain.len() < 14 {
-            return None;
-        }
-        Some(Self {
-            chain: chain.to_string(),
-            seq,
-        })
-    }
-
-    /// Generate a new chain ID from the current timestamp.
-    /// Format: YYYYMMDDHHmmss + 2-digit counter.
-    pub fn new_chain(counter: u8) -> String {
-        let now = chrono::Local::now();
-        format!("{}{:02}", now.format("%Y%m%d%H%M%S"), counter)
-    }
-
-    /// Directory name for this message under `.decree/runs/`.
-    pub fn dir_name(&self) -> String {
-        self.to_string()
-    }
-}
-
-/// Resolve an ID prefix to matching message directories in `.decree/runs/`.
-///
-/// Accepts:
-/// - Full message ID: `2025022514320000-2`
-/// - Chain ID: `2025022514320000` (matches all messages in chain)
-/// - Unique prefix of either
-pub fn resolve_id(runs_dir: &Path, prefix: &str) -> Result<Vec<String>, DecreeError> {
-    if !runs_dir.is_dir() {
-        return Err(DecreeError::MessageNotFound(prefix.to_string()));
-    }
-
-    let mut matches: Vec<String> = Vec::new();
-
-    let entries = std::fs::read_dir(runs_dir)?;
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        // Match full ID or chain prefix
-        if name.starts_with(prefix) {
-            matches.push(name);
-        }
-    }
-
-    matches.sort();
-
-    if matches.is_empty() {
-        return Err(DecreeError::MessageNotFound(prefix.to_string()));
-    }
-
-    Ok(matches)
-}
-
-/// Get the most recent message directory (by name, which sorts chronologically).
-pub fn most_recent(runs_dir: &Path) -> Result<String, DecreeError> {
-    if !runs_dir.is_dir() {
-        return Err(DecreeError::MessageNotFound("(no runs)".to_string()));
-    }
-
-    let mut dirs: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(runs_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            dirs.push(entry.file_name().to_string_lossy().to_string());
-        }
-    }
-
-    dirs.sort();
-    dirs.last()
-        .cloned()
-        .ok_or_else(|| DecreeError::MessageNotFound("(no runs)".to_string()))
-}
-
-// ---------------------------------------------------------------------------
-// Inbox message format & normalization
-// ---------------------------------------------------------------------------
-
-/// Message type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Message type: spec (has input_file) or task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
     Spec,
     Task,
@@ -136,273 +32,777 @@ impl MessageType {
     }
 }
 
-/// A fully-parsed inbox message with all fields resolved.
+/// A fully normalized inbox message with all required fields present.
 #[derive(Debug, Clone)]
-pub struct InboxMessage {
+pub struct Message {
     pub id: String,
     pub chain: String,
     pub seq: u32,
-    pub msg_type: MessageType,
+    pub message_type: MessageType,
     pub input_file: Option<String>,
     pub routine: String,
+    pub custom_fields: BTreeMap<String, Value>,
     pub body: String,
-    /// Custom frontmatter fields beyond the standard set.
-    pub custom_fields: BTreeMap<String, serde_yaml::Value>,
+    pub path: PathBuf,
 }
 
-/// Raw parsed frontmatter — all fields optional.
-#[derive(Debug, Clone, Default)]
-pub struct RawFrontmatter {
+/// A raw parsed message where all fields are optional.
+#[derive(Debug, Clone)]
+pub struct RawMessage {
     pub id: Option<String>,
     pub chain: Option<String>,
     pub seq: Option<u32>,
-    pub msg_type: Option<String>,
+    pub message_type: Option<MessageType>,
     pub input_file: Option<String>,
     pub routine: Option<String>,
-    pub custom_fields: BTreeMap<String, serde_yaml::Value>,
+    pub custom_fields: BTreeMap<String, Value>,
+    pub body: String,
+    pub path: PathBuf,
 }
 
-/// Parse a markdown file into raw frontmatter + body.
-pub fn parse_message_file(content: &str) -> (RawFrontmatter, String) {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return (RawFrontmatter::default(), content.to_string());
+/// Known frontmatter field names that are extracted into typed fields.
+const KNOWN_FIELDS: &[&str] = &["id", "chain", "seq", "type", "input_file", "routine"];
+
+impl RawMessage {
+    /// Parse an inbox message file from disk.
+    pub fn load(path: &Path) -> Result<Self> {
+        let content = fs::read_to_string(path)?;
+        Self::parse(path, &content)
     }
 
-    let after_open = &trimmed[3..];
-    // Find closing "---" on its own line
-    let close = match after_open.find("\n---") {
-        Some(pos) => pos,
-        None => return (RawFrontmatter::default(), content.to_string()),
-    };
+    /// Parse message content with a given path.
+    pub fn parse(path: &Path, content: &str) -> Result<Self> {
+        let (frontmatter, body) = split_frontmatter(content);
 
-    let yaml_block = &after_open[..close];
-    // Body starts after the closing "---\n"
-    let body_start = 3 + close + 4; // "---" + "\n---"
-    let body = if body_start < trimmed.len() {
-        let rest = &trimmed[body_start..];
-        // Strip one leading newline if present
-        rest.strip_prefix('\n').unwrap_or(rest).to_string()
-    } else {
-        String::new()
-    };
-
-    let map: serde_yaml::Value = match serde_yaml::from_str(yaml_block) {
-        Ok(v) => v,
-        Err(_) => return (RawFrontmatter::default(), content.to_string()),
-    };
-
-    let mapping = match map.as_mapping() {
-        Some(m) => m,
-        None => return (RawFrontmatter::default(), content.to_string()),
-    };
-
-    let mut fm = RawFrontmatter::default();
-    let known_keys = ["id", "chain", "seq", "type", "input_file", "routine"];
-
-    for (key, value) in mapping {
-        let key_str = match key.as_str() {
-            Some(k) => k,
-            None => continue,
+        let (known, custom) = match frontmatter {
+            Some(yaml) if !yaml.trim().is_empty() => parse_frontmatter(yaml)?,
+            _ => (BTreeMap::new(), BTreeMap::new()),
         };
 
-        match key_str {
-            "id" => fm.id = value.as_str().map(String::from),
-            "chain" => {
-                // Chain can be a number or string in YAML
-                fm.chain = value
-                    .as_str()
-                    .map(String::from)
-                    .or_else(|| value.as_u64().map(|n| n.to_string()));
-            }
-            "seq" => fm.seq = value.as_u64().map(|n| n as u32),
-            "type" => fm.msg_type = value.as_str().map(String::from),
-            "input_file" => fm.input_file = value.as_str().map(String::from),
-            "routine" => fm.routine = value.as_str().map(String::from),
-            _ => {
-                if !known_keys.contains(&key_str) {
-                    fm.custom_fields
-                        .insert(key_str.to_string(), value.clone());
-                }
+        Ok(Self {
+            id: get_string(&known, "id"),
+            chain: get_string(&known, "chain"),
+            seq: get_u32(&known, "seq"),
+            message_type: get_string(&known, "type").and_then(|s| MessageType::parse(&s)),
+            input_file: get_string(&known, "input_file"),
+            routine: get_string(&known, "routine"),
+            custom_fields: custom,
+            body: body.to_string(),
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Check if this message already has all required fields filled.
+    pub fn is_complete(&self) -> bool {
+        self.id.is_some()
+            && self.chain.is_some()
+            && self.seq.is_some()
+            && self.message_type.is_some()
+            && self.routine.is_some()
+    }
+}
+
+/// Parse YAML frontmatter into known fields and custom fields.
+fn parse_frontmatter(yaml: &str) -> Result<(BTreeMap<String, Value>, BTreeMap<String, Value>)> {
+    let mapping: BTreeMap<String, Value> = serde_yaml::from_str(yaml)
+        .map_err(|e| DecreeError::Config(format!("invalid frontmatter YAML: {e}")))?;
+
+    let mut known = BTreeMap::new();
+    let mut custom = BTreeMap::new();
+
+    for (key, value) in mapping {
+        if KNOWN_FIELDS.contains(&key.as_str()) {
+            known.insert(key, value);
+        } else {
+            custom.insert(key, value);
+        }
+    }
+
+    Ok((known, custom))
+}
+
+fn get_string(map: &BTreeMap<String, Value>, key: &str) -> Option<String> {
+    map.get(key).and_then(|v| match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    })
+}
+
+fn get_u32(map: &BTreeMap<String, Value>, key: &str) -> Option<u32> {
+    map.get(key).and_then(|v| match v {
+        Value::Number(n) => n.as_u64().and_then(|n| u32::try_from(n).ok()),
+        Value::String(s) => s.parse().ok(),
+        _ => None,
+    })
+}
+
+/// Extract chain and seq from a filename like `<chain>-<seq>.md`.
+fn parse_filename(path: &Path) -> (Option<String>, Option<u32>) {
+    let stem = match path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s,
+        None => return (None, None),
+    };
+
+    // Find the last hyphen — everything before is chain, after is seq
+    if let Some(last_hyphen) = stem.rfind('-') {
+        let chain_part = &stem[..last_hyphen];
+        let seq_part = &stem[last_hyphen + 1..];
+        if let Ok(seq) = seq_part.parse::<u32>() {
+            if !chain_part.is_empty() {
+                return (Some(chain_part.to_string()), Some(seq));
             }
         }
     }
 
-    (fm, body)
+    (None, None)
 }
 
-/// Try to extract chain and seq from a filename like `<chain>-<seq>.md`.
-pub fn chain_seq_from_filename(filename: &str) -> Option<(String, u32)> {
-    let stem = filename.strip_suffix(".md")?;
-    MessageId::parse(stem).map(|id| (id.chain, id.seq))
+/// Generate a new chain ID based on current timestamp.
+pub fn generate_chain_id() -> String {
+    Utc::now().format("%Y%m%d%H%M%S%3f").to_string()
 }
 
-/// Check if all required fields are present (normalization is a no-op).
-fn is_fully_normalized(fm: &RawFrontmatter) -> bool {
-    fm.id.is_some()
-        && fm.chain.is_some()
-        && fm.seq.is_some()
-        && fm.msg_type.is_some()
-        && fm.routine.is_some()
+/// Configuration needed for normalization.
+pub struct NormalizeContext {
+    pub default_routine: String,
+    pub migration_routine: Option<String>,
 }
 
-/// Serialize an InboxMessage back to a markdown file with YAML frontmatter.
-pub fn serialize_message(msg: &InboxMessage) -> String {
-    let mut out = String::from("---\n");
-    out.push_str(&format!("id: {}\n", msg.id));
-    out.push_str(&format!("chain: {}\n", msg.chain));
-    out.push_str(&format!("seq: {}\n", msg.seq));
-    out.push_str(&format!("type: {}\n", msg.msg_type.as_str()));
-    if let Some(ref input_file) = msg.input_file {
-        out.push_str(&format!("input_file: {}\n", input_file));
-    }
-    out.push_str(&format!("routine: {}\n", msg.routine));
-    for (key, value) in &msg.custom_fields {
-        let val_str = match value {
-            serde_yaml::Value::String(s) => s.clone(),
-            other => serde_yaml::to_string(other).unwrap_or_default().trim().to_string(),
-        };
-        out.push_str(&format!("{}: {}\n", key, val_str));
-    }
-    out.push_str("---\n");
-    if !msg.body.is_empty() {
-        out.push_str(&msg.body);
-    }
-    out
-}
-
-/// Router function type for routine selection.
-/// Takes a prompt string and returns the router's response.
-pub type RouterFn = dyn FnOnce(&str) -> Result<String, DecreeError>;
-
-/// Normalize an inbox message file in place.
+/// Normalize a raw message, filling all missing fields.
 ///
-/// Reads the file, fills missing fields, optionally invokes the router for
-/// routine selection, and writes the normalized message back.
-///
-/// `router_fn`: called when the routine field is missing and must be selected
-/// by the router AI. Pass `None` to skip AI routing (fallback chain is used).
-///
-/// `spec_routine`: the routine from the spec's frontmatter, if this message
-/// originated from a spec. Used in the fallback chain.
-pub fn normalize_message(
-    file_path: &Path,
-    config: &Config,
-    routines: &[RoutineInfo],
-    router_fn: Option<Box<RouterFn>>,
-    spec_routine: Option<&str>,
-) -> Result<InboxMessage, DecreeError> {
-    let content = fs::read_to_string(file_path)?;
-    let (fm, body) = parse_message_file(&content);
+/// The `routine_selector` callback is invoked only if no routine can be
+/// determined from frontmatter, migration, or config. It receives the
+/// message body and should return a routine name (AI-assisted selection).
+pub fn normalize<F>(
+    raw: RawMessage,
+    ctx: &NormalizeContext,
+    routine_selector: F,
+) -> Result<Message>
+where
+    F: FnOnce(&str) -> Result<Option<String>>,
+{
+    let (filename_chain, filename_seq) = parse_filename(&raw.path);
 
-    // If fully normalized, parse and return without rewriting
-    if is_fully_normalized(&fm) {
-        let msg_type = MessageType::parse(fm.msg_type.as_deref().unwrap_or("task"))
-            .unwrap_or(MessageType::Task);
-        return Ok(InboxMessage {
-            id: fm.id.unwrap_or_default(),
-            chain: fm.chain.unwrap_or_default(),
-            seq: fm.seq.unwrap_or(0),
-            msg_type,
-            input_file: fm.input_file,
-            routine: fm.routine.unwrap_or_default(),
-            body,
-            custom_fields: fm.custom_fields,
-        });
-    }
-
-    // Derive chain and seq from filename if not in frontmatter
-    let filename = file_path
-        .file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let from_filename = chain_seq_from_filename(&filename);
-
-    let chain = fm
+    // chain: frontmatter → filename → generate new
+    let chain = raw
         .chain
-        .or_else(|| from_filename.as_ref().map(|(c, _)| c.clone()))
-        .unwrap_or_else(|| MessageId::new_chain(0));
+        .or(filename_chain)
+        .unwrap_or_else(generate_chain_id);
 
-    let seq = fm
-        .seq
-        .or_else(|| from_filename.map(|(_, s)| s))
-        .unwrap_or(0);
+    // seq: frontmatter → filename → default 0
+    let seq = raw.seq.or(filename_seq).unwrap_or(0);
 
-    let id = format!("{}-{}", chain, seq);
+    // id: always recomputed
+    let id = format!("{chain}-{seq}");
 
-    // Type inference
-    let msg_type = fm
-        .msg_type
-        .as_deref()
-        .and_then(MessageType::parse)
-        .unwrap_or_else(|| {
-            if fm.input_file.is_some() {
-                MessageType::Spec
-            } else {
-                MessageType::Task
-            }
-        });
+    // type: frontmatter → spec if input_file set → task
+    let message_type = raw.message_type.unwrap_or_else(|| {
+        if raw.input_file.is_some() {
+            MessageType::Spec
+        } else {
+            MessageType::Task
+        }
+    });
 
-    // Routine selection
-    let routine = if let Some(r) = fm.routine {
+    // routine: frontmatter → migration frontmatter → AI selector → config default → "develop"
+    let routine = if let Some(r) = raw.routine {
+        r
+    } else if let Some(r) = ctx.migration_routine.clone() {
         r
     } else {
-        select_routine(&body, routines, router_fn, spec_routine, config)
+        // Try AI-assisted selection
+        let ai_result = routine_selector(&raw.body)?;
+        ai_result.unwrap_or_else(|| {
+            if ctx.default_routine.is_empty() {
+                "develop".to_string()
+            } else {
+                ctx.default_routine.clone()
+            }
+        })
     };
 
-    let msg = InboxMessage {
+    Ok(Message {
         id,
         chain,
         seq,
-        msg_type,
-        input_file: fm.input_file,
+        message_type,
+        input_file: raw.input_file,
         routine,
-        body: body.clone(),
-        custom_fields: fm.custom_fields,
-    };
-
-    // Write back normalized message
-    let normalized = serialize_message(&msg);
-    fs::write(file_path, normalized)?;
-
-    Ok(msg)
+        custom_fields: raw.custom_fields,
+        body: raw.body,
+        path: raw.path,
+    })
 }
 
-/// Select a routine using the fallback chain:
-/// 1. Router AI (if router_fn provided and routines exist)
-/// 2. Spec frontmatter routine
-/// 3. Config default_routine
-/// 4. "develop"
-fn select_routine(
-    body: &str,
-    routines: &[RoutineInfo],
-    router_fn: Option<Box<RouterFn>>,
-    spec_routine: Option<&str>,
-    config: &Config,
-) -> String {
-    // Try router AI
-    if let Some(router) = router_fn {
-        if !routines.is_empty() {
-            let prompt = routine::build_router_prompt(routines, body);
-            if let Ok(response) = router(&prompt) {
-                let name = response.trim().to_string();
-                if routine::is_valid_routine(routines, &name) {
-                    return name;
-                }
+impl Message {
+    /// Serialize this message back to a file with full YAML frontmatter.
+    pub fn to_string(&self) -> String {
+        let mut yaml = BTreeMap::new();
+
+        yaml.insert("id".to_string(), Value::String(self.id.clone()));
+        yaml.insert("chain".to_string(), Value::String(self.chain.clone()));
+        yaml.insert("seq".to_string(), Value::Number(serde_yaml::Number::from(self.seq)));
+        yaml.insert(
+            "type".to_string(),
+            Value::String(self.message_type.as_str().to_string()),
+        );
+        if let Some(ref input_file) = self.input_file {
+            yaml.insert("input_file".to_string(), Value::String(input_file.clone()));
+        }
+        yaml.insert("routine".to_string(), Value::String(self.routine.clone()));
+
+        // Merge custom fields
+        for (key, value) in &self.custom_fields {
+            yaml.insert(key.clone(), value.clone());
+        }
+
+        let yaml_str = serde_yaml::to_string(&yaml)
+            .unwrap_or_default();
+
+        let mut output = String::new();
+        output.push_str("---\n");
+        output.push_str(&yaml_str);
+        output.push_str("---\n");
+        if !self.body.is_empty() {
+            output.push_str(&self.body);
+            if !self.body.ends_with('\n') {
+                output.push('\n');
             }
         }
+        output
     }
 
-    // Fallback chain
-    if let Some(r) = spec_routine {
-        if !r.is_empty() {
-            return r.to_string();
+    /// Write this message to its path (rewrite with full frontmatter).
+    pub fn write(&self) -> Result<()> {
+        let content = self.to_string();
+        fs::write(&self.path, content)?;
+        Ok(())
+    }
+
+    /// Rename the file to match the canonical `<chain>-<seq>.md` name.
+    /// Returns the new path.
+    pub fn rename_to_canonical(&mut self, inbox_dir: &Path) -> Result<()> {
+        let canonical_name = format!("{}-{}.md", self.chain, self.seq);
+        let new_path = inbox_dir.join(&canonical_name);
+
+        if new_path != self.path {
+            if self.path.exists() {
+                fs::rename(&self.path, &new_path)?;
+            }
+            self.path = new_path;
+        }
+
+        Ok(())
+    }
+}
+
+/// List pending inbox messages (top-level .md files in inbox dir).
+pub fn list_inbox(inbox_dir: &Path) -> Result<Vec<PathBuf>> {
+    if !inbox_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut files: Vec<PathBuf> = Vec::new();
+
+    for entry in fs::read_dir(inbox_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            files.push(path);
         }
     }
 
-    if !config.default_routine.is_empty() {
-        return config.default_routine.clone();
+    files.sort();
+    Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_filename_valid() {
+        let path = Path::new(".decree/inbox/2025022514320000-0.md");
+        let (chain, seq) = parse_filename(path);
+        assert_eq!(chain.as_deref(), Some("2025022514320000"));
+        assert_eq!(seq, Some(0));
     }
 
-    "develop".to_string()
+    #[test]
+    fn test_parse_filename_higher_seq() {
+        let path = Path::new(".decree/inbox/2025022514320000-5.md");
+        let (chain, seq) = parse_filename(path);
+        assert_eq!(chain.as_deref(), Some("2025022514320000"));
+        assert_eq!(seq, Some(5));
+    }
+
+    #[test]
+    fn test_parse_filename_no_seq() {
+        let path = Path::new(".decree/inbox/random-name.md");
+        let (chain, seq) = parse_filename(path);
+        // "random" as chain, "name" is not a u32, so None
+        assert!(chain.is_none());
+        assert!(seq.is_none());
+    }
+
+    #[test]
+    fn test_parse_filename_bare() {
+        let path = Path::new(".decree/inbox/something.md");
+        let (chain, seq) = parse_filename(path);
+        assert!(chain.is_none());
+        assert!(seq.is_none());
+    }
+
+    #[test]
+    fn test_generate_chain_id_format() {
+        let id = generate_chain_id();
+        // Should be digits only, at least 17 chars (YYYYMMDDHHmmSSmmm)
+        assert!(id.len() >= 17);
+        assert!(id.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_raw_message_parse_full() {
+        let content = "\
+---
+id: 2025022514320000-0
+chain: 2025022514320000
+seq: 0
+type: spec
+input_file: migrations/01-add-auth.md
+routine: develop
+---
+Do the thing.";
+
+        let path = Path::new(".decree/inbox/2025022514320000-0.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        assert_eq!(raw.id.as_deref(), Some("2025022514320000-0"));
+        assert_eq!(raw.chain.as_deref(), Some("2025022514320000"));
+        assert_eq!(raw.seq, Some(0));
+        assert_eq!(raw.message_type, Some(MessageType::Spec));
+        assert_eq!(raw.input_file.as_deref(), Some("migrations/01-add-auth.md"));
+        assert_eq!(raw.routine.as_deref(), Some("develop"));
+        assert_eq!(raw.body, "Do the thing.");
+        assert!(raw.is_complete());
+    }
+
+    #[test]
+    fn test_raw_message_parse_minimal() {
+        let content = "\
+---
+routine: develop
+---
+Fix type errors in src/auth.rs.";
+
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        assert!(raw.id.is_none());
+        assert!(raw.chain.is_none());
+        assert!(raw.seq.is_none());
+        assert!(raw.message_type.is_none());
+        assert_eq!(raw.routine.as_deref(), Some("develop"));
+        assert_eq!(raw.body, "Fix type errors in src/auth.rs.");
+        assert!(!raw.is_complete());
+    }
+
+    #[test]
+    fn test_raw_message_parse_bare() {
+        let content = "Fix type errors in src/auth.rs.";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        assert!(raw.id.is_none());
+        assert!(raw.routine.is_none());
+        assert_eq!(raw.body, "Fix type errors in src/auth.rs.");
+    }
+
+    #[test]
+    fn test_raw_message_parse_empty_body() {
+        let content = "\
+---
+input_file: migrations/01-add-auth.md
+routine: develop
+---
+";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        assert_eq!(raw.input_file.as_deref(), Some("migrations/01-add-auth.md"));
+        assert_eq!(raw.body, "");
+    }
+
+    #[test]
+    fn test_raw_message_custom_fields() {
+        let content = "\
+---
+routine: develop
+my_custom: hello
+priority: 5
+---
+Body.";
+
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        assert_eq!(raw.routine.as_deref(), Some("develop"));
+        assert_eq!(
+            raw.custom_fields.get("my_custom"),
+            Some(&Value::String("hello".to_string()))
+        );
+        assert!(raw.custom_fields.contains_key("priority"));
+        assert_eq!(raw.custom_fields.len(), 2);
+    }
+
+    #[test]
+    fn test_normalize_bare_message() {
+        let content = "Fix type errors in src/auth.rs.";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+
+        assert!(!msg.chain.is_empty());
+        assert_eq!(msg.seq, 0);
+        assert_eq!(msg.id, format!("{}-0", msg.chain));
+        assert_eq!(msg.message_type, MessageType::Task);
+        assert_eq!(msg.routine, "develop");
+        assert_eq!(msg.body, "Fix type errors in src/auth.rs.");
+    }
+
+    #[test]
+    fn test_normalize_uses_filename_chain_seq() {
+        let content = "Fix type errors.";
+        let path = Path::new(".decree/inbox/2025022514320000-3.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+
+        assert_eq!(msg.chain, "2025022514320000");
+        assert_eq!(msg.seq, 3);
+        assert_eq!(msg.id, "2025022514320000-3");
+    }
+
+    #[test]
+    fn test_normalize_frontmatter_overrides_filename() {
+        let content = "\
+---
+chain: custom_chain
+seq: 7
+---
+Body.";
+        let path = Path::new(".decree/inbox/2025022514320000-3.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+
+        assert_eq!(msg.chain, "custom_chain");
+        assert_eq!(msg.seq, 7);
+        assert_eq!(msg.id, "custom_chain-7");
+    }
+
+    #[test]
+    fn test_normalize_type_spec_when_input_file() {
+        let content = "\
+---
+input_file: migrations/01-add-auth.md
+---
+";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+
+        assert_eq!(msg.message_type, MessageType::Spec);
+    }
+
+    #[test]
+    fn test_normalize_routine_fallback_migration() {
+        let content = "Do something.";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: Some("custom-routine".to_string()),
+        };
+
+        // AI returns None, so fallback to migration routine
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+        assert_eq!(msg.routine, "custom-routine");
+    }
+
+    #[test]
+    fn test_normalize_routine_fallback_config_default() {
+        let content = "Do something.";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "my-default".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+        assert_eq!(msg.routine, "my-default");
+    }
+
+    #[test]
+    fn test_normalize_routine_ai_selection() {
+        let content = "Do something.";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(Some("ai-picked".to_string()))).unwrap();
+        assert_eq!(msg.routine, "ai-picked");
+    }
+
+    #[test]
+    fn test_normalize_routine_from_frontmatter_skips_ai() {
+        let content = "\
+---
+routine: explicit
+---
+Body.";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        // The AI selector should NOT be called since routine is in frontmatter
+        let msg = normalize(raw, &ctx, |_| {
+            panic!("AI selector should not be called");
+        })
+        .unwrap();
+        assert_eq!(msg.routine, "explicit");
+    }
+
+    #[test]
+    fn test_normalize_complete_message_not_changed() {
+        let content = "\
+---
+id: 2025022514320000-0
+chain: 2025022514320000
+seq: 0
+type: spec
+input_file: migrations/01-add-auth.md
+routine: develop
+---
+Do the thing.";
+
+        let path = Path::new(".decree/inbox/2025022514320000-0.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+        assert!(raw.is_complete());
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+        assert_eq!(msg.id, "2025022514320000-0");
+        assert_eq!(msg.chain, "2025022514320000");
+        assert_eq!(msg.seq, 0);
+        assert_eq!(msg.message_type, MessageType::Spec);
+        assert_eq!(msg.routine, "develop");
+    }
+
+    #[test]
+    fn test_message_serialize() {
+        let msg = Message {
+            id: "20250225-0".to_string(),
+            chain: "20250225".to_string(),
+            seq: 0,
+            message_type: MessageType::Task,
+            input_file: None,
+            routine: "develop".to_string(),
+            custom_fields: BTreeMap::new(),
+            body: "Fix the bug.".to_string(),
+            path: PathBuf::from(".decree/inbox/20250225-0.md"),
+        };
+
+        let output = msg.to_string();
+        assert!(output.starts_with("---\n"));
+        assert!(output.contains("id: 20250225-0"));
+        assert!(output.contains("chain: '20250225'"));
+        assert!(output.contains("seq: 0"));
+        assert!(output.contains("type: task"));
+        assert!(output.contains("routine: develop"));
+        assert!(output.contains("Fix the bug."));
+    }
+
+    #[test]
+    fn test_message_serialize_with_custom_fields() {
+        let mut custom = BTreeMap::new();
+        custom.insert("priority".to_string(), Value::Number(serde_yaml::Number::from(5)));
+        custom.insert("tag".to_string(), Value::String("urgent".to_string()));
+
+        let msg = Message {
+            id: "20250225-0".to_string(),
+            chain: "20250225".to_string(),
+            seq: 0,
+            message_type: MessageType::Task,
+            input_file: None,
+            routine: "develop".to_string(),
+            custom_fields: custom,
+            body: "Fix it.".to_string(),
+            path: PathBuf::from("test.md"),
+        };
+
+        let output = msg.to_string();
+        assert!(output.contains("priority: 5"));
+        assert!(output.contains("tag: urgent"));
+    }
+
+    #[test]
+    fn test_message_serialize_with_input_file() {
+        let msg = Message {
+            id: "20250225-0".to_string(),
+            chain: "20250225".to_string(),
+            seq: 0,
+            message_type: MessageType::Spec,
+            input_file: Some("migrations/01-add-auth.md".to_string()),
+            routine: "develop".to_string(),
+            custom_fields: BTreeMap::new(),
+            body: String::new(),
+            path: PathBuf::from("test.md"),
+        };
+
+        let output = msg.to_string();
+        assert!(output.contains("input_file: migrations/01-add-auth.md"));
+        assert!(output.contains("type: spec"));
+    }
+
+    #[test]
+    fn test_message_roundtrip() {
+        let mut custom = BTreeMap::new();
+        custom.insert("env_var".to_string(), Value::String("value".to_string()));
+
+        let msg = Message {
+            id: "2025022514320000-2".to_string(),
+            chain: "2025022514320000".to_string(),
+            seq: 2,
+            message_type: MessageType::Task,
+            input_file: None,
+            routine: "develop".to_string(),
+            custom_fields: custom,
+            body: "Original body text.".to_string(),
+            path: PathBuf::from(".decree/inbox/2025022514320000-2.md"),
+        };
+
+        let serialized = msg.to_string();
+        let raw = RawMessage::parse(&msg.path, &serialized).unwrap();
+
+        assert_eq!(raw.id.as_deref(), Some("2025022514320000-2"));
+        assert_eq!(raw.chain.as_deref(), Some("2025022514320000"));
+        assert_eq!(raw.seq, Some(2));
+        assert_eq!(raw.message_type, Some(MessageType::Task));
+        assert_eq!(raw.routine.as_deref(), Some("develop"));
+        assert!(raw.custom_fields.contains_key("env_var"));
+        assert_eq!(raw.body.trim(), "Original body text.");
+    }
+
+    #[test]
+    fn test_list_inbox() {
+        let tmp = std::env::temp_dir().join("decree_test_list_inbox");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        fs::write(tmp.join("b-1.md"), "B").unwrap();
+        fs::write(tmp.join("a-0.md"), "A").unwrap();
+        fs::write(tmp.join("not-md.txt"), "skip").unwrap();
+        fs::create_dir_all(tmp.join("done")).unwrap(); // subdir should be skipped
+
+        let files = list_inbox(&tmp).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files[0].file_name().unwrap().to_str().unwrap() == "a-0.md");
+        assert!(files[1].file_name().unwrap().to_str().unwrap() == "b-1.md");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_empty_body_valid() {
+        let content = "\
+---
+routine: develop
+---
+";
+        let path = Path::new(".decree/inbox/test.md");
+        let raw = RawMessage::parse(path, content).unwrap();
+        assert_eq!(raw.body, "");
+
+        let ctx = NormalizeContext {
+            default_routine: "develop".to_string(),
+            migration_routine: None,
+        };
+
+        let msg = normalize(raw, &ctx, |_| Ok(None)).unwrap();
+        assert_eq!(msg.body, "");
+        assert_eq!(msg.routine, "develop");
+    }
+
+    #[test]
+    fn test_message_write_and_reload() {
+        let tmp = std::env::temp_dir().join("decree_test_msg_write");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let path = tmp.join("test-0.md");
+        let msg = Message {
+            id: "test-0".to_string(),
+            chain: "test".to_string(),
+            seq: 0,
+            message_type: MessageType::Task,
+            input_file: None,
+            routine: "develop".to_string(),
+            custom_fields: BTreeMap::new(),
+            body: "Hello world.".to_string(),
+            path: path.clone(),
+        };
+
+        msg.write().unwrap();
+
+        let reloaded = RawMessage::load(&path).unwrap();
+        assert_eq!(reloaded.id.as_deref(), Some("test-0"));
+        assert_eq!(reloaded.chain.as_deref(), Some("test"));
+        assert_eq!(reloaded.seq, Some(0));
+        assert_eq!(reloaded.routine.as_deref(), Some("develop"));
+        assert_eq!(reloaded.body.trim(), "Hello world.");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

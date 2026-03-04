@@ -1,12 +1,8 @@
-pub mod ai;
-pub mod apply;
-pub mod bench;
 pub mod daemon;
-pub mod diff;
 pub mod init;
 pub mod log;
-pub mod plan;
 pub mod process;
-pub mod run;
-pub mod sow;
+pub mod routine;
+pub mod starter;
 pub mod status;
+pub mod verify;

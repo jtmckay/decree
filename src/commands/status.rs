@@ -1,110 +1,113 @@
 use std::fs;
+use std::path::Path;
 
-use crate::error::{find_project_root, DecreeError};
+use crate::error::Result;
 
-pub fn run() -> Result<(), DecreeError> {
-    let root = find_project_root()?;
+pub fn run() -> Result<()> {
+    // Processed migrations
+    let processed_path = Path::new("migrations/processed.md");
+    let processed_count = if processed_path.exists() {
+        let content = fs::read_to_string(processed_path)?;
+        content.lines().filter(|l| !l.trim().is_empty()).count()
+    } else {
+        0
+    };
 
-    // --- Processed specs ---
-    let processed_path = root.join("specs/processed-spec.md");
-    let processed_specs: Vec<String> = if processed_path.exists() {
-        fs::read_to_string(&processed_path)?
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(String::from)
-            .collect()
+    // Pending migrations
+    let migrations_dir = Path::new("migrations");
+    let pending_migrations = if migrations_dir.exists() {
+        count_files_with_ext(migrations_dir, "md")?
+            .saturating_sub(if processed_path.exists() { 1 } else { 0 }) // exclude processed.md
+    } else {
+        0
+    };
+
+    // Pending inbox messages
+    let inbox_dir = Path::new(".decree/inbox");
+    let pending_inbox = if inbox_dir.exists() {
+        count_md_files_toplevel(inbox_dir)?
+    } else {
+        0
+    };
+
+    // Done inbox messages
+    let done_dir = Path::new(".decree/inbox/done");
+    let done_count = if done_dir.exists() {
+        count_md_files_toplevel(done_dir)?
+    } else {
+        0
+    };
+
+    // Dead inbox messages
+    let dead_dir = Path::new(".decree/inbox/dead");
+    let dead_count = if dead_dir.exists() {
+        count_md_files_toplevel(dead_dir)?
+    } else {
+        0
+    };
+
+    // Recent runs
+    let runs_dir = Path::new(".decree/runs");
+    let recent_runs = if runs_dir.exists() {
+        list_recent_runs(runs_dir, 5)?
     } else {
         Vec::new()
     };
 
-    let specs_dir = root.join("specs");
-    let mut all_specs: Vec<String> = Vec::new();
-    if specs_dir.is_dir() {
-        for entry in fs::read_dir(&specs_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".spec.md") {
-                all_specs.push(name);
-            }
-        }
-    }
-    all_specs.sort();
-
-    println!("=== Specs ===");
+    // Print summary
+    println!("Migrations: {} processed, {} pending", processed_count, pending_migrations);
     println!(
-        "  {}/{} processed",
-        processed_specs.len(),
-        all_specs.len()
+        "Inbox: {} pending, {} done, {} dead",
+        pending_inbox, done_count, dead_count
     );
-    for spec in &all_specs {
-        let status = if processed_specs.iter().any(|p| p.contains(spec)) {
-            "✓"
-        } else {
-            " "
-        };
-        println!("  [{status}] {spec}");
-    }
 
-    // --- Pending inbox messages ---
-    let inbox_dir = root.join(".decree/inbox");
-    let mut pending: Vec<String> = Vec::new();
-    if inbox_dir.is_dir() {
-        for entry in fs::read_dir(&inbox_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") && entry.file_type()?.is_file() {
-                pending.push(name);
-            }
-        }
-    }
-    pending.sort();
-
-    println!("\n=== Inbox ===");
-    if pending.is_empty() {
-        println!("  (empty)");
+    if recent_runs.is_empty() {
+        println!("\nNo recent runs.");
     } else {
-        for msg in &pending {
-            println!("  {msg}");
-        }
-    }
-
-    // --- Recent message history ---
-    let runs_dir = root.join(".decree/runs");
-    let mut runs: Vec<String> = Vec::new();
-    if runs_dir.is_dir() {
-        for entry in fs::read_dir(&runs_dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                runs.push(entry.file_name().to_string_lossy().to_string());
-            }
-        }
-    }
-    runs.sort();
-
-    println!("\n=== Recent Messages ===");
-    if runs.is_empty() {
-        println!("  (none)");
-    } else {
-        // Show last 10
-        let start = if runs.len() > 10 { runs.len() - 10 } else { 0 };
-        for run_id in &runs[start..] {
-            let msg_path = runs_dir.join(run_id).join("message.md");
-            let summary = if msg_path.exists() {
-                let content = fs::read_to_string(&msg_path).unwrap_or_default();
-                // First non-empty line as summary
-                content
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or("(no content)")
-                    .chars()
-                    .take(60)
-                    .collect::<String>()
-            } else {
-                "(no message.md)".to_string()
-            };
-            println!("  {run_id}  {summary}");
+        println!("\nRecent runs:");
+        for run in &recent_runs {
+            println!("  {run}");
         }
     }
 
     Ok(())
+}
+
+fn count_files_with_ext(dir: &Path, ext: &str) -> Result<usize> {
+    let mut count = 0;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            if let Some(e) = entry.path().extension() {
+                if e == ext {
+                    count += 1;
+                }
+            }
+        }
+    }
+    Ok(count)
+}
+
+fn count_md_files_toplevel(dir: &Path) -> Result<usize> {
+    count_files_with_ext(dir, "md")
+}
+
+fn list_recent_runs(runs_dir: &Path, limit: usize) -> Result<Vec<String>> {
+    let mut entries: Vec<String> = Vec::new();
+
+    for entry in fs::read_dir(runs_dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            if let Some(name) = entry.file_name().to_str() {
+                entries.push(name.to_string());
+            }
+        }
+    }
+
+    // Sort descending (most recent first — lexicographic works for timestamp IDs)
+    entries.sort();
+    entries.reverse();
+    entries.truncate(limit);
+
+    Ok(entries)
 }

@@ -1,0 +1,165 @@
+# 12: CLI Help System
+
+## Overview
+
+`decree help` outputs a detailed, verbose explanation of everything
+decree does. This is more than a typical `--help` flag — it's a
+built-in reference that explains the message format, processing
+pipeline, routine system, and how to get started.
+
+## `decree help`
+
+Prints comprehensive help to stdout. The output covers:
+
+### Section 1: What Decree Does
+
+```
+Decree is an AI orchestrator for structured, reproducible workflows.
+
+It processes migration files through AI-powered routines, with optional
+git stash hooks for change tracking and retry on failure.
+
+Core workflow:
+  1. Write migration files describing work in migrations/
+  2. Run `decree process` to execute them through AI routines
+  3. Routines invoke AI tools (opencode, claude, copilot) to do the work
+  4. Git stash hooks isolate each routine's changes, retries chain follow-ups
+```
+
+### Section 2: Commands
+
+```
+Commands:
+  decree process              Process all pending migrations + drain inbox
+  decree starter [NAME]       Build starter prompt, copy or launch AI
+  decree routine              List routines (interactive select + run)
+  decree routine <name>       Show routine detail + run pre-checks
+  decree verify               Run all routine pre-checks
+  decree daemon [--interval]  Continuous inbox + cron monitoring
+  decree status               Show processing progress
+  decree log [ID]             Show routine execution output
+  decree init                 Initialize a new decree project
+  decree help                 This help text
+```
+
+### Section 3: Message Format
+
+```
+Message Format:
+  Messages use optional YAML frontmatter followed by a markdown body.
+  Frontmatter fields control routing and parameters.
+
+  ---
+  routine: develop              # Which routine to execute
+  input_file: path/to/file.md   # Optional. Path to input file
+  custom_field: value           # Custom fields become env vars
+  ---
+  Description of the work to do.
+
+  The body can be empty. All frontmatter fields are optional — decree
+  fills in missing fields automatically (chain, seq, id, type, routine).
+```
+
+### Section 4: How Messages Are Processed
+
+```
+Processing Pipeline:
+  1. Migration files in migrations/ are read in alphabetical order
+  2. Each migration becomes an inbox message in .decree/inbox/
+  3. Messages are normalized (missing fields filled, routine selected)
+  4. Lifecycle hooks run (beforeEach creates git baseline if configured)
+  5. The selected routine executes with parameters as env vars
+  6. On success: afterEach stashes changes, message moves to inbox/done/
+  7. On failure: retry strategy applies (keep changes or revert via git)
+  8. After all retries: revert, dead-letter the message
+  9. Follow-up messages from routines are processed depth-first
+  10. After all migrations: remaining inbox messages are drained
+```
+
+### Section 5: How to Define Routines
+
+```
+Defining Routines:
+  Routines are shell scripts in .decree/routines/ (nested dirs allowed).
+
+  Required structure:
+    #!/usr/bin/env bash
+    # Title
+    #
+    # Description shown by `decree routine`.
+    set -euo pipefail
+
+    # --- Parameters ---
+    # message_file  - Path to message.md in the run directory
+    # message_id    - Full message ID (<chain>-<seq>)
+    # message_dir   - Run directory path
+    # chain         - Chain ID
+    # seq           - Sequence number
+    # input_file    - Optional. Path to input file (e.g., migration file)
+    message_file="${message_file:-}"
+    message_id="${message_id:-}"
+    message_dir="${message_dir:-}"
+    chain="${chain:-}"
+    seq="${seq:-}"
+    input_file="${input_file:-}"
+
+    # Pre-check (required — exit 0 if ready, non-zero if not):
+    if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
+        command -v opencode >/dev/null 2>&1 || exit 1
+        exit 0
+    fi
+
+    # Custom params (from frontmatter, discovered automatically):
+    my_param="${my_param:-default}"
+
+    # Implementation (invoke AI tool to do the work):
+    opencode run "Read ${input_file:-$message_file} and implement the requirements."
+
+  Run `decree verify` to check all routines' pre-checks at once.
+  See ROUTINES.md for full authoring guide.
+```
+
+### Section 6: Lifecycle Hooks
+
+```
+Lifecycle Hooks (config.yml):
+  hooks:
+    beforeAll: ""      # Routine to run before all processing
+    afterAll: ""       # Routine to run after all processing
+    beforeEach: ""     # Routine to run before each message
+    afterEach: ""      # Routine to run after each message
+```
+
+### Section 7: Getting Started
+
+```
+Getting Started:
+  1. decree init                    # Set up project
+  2. decree starter spec            # Plan work with AI → migration files
+  3. decree verify                  # Check routines are ready
+  4. decree process                 # Execute all migrations
+  5. decree routine                 # Run individual routines interactively
+```
+
+## Implementation
+
+The help text is a single `include_str!()` template in `src/templates/help.txt`
+or constructed programmatically. It is printed to stdout with no paging
+(users can pipe to `less` if needed).
+
+`decree --help` (clap's built-in) shows the short form. `decree help`
+(the subcommand) shows the verbose form described above.
+
+## Acceptance Criteria
+
+- [ ] `decree help` prints verbose multi-section help to stdout
+- [ ] Help explains what decree does and the core workflow
+- [ ] Help lists all available commands with descriptions
+- [ ] Help explains message format with frontmatter example
+- [ ] Help documents `input_file` as an optional parameter
+- [ ] Help explains the full processing pipeline
+- [ ] Help shows how to define routines with required structure
+- [ ] Help documents pre-check sections
+- [ ] Help documents lifecycle hooks
+- [ ] Help includes getting started steps
+- [ ] `decree --help` shows short clap-generated help (separate from `decree help`)
