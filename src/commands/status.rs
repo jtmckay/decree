@@ -1,113 +1,190 @@
-use std::fs;
+use crate::config;
+use crate::error::color;
+use crate::error::DecreeError;
+use crate::message;
 use std::path::Path;
 
-use crate::error::Result;
+/// Run `decree status`.
+pub fn run(project_root: &Path) -> Result<(), DecreeError> {
+    let decree_dir = project_root.join(config::DECREE_DIR);
 
-pub fn run() -> Result<()> {
-    // Processed migrations
-    let processed_path = Path::new("migrations/processed.md");
-    let processed_count = if processed_path.exists() {
-        let content = fs::read_to_string(processed_path)?;
-        content.lines().filter(|l| !l.trim().is_empty()).count()
-    } else {
-        0
-    };
+    // --- Migrations ---
+    println!("{}", color::bold("Migrations:"));
+    let migrations_dir = decree_dir.join(config::MIGRATIONS_DIR);
+    let processed_path = decree_dir.join(config::PROCESSED_FILE);
 
-    // Pending migrations
-    let migrations_dir = Path::new("migrations");
-    let pending_migrations = if migrations_dir.exists() {
-        count_files_with_ext(migrations_dir, "md")?
-            .saturating_sub(if processed_path.exists() { 1 } else { 0 }) // exclude processed.md
-    } else {
-        0
-    };
+    let all_migrations = list_migrations(&migrations_dir)?;
+    let processed = read_processed(&processed_path)?;
 
-    // Pending inbox messages
-    let inbox_dir = Path::new(".decree/inbox");
-    let pending_inbox = if inbox_dir.exists() {
-        count_md_files_toplevel(inbox_dir)?
-    } else {
-        0
-    };
+    let processed_count = all_migrations
+        .iter()
+        .filter(|m| processed.contains(&m.to_string()))
+        .count();
+    let total = all_migrations.len();
 
-    // Done inbox messages
-    let done_dir = Path::new(".decree/inbox/done");
-    let done_count = if done_dir.exists() {
-        count_md_files_toplevel(done_dir)?
-    } else {
-        0
-    };
+    println!("  Processed: {} of {}", processed_count, total);
 
-    // Dead inbox messages
-    let dead_dir = Path::new(".decree/inbox/dead");
-    let dead_count = if dead_dir.exists() {
-        count_md_files_toplevel(dead_dir)?
-    } else {
-        0
-    };
+    if let Some(next) = all_migrations
+        .iter()
+        .find(|m| !processed.contains(&m.to_string()))
+    {
+        println!("  Next: {}", next);
+    }
 
-    // Recent runs
-    let runs_dir = Path::new(".decree/runs");
-    let recent_runs = if runs_dir.exists() {
-        list_recent_runs(runs_dir, 5)?
-    } else {
-        Vec::new()
-    };
+    println!();
 
-    // Print summary
-    println!("Migrations: {} processed, {} pending", processed_count, pending_migrations);
+    // --- Inbox ---
+    println!("{}", color::bold("Inbox:"));
+    let inbox_dir = decree_dir.join(config::INBOX_DIR);
+    let inbox_dead_dir = inbox_dir.join(config::DEAD_DIR);
+
+    let pending = count_files(&inbox_dir)?;
+    let dead = count_files(&inbox_dead_dir)?;
+
     println!(
-        "Inbox: {} pending, {} done, {} dead",
-        pending_inbox, done_count, dead_count
+        "  Pending: {} message{}",
+        pending,
+        if pending == 1 { "" } else { "s" }
+    );
+    println!(
+        "  Dead-lettered: {} message{}",
+        dead,
+        if dead == 1 { "" } else { "s" }
     );
 
-    if recent_runs.is_empty() {
-        println!("\nNo recent runs.");
+    println!();
+
+    // --- Recent Activity ---
+    println!("{}", color::bold("Recent Activity (last 5):"));
+    let runs = message::list_runs(project_root)?;
+
+    if runs.is_empty() {
+        println!("  No activity yet.");
     } else {
-        println!("\nRecent runs:");
-        for run in &recent_runs {
-            println!("  {run}");
+        // Dead-lettered message IDs (files in inbox/dead/)
+        let dead_ids = list_dead_ids(&inbox_dead_dir)?;
+
+        let recent: Vec<&String> = runs.iter().rev().take(5).collect();
+        for run_name in recent.iter().rev() {
+            let run_dir = decree_dir.join(config::RUNS_DIR).join(run_name);
+            let routine = detect_routine(&run_dir);
+            let disposition = if dead_ids.iter().any(|d| run_name.starts_with(d)) {
+                color::error("dead")
+            } else {
+                color::success("done")
+            };
+
+            // Parse to check if follow-up
+            let description = match message::MessageId::parse(run_name) {
+                Ok(id) if id.seq > 0 => color::dim("(follow-up)"),
+                Ok(_) => detect_migration_name(run_name),
+                Err(_) => run_name.to_string(),
+            };
+
+            println!(
+                "  {}  {}  {}  {}",
+                color::dim(run_name),
+                routine,
+                disposition,
+                description,
+            );
         }
     }
 
     Ok(())
 }
 
-fn count_files_with_ext(dir: &Path, ext: &str) -> Result<usize> {
-    let mut count = 0;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_file() {
-            if let Some(e) = entry.path().extension() {
-                if e == ext {
-                    count += 1;
-                }
-            }
-        }
+/// List migration files sorted alphabetically.
+fn list_migrations(migrations_dir: &Path) -> Result<Vec<String>, DecreeError> {
+    if !migrations_dir.exists() {
+        return Ok(Vec::new());
     }
+    let mut files: Vec<String> = std::fs::read_dir(migrations_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "md")
+        })
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Read processed migration list from processed.md.
+fn read_processed(path: &Path) -> Result<Vec<String>, DecreeError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(path)?;
+    Ok(content
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
+}
+
+/// Count regular files in a directory (non-recursive).
+fn count_files(dir: &Path) -> Result<usize, DecreeError> {
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let count = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .count();
     Ok(count)
 }
 
-fn count_md_files_toplevel(dir: &Path) -> Result<usize> {
-    count_files_with_ext(dir, "md")
+/// List message IDs from dead letter directory.
+fn list_dead_ids(dead_dir: &Path) -> Result<Vec<String>, DecreeError> {
+    if !dead_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<String> = std::fs::read_dir(dead_dir)?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            e.file_name()
+                .into_string()
+                .ok()
+                .map(|name| name.trim_end_matches(".md").to_string())
+        })
+        .collect();
+    Ok(ids)
 }
 
-fn list_recent_runs(runs_dir: &Path, limit: usize) -> Result<Vec<String>> {
-    let mut entries: Vec<String> = Vec::new();
+/// Try to detect which routine was used from the run directory.
+fn detect_routine(run_dir: &Path) -> String {
+    // Look for routine.log or <name>.log files
+    if let Ok(entries) = std::fs::read_dir(run_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".log") && name != "routine.log" {
+                return name.trim_end_matches(".log").to_string();
+            }
+        }
+        // Fallback to routine.log
+        if run_dir.join("routine.log").exists() {
+            return "routine".to_string();
+        }
+    }
+    "unknown".to_string()
+}
 
-    for entry in fs::read_dir(runs_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            if let Some(name) = entry.file_name().to_str() {
-                entries.push(name.to_string());
+/// Extract migration name from a chain ID.
+/// Chain format: `D<NNNN>-HHmm-<name>`
+fn detect_migration_name(run_name: &str) -> String {
+    // Skip D<NNNN>-HHmm- prefix (11 chars) to get the name part
+    if run_name.len() > 11 {
+        let name_part = &run_name[11..];
+        // Remove trailing -<seq> if present
+        if let Some(last_dash) = name_part.rfind('-') {
+            let potential_name = &name_part[..last_dash];
+            if !potential_name.is_empty() {
+                return format!("{potential_name}.md");
             }
         }
     }
-
-    // Sort descending (most recent first — lexicographic works for timestamp IDs)
-    entries.sort();
-    entries.reverse();
-    entries.truncate(limit);
-
-    Ok(entries)
+    run_name.to_string()
 }

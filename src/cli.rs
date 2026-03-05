@@ -3,12 +3,22 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(
     name = "decree",
-    about = "Task orchestration for AI-assisted development",
-    disable_help_subcommand = true
+    version,
+    about = "AI orchestrator for structured, reproducible workflows",
+    disable_help_subcommand = true,
+    disable_version_flag = true
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Print version
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    pub version: (),
+
+    /// Disable color output
+    #[arg(long = "no-color", global = true)]
+    pub no_color: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -17,11 +27,15 @@ pub enum Command {
     Init,
 
     /// Process all migrations + drain inbox
-    Process,
+    Process {
+        /// Show what would be processed without executing
+        #[arg(long)]
+        dry_run: bool,
+    },
 
-    /// Build starter prompt, copy or launch AI
-    Starter {
-        /// Starter template name
+    /// Build prompt, copy or launch AI
+    Prompt {
+        /// Prompt template name
         name: Option<String>,
     },
 
@@ -34,9 +48,9 @@ pub enum Command {
     /// Run all routine pre-checks
     Verify,
 
-    /// Monitor inbox + cron
+    /// Daemon: monitor inbox + cron
     Daemon {
-        /// Poll interval in seconds
+        /// Polling interval in seconds
         #[arg(long, default_value = "2")]
         interval: u64,
     },
@@ -46,10 +60,10 @@ pub enum Command {
 
     /// Show execution log
     Log {
-        /// Message or chain ID
+        /// Message ID (full, chain, or prefix)
         id: Option<String>,
     },
 
-    /// Show verbose help
+    /// Verbose help
     Help,
 }

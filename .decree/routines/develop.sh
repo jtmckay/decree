@@ -2,29 +2,35 @@
 # Develop
 #
 # Default routine that delegates work to an AI assistant.
-# Reads the spec file or task message, prompts the AI to implement all
+# Reads the task message, prompts the AI to implement all
 # requirements, then verifies acceptance criteria are met.
 set -euo pipefail
 
-# Parameters (decree injects these as env vars)
-spec_file="${spec_file:-}"
+# --- Standard Environment Variables ---
+# message_file  - Path to message.md in the run directory
+# message_id    - Full message ID (e.g., D0001-1432-01-add-auth-0)
+# message_dir   - Run directory path (contains logs from prior attempts)
+# chain         - Chain ID (D<NNNN>-HHmm-<name>)
+# seq           - Sequence number in chain
 message_file="${message_file:-}"
 message_id="${message_id:-}"
 message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
 
-# Determine the work description
-if [ -n "$spec_file" ] && [ -f "$spec_file" ]; then
-    WORK_FILE="$spec_file"
-else
-    WORK_FILE="$message_file"
+# Pre-check: verify AI tool is available
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
+    command -v claude >/dev/null 2>&1 || { echo "claude not found" >&2; exit 1; }
+    exit 0
 fi
 
 # Implementation
-claude -p "You are a senior software engineer. Read the work description at ${WORK_FILE} and implement all requirements. Follow best practices: clean code, proper error handling, and tests where appropriate. Work methodically through each requirement." \
-  --allowedTools 'Edit,Write,Bash(cargo*),Bash(npm*),Bash(python*),Bash(make*)'
+claude -p "Read ${message_file} and implement all requirements.
+Previous attempt logs (if any) are in ${message_dir} for context.
+Follow best practices: clean code, proper error handling, and tests
+where appropriate."
 
 # Verification
-claude -p "Read the work description at ${WORK_FILE}. Verify that all requirements and acceptance criteria are met. Run any tests defined in the project. Clean up unused code: remove dead imports, unused functions, unreachable branches, and orphaned helpers introduced during implementation. Report what passes and what fails. Exit 0 if everything passes, exit 1 if anything fails." \
-  --allowedTools 'Edit,Write,Bash(cargo*),Bash(npm*),Bash(python*),Bash(make*)'
+claude -p "Read ${message_file}. Verify that all requirements and
+acceptance criteria are met. Run any tests. Report what passes and what
+fails. Exit 0 if everything passes, exit 1 if anything fails."

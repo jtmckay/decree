@@ -1,166 +1,37 @@
-use std::fs;
+use crate::config;
+use crate::error::color::is_tty;
+use crate::error::DecreeError;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-use crate::config::{AiTool, Config, AI_TOOLS};
-use crate::error::{DecreeError, Result};
+/// AI backends we search for, in priority order.
+const AI_BACKENDS: &[(&str, &str, &str)] = &[
+    // (command, ai_router template, ai_interactive template)
+    ("opencode", "opencode run {prompt}", "opencode"),
+    ("claude", "claude -p {prompt}", "claude"),
+    ("copilot", "copilot -p {prompt}", "copilot"),
+];
 
-const TEMPLATE_SPEC: &str = include_str!("../templates/spec.md");
-const TEMPLATE_DEVELOP: &str = include_str!("../templates/develop.sh");
-const TEMPLATE_RUST_DEVELOP: &str = include_str!("../templates/rust-develop.sh");
-const TEMPLATE_GITIGNORE: &str = include_str!("../templates/gitignore");
-const TEMPLATE_GIT_BASELINE: &str = include_str!("../templates/git-baseline.sh");
-const TEMPLATE_GIT_STASH_CHANGES: &str = include_str!("../templates/git-stash-changes.sh");
-const TEMPLATE_ROUTINES_DOC: &str = include_str!("../templates/routines.md");
+/// Git stash hook routine: git-baseline.sh (beforeEach hook)
+const GIT_BASELINE_SH: &str = include_str!("../templates/git-baseline.sh");
 
-pub fn run() -> Result<()> {
-    let decree_dir = Path::new(".decree");
+/// Git stash hook routine: git-stash-changes.sh (afterEach hook)
+const GIT_STASH_CHANGES_SH: &str = include_str!("../templates/git-stash-changes.sh");
 
-    if decree_dir.exists() {
-        return Err(DecreeError::AlreadyInitialized(decree_dir.to_path_buf()));
-    }
+// Templates embedded from src/templates/ at compile time.
+const DEVELOP_SH: &str = include_str!("../templates/develop.sh");
+const RUST_DEVELOP_SH: &str = include_str!("../templates/rust-develop.sh");
+const ROUTER_MD: &str = include_str!("../templates/router.md");
+const SOW_PROMPT_MD: &str = include_str!("../templates/sow.md");
+const MIGRATION_PROMPT_MD: &str = include_str!("../templates/migration.md");
+const ROUTINE_PROMPT_MD: &str = include_str!("../templates/routine.md");
+const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
 
-    // Detect AI backends
-    let ai_tool = detect_ai_backend()?;
-    let ai_cmd = ai_tool.to_string();
-
-    // Build config
-    let mut config = Config::default().with_ai_command(&ai_tool);
-
-    // Git detection and hook setup
-    let git_available = check_git_available();
-    if git_available {
-        let enable_hooks = prompt_git_hooks()?;
-        if enable_hooks {
-            config = config.with_git_hooks();
-        }
-    } else {
-        eprintln!("git not found — skipping lifecycle hook setup");
-    }
-
-    // Create directory structure
-    create_directories(decree_dir)?;
-
-    // Write templates with AI_CMD replaced
-    write_templates(decree_dir, &ai_cmd, git_available && config.hooks.before_each == "git-baseline")?;
-
-    // Write ROUTINES.md in project root
-    fs::write("ROUTINES.md", TEMPLATE_ROUTINES_DOC)?;
-
-    // Write config
-    config.save(&decree_dir.join("config.yml"))?;
-
-    // Create migrations directory at project root
-    let migrations_dir = Path::new("migrations");
-    if !migrations_dir.exists() {
-        fs::create_dir_all(migrations_dir)?;
-    }
-    let processed_file = migrations_dir.join("processed.md");
-    if !processed_file.exists() {
-        fs::write(&processed_file, "")?;
-    }
-
-    eprintln!("Initialized decree project");
-    Ok(())
-}
-
-fn create_directories(base: &Path) -> Result<()> {
-    let dirs = [
-        base.to_path_buf(),
-        base.join("routines"),
-        base.join("starters"),
-        base.join("cron"),
-        base.join("inbox"),
-        base.join("inbox/done"),
-        base.join("inbox/dead"),
-        base.join("runs"),
-    ];
-    for dir in &dirs {
-        fs::create_dir_all(dir)?;
-    }
-    Ok(())
-}
-
-fn write_templates(base: &Path, ai_cmd: &str, write_git_hooks: bool) -> Result<()> {
-    // .gitignore
-    fs::write(base.join(".gitignore"), TEMPLATE_GITIGNORE)?;
-
-    // Starter template
-    fs::write(base.join("starters/spec.md"), TEMPLATE_SPEC)?;
-
-    // Routine templates with {AI_CMD} replaced
-    let develop = TEMPLATE_DEVELOP.replace("{AI_CMD}", ai_cmd);
-    fs::write(base.join("routines/develop.sh"), &develop)?;
-    set_executable(base.join("routines/develop.sh"))?;
-
-    let rust_develop = TEMPLATE_RUST_DEVELOP.replace("{AI_CMD}", ai_cmd);
-    fs::write(base.join("routines/rust-develop.sh"), &rust_develop)?;
-    set_executable(base.join("routines/rust-develop.sh"))?;
-
-    // Git hook routines (only if user accepted)
-    if write_git_hooks {
-        fs::write(base.join("routines/git-baseline.sh"), TEMPLATE_GIT_BASELINE)?;
-        set_executable(base.join("routines/git-baseline.sh"))?;
-
-        fs::write(
-            base.join("routines/git-stash-changes.sh"),
-            TEMPLATE_GIT_STASH_CHANGES,
-        )?;
-        set_executable(base.join("routines/git-stash-changes.sh"))?;
-    }
-
-    Ok(())
-}
-
-fn set_executable<P: AsRef<Path>>(path: P) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let metadata = fs::metadata(path.as_ref())?;
-    let mut perms = metadata.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path.as_ref(), perms)?;
-    Ok(())
-}
-
-fn detect_ai_backend() -> Result<AiTool> {
-    let mut found: Vec<AiTool> = Vec::new();
-
-    for (tool, binary) in AI_TOOLS {
-        if which_exists(binary) {
-            found.push(*tool);
-        }
-    }
-
-    match found.len() {
-        0 => {
-            eprintln!(
-                "No AI backend found. Install one — we recommend opencode: https://opencode.ai/"
-            );
-            Ok(AiTool::Opencode)
-        }
-        1 => {
-            eprintln!("Detected AI backend: {}", found[0]);
-            Ok(found[0])
-        }
-        _ => select_ai_backend(&found),
-    }
-}
-
-fn select_ai_backend(tools: &[AiTool]) -> Result<AiTool> {
-    let items: Vec<String> = tools.iter().map(|t| t.to_string()).collect();
-
-    let selection = dialoguer::Select::new()
-        .with_prompt("Multiple AI backends found. Select one")
-        .items(&items)
-        .default(0)
-        .interact()
-        .map_err(|e| DecreeError::Config(format!("selection failed: {e}")))?;
-
-    Ok(tools[selection])
-}
-
-fn which_exists(binary: &str) -> bool {
+/// Check if a command exists on PATH.
+fn command_exists(name: &str) -> bool {
     Command::new("which")
-        .arg(binary)
+        .arg(name)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -168,12 +39,8 @@ fn which_exists(binary: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn check_git_available() -> bool {
-    let git_found = which_exists("git");
-    if !git_found {
-        return false;
-    }
-
+/// Check if we're inside a git repository.
+fn is_git_repo() -> bool {
     Command::new("git")
         .args(["rev-parse", "--is-inside-work-tree"])
         .stdout(std::process::Stdio::null())
@@ -183,13 +50,232 @@ fn check_git_available() -> bool {
         .unwrap_or(false)
 }
 
-fn prompt_git_hooks() -> Result<bool> {
-    let result = dialoguer::Confirm::new()
-        .with_prompt("Enable git stash hooks for change tracking?")
-        .default(true)
-        .interact()
-        .map_err(|e| DecreeError::Config(format!("prompt failed: {e}")))?;
-    Ok(result)
+/// Detect available AI backends. Returns list of (command, router_template, interactive_template).
+fn detect_ai_backends() -> Vec<(&'static str, &'static str, &'static str)> {
+    AI_BACKENDS
+        .iter()
+        .copied()
+        .filter(|(cmd, _, _)| command_exists(cmd))
+        .collect()
+}
+
+/// Derive the AI invocation prefix from an ai_router template by stripping {prompt}.
+fn ai_invoke_prefix(ai_router: &str) -> String {
+    ai_router
+        .replace(" {prompt}", "")
+        .replace("{prompt}", "")
+        .trim()
+        .to_string()
+}
+
+/// Replace AI placeholders in a routine template.
+fn replace_ai_placeholders(template: &str, ai_name: &str, ai_router: &str) -> String {
+    let invoke = ai_invoke_prefix(ai_router);
+    template
+        .replace("{ai_name}", ai_name)
+        .replace("{ai_invoke}", &invoke)
+}
+
+/// Generate config.yml content with the selected AI command.
+fn generate_config(ai_name: &str, ai_router: &str, ai_interactive: &str, git_hooks: bool) -> String {
+    let mut config = String::new();
+
+    config.push_str("commands:\n");
+    config.push_str(&format!("  ai_router: \"{ai_router}\"\n"));
+    config.push_str(&format!("  ai_interactive: \"{ai_interactive}\"\n"));
+
+    // Add commented alternatives
+    for &(name, router, interactive) in AI_BACKENDS {
+        if name != ai_name {
+            config.push_str(&format!("  # ai_router: \"{router}\"\n"));
+            config.push_str(&format!("  # ai_interactive: \"{interactive}\"\n"));
+        }
+    }
+
+    config.push('\n');
+    config.push_str("max_retries: 3\n");
+    config.push_str("max_depth: 10\n");
+    config.push_str("max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable\n");
+    config.push_str("default_routine: develop\n");
+    config.push('\n');
+
+    config.push_str("hooks:\n");
+    config.push_str("  beforeAll: \"\"\n");
+    config.push_str("  afterAll: \"\"\n");
+
+    if git_hooks {
+        config.push_str("  beforeEach: \"git-baseline\"\n");
+        config.push_str("  afterEach: \"git-stash-changes\"\n");
+    } else {
+        config.push_str("  beforeEach: \"\"\n");
+        config.push_str("  afterEach: \"\"\n");
+    }
+
+    config.push_str("  # --- Git stash workflow (uncomment to enable) ---\n");
+    config.push_str("  # beforeEach: \"git-baseline\"\n");
+    config.push_str("  # afterEach: \"git-stash-changes\"\n");
+
+    config
+}
+
+/// Run `decree init`.
+pub fn run() -> Result<(), DecreeError> {
+    let decree_dir = Path::new(config::DECREE_DIR);
+
+    // Re-run check
+    if decree_dir.exists() {
+        if is_tty() {
+            eprint!("Decree is already configured in this directory.\nOverwrite existing configuration? [y/N] ");
+            std::io::stderr().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("Aborted.");
+                return Ok(());
+            }
+        } else {
+            // Non-TTY: error if unresolvable (spec says auto-detect AI, accept hooks)
+            // We proceed with overwrite in non-TTY mode since there's no way to ask
+            eprintln!("Decree is already configured in this directory. Overwriting in non-TTY mode.");
+        }
+    }
+
+    // 1. Detect AI backend
+    let available = detect_ai_backends();
+    let (ai_name, ai_router, ai_interactive) = if available.is_empty() {
+        println!("No AI backend detected (opencode, claude, copilot).");
+        println!("Visit https://opencode.ai/ to install opencode.");
+        println!("Defaulting to opencode.");
+        AI_BACKENDS[0] // opencode defaults
+    } else if available.len() == 1 {
+        println!("Detected AI backend: {}", available[0].0);
+        available[0]
+    } else if is_tty() {
+        // Multiple backends found — present selector
+        let options: Vec<String> = available.iter().map(|(cmd, _, _)| cmd.to_string()).collect();
+        let selection = inquire::Select::new("Select AI backend:", options)
+            .prompt()
+            .map_err(|e| DecreeError::Other(format!("selection cancelled: {e}")))?;
+        *available
+            .iter()
+            .find(|(cmd, _, _)| *cmd == selection.as_str())
+            .expect("selection came from available list")
+    } else {
+        // Non-TTY with multiple: pick first
+        println!("Multiple AI backends detected, using: {}", available[0].0);
+        available[0]
+    };
+
+    // 2. Detect git and ask about lifecycle hooks
+    let has_git = command_exists("git") && is_git_repo();
+    let git_hooks = if has_git {
+        if is_tty() {
+            eprint!("Enable git stash hooks for change tracking? [Y/n] ");
+            std::io::stderr().flush()?;
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim();
+            trimmed.is_empty() || trimmed.eq_ignore_ascii_case("y")
+        } else {
+            // Non-TTY: accept git hooks if detected
+            true
+        }
+    } else {
+        if !command_exists("git") || !is_git_repo() {
+            println!("git not found — skipping lifecycle hook setup");
+        }
+        false
+    };
+
+    // 3. Create directory structure
+    let dirs = [
+        config::DECREE_DIR,
+        &format!("{}/{}", config::DECREE_DIR, config::ROUTINES_DIR),
+        &format!("{}/{}", config::DECREE_DIR, config::PROMPTS_DIR),
+        &format!("{}/{}", config::DECREE_DIR, config::CRON_DIR),
+        &format!("{}/{}", config::DECREE_DIR, config::INBOX_DIR),
+        &format!("{}/{}/{}", config::DECREE_DIR, config::INBOX_DIR, config::DEAD_DIR),
+        &format!("{}/{}", config::DECREE_DIR, config::OUTBOX_DIR),
+        &format!("{}/{}/{}", config::DECREE_DIR, config::OUTBOX_DIR, config::DEAD_DIR),
+        &format!("{}/{}", config::DECREE_DIR, config::RUNS_DIR),
+        &format!("{}/{}", config::DECREE_DIR, config::MIGRATIONS_DIR),
+    ];
+    for dir in &dirs {
+        std::fs::create_dir_all(dir)?;
+    }
+
+    // 4. Write config.yml
+    let config_content = generate_config(ai_name, ai_router, ai_interactive, git_hooks);
+    std::fs::write(
+        format!("{}/{}", config::DECREE_DIR, config::CONFIG_FILE),
+        &config_content,
+    )?;
+
+    // 5. Write .gitignore
+    std::fs::write(
+        format!("{}/{}", config::DECREE_DIR, config::GITIGNORE_FILE),
+        DECREE_GITIGNORE,
+    )?;
+
+    // 6. Write router.md
+    std::fs::write(
+        format!("{}/{}", config::DECREE_DIR, config::ROUTER_FILE),
+        ROUTER_MD,
+    )?;
+
+    // 7. Write prompt templates
+    let prompts_base = format!("{}/{}", config::DECREE_DIR, config::PROMPTS_DIR);
+    std::fs::write(format!("{prompts_base}/migration.md"), MIGRATION_PROMPT_MD)?;
+    std::fs::write(format!("{prompts_base}/sow.md"), SOW_PROMPT_MD)?;
+    std::fs::write(format!("{prompts_base}/routine.md"), ROUTINE_PROMPT_MD)?;
+
+    // 8. Write routine templates (replace {ai_name}/{ai_invoke} with detected backend)
+    let routines_base = format!("{}/{}", config::DECREE_DIR, config::ROUTINES_DIR);
+    std::fs::write(
+        format!("{routines_base}/develop.sh"),
+        replace_ai_placeholders(DEVELOP_SH, ai_name, ai_router),
+    )?;
+    std::fs::write(
+        format!("{routines_base}/rust-develop.sh"),
+        replace_ai_placeholders(RUST_DEVELOP_SH, ai_name, ai_router),
+    )?;
+
+    // 9. Write git hook routines if accepted
+    if git_hooks {
+        std::fs::write(
+            format!("{routines_base}/git-baseline.sh"),
+            GIT_BASELINE_SH,
+        )?;
+        std::fs::write(
+            format!("{routines_base}/git-stash-changes.sh"),
+            GIT_STASH_CHANGES_SH,
+        )?;
+    }
+
+    // 10. Write empty processed.md tracker
+    std::fs::write(
+        format!("{}/{}", config::DECREE_DIR, config::PROCESSED_FILE),
+        "",
+    )?;
+
+    // Make routine scripts executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let routines_path = Path::new(&routines_base);
+        if let Ok(entries) = std::fs::read_dir(routines_path) {
+            for entry in entries.flatten() {
+                if entry.path().extension().is_some_and(|ext| ext == "sh") {
+                    let mut perms = std::fs::metadata(entry.path())?.permissions();
+                    perms.set_mode(0o755);
+                    std::fs::set_permissions(entry.path(), perms)?;
+                }
+            }
+        }
+    }
+
+    println!("Decree initialized successfully.");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -197,182 +283,222 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_which_exists_false_for_nonexistent() {
-        assert!(!which_exists("definitely_not_a_real_binary_12345"));
+    fn test_generate_config_without_git_hooks() {
+        let config = generate_config("claude", "claude -p {prompt}", "claude", false);
+        assert!(config.contains("ai_router: \"claude -p {prompt}\""));
+        assert!(config.contains("ai_interactive: \"claude\""));
+        assert!(!config.contains("ai_command"));
+        assert!(config.contains("max_retries: 3"));
+        assert!(config.contains("beforeEach: \"\""));
+        assert!(config.contains("# beforeEach: \"git-baseline\""));
     }
 
     #[test]
-    fn test_template_ai_cmd_replacement() {
-        let result = TEMPLATE_DEVELOP.replace("{AI_CMD}", "claude");
-        assert!(result.contains("claude"));
-        assert!(!result.contains("{AI_CMD}"));
+    fn test_generate_config_with_git_hooks() {
+        let config = generate_config("opencode", "opencode run {prompt}", "opencode", true);
+        assert!(config.contains("ai_router: \"opencode run {prompt}\""));
+        assert!(config.contains("beforeEach: \"git-baseline\""));
+        assert!(config.contains("afterEach: \"git-stash-changes\""));
+        // Should still contain commented versions
+        assert!(config.contains("# beforeEach: \"git-baseline\""));
     }
 
     #[test]
-    fn test_rust_develop_ai_cmd_replacement() {
-        let result = TEMPLATE_RUST_DEVELOP.replace("{AI_CMD}", "copilot");
-        assert!(result.contains("copilot"));
-        assert!(!result.contains("{AI_CMD}"));
+    fn test_generate_config_includes_alternatives() {
+        let config = generate_config("claude", "claude -p {prompt}", "claude", false);
+        // Other backends should be commented out
+        assert!(config.contains("# ai_router: \"opencode run {prompt}\""));
+        assert!(config.contains("# ai_router: \"copilot -p {prompt}\""));
+        // Selected should not be commented
+        assert!(config.contains("  ai_router: \"claude -p {prompt}\"\n"));
     }
 
     #[test]
-    fn test_develop_has_precheck() {
-        assert!(TEMPLATE_DEVELOP.contains("DECREE_PRE_CHECK"));
-        assert!(TEMPLATE_DEVELOP.contains("command -v {AI_CMD}"));
+    fn test_command_exists_true() {
+        // `ls` should exist on any system
+        assert!(command_exists("ls"));
     }
 
     #[test]
-    fn test_rust_develop_has_precheck() {
-        assert!(TEMPLATE_RUST_DEVELOP.contains("DECREE_PRE_CHECK"));
-        assert!(TEMPLATE_RUST_DEVELOP.contains("command -v {AI_CMD}"));
-        assert!(TEMPLATE_RUST_DEVELOP.contains("command -v cargo"));
+    fn test_command_exists_false() {
+        assert!(!command_exists("definitely_not_a_real_command_xyz"));
     }
 
     #[test]
-    fn test_routine_description_headers() {
-        // Routines must have a description comment for `decree routine` extraction
-        assert!(TEMPLATE_DEVELOP.starts_with("#!/usr/bin/env bash\n# Develop\n"));
-        assert!(TEMPLATE_RUST_DEVELOP.starts_with("#!/usr/bin/env bash\n# Rust Develop\n"));
+    fn test_develop_template_has_precheck() {
+        assert!(DEVELOP_SH.contains("DECREE_PRE_CHECK"));
+        assert!(DEVELOP_SH.contains("{ai_name}"));
+        assert!(DEVELOP_SH.contains("{ai_invoke}"));
     }
 
     #[test]
-    fn test_gitignore_excludes() {
-        assert!(TEMPLATE_GITIGNORE.contains("inbox/"));
-        assert!(TEMPLATE_GITIGNORE.contains("runs/"));
+    fn test_rust_develop_template_has_precheck() {
+        assert!(RUST_DEVELOP_SH.contains("DECREE_PRE_CHECK"));
+        assert!(RUST_DEVELOP_SH.contains("{ai_name}"));
+        assert!(RUST_DEVELOP_SH.contains("{ai_invoke}"));
+        assert!(RUST_DEVELOP_SH.contains("cargo"));
     }
 
     #[test]
-    fn test_spec_template_content() {
-        assert!(TEMPLATE_SPEC.contains("# Spec Template"));
-        assert!(TEMPLATE_SPEC.contains("Naming"));
-        assert!(TEMPLATE_SPEC.contains("Frontmatter"));
-        assert!(TEMPLATE_SPEC.contains("Immutability"));
+    fn test_develop_template_has_description_header() {
+        // First non-shebang comment line is the title
+        let lines: Vec<&str> = DEVELOP_SH.lines().collect();
+        assert_eq!(lines[1], "# Develop");
+        assert_eq!(lines[2], "#");
+        // Description follows
+        assert!(lines[3].starts_with("# "));
     }
 
     #[test]
-    fn test_routines_doc_standard_parameter_table() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Standard Parameter Mapping"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("| `input_file` | `input_file`"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("| *(auto)* | `message_file`"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("| *(auto)* | `message_id`"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("| *(auto)* | `message_dir`"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("| `chain` | `chain`"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("| `seq` | `seq`"));
+    fn test_rust_develop_template_has_description_header() {
+        let lines: Vec<&str> = RUST_DEVELOP_SH.lines().collect();
+        assert_eq!(lines[1], "# Rust Develop");
+        assert_eq!(lines[2], "#");
+        assert!(lines[3].starts_with("# "));
     }
 
     #[test]
-    fn test_routines_doc_custom_parameter_discovery() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Custom Parameter Discovery"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains(r#"var_name="${var_name:-default_value}""#));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("${var:-}"));
+    fn test_develop_template_references_message_dir() {
+        assert!(DEVELOP_SH.contains("${message_dir}"));
     }
 
     #[test]
-    fn test_routines_doc_precheck_section() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Pre-Check Section"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("DECREE_PRE_CHECK"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("exit 0"));
+    fn test_rust_develop_template_references_message_dir() {
+        assert!(RUST_DEVELOP_SH.contains("${message_dir}"));
     }
 
     #[test]
-    fn test_routines_doc_minimal_example() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Minimal Routine Example"));
-        // Standard params present
-        assert!(TEMPLATE_ROUTINES_DOC.contains(r#"message_file="${message_file:-}""#));
-        assert!(TEMPLATE_ROUTINES_DOC.contains(r#"message_id="${message_id:-}""#));
-        // Pre-check present
-        assert!(TEMPLATE_ROUTINES_DOC.contains(r#"if [ "${DECREE_PRE_CHECK:-}" = "true" ]"#));
-        // Custom params present
-        assert!(TEMPLATE_ROUTINES_DOC.contains(r#"my_option="${my_option:-default_value}""#));
+    fn test_precheck_prints_to_stderr() {
+        // Both routines should print errors to stderr (>&2)
+        assert!(DEVELOP_SH.contains(">&2"));
+        assert!(RUST_DEVELOP_SH.contains(">&2"));
     }
 
     #[test]
-    fn test_routines_doc_frontmatter_example() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Corresponding Message Frontmatter"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("routine: my-routine"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("my_option: custom_value"));
+    fn test_router_has_placeholders() {
+        assert!(ROUTER_MD.contains("{routines}"));
+        assert!(ROUTER_MD.contains("{message}"));
     }
 
     #[test]
-    fn test_routines_doc_comment_header_format() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Comment Header Format"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("# Title Here"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("# Short description"));
+    fn test_gitignore_content() {
+        assert!(DECREE_GITIGNORE.contains("inbox/"));
+        assert!(DECREE_GITIGNORE.contains("outbox/"));
+        assert!(DECREE_GITIGNORE.contains("runs/"));
     }
 
     #[test]
-    fn test_routines_doc_nested_routines() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Nested Routines"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("routine: deploy/staging"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("routine: review/pr"));
+    fn test_ai_placeholder_replacement() {
+        let replaced = replace_ai_placeholders(DEVELOP_SH, "claude", "claude -p {prompt}");
+        assert!(replaced.contains("claude -p \"Read"));
+        assert!(replaced.contains("command -v claude"));
+        assert!(!replaced.contains("{ai_name}"));
+        assert!(!replaced.contains("{ai_invoke}"));
     }
 
     #[test]
-    fn test_routines_doc_tips_section() {
-        assert!(TEMPLATE_ROUTINES_DOC.contains("## Tips and Gotchas"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("# --- Parameters ---"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("set -euo pipefail"));
-        assert!(TEMPLATE_ROUTINES_DOC.contains("AI-specific"));
+    fn test_ai_invoke_prefix() {
+        assert_eq!(ai_invoke_prefix("opencode run {prompt}"), "opencode run");
+        assert_eq!(ai_invoke_prefix("claude -p {prompt}"), "claude -p");
+        assert_eq!(ai_invoke_prefix("copilot -p {prompt}"), "copilot -p");
     }
 
     #[test]
-    fn test_git_baseline_template() {
-        assert!(TEMPLATE_GIT_BASELINE.starts_with("#!/usr/bin/env bash\n# Git Baseline\n"));
-        assert!(TEMPLATE_GIT_BASELINE.contains("DECREE_PRE_CHECK"));
-        assert!(TEMPLATE_GIT_BASELINE.contains("git rev-parse --is-inside-work-tree"));
-        assert!(TEMPLATE_GIT_BASELINE.contains("git add -A"));
-        assert!(TEMPLATE_GIT_BASELINE.contains("git commit --allow-empty --no-verify"));
-        assert!(TEMPLATE_GIT_BASELINE.contains("decree-baseline: ${message_id}"));
+    fn test_git_baseline_has_precheck() {
+        assert!(GIT_BASELINE_SH.contains("DECREE_PRE_CHECK"));
+        assert!(GIT_BASELINE_SH.contains("git rev-parse --is-inside-work-tree"));
     }
 
     #[test]
-    fn test_git_baseline_has_standard_params() {
-        assert!(TEMPLATE_GIT_BASELINE.contains(r#"message_file="${message_file:-}""#));
-        assert!(TEMPLATE_GIT_BASELINE.contains(r#"message_id="${message_id:-}""#));
-        assert!(TEMPLATE_GIT_BASELINE.contains(r#"message_dir="${message_dir:-}""#));
-        assert!(TEMPLATE_GIT_BASELINE.contains(r#"chain="${chain:-}""#));
-        assert!(TEMPLATE_GIT_BASELINE.contains(r#"seq="${seq:-}""#));
+    fn test_git_baseline_has_description_header() {
+        let lines: Vec<&str> = GIT_BASELINE_SH.lines().collect();
+        assert_eq!(lines[1], "# Git Baseline");
+        assert_eq!(lines[2], "#");
+        assert!(lines[3].starts_with("# "));
     }
 
     #[test]
-    fn test_git_stash_changes_template() {
-        assert!(
-            TEMPLATE_GIT_STASH_CHANGES
-                .starts_with("#!/usr/bin/env bash\n# Git Stash Changes\n")
-        );
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains("DECREE_PRE_CHECK"));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains("git add -A"));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains("git stash create"));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains(r#"git stash store -m "decree: ${message_id}""#));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains("git reset --soft HEAD~1"));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains("git reset HEAD ."));
+    fn test_git_baseline_uses_env_vars() {
+        assert!(GIT_BASELINE_SH.contains("DECREE_ATTEMPT"));
+        assert!(GIT_BASELINE_SH.contains("DECREE_MAX_RETRIES"));
     }
 
     #[test]
-    fn test_git_stash_changes_has_standard_params() {
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains(r#"message_file="${message_file:-}""#));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains(r#"message_id="${message_id:-}""#));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains(r#"message_dir="${message_dir:-}""#));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains(r#"chain="${chain:-}""#));
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains(r#"seq="${seq:-}""#));
+    fn test_git_baseline_named_stashes() {
+        assert!(GIT_BASELINE_SH.contains("decree-baseline: ${message_id}"));
+        assert!(GIT_BASELINE_SH.contains("decree-failed: ${message_id}"));
     }
 
     #[test]
-    fn test_git_stash_names_use_decree_prefix() {
-        // Stash entries must be named "decree: <message_id>" for easy identification
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains(r#""decree: ${message_id}""#));
+    fn test_git_baseline_has_parameters() {
+        assert!(GIT_BASELINE_SH.contains("message_file="));
+        assert!(GIT_BASELINE_SH.contains("message_id="));
+        assert!(GIT_BASELINE_SH.contains("message_dir="));
+        assert!(GIT_BASELINE_SH.contains("chain="));
+        assert!(GIT_BASELINE_SH.contains("seq="));
     }
 
     #[test]
-    fn test_git_baseline_precheck_verifies_git_repo() {
-        // Pre-check must verify both git binary and that we're in a repo
-        assert!(TEMPLATE_GIT_BASELINE.contains("command -v git"));
-        assert!(TEMPLATE_GIT_BASELINE.contains("git rev-parse --is-inside-work-tree"));
+    fn test_git_baseline_no_destructive_commands() {
+        assert!(!GIT_BASELINE_SH.contains("git reset"));
+        assert!(!GIT_BASELINE_SH.contains("git clean"));
+        assert!(!GIT_BASELINE_SH.contains("git checkout ."));
     }
 
     #[test]
-    fn test_git_stash_changes_precheck_verifies_git() {
-        // Pre-check must verify git binary is available
-        assert!(TEMPLATE_GIT_STASH_CHANGES.contains("command -v git"));
+    fn test_git_stash_changes_has_precheck() {
+        assert!(GIT_STASH_CHANGES_SH.contains("DECREE_PRE_CHECK"));
+    }
+
+    #[test]
+    fn test_git_stash_changes_has_description_header() {
+        let lines: Vec<&str> = GIT_STASH_CHANGES_SH.lines().collect();
+        assert_eq!(lines[1], "# Git Stash Changes");
+        assert_eq!(lines[2], "#");
+        assert!(lines[3].starts_with("# "));
+    }
+
+    #[test]
+    fn test_git_stash_changes_uses_env_vars() {
+        assert!(GIT_STASH_CHANGES_SH.contains("DECREE_ATTEMPT"));
+        assert!(GIT_STASH_CHANGES_SH.contains("DECREE_MAX_RETRIES"));
+        assert!(GIT_STASH_CHANGES_SH.contains("DECREE_ROUTINE_EXIT_CODE"));
+    }
+
+    #[test]
+    fn test_git_stash_changes_named_stashes() {
+        assert!(GIT_STASH_CHANGES_SH.contains("decree: ${message_id} attempt ${ATTEMPT}"));
+        assert!(GIT_STASH_CHANGES_SH.contains("decree-exhausted: ${message_id}"));
+    }
+
+    #[test]
+    fn test_git_stash_changes_has_parameters() {
+        assert!(GIT_STASH_CHANGES_SH.contains("message_file="));
+        assert!(GIT_STASH_CHANGES_SH.contains("message_id="));
+        assert!(GIT_STASH_CHANGES_SH.contains("message_dir="));
+        assert!(GIT_STASH_CHANGES_SH.contains("chain="));
+        assert!(GIT_STASH_CHANGES_SH.contains("seq="));
+    }
+
+    #[test]
+    fn test_git_stash_changes_no_destructive_commands() {
+        assert!(!GIT_STASH_CHANGES_SH.contains("git reset"));
+        assert!(!GIT_STASH_CHANGES_SH.contains("git clean"));
+        assert!(!GIT_STASH_CHANGES_SH.contains("git checkout ."));
+    }
+
+    #[test]
+    fn test_git_stash_changes_restores_baseline_on_exhaustion() {
+        // Should restore baseline when exit code != 0 and attempt == max_retries
+        assert!(GIT_STASH_CHANGES_SH.contains("EXIT_CODE\" -ne 0"));
+        assert!(GIT_STASH_CHANGES_SH.contains("ATTEMPT\" -eq \"$MAX_RETRIES\""));
+        assert!(GIT_STASH_CHANGES_SH.contains("decree-baseline: ${message_id}"));
+    }
+
+    #[test]
+    fn test_git_baseline_restores_on_final_retry() {
+        // Final retry should stash failed changes and restore baseline
+        assert!(GIT_BASELINE_SH.contains("ATTEMPT\" -eq \"$MAX_RETRIES\""));
+        assert!(GIT_BASELINE_SH.contains("git stash apply"));
     }
 }

@@ -2,7 +2,13 @@ pub mod daemon;
 pub mod init;
 pub mod log;
 pub mod process;
+pub mod prompt;
 pub mod routine;
-pub mod starter;
 pub mod status;
-pub mod verify;
+
+use crate::error::DecreeError;
+
+pub fn help() -> Result<(), DecreeError> {
+    print!("{}", include_str!("../templates/help.txt"));
+    Ok(())
+}

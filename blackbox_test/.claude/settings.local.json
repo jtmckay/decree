@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./decree:*)",
+      "Bash(./test_decree.sh:*)"
+    ]
+  }
+}

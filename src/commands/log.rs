@@ -1,152 +1,123 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use crate::config;
+use crate::error::color;
+use crate::error::DecreeError;
+use crate::message;
+use std::path::Path;
 
-use crate::error::{DecreeError, Result};
-
-pub fn run(id: Option<&str>) -> Result<()> {
-    let runs_dir = Path::new(".decree/runs");
-
-    if !runs_dir.exists() {
-        return Err(DecreeError::MessageNotFound(
-            "no runs directory".to_string(),
-        ));
-    }
+/// Run `decree log [ID]`.
+pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
+    let runs = message::list_runs(project_root)?;
 
     match id {
-        None => show_most_recent_log(runs_dir),
-        Some(id) => show_log_by_id(runs_dir, id),
-    }
-}
-
-fn show_most_recent_log(runs_dir: &Path) -> Result<()> {
-    let most_recent = find_most_recent_run(runs_dir)?;
-    print_run_logs(&most_recent)
-}
-
-fn show_log_by_id(runs_dir: &Path, id: &str) -> Result<()> {
-    // Try exact match first (full message ID like "2025022514320000-0")
-    let exact = runs_dir.join(id);
-    if exact.is_dir() {
-        return print_run_logs(&exact);
-    }
-
-    // Try as chain ID — find all matching run dirs
-    let matching = find_runs_by_prefix(runs_dir, id)?;
-
-    if matching.is_empty() {
-        return Err(DecreeError::MessageNotFound(id.to_string()));
-    }
-
-    // Show all matching runs (chain view)
-    for (i, run_dir) in matching.iter().enumerate() {
-        if i > 0 {
-            println!();
+        None => {
+            if runs.is_empty() {
+                println!("No runs found.");
+                return Ok(());
+            }
+            run_no_id(project_root, &runs)
         }
-        let dir_name = run_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        println!("=== {} ===", dir_name);
-        print_run_logs(run_dir)?;
+        Some(query) => run_with_id(project_root, query),
     }
-
-    Ok(())
 }
 
-fn find_most_recent_run(runs_dir: &Path) -> Result<PathBuf> {
-    let mut entries: Vec<PathBuf> = Vec::new();
-
-    for entry in fs::read_dir(runs_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            entries.push(entry.path());
+/// No ID provided.
+fn run_no_id(project_root: &Path, runs: &[String]) -> Result<(), DecreeError> {
+    if color::is_tty() {
+        // TTY: arrow-key selector (most recent first)
+        let mut options: Vec<String> = runs.to_vec();
+        options.reverse();
+        let selection = inquire::Select::new("Select run:", options)
+            .prompt()
+            .map_err(|e| DecreeError::Other(format!("selection cancelled: {e}")))?;
+        display_run_logs(project_root, &selection)
+    } else {
+        // Non-TTY: print most recent
+        if let Some(latest) = runs.last() {
+            display_run_logs(project_root, latest)
+        } else {
+            Ok(())
         }
     }
-
-    entries.sort();
-    entries
-        .pop()
-        .ok_or_else(|| DecreeError::MessageNotFound("no runs found".to_string()))
 }
 
-fn find_runs_by_prefix(runs_dir: &Path, prefix: &str) -> Result<Vec<PathBuf>> {
-    let mut matching: Vec<PathBuf> = Vec::new();
+/// ID provided (may be full, chain, or prefix).
+fn run_with_id(project_root: &Path, query: &str) -> Result<(), DecreeError> {
+    let matches = message::find_matching_runs(project_root, query)?;
 
-    for entry in fs::read_dir(runs_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.starts_with(prefix) {
-                    matching.push(entry.path());
+    match matches.len() {
+        0 => Err(DecreeError::MessageNotFound(query.to_string())),
+        1 => display_run_logs(project_root, &matches[0]),
+        _ => {
+            if color::is_tty() {
+                // Ambiguous + TTY: arrow-key selector
+                let selection = inquire::Select::new("Multiple matches — select run:", matches)
+                    .prompt()
+                    .map_err(|e| DecreeError::Other(format!("selection cancelled: {e}")))?;
+                display_run_logs(project_root, &selection)
+            } else {
+                // Ambiguous + Non-TTY: list all
+                for m in &matches {
+                    display_run_logs(project_root, m)?;
+                    println!();
                 }
+                Ok(())
             }
         }
     }
-
-    matching.sort();
-    Ok(matching)
 }
 
-fn print_run_logs(run_dir: &Path) -> Result<()> {
-    // Collect all log files: routine.log, routine-2.log, routine-3.log, etc.
-    let mut log_files: Vec<PathBuf> = Vec::new();
+/// Display all log files from a run directory.
+fn display_run_logs(project_root: &Path, run_name: &str) -> Result<(), DecreeError> {
+    let run_dir = project_root
+        .join(config::DECREE_DIR)
+        .join(config::RUNS_DIR)
+        .join(run_name);
 
-    let primary = run_dir.join("routine.log");
-    if primary.exists() {
-        log_files.push(primary);
+    if !run_dir.exists() {
+        return Err(DecreeError::MessageNotFound(run_name.to_string()));
     }
 
-    // Check for retry logs
-    for i in 2..=20 {
-        let retry_log = run_dir.join(format!("routine-{i}.log"));
-        if retry_log.exists() {
-            log_files.push(retry_log);
-        } else {
-            break;
-        }
-    }
+    // Collect log files, sorted
+    let mut logs: Vec<String> = std::fs::read_dir(&run_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "log")
+        })
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    logs.sort();
 
-    if log_files.is_empty() {
-        let dir_name = run_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        println!("No logs found for {dir_name}");
+    if logs.is_empty() {
+        println!(
+            "{}: no logs found",
+            color::dim(run_name),
+        );
         return Ok(());
     }
 
-    for (i, log_path) in log_files.iter().enumerate() {
-        if log_files.len() > 1 {
-            let label = if i == 0 {
-                "Attempt 1".to_string()
-            } else {
-                format!("Attempt {}", i + 1)
-            };
-            println!("--- {label} ---");
+    let multiple = logs.len() > 1;
+
+    for (i, log_name) in logs.iter().enumerate() {
+        if multiple {
+            let attempt = i + 1;
+            println!(
+                "{}",
+                color::bold(&format!("=== {run_name} — Attempt {attempt} ({log_name}) ==="))
+            );
+        } else {
+            println!("{}", color::bold(&format!("=== {run_name} ===")));
         }
 
-        let content = fs::read_to_string(log_path)?;
+        let log_path = run_dir.join(log_name);
+        let content = std::fs::read_to_string(&log_path)?;
         print!("{content}");
 
-        // Ensure trailing newline
         if !content.ends_with('\n') {
             println!();
         }
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_find_runs_by_prefix_empty() {
-        let dir = std::env::temp_dir().join("decree_test_empty_runs");
-        let _ = fs::create_dir_all(&dir);
-        let result = find_runs_by_prefix(&dir, "nonexistent").unwrap();
-        assert!(result.is_empty());
-        let _ = fs::remove_dir_all(&dir);
-    }
 }

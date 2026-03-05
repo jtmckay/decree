@@ -1,174 +1,165 @@
-use std::path::Path;
-
+use crate::error::DecreeError;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
-use crate::error::{DecreeError, Result};
+/// Directory and file constants.
+pub const DECREE_DIR: &str = ".decree";
+pub const ROUTINES_DIR: &str = "routines";
+pub const PROMPTS_DIR: &str = "prompts";
+pub const CRON_DIR: &str = "cron";
+pub const INBOX_DIR: &str = "inbox";
+pub const OUTBOX_DIR: &str = "outbox";
+pub const RUNS_DIR: &str = "runs";
+pub const MIGRATIONS_DIR: &str = "migrations";
+pub const DEAD_DIR: &str = "dead";
+pub const PROCESSED_FILE: &str = "processed.md";
+pub const ROUTER_FILE: &str = "router.md";
+pub const CONFIG_FILE: &str = "config.yml";
+pub const GITIGNORE_FILE: &str = ".gitignore";
 
+/// Commands configuration — AI tool settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Config {
-    pub commands: Commands,
-    pub max_retries: u32,
-    pub max_depth: u32,
-    pub max_log_size: u64,
-    pub default_routine: String,
-    pub hooks: Hooks,
+pub struct CommandsConfig {
+    pub ai_router: String,
+    pub ai_interactive: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Commands {
-    pub ai: String,
-    pub interactive_ai: String,
-}
-
-impl Default for Commands {
+impl Default for CommandsConfig {
     fn default() -> Self {
         Self {
-            ai: "opencode run {prompt}".to_string(),
-            interactive_ai: "opencode".to_string(),
+            ai_router: "opencode run {prompt}".to_string(),
+            ai_interactive: "opencode".to_string(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Hooks {
-    #[serde(rename = "beforeAll")]
+/// Lifecycle hooks configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HooksConfig {
+    #[serde(default, rename = "beforeAll")]
     pub before_all: String,
-    #[serde(rename = "afterAll")]
+    #[serde(default, rename = "afterAll")]
     pub after_all: String,
-    #[serde(rename = "beforeEach")]
+    #[serde(default, rename = "beforeEach")]
     pub before_each: String,
-    #[serde(rename = "afterEach")]
+    #[serde(default, rename = "afterEach")]
     pub after_each: String,
 }
 
-impl Default for Config {
+/// Top-level application config (deserialized from config.yml).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub commands: CommandsConfig,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_max_depth")]
+    pub max_depth: u32,
+    #[serde(default = "default_max_log_size")]
+    pub max_log_size: u64,
+    #[serde(default = "default_routine")]
+    pub default_routine: String,
+    #[serde(default)]
+    pub hooks: HooksConfig,
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_max_depth() -> u32 {
+    10
+}
+fn default_max_log_size() -> u64 {
+    2_097_152
+}
+fn default_routine() -> String {
+    "develop".to_string()
+}
+
+impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            commands: Commands::default(),
-            max_retries: 3,
-            max_depth: 10,
-            max_log_size: 2_097_152,
-            default_routine: "develop".to_string(),
-            hooks: Hooks::default(),
+            commands: CommandsConfig::default(),
+            max_retries: default_max_retries(),
+            max_depth: default_max_depth(),
+            max_log_size: default_max_log_size(),
+            default_routine: default_routine(),
+            hooks: HooksConfig::default(),
         }
     }
 }
 
-impl Default for Hooks {
-    fn default() -> Self {
-        Self {
-            before_all: String::new(),
-            after_all: String::new(),
-            before_each: String::new(),
-            after_each: String::new(),
-        }
-    }
-}
-
-impl Config {
-    pub fn load(path: &Path) -> Result<Self> {
-        let contents = std::fs::read_to_string(path).map_err(|e| {
-            DecreeError::Config(format!("failed to read {}: {}", path.display(), e))
-        })?;
-        let config: Config = serde_yaml::from_str(&contents)
-            .map_err(|e| DecreeError::Config(format!("failed to parse config: {e}")))?;
+impl AppConfig {
+    /// Load config from a file path.
+    pub fn load(path: &Path) -> Result<Self, DecreeError> {
+        let contents = std::fs::read_to_string(path)?;
+        let config: AppConfig = serde_yaml::from_str(&contents)?;
         Ok(config)
     }
 
-    pub fn save(&self, path: &Path) -> Result<()> {
-        let contents = serde_yaml::to_string(self)
-            .map_err(|e| DecreeError::Config(format!("failed to serialize config: {e}")))?;
-        std::fs::write(path, contents)?;
-        Ok(())
+    /// Load config from the project root's `.decree/config.yml`.
+    pub fn load_from_project(project_root: &Path) -> Result<Self, DecreeError> {
+        let path = project_root.join(DECREE_DIR).join(CONFIG_FILE);
+        Self::load(&path)
     }
 
-    pub fn with_ai_command(mut self, tool: &AiTool) -> Self {
-        let (ai, interactive) = match tool {
-            AiTool::Opencode => ("opencode run {prompt}".to_string(), "opencode".to_string()),
-            AiTool::Claude => (
-                "claude -p {prompt}".to_string(),
-                "claude".to_string(),
-            ),
-            AiTool::Copilot => ("copilot run {prompt}".to_string(), "copilot".to_string()),
-        };
-        self.commands.ai = ai;
-        self.commands.interactive_ai = interactive;
-        self
-    }
-
-    pub fn with_git_hooks(mut self) -> Self {
-        self.hooks.before_each = "git-baseline".to_string();
-        self.hooks.after_each = "git-stash-changes".to_string();
-        self
+    /// Return the `.decree/` path for a given project root.
+    pub fn decree_dir(project_root: &Path) -> PathBuf {
+        project_root.join(DECREE_DIR)
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AiTool {
-    Opencode,
-    Claude,
-    Copilot,
-}
-
-impl std::fmt::Display for AiTool {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AiTool::Opencode => write!(f, "opencode"),
-            AiTool::Claude => write!(f, "claude"),
-            AiTool::Copilot => write!(f, "copilot"),
-        }
-    }
-}
-
-/// The ordered list of AI tools to detect.
-pub const AI_TOOLS: &[(AiTool, &str)] = &[
-    (AiTool::Opencode, "opencode"),
-    (AiTool::Claude, "claude"),
-    (AiTool::Copilot, "copilot"),
-];
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_default_config_values() {
-        let config = Config::default();
+    fn test_default_config() {
+        let config = AppConfig::default();
+        assert_eq!(config.commands.ai_router, "opencode run {prompt}");
+        assert_eq!(config.commands.ai_interactive, "opencode");
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_log_size, 2_097_152);
         assert_eq!(config.default_routine, "develop");
-        assert!(config.hooks.before_all.is_empty());
-        assert!(config.hooks.after_all.is_empty());
-        assert!(config.hooks.before_each.is_empty());
-        assert!(config.hooks.after_each.is_empty());
     }
 
     #[test]
-    fn test_with_ai_command() {
-        let config = Config::default().with_ai_command(&AiTool::Claude);
-        assert_eq!(config.commands.ai, "claude -p {prompt}");
-        assert_eq!(config.commands.interactive_ai, "claude");
-    }
-
-    #[test]
-    fn test_with_git_hooks() {
-        let config = Config::default().with_git_hooks();
+    fn test_deserialize_config() {
+        let yaml = r#"
+commands:
+  ai_router: "claude -p {prompt}"
+  ai_interactive: "claude"
+max_retries: 5
+max_depth: 20
+max_log_size: 0
+default_routine: rust-develop
+hooks:
+  beforeAll: ""
+  afterAll: ""
+  beforeEach: "git-baseline"
+  afterEach: "git-stash-changes"
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.commands.ai_router, "claude -p {prompt}");
+        assert_eq!(config.commands.ai_interactive, "claude");
+        assert_eq!(config.max_retries, 5);
+        assert_eq!(config.max_depth, 20);
+        assert_eq!(config.max_log_size, 0);
+        assert_eq!(config.default_routine, "rust-develop");
         assert_eq!(config.hooks.before_each, "git-baseline");
         assert_eq!(config.hooks.after_each, "git-stash-changes");
-        assert!(config.hooks.before_all.is_empty());
-        assert!(config.hooks.after_all.is_empty());
     }
 
     #[test]
-    fn test_config_roundtrip() {
-        let config = Config::default().with_ai_command(&AiTool::Claude).with_git_hooks();
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(parsed.commands.ai, config.commands.ai);
-        assert_eq!(parsed.hooks.before_each, config.hooks.before_each);
+    fn test_deserialize_minimal_config() {
+        let yaml = r#"
+commands:
+  ai_router: "opencode run {prompt}"
+  ai_interactive: "opencode"
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.max_depth, 10);
+        assert_eq!(config.default_routine, "develop");
     }
 }

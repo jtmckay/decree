@@ -1,14 +1,24 @@
 [package]
 name = "decree"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+description = "AI orchestrator for structured, reproducible workflows"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+serde_json = "1"
 chrono = "0.4"
 thiserror = "2"
-dialoguer = { version = "0.11", features = ["fuzzy-select"] }
-console = "0.15"
+colored = "3"
+inquire = "0.7"
+signal-hook = "0.3"
 libc = "0.2"
+walkdir = "2"
+cron = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"

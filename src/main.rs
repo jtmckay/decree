@@ -1,61 +1,52 @@
-use std::path::Path;
-use std::process;
-
 use clap::Parser;
-
 use decree::cli::{Cli, Command};
-use decree::error::DecreeError;
+use decree::commands;
+use decree::error::{self, color, DecreeError, EXIT_SUCCESS};
+use std::process;
 
 fn main() {
     let cli = Cli::parse();
 
-    if let Err(e) = dispatch(cli) {
-        let code = match &e {
-            DecreeError::HookFailed { code, .. } => *code,
-            _ => 1,
-        };
-        eprintln!("error: {e}");
-        process::exit(code);
+    // Initialize color settings
+    color::init(cli.no_color);
+
+    let result = dispatch(cli.command);
+
+    match result {
+        Ok(()) => process::exit(EXIT_SUCCESS),
+        Err(e) => {
+            eprintln!("{}: {e}", color::error("error"));
+            process::exit(e.exit_code());
+        }
     }
 }
 
-fn dispatch(cli: Cli) -> decree::error::Result<()> {
-    let command = cli.command.unwrap_or(Command::Process);
-
-    // Commands that don't require .decree/ to exist
-    match &command {
-        Command::Init => return decree::commands::init::run(),
-        Command::Help => {
-            print_help();
-            return Ok(());
-        }
-        _ => {}
-    }
-
-    // All other commands require .decree/ to exist
-    let decree_dir = Path::new(".decree");
-    if !decree_dir.exists() {
-        return Err(DecreeError::NotInitialized);
-    }
-
+fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     match command {
-        Command::Process => decree::commands::process::run(),
-        Command::Starter { name } => decree::commands::starter::run(name.as_deref()),
-        Command::Routine { name } => decree::commands::routine::run(name.as_deref()),
-        Command::Verify => {
-            let all_pass = decree::commands::verify::run()?;
-            if !all_pass {
-                process::exit(1);
-            }
-            Ok(())
-        }
-        Command::Daemon { interval } => decree::commands::daemon::run(interval),
-        Command::Status => decree::commands::status::run(),
-        Command::Log { id } => decree::commands::log::run(id.as_deref()),
-        Command::Init | Command::Help => unreachable!(),
-    }
-}
+        // `decree init` and `decree help` don't require an existing project
+        Some(Command::Init) => commands::init::run(),
+        Some(Command::Help) => commands::help(),
 
-fn print_help() {
-    print!("{}", include_str!("templates/help.txt"));
+        // Bare `decree` defaults to `decree process`
+        None => {
+            let root = error::require_project_root()?;
+            commands::process::run(&root, false)
+        }
+
+        // All other commands require an existing project
+        Some(cmd) => {
+            let root = error::require_project_root()?;
+            match cmd {
+                Command::Process { dry_run } => commands::process::run(&root, dry_run),
+                Command::Prompt { name } => commands::prompt::run(&root, name.as_deref()),
+                Command::Routine { name } => commands::routine::run(&root, name.as_deref()),
+                Command::Verify => commands::routine::verify(&root),
+                Command::Daemon { interval } => commands::daemon::run(&root, interval),
+                Command::Status => commands::status::run(&root),
+                Command::Log { id } => commands::log::run(&root, id.as_deref()),
+                // Already handled above
+                Command::Init | Command::Help => unreachable!(),
+            }
+        }
+    }
 }

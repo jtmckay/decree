@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__playwright__*",
+      "Bash(cargo *)",
+      "Bash(LIBCLANG_PATH=* cargo *)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)"
+    ]
+  }
+}
