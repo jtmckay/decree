@@ -1,104 +1,123 @@
-use std::fs;
+use crate::config;
+use crate::error::color;
+use crate::error::DecreeError;
+use crate::message;
 use std::path::Path;
 
-use crate::error::{find_project_root, DecreeError};
-use crate::message;
-
-pub fn run(id: Option<&str>) -> Result<(), DecreeError> {
-    let root = find_project_root()?;
-    let runs_dir = root.join(".decree/runs");
+/// Run `decree log [ID]`.
+pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
+    let runs = message::list_runs(project_root)?;
 
     match id {
         None => {
-            // Show the most recent message's log
-            let latest = message::most_recent(&runs_dir)?;
-            print_log(&runs_dir, &latest)?;
-        }
-        Some(prefix) => {
-            let matches = message::resolve_id(&runs_dir, prefix)?;
-
-            if matches.len() == 1 {
-                print_log(&runs_dir, &matches[0])?;
-            } else {
-                // Check if all matches share the same chain (chain ID was given)
-                let first_chain = matches[0].rsplit_once('-').map(|(c, _)| c);
-                let all_same_chain = matches
-                    .iter()
-                    .all(|m| m.rsplit_once('-').map(|(c, _)| c) == first_chain);
-
-                if all_same_chain {
-                    // Show all logs in the chain
-                    for m in &matches {
-                        println!("--- {} ---", m);
-                        print_log(&runs_dir, m)?;
-                        println!();
-                    }
-                } else {
-                    return Err(DecreeError::AmbiguousId {
-                        prefix: prefix.to_string(),
-                        candidates: matches,
-                    });
-                }
+            if runs.is_empty() {
+                println!("No runs found.");
+                return Ok(());
             }
+            run_no_id(project_root, &runs)
         }
+        Some(query) => run_with_id(project_root, query),
     }
-
-    Ok(())
 }
 
-fn print_log(runs_dir: &Path, msg_id: &str) -> Result<(), DecreeError> {
-    let msg_dir = runs_dir.join(msg_id);
-
-    // Shell routine log
-    let routine_log = msg_dir.join("routine.log");
-    if routine_log.exists() {
-        let content = fs::read_to_string(&routine_log)?;
-        println!("{content}");
-        return Ok(());
-    }
-
-    // Notebook routine output
-    let output_ipynb = msg_dir.join("output.ipynb");
-    let papermill_log = msg_dir.join("papermill.log");
-
-    if output_ipynb.exists() || papermill_log.exists() {
-        if papermill_log.exists() {
-            let content = fs::read_to_string(&papermill_log)?;
-            if !content.is_empty() {
-                println!("=== Papermill Log ===");
-                println!("{content}");
-            }
+/// No ID provided.
+fn run_no_id(project_root: &Path, runs: &[String]) -> Result<(), DecreeError> {
+    if color::is_tty() {
+        // TTY: arrow-key selector (most recent first)
+        let mut options: Vec<String> = runs.to_vec();
+        options.reverse();
+        let selection = inquire::Select::new("Select run:", options)
+            .prompt()
+            .map_err(|e| DecreeError::Other(format!("selection cancelled: {e}")))?;
+        display_run_logs(project_root, &selection)
+    } else {
+        // Non-TTY: print most recent
+        if let Some(latest) = runs.last() {
+            display_run_logs(project_root, latest)
+        } else {
+            Ok(())
         }
-        if output_ipynb.exists() {
-            println!("=== Notebook Output ===");
-            println!("  {}", output_ipynb.display());
-            // Print cell outputs from the notebook
-            let nb_content = fs::read_to_string(&output_ipynb)?;
-            if let Ok(nb) = serde_json::from_str::<serde_json::Value>(&nb_content) {
-                if let Some(cells) = nb.get("cells").and_then(|c| c.as_array()) {
-                    for (i, cell) in cells.iter().enumerate() {
-                        if let Some(outputs) = cell.get("outputs").and_then(|o| o.as_array()) {
-                            if outputs.is_empty() {
-                                continue;
-                            }
-                            println!("\n  Cell {i}:");
-                            for output in outputs {
-                                if let Some(text) = output.get("text").and_then(|t| t.as_array()) {
-                                    for line in text {
-                                        if let Some(s) = line.as_str() {
-                                            print!("    {s}");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+    }
+}
+
+/// ID provided (may be full, chain, or prefix).
+fn run_with_id(project_root: &Path, query: &str) -> Result<(), DecreeError> {
+    let matches = message::find_matching_runs(project_root, query)?;
+
+    match matches.len() {
+        0 => Err(DecreeError::MessageNotFound(query.to_string())),
+        1 => display_run_logs(project_root, &matches[0]),
+        _ => {
+            if color::is_tty() {
+                // Ambiguous + TTY: arrow-key selector
+                let selection = inquire::Select::new("Multiple matches — select run:", matches)
+                    .prompt()
+                    .map_err(|e| DecreeError::Other(format!("selection cancelled: {e}")))?;
+                display_run_logs(project_root, &selection)
+            } else {
+                // Ambiguous + Non-TTY: list all
+                for m in &matches {
+                    display_run_logs(project_root, m)?;
+                    println!();
                 }
+                Ok(())
             }
         }
+    }
+}
+
+/// Display all log files from a run directory.
+fn display_run_logs(project_root: &Path, run_name: &str) -> Result<(), DecreeError> {
+    let run_dir = project_root
+        .join(config::DECREE_DIR)
+        .join(config::RUNS_DIR)
+        .join(run_name);
+
+    if !run_dir.exists() {
+        return Err(DecreeError::MessageNotFound(run_name.to_string()));
+    }
+
+    // Collect log files, sorted
+    let mut logs: Vec<String> = std::fs::read_dir(&run_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "log")
+        })
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    logs.sort();
+
+    if logs.is_empty() {
+        println!(
+            "{}: no logs found",
+            color::dim(run_name),
+        );
         return Ok(());
     }
 
-    println!("No log files found for message {msg_id}");
+    let multiple = logs.len() > 1;
+
+    for (i, log_name) in logs.iter().enumerate() {
+        if multiple {
+            let attempt = i + 1;
+            println!(
+                "{}",
+                color::bold(&format!("=== {run_name} — Attempt {attempt} ({log_name}) ==="))
+            );
+        } else {
+            println!("{}", color::bold(&format!("=== {run_name} ===")));
+        }
+
+        let log_path = run_dir.join(log_name);
+        let content = std::fs::read_to_string(&log_path)?;
+        print!("{content}");
+
+        if !content.ends_with('\n') {
+            println!();
+        }
+    }
+
     Ok(())
 }

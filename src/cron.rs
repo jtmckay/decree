@@ -1,544 +1,404 @@
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
-
-use chrono::{Datelike, NaiveDateTime, Timelike};
-
+use crate::config;
 use crate::error::DecreeError;
-use crate::message::{self, MessageId};
-
-// ---------------------------------------------------------------------------
-// Cron expression parsing
-// ---------------------------------------------------------------------------
-
-/// A parsed 5-field cron expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CronExpr {
-    pub minute: CronField,
-    pub hour: CronField,
-    pub dom: CronField,
-    pub month: CronField,
-    pub dow: CronField,
-}
-
-/// A single cron field: a set of matching values.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CronField {
-    /// The set of values this field matches (e.g. {0, 15, 30, 45} for */15).
-    pub values: Vec<u32>,
-    /// True if this field matches any value (wildcard).
-    pub wildcard: bool,
-}
-
-impl CronField {
-    fn matches(&self, value: u32) -> bool {
-        self.wildcard || self.values.contains(&value)
-    }
-}
-
-/// Parse a standard 5-field cron expression.
-///
-/// Fields: minute hour day-of-month month day-of-week
-pub fn parse_cron_expr(s: &str) -> Result<CronExpr, DecreeError> {
-    let fields: Vec<&str> = s.split_whitespace().collect();
-    if fields.len() != 5 {
-        return Err(DecreeError::Config(format!(
-            "invalid cron expression '{s}': expected 5 fields, got {}",
-            fields.len()
-        )));
-    }
-
-    Ok(CronExpr {
-        minute: parse_field(fields[0], 0, 59)?,
-        hour: parse_field(fields[1], 0, 23)?,
-        dom: parse_field(fields[2], 1, 31)?,
-        month: parse_field(fields[3], 1, 12)?,
-        dow: parse_field(fields[4], 0, 7)?,
-    })
-}
-
-/// Parse a single cron field. Supports:
-/// - `*` (wildcard)
-/// - `N` (single value)
-/// - `N-M` (range)
-/// - `*/N` (step from min)
-/// - `N-M/S` (range with step)
-/// - `A,B,C` (list of any of the above)
-fn parse_field(s: &str, min: u32, max: u32) -> Result<CronField, DecreeError> {
-    if s == "*" {
-        return Ok(CronField {
-            values: Vec::new(),
-            wildcard: true,
-        });
-    }
-
-    let mut values = Vec::new();
-
-    for part in s.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-
-        if let Some(rest) = part.strip_prefix("*/") {
-            // Step from min
-            let step: u32 = rest
-                .parse()
-                .map_err(|_| DecreeError::Config(format!("invalid cron step: {part}")))?;
-            if step == 0 {
-                return Err(DecreeError::Config(format!("cron step cannot be 0: {part}")));
-            }
-            let mut v = min;
-            while v <= max {
-                values.push(v);
-                v += step;
-            }
-        } else if part.contains('/') {
-            // Range with step: N-M/S
-            let (range_part, step_str) = part
-                .split_once('/')
-                .ok_or_else(|| DecreeError::Config(format!("invalid cron field: {part}")))?;
-            let step: u32 = step_str
-                .parse()
-                .map_err(|_| DecreeError::Config(format!("invalid cron step: {part}")))?;
-            if step == 0 {
-                return Err(DecreeError::Config(format!("cron step cannot be 0: {part}")));
-            }
-            let (start, end) = parse_range(range_part, min, max)?;
-            let mut v = start;
-            while v <= end {
-                values.push(v);
-                v += step;
-            }
-        } else if part.contains('-') {
-            // Range: N-M
-            let (start, end) = parse_range(part, min, max)?;
-            for v in start..=end {
-                values.push(v);
-            }
-        } else {
-            // Single value
-            let v: u32 = part
-                .parse()
-                .map_err(|_| DecreeError::Config(format!("invalid cron value: {part}")))?;
-            if v < min || v > max {
-                return Err(DecreeError::Config(format!(
-                    "cron value {v} out of range {min}-{max}"
-                )));
-            }
-            values.push(v);
-        }
-    }
-
-    values.sort();
-    values.dedup();
-    Ok(CronField {
-        values,
-        wildcard: false,
-    })
-}
-
-fn parse_range(s: &str, min: u32, max: u32) -> Result<(u32, u32), DecreeError> {
-    let (start_str, end_str) = s
-        .split_once('-')
-        .ok_or_else(|| DecreeError::Config(format!("invalid cron range: {s}")))?;
-    let start: u32 = start_str
-        .parse()
-        .map_err(|_| DecreeError::Config(format!("invalid cron range start: {s}")))?;
-    let end: u32 = end_str
-        .parse()
-        .map_err(|_| DecreeError::Config(format!("invalid cron range end: {s}")))?;
-    if start < min || end > max || start > end {
-        return Err(DecreeError::Config(format!(
-            "cron range {s} out of bounds {min}-{max}"
-        )));
-    }
-    Ok((start, end))
-}
-
-/// Check if a cron expression matches the given time.
-pub fn matches_time(expr: &CronExpr, time: &NaiveDateTime) -> bool {
-    let minute = time.minute();
-    let hour = time.hour();
-    let dom = time.day();
-    let month = time.month();
-    // chrono: Monday=1 .. Sunday=7; cron: Sunday=0, Monday=1 .. Saturday=6, Sunday=7
-    let dow_chrono = time.weekday().num_days_from_sunday(); // Sunday=0, Monday=1, ..., Saturday=6
-
-    expr.minute.matches(minute)
-        && expr.hour.matches(hour)
-        && expr.dom.matches(dom)
-        && expr.month.matches(month)
-        && (expr.dow.matches(dow_chrono) || (dow_chrono == 0 && expr.dow.matches(7)))
-}
-
-// ---------------------------------------------------------------------------
-// Cron file scanning
-// ---------------------------------------------------------------------------
+use crate::message::{build_chain_id, next_day_counter, parse_frontmatter, InboxMessage};
+use chrono::{Local, Utc};
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+use std::str::FromStr;
 
 /// A parsed cron file from `.decree/cron/`.
 #[derive(Debug, Clone)]
 pub struct CronFile {
-    pub path: PathBuf,
-    pub name: String,
-    pub cron_expr: CronExpr,
+    /// Filename (e.g., `hourly-maintenance.md`).
+    pub filename: String,
+    /// The stem used for chain ID naming (e.g., `hourly-maintenance`).
+    pub name_stem: String,
+    /// Parsed cron schedule.
+    pub schedule: cron::Schedule,
+    /// Optional routine override.
     pub routine: Option<String>,
+    /// Custom frontmatter fields (cron field stripped).
     pub custom_fields: BTreeMap<String, serde_yaml::Value>,
+    /// Markdown body.
     pub body: String,
 }
 
 /// Scan `.decree/cron/` for valid cron files.
-pub fn scan_cron_files(cron_dir: &Path) -> Result<Vec<CronFile>, DecreeError> {
-    if !cron_dir.is_dir() {
+pub fn scan_cron_files(project_root: &Path) -> Result<Vec<CronFile>, DecreeError> {
+    let cron_dir = project_root
+        .join(config::DECREE_DIR)
+        .join(config::CRON_DIR);
+
+    if !cron_dir.exists() {
         return Ok(Vec::new());
     }
 
-    let mut files = Vec::new();
+    let mut entries: Vec<String> = std::fs::read_dir(&cron_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
 
-    for entry in fs::read_dir(cron_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let filename = entry.file_name().to_string_lossy().to_string();
-        if !filename.ends_with(".md") {
-            continue;
-        }
+    entries.sort();
 
-        let content = fs::read_to_string(&path)?;
-        let (fm, body) = message::parse_message_file(&content);
-
-        // Check for `cron` field in custom_fields
-        let cron_value = fm.custom_fields.get("cron");
-        let cron_str = match cron_value {
-            Some(serde_yaml::Value::String(s)) => s.clone(),
-            _ => continue, // No cron field — skip
-        };
-
-        let cron_expr = match parse_cron_expr(&cron_str) {
-            Ok(expr) => expr,
-            Err(e) => {
-                eprintln!("warning: skipping cron file {filename}: {e}");
+    let mut cron_files = Vec::new();
+    for filename in entries {
+        let path = cron_dir.join(&filename);
+        let content = std::fs::read_to_string(&path)?;
+        match parse_cron_file(&filename, &content) {
+            Ok(cf) => cron_files.push(cf),
+            Err(_) => {
+                // Skip files with invalid cron expressions or no cron field
                 continue;
             }
-        };
-
-        // Collect custom fields, stripping `cron`
-        let mut custom_fields = fm.custom_fields;
-        custom_fields.remove("cron");
-
-        let name = filename
-            .strip_suffix(".md")
-            .unwrap_or(&filename)
-            .to_string();
-
-        files.push(CronFile {
-            path,
-            name,
-            cron_expr,
-            routine: fm.routine,
-            custom_fields,
-            body,
-        });
-    }
-
-    Ok(files)
-}
-
-/// Create an inbox message from a fired cron file.
-///
-/// Returns the path to the newly created inbox message.
-pub fn create_inbox_from_cron(
-    project_root: &Path,
-    cron_file: &CronFile,
-) -> Result<PathBuf, DecreeError> {
-    let inbox_dir = project_root.join(".decree/inbox");
-    fs::create_dir_all(&inbox_dir)?;
-
-    let chain = MessageId::new_chain(0);
-    let filename = format!("{chain}-0.md");
-    let file_path = inbox_dir.join(&filename);
-
-    let mut fm = String::from("---\n");
-    fm.push_str("seq: 0\n");
-    fm.push_str("type: task\n");
-
-    if let Some(ref routine) = cron_file.routine {
-        fm.push_str(&format!("routine: {routine}\n"));
-    }
-
-    for (key, value) in &cron_file.custom_fields {
-        let val_str = match value {
-            serde_yaml::Value::String(s) => s.clone(),
-            other => serde_yaml::to_string(other)
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
-        };
-        fm.push_str(&format!("{key}: {val_str}\n"));
-    }
-
-    fm.push_str("---\n");
-    if !cron_file.body.is_empty() {
-        fm.push_str(&cron_file.body);
-        if !cron_file.body.ends_with('\n') {
-            fm.push('\n');
         }
     }
 
-    fs::write(&file_path, &fm)?;
-    Ok(file_path)
+    Ok(cron_files)
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/// Parse a single cron file from its filename and content.
+fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeError> {
+    let (fields, body) = parse_frontmatter(content)?;
+
+    let cron_expr = fields
+        .get("cron")
+        .and_then(|v| match v {
+            serde_yaml::Value::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| DecreeError::Other(format!("no cron field in {filename}")))?;
+
+    // The cron crate expects 6 or 7 fields (seconds included).
+    // Standard 5-field cron needs a "0" seconds prefix.
+    let fields_count = cron_expr.split_whitespace().count();
+    let schedule_expr = if fields_count == 5 {
+        format!("0 {cron_expr}")
+    } else {
+        cron_expr.clone()
+    };
+
+    let schedule = cron::Schedule::from_str(&schedule_expr)
+        .map_err(|e| DecreeError::Other(format!("invalid cron expression in {filename}: {e}")))?;
+
+    let routine = fields.get("routine").and_then(|v| match v {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        _ => None,
+    });
+
+    // Collect custom fields, stripping "cron" and known message fields
+    let strip_fields: &[&str] = &["cron", "routine"];
+    let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
+        .into_iter()
+        .filter(|(k, _)| !strip_fields.contains(&k.as_str()))
+        .collect();
+
+    let name_stem = filename
+        .strip_suffix(".md")
+        .unwrap_or(filename)
+        .to_string();
+
+    Ok(CronFile {
+        filename: filename.to_string(),
+        name_stem,
+        schedule,
+        routine,
+        custom_fields,
+        body,
+    })
+}
+
+/// Tracker for preventing duplicate firings within the same minute.
+#[derive(Debug, Default)]
+pub struct CronTracker {
+    /// Maps cron filename to the last minute string it fired (e.g., "202603041530").
+    last_fire: HashMap<String, String>,
+}
+
+impl CronTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if a cron file is due and hasn't already fired this minute.
+    /// Returns true if the job should fire.
+    pub fn is_due(&self, cron_file: &CronFile) -> bool {
+        let now = Utc::now();
+        let minute_key = now.format("%Y%m%d%H%M").to_string();
+
+        // Check if already fired this minute
+        if let Some(last) = self.last_fire.get(&cron_file.filename) {
+            if last == &minute_key {
+                return false;
+            }
+        }
+
+        // Check if the cron expression matches the current time
+        // Get the next upcoming occurrence and see if it falls within the current minute
+        if let Some(next) = cron_file.schedule.upcoming(Utc).next() {
+            let diff = next.signed_duration_since(now);
+            // If the next occurrence is within 60 seconds, the current minute matches
+            diff.num_seconds() < 60
+        } else {
+            false
+        }
+    }
+
+    /// Record that a cron file has fired.
+    pub fn mark_fired(&mut self, cron_file: &CronFile) {
+        let minute_key = Utc::now().format("%Y%m%d%H%M").to_string();
+        self.last_fire
+            .insert(cron_file.filename.clone(), minute_key);
+    }
+}
+
+/// Create an inbox message from a fired cron job.
+pub fn cron_to_inbox_message(
+    project_root: &Path,
+    cron_file: &CronFile,
+) -> Result<InboxMessage, DecreeError> {
+    let now = Local::now();
+    let hhmm = now.format("%H%M").to_string();
+    let day = next_day_counter(project_root, &hhmm)?;
+    let chain = build_chain_id(&day, &hhmm, &cron_file.name_stem);
+    let filename = format!("{chain}-0.md");
+    let id = format!("{chain}-0");
+
+    Ok(InboxMessage {
+        id: Some(id),
+        chain: Some(chain),
+        seq: Some(0),
+        routine: cron_file.routine.clone(),
+        migration: None,
+        body: cron_file.body.clone(),
+        custom_fields: cron_file.custom_fields.clone(),
+        filename,
+    })
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
+    use tempfile::TempDir;
 
-    #[test]
-    fn test_parse_wildcard() {
-        let expr = parse_cron_expr("* * * * *").unwrap();
-        assert!(expr.minute.wildcard);
-        assert!(expr.hour.wildcard);
-        assert!(expr.dom.wildcard);
-        assert!(expr.month.wildcard);
-        assert!(expr.dow.wildcard);
+    fn setup_decree_dir(dir: &TempDir) {
+        let decree = dir.path().join(".decree");
+        std::fs::create_dir_all(decree.join("cron")).unwrap();
+        std::fs::create_dir_all(decree.join("inbox")).unwrap();
+        std::fs::create_dir_all(decree.join("runs")).unwrap();
     }
 
     #[test]
-    fn test_parse_specific_values() {
-        let expr = parse_cron_expr("0 12 1 6 3").unwrap();
-        assert_eq!(expr.minute.values, vec![0]);
-        assert_eq!(expr.hour.values, vec![12]);
-        assert_eq!(expr.dom.values, vec![1]);
-        assert_eq!(expr.month.values, vec![6]);
-        assert_eq!(expr.dow.values, vec![3]);
+    fn test_parse_cron_file_basic() {
+        let content = "---\ncron: \"0 * * * *\"\nroutine: develop\n---\nRun hourly task.\n";
+        let cf = parse_cron_file("hourly-task.md", content).unwrap();
+        assert_eq!(cf.filename, "hourly-task.md");
+        assert_eq!(cf.name_stem, "hourly-task");
+        assert_eq!(cf.routine, Some("develop".to_string()));
+        assert_eq!(cf.body, "Run hourly task.\n");
+        assert!(cf.custom_fields.is_empty());
     }
 
     #[test]
-    fn test_parse_step() {
-        let expr = parse_cron_expr("*/15 * * * *").unwrap();
-        assert_eq!(expr.minute.values, vec![0, 15, 30, 45]);
+    fn test_parse_cron_file_no_routine() {
+        let content = "---\ncron: \"*/15 * * * *\"\n---\nEvery 15 minutes.\n";
+        let cf = parse_cron_file("frequent.md", content).unwrap();
+        assert!(cf.routine.is_none());
     }
 
     #[test]
-    fn test_parse_range() {
-        let expr = parse_cron_expr("1-5 * * * *").unwrap();
-        assert_eq!(expr.minute.values, vec![1, 2, 3, 4, 5]);
+    fn test_parse_cron_file_custom_fields() {
+        let content =
+            "---\ncron: \"0 9 * * *\"\npriority: high\ntags: daily\n---\nDaily task.\n";
+        let cf = parse_cron_file("daily.md", content).unwrap();
+        assert_eq!(cf.custom_fields.len(), 2);
+        assert_eq!(
+            cf.custom_fields.get("priority"),
+            Some(&serde_yaml::Value::String("high".into()))
+        );
     }
 
     #[test]
-    fn test_parse_list() {
-        let expr = parse_cron_expr("0,30 * * * *").unwrap();
-        assert_eq!(expr.minute.values, vec![0, 30]);
+    fn test_parse_cron_file_strips_cron_field() {
+        let content = "---\ncron: \"0 * * * *\"\nroutine: develop\n---\nBody.\n";
+        let cf = parse_cron_file("test.md", content).unwrap();
+        // "cron" should NOT be in custom_fields
+        assert!(!cf.custom_fields.contains_key("cron"));
+        // "routine" is extracted separately, also not in custom_fields
+        assert!(!cf.custom_fields.contains_key("routine"));
     }
 
     #[test]
-    fn test_parse_range_with_step() {
-        let expr = parse_cron_expr("0-30/10 * * * *").unwrap();
-        assert_eq!(expr.minute.values, vec![0, 10, 20, 30]);
+    fn test_parse_cron_file_no_cron_field() {
+        let content = "---\nroutine: develop\n---\nBody.\n";
+        let result = parse_cron_file("test.md", content);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_parse_invalid_field_count() {
-        assert!(parse_cron_expr("* *").is_err());
+    fn test_parse_cron_file_invalid_expression() {
+        let content = "---\ncron: \"invalid cron\"\n---\nBody.\n";
+        let result = parse_cron_file("test.md", content);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_parse_invalid_value() {
-        assert!(parse_cron_expr("60 * * * *").is_err());
-    }
-
-    #[test]
-    fn test_parse_zero_step() {
-        assert!(parse_cron_expr("*/0 * * * *").is_err());
-    }
-
-    #[test]
-    fn test_matches_every_minute() {
-        let expr = parse_cron_expr("* * * * *").unwrap();
-        let time = NaiveDate::from_ymd_opt(2026, 2, 26)
-            .unwrap()
-            .and_hms_opt(14, 30, 0)
-            .unwrap();
-        assert!(matches_time(&expr, &time));
-    }
-
-    #[test]
-    fn test_matches_specific_time() {
-        let expr = parse_cron_expr("30 14 * * *").unwrap();
-        let time = NaiveDate::from_ymd_opt(2026, 2, 26)
-            .unwrap()
-            .and_hms_opt(14, 30, 0)
-            .unwrap();
-        assert!(matches_time(&expr, &time));
-
-        let time2 = NaiveDate::from_ymd_opt(2026, 2, 26)
-            .unwrap()
-            .and_hms_opt(14, 31, 0)
-            .unwrap();
-        assert!(!matches_time(&expr, &time2));
-    }
-
-    #[test]
-    fn test_matches_hourly() {
-        let expr = parse_cron_expr("0 * * * *").unwrap();
-        let time_match = NaiveDate::from_ymd_opt(2026, 2, 26)
-            .unwrap()
-            .and_hms_opt(10, 0, 0)
-            .unwrap();
-        assert!(matches_time(&expr, &time_match));
-
-        let time_no_match = NaiveDate::from_ymd_opt(2026, 2, 26)
-            .unwrap()
-            .and_hms_opt(10, 1, 0)
-            .unwrap();
-        assert!(!matches_time(&expr, &time_no_match));
-    }
-
-    #[test]
-    fn test_matches_day_of_week() {
-        // 2026-02-26 is a Thursday (dow=4 in cron)
-        let expr = parse_cron_expr("0 0 * * 4").unwrap();
-        let time = NaiveDate::from_ymd_opt(2026, 2, 26)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap();
-        assert!(matches_time(&expr, &time));
-
-        // Sunday=0 should also match Sunday=7
-        let expr_sun = parse_cron_expr("0 0 * * 0").unwrap();
-        // 2026-03-01 is a Sunday
-        let sunday = NaiveDate::from_ymd_opt(2026, 3, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap();
-        assert!(matches_time(&expr_sun, &sunday));
+    fn test_parse_cron_file_no_frontmatter() {
+        let content = "Just plain text.\n";
+        let result = parse_cron_file("test.md", content);
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_scan_cron_files_empty() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
         let files = scan_cron_files(dir.path()).unwrap();
         assert!(files.is_empty());
     }
 
     #[test]
-    fn test_scan_cron_files_with_valid_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let content = "---\ncron: \"0 * * * *\"\nroutine: develop\n---\nDo the thing.\n";
-        fs::write(dir.path().join("hourly-task.md"), content).unwrap();
-
-        let files = scan_cron_files(dir.path()).unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].name, "hourly-task");
-        assert_eq!(files[0].routine.as_deref(), Some("develop"));
-        assert_eq!(files[0].body.trim(), "Do the thing.");
-        assert!(!files[0].custom_fields.contains_key("cron"));
-    }
-
-    #[test]
-    fn test_scan_cron_files_skips_no_cron() {
-        let dir = tempfile::tempdir().unwrap();
-        let content = "---\nroutine: develop\n---\nNo cron field.\n";
-        fs::write(dir.path().join("no-cron.md"), content).unwrap();
-
+    fn test_scan_cron_files_no_dir() {
+        let dir = TempDir::new().unwrap();
         let files = scan_cron_files(dir.path()).unwrap();
         assert!(files.is_empty());
     }
 
     #[test]
-    fn test_scan_cron_files_custom_fields_preserved() {
-        let dir = tempfile::tempdir().unwrap();
-        let content =
-            "---\ncron: \"* * * * *\"\nroutine: deploy\ntarget: production\n---\nDeploy it.\n";
-        fs::write(dir.path().join("deploy.md"), content).unwrap();
+    fn test_scan_cron_files_sorted() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        let cron_dir = dir.path().join(".decree/cron");
+
+        std::fs::write(
+            cron_dir.join("beta.md"),
+            "---\ncron: \"0 * * * *\"\n---\nBeta.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cron_dir.join("alpha.md"),
+            "---\ncron: \"0 * * * *\"\n---\nAlpha.\n",
+        )
+        .unwrap();
+        // Non-md files should be excluded
+        std::fs::write(cron_dir.join("notes.txt"), "not cron").unwrap();
+
+        let files = scan_cron_files(dir.path()).unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].filename, "alpha.md");
+        assert_eq!(files[1].filename, "beta.md");
+    }
+
+    #[test]
+    fn test_scan_cron_files_skips_invalid() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        let cron_dir = dir.path().join(".decree/cron");
+
+        std::fs::write(
+            cron_dir.join("valid.md"),
+            "---\ncron: \"0 * * * *\"\n---\nValid.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cron_dir.join("invalid.md"),
+            "---\ncron: \"bad expression\"\n---\nInvalid.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cron_dir.join("no-cron.md"),
+            "---\nroutine: develop\n---\nNo cron.\n",
+        )
+        .unwrap();
 
         let files = scan_cron_files(dir.path()).unwrap();
         assert_eq!(files.len(), 1);
-        assert!(files[0].custom_fields.contains_key("target"));
-        assert!(!files[0].custom_fields.contains_key("cron"));
+        assert_eq!(files[0].filename, "valid.md");
     }
 
     #[test]
-    fn test_create_inbox_from_cron() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        fs::create_dir_all(root.join(".decree/inbox")).unwrap();
+    fn test_cron_tracker_prevents_duplicate() {
+        let content = "---\ncron: \"* * * * *\"\n---\nBody.\n";
+        let cf = parse_cron_file("test.md", content).unwrap();
 
-        let cron_file = CronFile {
-            path: PathBuf::from("test.md"),
-            name: "test".into(),
-            cron_expr: parse_cron_expr("* * * * *").unwrap(),
-            routine: Some("develop".into()),
-            custom_fields: BTreeMap::new(),
-            body: "Run the task.\n".into(),
-        };
+        let mut tracker = CronTracker::new();
 
-        let path = create_inbox_from_cron(root, &cron_file).unwrap();
-        assert!(path.exists());
+        // First check: is_due should return true (every minute matches)
+        assert!(tracker.is_due(&cf));
 
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("seq: 0"));
-        assert!(content.contains("type: task"));
-        assert!(content.contains("routine: develop"));
-        assert!(content.contains("Run the task."));
-        assert!(!content.contains("cron:"));
+        // Mark as fired
+        tracker.mark_fired(&cf);
+
+        // Second check within same minute: should return false
+        assert!(!tracker.is_due(&cf));
     }
 
     #[test]
-    fn test_create_inbox_from_cron_with_custom_fields() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        fs::create_dir_all(root.join(".decree/inbox")).unwrap();
+    fn test_cron_to_inbox_message() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
 
-        let mut custom = BTreeMap::new();
-        custom.insert(
-            "target".into(),
-            serde_yaml::Value::String("production".into()),
+        let content = "---\ncron: \"0 * * * *\"\nroutine: develop\npriority: high\n---\nHourly maintenance.\n";
+        let cf = parse_cron_file("hourly-maintenance.md", content).unwrap();
+
+        let msg = cron_to_inbox_message(dir.path(), &cf).unwrap();
+
+        // Check chain contains the cron file stem
+        let chain = msg.chain.as_ref().unwrap();
+        assert!(chain.contains("hourly-maintenance"));
+
+        // Check seq is 0
+        assert_eq!(msg.seq, Some(0));
+
+        // Check routine preserved
+        assert_eq!(msg.routine.as_deref(), Some("develop"));
+
+        // Check custom fields preserved (cron stripped)
+        assert!(!msg.custom_fields.contains_key("cron"));
+        assert_eq!(
+            msg.custom_fields.get("priority"),
+            Some(&serde_yaml::Value::String("high".into()))
         );
 
-        let cron_file = CronFile {
-            path: PathBuf::from("deploy.md"),
-            name: "deploy".into(),
-            cron_expr: parse_cron_expr("0 0 * * *").unwrap(),
-            routine: Some("deploy".into()),
-            custom_fields: custom,
-            body: "Deploy to prod.\n".into(),
-        };
+        // Check body preserved
+        assert_eq!(msg.body, "Hourly maintenance.\n");
 
-        let path = create_inbox_from_cron(root, &cron_file).unwrap();
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("routine: deploy"));
-        assert!(content.contains("target: production"));
-        assert!(content.contains("Deploy to prod."));
-        assert!(!content.contains("cron:"));
+        // Check filename format
+        assert!(msg.filename.ends_with("-0.md"));
     }
 
     #[test]
-    fn test_create_inbox_from_cron_no_routine() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        fs::create_dir_all(root.join(".decree/inbox")).unwrap();
+    fn test_cron_to_inbox_message_no_routine() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
 
-        let cron_file = CronFile {
-            path: PathBuf::from("generic.md"),
-            name: "generic".into(),
-            cron_expr: parse_cron_expr("* * * * *").unwrap(),
-            routine: None,
-            custom_fields: BTreeMap::new(),
-            body: "Generic task.\n".into(),
-        };
+        let content = "---\ncron: \"0 * * * *\"\n---\nTask.\n";
+        let cf = parse_cron_file("task.md", content).unwrap();
 
-        let path = create_inbox_from_cron(root, &cron_file).unwrap();
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("seq: 0"));
-        assert!(content.contains("type: task"));
-        assert!(!content.contains("routine:"));
+        let msg = cron_to_inbox_message(dir.path(), &cf).unwrap();
+        assert!(msg.routine.is_none());
+    }
+
+    #[test]
+    fn test_various_cron_expressions() {
+        // Every minute
+        let cf = parse_cron_file("t.md", "---\ncron: \"* * * * *\"\n---\n").unwrap();
+        assert!(cf.schedule.upcoming(Utc).next().is_some());
+
+        // Every hour
+        let cf = parse_cron_file("t.md", "---\ncron: \"0 * * * *\"\n---\n").unwrap();
+        assert!(cf.schedule.upcoming(Utc).next().is_some());
+
+        // Daily at 9am
+        let cf = parse_cron_file("t.md", "---\ncron: \"0 9 * * *\"\n---\n").unwrap();
+        assert!(cf.schedule.upcoming(Utc).next().is_some());
+
+        // Weekdays at 9am
+        let cf = parse_cron_file("t.md", "---\ncron: \"0 9 * * 1-5\"\n---\n").unwrap();
+        assert!(cf.schedule.upcoming(Utc).next().is_some());
+
+        // Every 15 minutes
+        let cf = parse_cron_file("t.md", "---\ncron: \"*/15 * * * *\"\n---\n").unwrap();
+        assert!(cf.schedule.upcoming(Utc).next().is_some());
     }
 }

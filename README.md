@@ -1,107 +1,199 @@
 # Decree
 
-AI orchestrator for structured, reproducible workflows. Write specs, let AI execute them, review the diffs.
+An AI orchestrator for spec-driven development. Write specs, run `decree process`, get working code.
 
-Decree is a self-contained Rust CLI that orchestrates AI agents through a message-driven pipeline. You describe work as spec files, Decree routes each one to the right AI-powered routine, checkpoints your repo before and after, retries on failure, and collects the results for your review. Think CI/CD for AI-assisted development.
+## Why Decree
 
-## How It Works
+AI coding assistants are powerful but ad hoc. You prompt, you review, you prompt again. Nothing is repeatable, nothing is tracked, and multi-step workflows need constant babysitting.
 
-```
-specs/           .decree/routines/       .decree/runs/
-01-auth.spec.md  ──→  develop.sh     ──→  changes.diff
-02-db.spec.md         rust-develop.sh     pre/post checkpoints
-03-logs.spec.md       *.ipynb (opt)       stdout/stderr logs
-```
+Decree treats AI work like database migrations. You write spec files describing what you want built. Routines define *how* AI processes each spec — implement, build, test, fix. Processing runs them in order, one at a time, each building on the last. Everything is logged.
 
-1. You write **spec files** describing work to be done
-2. Decree **routes** each spec to an AI-powered **routine** (shell script or Jupyter notebook) that implements, builds, and tests the change
-3. Every execution is **checkpointed** — full file manifests before and after, unified diffs of all changes
-4. Failures **retry** up to 3 times (partial work preserved on early retries, clean revert with failure context on final attempt), then dead-letter
-5. You **review** diffs and **selectively apply** changes to your working tree
-6. Routines can **chain** follow-up messages, enabling multi-step AI workflows within a single execution
-
-## Commands
-
-| Command                  | Purpose                                                                              |
-| ------------------------ | ------------------------------------------------------------------------------------ |
-| `decree init`            | Scaffold `.decree/` with routines, templates, config, and optional model download    |
-| `decree plan [template]` | Interactive AI planning session → produces spec files                                |
-| `decree process`         | Batch-process all unprocessed specs in order                                         |
-| `decree run -p "prompt"` | Execute a single ad hoc task immediately                                             |
-| `decree sow`             | Generate a Statement of Work from your specs using the relative .decree/plans/sow.md |
-| `decree diff [id]`       | Review unified diffs from any execution                                              |
-| `decree apply [id]`      | Selectively re-apply changes with conflict detection                                 |
-| `decree daemon`          | Background service: monitors inbox + fires cron jobs                                 |
-| `decree ai`              | Embedded LLM REPL with session persistence                                           |
-| `decree status`          | Spec processing progress and recent history                                          |
-| `decree log [id]`        | Inspect execution logs                                                               |
-| `decree bench`           | Benchmark embedded model performance                                                 |
+The result: you focus on *what* to build. The routines handle *how*.
 
 ## Quick Start
 
 ```bash
-cargo install --path .
-decree init        # choose AI provider, configure routines
-decree plan spec   # interactively generate spec files
-decree process     # execute all specs
-decree diff        # review what changed
-decree apply --all # apply changes to working tree
+cargo install decree
+decree init          # scaffold project, pick your AI tool
 ```
 
-## AI Backends
+This creates `.decree/` with routines, prompts, config, and a router.
 
-Decree orchestrates any AI that can run from the command line. Three backends are supported out of the box, selected during `init`:
+## Workflow: Spec-Driven Development
 
-- **Claude CLI** — `claude -p {prompt}`
-- **GitHub Copilot CLI** — `copilot -p {prompt}`
-- **Embedded** — Qwen 2.5 1.5B-Instruct via llama.cpp (~1.1 GB download, no account required)
+**1. Write specs**
 
-The embedded model handles routing and interactive planning. External CLIs handle heavier implementation work. Mix and match per command slot via `.decree/config.yml`.
+Create migration files in `.decree/migrations/`, numbered for ordering:
 
-## Key Concepts
+```
+.decree/migrations/
+├── 01-auth-system.spec.md
+├── 02-user-profiles.spec.md
+└── 03-api-endpoints.spec.md
+```
 
-**Specs** are immutable markdown files with optional YAML frontmatter. They're the input to the orchestrator — each spec describes a unit of work for AI to execute. Once processed, they're never modified; corrections require new specs.
+Each spec is markdown with optional YAML frontmatter:
 
-**Routines** are the AI execution templates (`.sh` or `.ipynb`) in `.decree/routines/`. Each routine defines how an AI agent should handle a task — what tools to invoke, what checks to run, what constitutes success. Decree routes specs to routines automatically or via frontmatter.
+```markdown
+---
+routine: develop
+---
+# Auth System
 
-**Messages** are the unit of orchestration. Specs become messages, `decree run` creates messages, cron jobs create messages. Each message gets its own isolated run directory with checkpoints, diffs, and logs.
+Implement email/password authentication with session tokens.
 
-**Chains** let routines spawn follow-up messages (depth-limited to 10), enabling multi-step agentic workflows — one AI action can trigger the next.
+## Requirements
+- POST /auth/register creates a user
+- POST /auth/login returns a session token
+- Sessions expire after 24 hours
+
+## Acceptance Criteria
+- Registration with duplicate email returns 409
+- Invalid credentials return 401
+- Expired tokens are rejected
+```
+
+**2. Process**
+
+```bash
+decree process
+```
+
+Each spec is processed in order through the assigned routine. The default `develop` routine invokes your AI tool twice — once to implement, once to verify acceptance criteria. Failed specs retry with prior attempt logs as context.
+
+**3. Review**
+
+```bash
+decree status        # see what's been processed
+decree log 01        # see execution output for a spec
+```
+
+## Blackbox Testing with Specs
+
+Specs work well as blackbox test cases. Define inputs and expected outputs. The routine implements code to satisfy them. You never describe *how* — only *what*.
+
+Write specs around observable behavior:
+
+```markdown
+# Markdown Parser
+
+Parse markdown to HTML.
+
+## Acceptance Criteria
+- `# Hello` produces `<h1>Hello</h1>`
+- `**bold**` produces `<strong>bold</strong>`
+- Empty input produces empty output
+- Nested lists render correctly
+```
+
+The AI figures out the implementation. The acceptance criteria are the tests.
+
+## Routines
+
+Routines are shell scripts in `.decree/routines/` that define how work gets done. They receive the spec as a message file and call your AI tool directly.
+
+The default `develop` routine:
+1. Sends the spec to your AI tool for implementation
+2. Sends it again for verification against acceptance criteria
+
+The `rust-develop` routine adds build and test steps:
+1. AI implements the spec
+2. `cargo build --release && cargo test`
+3. AI reads build/test output and fixes failures
+
+Write your own routines for any workflow — linting passes, documentation generation, image creation, data pipelines. A routine is just a bash script that calls whatever tools you need.
+
+```bash
+decree routine       # list available routines
+decree verify        # check all routine pre-checks pass
+```
+
+## Chaining
+
+Routines can write follow-up messages to `.decree/outbox/`. Decree processes them depth-first before moving to the next migration. This enables multi-step pipelines:
+
+```
+market-analysis → competitive-landscape → financial-model → executive-summary
+```
+
+One spec in, four documents out.
+
+## AI Tool Permissions
+
+Your AI tool needs permission to read and write files in the repo. Configure this per-project so routines can operate non-interactively.
+
+For Claude Code, create `.claude/settings.local.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep"
+    ]
+  }
+}
+```
+
+Other tools have similar mechanisms — check your AI tool's docs for non-interactive / headless permissions.
+
+## Lifecycle Hooks
+
+Configure hooks in `.decree/config.yml` for cross-cutting concerns:
+
+```yaml
+hooks:
+  beforeEach: git-baseline
+  afterEach: git-stash-changes
+```
+
+The built-in git hooks stash a baseline before each spec and checkpoint changes after. Failed specs restore to baseline before retrying. Every attempt is preserved as a named stash.
+
+## Daemon & Cron
+
+For recurring work, run the daemon:
+
+```bash
+decree daemon
+```
+
+It polls `.decree/cron/` for scheduled messages and `.decree/inbox/` for new work. Cron messages use standard cron syntax in frontmatter:
+
+```markdown
+---
+cron: "0 9 * * 1-5"
+routine: daily-review
+---
+Run the morning code review.
+```
+
+## Prompts
+
+Interactive prompt templates live in `.decree/prompts/`. They inject project context — processed migrations, available routines, config — so your AI conversations start informed:
+
+```bash
+decree prompt migration    # plan next batch of specs
+decree prompt routine      # get help writing a new routine
+```
 
 ## Project Structure
 
 ```
 .decree/
-├── config.yml       # AI providers, retry limits, default routine
-├── routines/        # Shell scripts and/or Jupyter notebooks
-├── plans/           # Templates for planning sessions
-├── cron/            # Scheduled job definitions
-├── inbox/           # Pending messages (done/ and dead/ subdirs)
-├── runs/            # Execution history with checkpoints and diffs
-└── sessions/        # Saved AI conversation histories
-specs/
-├── *.spec.md        # Your specification files
-└── processed-spec.md # Tracking file
+├── config.yml          # AI tool config, retries, hooks
+├── router.md           # instructions for automatic routine selection
+├── processed.md        # tracks completed migrations
+├── migrations/         # spec files (your input)
+├── routines/           # shell scripts (your workflows)
+├── prompts/            # interactive prompt templates
+├── cron/               # scheduled messages
+├── inbox/              # messages being processed
+├── outbox/             # follow-up messages from routines
+├── runs/               # execution logs (the audit trail)
+└── dead/               # exhausted messages for review
 ```
-
-## Examples
-
-The `examples/` directory contains self-contained projects demonstrating different Decree patterns:
-
-- **[historical-portraits](examples/historical-portraits/)** — Chain-based pipeline. Each spec triggers a 3-step chain (research → prompt-craft → generate) to produce AI art portraits of historical figures via ComfyUI. Demonstrates message chaining, custom parameters, and inter-step data sharing.
-
-- **[business-eval](examples/business-eval/)** — Chain-based analysis pipeline. Each spec is a different business idea that triggers a 4-step chain (market analysis → competitive landscape → financial model → executive summary). Demonstrates accumulated context through chains and multiple independent businesses processed in sequence.
-
-## GPU Acceleration
-
-```bash
-cargo build --release --features vulkan  # Vulkan
-cargo build --release --features cuda    # NVIDIA CUDA
-cargo build --release --features metal   # Apple Metal
-```
-
-## Requirements
-
-- Bash (Linux/macOS built-in, Git Bash or WSL on Windows)
-- Python 3 only if using Jupyter notebook routines (opt-in)
-- No cloud account needed for core functionality

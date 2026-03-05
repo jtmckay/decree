@@ -1,12 +1,8 @@
-pub mod checkpoint;
+pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod cron;
-pub mod diff_apply;
 pub mod error;
-pub mod llm;
+pub mod hooks;
 pub mod message;
-pub mod pipeline;
 pub mod routine;
-pub mod session;
-pub mod spec;

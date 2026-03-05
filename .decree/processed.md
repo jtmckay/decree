@@ -1,0 +1,13 @@
+01-init-config-and-cli.spec.md
+02-default-templates.spec.md
+03-message-format.spec.md
+04-routine-system.spec.md
+05-routine-cli.spec.md
+06-routine-authoring.spec.md
+07-process-pipeline.spec.md
+08-git-stash-hooks.spec.md
+09-starter-sessions.spec.md
+10-lifecycle-hooks.spec.md
+11-daemon-and-cron.spec.md
+12-cli-help.spec.md
+13-post-cleanup.spec.md

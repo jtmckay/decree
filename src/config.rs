@@ -1,35 +1,65 @@
+use crate::error::DecreeError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::error::DecreeError;
+/// Directory and file constants.
+pub const DECREE_DIR: &str = ".decree";
+pub const ROUTINES_DIR: &str = "routines";
+pub const PROMPTS_DIR: &str = "prompts";
+pub const CRON_DIR: &str = "cron";
+pub const INBOX_DIR: &str = "inbox";
+pub const OUTBOX_DIR: &str = "outbox";
+pub const RUNS_DIR: &str = "runs";
+pub const MIGRATIONS_DIR: &str = "migrations";
+pub const DEAD_DIR: &str = "dead";
+pub const PROCESSED_FILE: &str = "processed.md";
+pub const ROUTER_FILE: &str = "router.md";
+pub const CONFIG_FILE: &str = "config.yml";
+pub const GITIGNORE_FILE: &str = ".gitignore";
 
+/// Commands configuration — AI tool settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub ai: AiConfig,
+pub struct CommandsConfig {
+    pub ai_router: String,
+    pub ai_interactive: String,
+}
+
+impl Default for CommandsConfig {
+    fn default() -> Self {
+        Self {
+            ai_router: "opencode run {prompt}".to_string(),
+            ai_interactive: "opencode".to_string(),
+        }
+    }
+}
+
+/// Lifecycle hooks configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HooksConfig {
+    #[serde(default, rename = "beforeAll")]
+    pub before_all: String,
+    #[serde(default, rename = "afterAll")]
+    pub after_all: String,
+    #[serde(default, rename = "beforeEach")]
+    pub before_each: String,
+    #[serde(default, rename = "afterEach")]
+    pub after_each: String,
+}
+
+/// Top-level application config (deserialized from config.yml).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
     pub commands: CommandsConfig,
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
     #[serde(default = "default_max_depth")]
     pub max_depth: u32,
+    #[serde(default = "default_max_log_size")]
+    pub max_log_size: u64,
     #[serde(default = "default_routine")]
     pub default_routine: String,
     #[serde(default)]
-    pub notebook_support: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiConfig {
-    #[serde(default = "default_model_path")]
-    pub model_path: String,
-    #[serde(default)]
-    pub n_gpu_layers: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandsConfig {
-    pub planning: String,
-    pub planning_continue: String,
-    pub router: String,
+    pub hooks: HooksConfig,
 }
 
 fn default_max_retries() -> u32 {
@@ -38,104 +68,98 @@ fn default_max_retries() -> u32 {
 fn default_max_depth() -> u32 {
     10
 }
-fn default_routine() -> String {
-    "develop".into()
+fn default_max_log_size() -> u64 {
+    2_097_152
 }
-fn default_model_path() -> String {
-    "~/.decree/models/qwen2.5-1.5b-instruct-q5_k_m.gguf".into()
+fn default_routine() -> String {
+    "develop".to_string()
 }
 
-impl Default for Config {
+impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            ai: AiConfig {
-                model_path: default_model_path(),
-                n_gpu_layers: 0,
-            },
-            commands: CommandsConfig {
-                planning: "claude -p {prompt}".into(),
-                planning_continue: "claude --continue".into(),
-                router: "decree ai".into(),
-            },
+            commands: CommandsConfig::default(),
             max_retries: default_max_retries(),
             max_depth: default_max_depth(),
+            max_log_size: default_max_log_size(),
             default_routine: default_routine(),
-            notebook_support: false,
+            hooks: HooksConfig::default(),
         }
     }
 }
 
-/// AI provider choices for interactive selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AiProvider {
-    ClaudeCli,
-    CopilotCli,
-    Embedded,
-}
-
-impl std::fmt::Display for AiProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AiProvider::ClaudeCli => write!(f, "Claude CLI"),
-            AiProvider::CopilotCli => write!(f, "GitHub Copilot CLI"),
-            AiProvider::Embedded => write!(f, "Embedded (decree ai)"),
-        }
-    }
-}
-
-impl AiProvider {
-    pub fn planning_command(&self) -> &str {
-        match self {
-            AiProvider::ClaudeCli => "claude -p {prompt}",
-            AiProvider::CopilotCli => "copilot -p {prompt}",
-            AiProvider::Embedded => "decree ai",
-        }
-    }
-
-    pub fn planning_continue_command(&self) -> &str {
-        match self {
-            AiProvider::ClaudeCli => "claude --continue",
-            AiProvider::CopilotCli => "copilot --continue",
-            AiProvider::Embedded => "",
-        }
-    }
-
-    pub fn router_command(&self) -> &str {
-        match self {
-            AiProvider::Embedded => "decree ai",
-            AiProvider::ClaudeCli => "claude -p {prompt}",
-            AiProvider::CopilotCli => "copilot -p {prompt}",
-        }
-    }
-}
-
-impl Config {
-    /// Load config from `.decree/config.yml` relative to the project root.
-    pub fn load(project_root: &Path) -> Result<Self, DecreeError> {
-        let path = project_root.join(".decree/config.yml");
-        let content = std::fs::read_to_string(&path).map_err(|e| {
-            DecreeError::Config(format!("failed to read {}: {}", path.display(), e))
-        })?;
-        let config: Config = serde_yaml::from_str(&content)?;
+impl AppConfig {
+    /// Load config from a file path.
+    pub fn load(path: &Path) -> Result<Self, DecreeError> {
+        let contents = std::fs::read_to_string(path)?;
+        let config: AppConfig = serde_yaml::from_str(&contents)?;
         Ok(config)
     }
 
-    /// Write config to `.decree/config.yml`.
-    pub fn save(&self, project_root: &Path) -> Result<(), DecreeError> {
-        let path = project_root.join(".decree/config.yml");
-        let content = serde_yaml::to_string(self)?;
-        std::fs::write(&path, content)?;
-        Ok(())
+    /// Load config from the project root's `.decree/config.yml`.
+    pub fn load_from_project(project_root: &Path) -> Result<Self, DecreeError> {
+        let path = project_root.join(DECREE_DIR).join(CONFIG_FILE);
+        Self::load(&path)
     }
 
-    /// Expand `~` in `model_path` to the user's home directory.
-    pub fn resolved_model_path(&self) -> PathBuf {
-        let p = &self.ai.model_path;
-        if let Some(rest) = p.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return home.join(rest);
-            }
-        }
-        PathBuf::from(p)
+    /// Return the `.decree/` path for a given project root.
+    pub fn decree_dir(project_root: &Path) -> PathBuf {
+        project_root.join(DECREE_DIR)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = AppConfig::default();
+        assert_eq!(config.commands.ai_router, "opencode run {prompt}");
+        assert_eq!(config.commands.ai_interactive, "opencode");
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.max_depth, 10);
+        assert_eq!(config.max_log_size, 2_097_152);
+        assert_eq!(config.default_routine, "develop");
+    }
+
+    #[test]
+    fn test_deserialize_config() {
+        let yaml = r#"
+commands:
+  ai_router: "claude -p {prompt}"
+  ai_interactive: "claude"
+max_retries: 5
+max_depth: 20
+max_log_size: 0
+default_routine: rust-develop
+hooks:
+  beforeAll: ""
+  afterAll: ""
+  beforeEach: "git-baseline"
+  afterEach: "git-stash-changes"
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.commands.ai_router, "claude -p {prompt}");
+        assert_eq!(config.commands.ai_interactive, "claude");
+        assert_eq!(config.max_retries, 5);
+        assert_eq!(config.max_depth, 20);
+        assert_eq!(config.max_log_size, 0);
+        assert_eq!(config.default_routine, "rust-develop");
+        assert_eq!(config.hooks.before_each, "git-baseline");
+        assert_eq!(config.hooks.after_each, "git-stash-changes");
+    }
+
+    #[test]
+    fn test_deserialize_minimal_config() {
+        let yaml = r#"
+commands:
+  ai_router: "opencode run {prompt}"
+  ai_interactive: "opencode"
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.max_depth, 10);
+        assert_eq!(config.default_routine, "develop");
     }
 }

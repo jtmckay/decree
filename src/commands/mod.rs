@@ -1,12 +1,14 @@
-pub mod ai;
-pub mod apply;
-pub mod bench;
 pub mod daemon;
-pub mod diff;
 pub mod init;
 pub mod log;
-pub mod plan;
 pub mod process;
-pub mod run;
-pub mod sow;
+pub mod prompt;
+pub mod routine;
 pub mod status;
+
+use crate::error::DecreeError;
+
+pub fn help() -> Result<(), DecreeError> {
+    print!("{}", include_str!("../templates/help.txt"));
+    Ok(())
+}

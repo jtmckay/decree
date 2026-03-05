@@ -1,0 +1,158 @@
+Decree is an AI orchestrator for structured, reproducible workflows.
+
+It processes migration files through AI-powered routines, with optional
+git stash hooks for change tracking and retry on failure.
+
+Core workflow:
+  1. Write migration files describing work in .decree/migrations/
+  2. Run `decree process` to execute them through AI routines
+  3. Routines invoke AI tools (opencode, claude, copilot) to do the work
+  4. Optional git stash hooks isolate each routine's changes
+
+Commands:
+  decree process              Process all pending migrations + drain inbox
+  decree prompt [NAME]        Build prompt from template, copy or launch AI
+  decree routine              List routines (interactive select + run)
+  decree routine <name>       Show routine detail + run pre-checks
+  decree verify               Run all routine pre-checks
+  decree daemon [--interval]  Continuous inbox + cron monitoring
+  decree status               Show processing progress
+  decree log [ID]             Show routine execution output
+  decree init                 Initialize a new decree project
+  decree help                 This help text
+
+Message Format:
+  Messages use optional YAML frontmatter followed by a markdown body.
+  Frontmatter fields control routing and parameters.
+
+  ---
+  routine: develop              # Which routine to execute
+  custom_field: value           # Custom fields become env vars
+  ---
+  Description of the work to do.
+
+  The body can be empty. All frontmatter fields are optional — decree
+  fills in missing fields automatically (chain, seq, id, routine).
+  Migration content is copied into the message body when processed.
+
+Processing Pipeline:
+  1. Migration files in .decree/migrations/ are read in alphabetical order
+  2. Each migration becomes an inbox message in .decree/inbox/
+  3. Messages are normalized (missing fields filled, routine selected)
+  4. Lifecycle hooks run (beforeEach — e.g. git stash baseline)
+  5. The selected routine executes with parameters as env vars
+  6. On success: afterEach hook runs, message deleted from inbox (run dir is the record)
+  7. On failure: retry strategy applies (hooks handle state management)
+  8. After all retries: dead-letter the message
+  9. Follow-up messages from routines are processed depth-first
+  10. Inbox is fully drained before the next migration starts
+
+Environment Variables:
+  Decree sets these env vars before running every routine and hook:
+
+  message_file  Path to message.md in the run directory
+  message_id    Full message ID (e.g., D0001-1432-01-add-auth-0)
+  message_dir   Run directory path (contains logs from prior attempts)
+  chain         Chain ID (D<NNNN>-HHmm-<name>)
+  seq           Sequence number in chain
+
+  Hook-only env vars:
+  DECREE_HOOK            Hook type name (beforeAll, afterAll, etc.)
+  DECREE_ATTEMPT         Current attempt number (beforeEach/afterEach)
+  DECREE_MAX_RETRIES     Configured max retries (beforeEach/afterEach)
+  DECREE_ROUTINE_EXIT_CODE  Routine exit code (afterEach only)
+  DECREE_PRE_CHECK       Set to "true" during pre-check runs
+
+  Custom frontmatter fields are also passed as env vars.
+
+Defining Routines:
+  Routines are shell scripts in .decree/routines/ (nested dirs allowed).
+  They call AI tools directly — no magic variables.
+
+  Required structure:
+    #!/usr/bin/env bash
+    # Title
+    #
+    # Description shown by `decree routine`.
+    set -euo pipefail
+
+    # --- Standard Environment Variables ---
+    # message_file  - Path to message.md in the run directory
+    # message_id    - Full message ID (e.g., D0001-1432-01-add-auth-0)
+    # message_dir   - Run directory path (contains logs from prior attempts)
+    # chain         - Chain ID (D<NNNN>-HHmm-<name>)
+    # seq           - Sequence number
+    message_file="${message_file:-}"
+    message_id="${message_id:-}"
+    message_dir="${message_dir:-}"
+    chain="${chain:-}"
+    seq="${seq:-}"
+
+    # Pre-check (required — exit 0 if ready, non-zero if not):
+    if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
+        command -v claude >/dev/null 2>&1 || { echo "claude not found" >&2; exit 1; }
+        exit 0
+    fi
+
+    # Custom params (from frontmatter, discovered automatically):
+    my_param="${my_param:-default}"
+
+    # Implementation (call your AI tool directly):
+    claude -p "Read ${message_file} and implement the requirements.
+    Previous attempt logs (if any) are in ${message_dir} for context."
+
+  Custom parameter discovery:
+    Decree scans for var="${var:-default}" patterns after the pre-check
+    block. Standard params are excluded. Remaining are custom parameters
+    whose values come from message frontmatter.
+
+  Tips:
+    - Pre-check failures should print to stderr
+    - Use ${message_dir} for prior attempt logs as AI context on retries
+    - Call your AI tool directly (e.g., claude -p, copilot -p, opencode run)
+    - Routines are non-interactive — only `decree prompt` launches interactive AI
+    - Use --no-color flag or NO_COLOR env var to disable color output
+
+  Run `decree verify` to check all routines' pre-checks at once.
+  Run `decree prompt routine` for an AI-assisted routine authoring guide.
+
+Lifecycle Hooks (config.yml):
+  hooks:
+    beforeAll: ""      # Routine to run before all processing
+    afterAll: ""       # Routine to run after all processing
+    beforeEach: ""     # Routine to run before each message
+    afterEach: ""      # Routine to run after each message
+
+  Hooks receive additional env vars:
+    DECREE_HOOK            — hook type name
+    DECREE_ATTEMPT         — current attempt number (beforeEach/afterEach)
+    DECREE_MAX_RETRIES     — configured max retries (beforeEach/afterEach)
+    DECREE_ROUTINE_EXIT_CODE — routine exit code (afterEach only)
+
+Cron Scheduling:
+  Place .md files with a `cron` frontmatter field in .decree/cron/:
+
+  ---
+  cron: "0 9 * * 1-5"
+  routine: develop
+  ---
+  Run the weekday morning task.
+
+  Common schedules:
+    * * * * *       Every minute
+    0 * * * *       Every hour
+    0 9 * * *       Daily at 9:00 AM
+    0 9 * * 1-5     Weekdays at 9:00 AM
+    0 0 * * 0       Weekly on Sunday
+    0 0 1 * *       Monthly on the 1st
+    */15 * * * *    Every 15 minutes
+
+  Run `decree daemon` to start monitoring cron and inbox.
+
+Getting Started:
+  1. decree init                    # Set up project
+  2. decree prompt migration        # Plan work with AI → migration files
+  3. decree verify                  # Check routines are ready
+  4. decree process                 # Execute all migrations
+  5. decree routine                 # Run individual routines interactively
+  6. decree prompt routine          # Get AI help building new routines

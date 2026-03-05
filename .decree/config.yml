@@ -1,11 +1,21 @@
-ai:
-  model_path: ~/.decree/models/qwen2.5-1.5b-instruct-q5_k_m.gguf
-  n_gpu_layers: 0
 commands:
-  planning: claude -p {prompt}
-  planning_continue: claude --continue
-  router: claude -p {prompt}
+  ai_router: "claude -p {prompt}"
+  ai_interactive: "claude"
+  # ai_router: "opencode run {prompt}"
+  # ai_interactive: "opencode"
+  # ai_router: "copilot -p {prompt}"
+  # ai_interactive: "copilot"
+
 max_retries: 3
 max_depth: 10
+max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable
 default_routine: develop
-notebook_support: true
+
+hooks:
+  beforeAll: ""
+  afterAll: ""
+  beforeEach: ""
+  afterEach: ""
+  # --- Git stash workflow (uncomment to enable) ---
+  # beforeEach: "git-baseline"
+  # afterEach: "git-stash-changes"
