@@ -1,8 +1,8 @@
 # Decree — Built with Decree
 
 Decree was built using itself. The entire CLI — parser, config system, AI
-integration, pipeline engine, checkpoint system, daemon — was produced by
-writing spec files and running `decree process`.
+integration, pipeline engine, daemon — was produced by writing spec files
+and running `decree process`.
 
 ## How It Worked
 
@@ -29,8 +29,8 @@ QA pass fix any failures — all in one automated cycle.
 
 ```bash
 decree process     # process next unprocessed spec
-decree diff        # review what the AI wrote
-decree apply --all # apply changes to the working tree
+decree status      # check processing progress
+decree log         # review routine execution output
 ```
 
 Repeat until all 11 specs are processed. The result is the `src/` directory,
@@ -41,7 +41,5 @@ Repeat until all 11 specs are processed. The result is the `src/` directory,
 - **Incremental, spec-driven development** — each spec builds on the code
   produced by prior specs, so ordering matters
 - **Self-hosting** — the tool's own pipeline was used to build the tool
-- **Review before apply** — every spec's output was diffed and reviewed
-  before being accepted into the working tree
 - **Reproducibility** — the specs are still in the repo; the same sequence
   could be re-run from a clean slate

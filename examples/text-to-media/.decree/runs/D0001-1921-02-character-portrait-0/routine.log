@@ -1,0 +1,18 @@
+[decree] start 2026-03-05T19:21:51
+=== ComfyUI FLUX2 Image (Text Only) ===
+  Prompt:   routine: comfy-image-text
+width: 400
+height: 600
+output_prefix: character_lily_f...
+  Size:     400x608
+  Output:   character_lily_fullbody
+  API:      http://127.0.0.1:8288/api/prompt
+=== Payload verification ===
+{
+  "text_preview": "routine: comfy-image-text\nwidth: 400\nheight: 600\noutput_pref...",
+  "latent_size": "400x608",
+  "output": "character_lily_fullbody"
+}
+=== Response (HTTP 200) ===
+{"prompt_id": "66eec293-2482-4de4-87b6-eedf832f8ddd", "number": 143, "node_errors": {}}
+[decree] duration 0s end 2026-03-05T19:21:51

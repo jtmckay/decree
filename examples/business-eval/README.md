@@ -8,7 +8,8 @@ evaluation chain automatically.
 
 ## What This Demonstrates
 
-- **Chain-based multi-step analysis** — each routine chains to the next
+- **Outbox-based chaining** — each routine writes the next step to `.decree/outbox/`,
+  decree collects and sequences them automatically
 - **Multiple businesses processed independently** — each spec spawns its own chain
 - **Accumulated context** — each step passes its output path to the next,
   so later routines build on earlier analyses

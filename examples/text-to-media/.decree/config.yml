@@ -1,0 +1,13 @@
+commands:
+  ai_router: "claude -p {prompt}"
+  ai_interactive: "claude"
+
+max_retries: 3
+max_depth: 10
+default_routine: comfy-image-text
+
+hooks:
+  beforeAll: ""
+  afterAll: ""
+  beforeEach: ""
+  afterEach: ""

@@ -1,0 +1,20 @@
+[decree] start 2026-03-05T19:21:51
+=== ComfyUI FLUX2 Image (Text + Reference Image) ===
+  Prompt:   routine: comfy-image-text-image
+width: 1024
+height: 1024
+input_image: reference....
+  Image:    reference.png
+  Size:     1024x1024
+  Output:   style_transfer_demo
+  API:      http://127.0.0.1:8288/api/prompt
+=== Payload verification ===
+{
+  "text_preview": "routine: comfy-image-text-image\nwidth: 1024\nheight: 1024\ninp...",
+  "input_image": "reference.png",
+  "latent_size": "1024x1024",
+  "output": "style_transfer_demo"
+}
+=== Response (HTTP 400) ===
+{"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"46": {"errors": [{"type": "custom_validation_failed", "message": "Custom validation failed for node", "details": "image - Invalid image file: reference.png", "extra_info": {"input_name": "image"}}], "dependent_outputs": ["9"], "class_type": "LoadImage"}}}
+[decree] duration 0s end 2026-03-05T19:21:51

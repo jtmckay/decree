@@ -1,0 +1,18 @@
+[decree] start 2026-03-05T19:21:51
+=== ComfyUI FLUX2 Image (Text Only) ===
+  Prompt:   routine: comfy-image-text
+width: 800
+height: 400
+output_prefix: unicorn_landscap...
+  Size:     800x400
+  Output:   unicorn_landscape
+  API:      http://127.0.0.1:8288/api/prompt
+=== Payload verification ===
+{
+  "text_preview": "routine: comfy-image-text\nwidth: 800\nheight: 400\noutput_pref...",
+  "latent_size": "800x400",
+  "output": "unicorn_landscape"
+}
+=== Response (HTTP 200) ===
+{"prompt_id": "7ef5cd13-ce80-4acc-b674-3b9477c6d6ae", "number": 142, "node_errors": {}}
+[decree] duration 0s end 2026-03-05T19:21:51

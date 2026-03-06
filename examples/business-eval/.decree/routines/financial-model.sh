@@ -4,16 +4,26 @@
 # Third step in the business evaluation chain. Builds revenue projections,
 # unit economics, cost structure, and funding requirements. Reads prior
 # market and competitive analyses. Writes to $message_dir/03-financial-model.md,
-# then chains to executive-summary.
+# then chains to executive-summary via outbox.
 set -euo pipefail
 
-# Parameters (decree injects these as env vars)
-spec_file="${spec_file:-}"
+# --- Standard Environment Variables ---
+# message_file  - Path to message.md in the run directory
+# message_id    - Full message ID (e.g., D0001-1432-01-add-auth-0)
+# message_dir   - Run directory path (contains logs from prior attempts)
+# chain         - Chain ID (D<NNNN>-HHmm-<name>)
+# seq           - Sequence number in chain
 message_file="${message_file:-}"
 message_id="${message_id:-}"
 message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
+
+# Pre-check: verify AI tool is available
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
+    command -v claude >/dev/null 2>&1 || { echo "claude not found" >&2; exit 1; }
+    exit 0
+fi
 
 # Custom parameters
 work_file="${work_file:-}"
@@ -63,9 +73,9 @@ if [ ! -f "${message_dir}/03-financial-model.md" ]; then
     exit 1
 fi
 
-# Chain to executive-summary
-NEXT_SEQ=$((seq + 1))
-cat > ".decree/inbox/${chain}-${NEXT_SEQ}.md" <<CHAIN
+# Chain to executive-summary via outbox
+mkdir -p .decree/outbox
+cat > ".decree/outbox/01-executive-summary.md" <<CHAIN
 ---
 routine: executive-summary
 work_file: ${work_file}

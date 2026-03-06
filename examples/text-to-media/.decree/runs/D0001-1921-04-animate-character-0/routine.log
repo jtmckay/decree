@@ -1,0 +1,20 @@
+[decree] start 2026-03-05T19:21:51
+=== ComfyUI WAN2.2 Video (Image-to-Video) ===
+  Prompt:   routine: comfy-video-i2v
+width: 640
+height: 640
+input_image: character_lily_full...
+  Image:    character_lily_fullbody_00001_.png
+  Size:     640x640
+  Output:   lily_waving
+  API:      http://127.0.0.1:8288/api/prompt
+=== Payload verification ===
+{
+  "text_preview": "routine: comfy-video-i2v\nwidth: 640\nheight: 640\ninput_image:...",
+  "input_image": "character_lily_fullbody_00001_.png",
+  "video_size": "640x640",
+  "output": "lily_waving"
+}
+=== Response (HTTP 400) ===
+{"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", "extra_info": {}}, "node_errors": {"97": {"errors": [{"type": "custom_validation_failed", "message": "Custom validation failed for node", "details": "image - Invalid image file: character_lily_fullbody_00001_.png", "extra_info": {"input_name": "image"}}], "dependent_outputs": ["108"], "class_type": "LoadImage"}}}
+[decree] duration 0s end 2026-03-05T19:21:51
