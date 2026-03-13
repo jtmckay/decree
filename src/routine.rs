@@ -1,7 +1,7 @@
-use crate::config;
+use crate::config::{self, AppConfig};
 use crate::error::DecreeError;
 use crate::message::RoutineInfo;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Standard parameters that are not custom user parameters.
@@ -191,13 +191,12 @@ fn parse_param_assignment(line: &str) -> Option<CustomParam> {
 }
 
 /// Build the full detail for a routine, including description and custom params.
-pub fn routine_detail(project_root: &Path, info: &RoutineInfo) -> Result<RoutineDetail, DecreeError> {
-    let routines_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::ROUTINES_DIR);
-
-    // Try common extensions
-    let script_path = find_routine_script(&routines_dir, &info.name)?;
+pub fn routine_detail(
+    project_root: &Path,
+    config: &AppConfig,
+    info: &RoutineInfo,
+) -> Result<RoutineDetail, DecreeError> {
+    let script_path = find_routine_script_layered(project_root, config, &info.name)?;
     let content = std::fs::read_to_string(&script_path)?;
 
     let (_, long_description) = extract_descriptions(&content);
@@ -230,15 +229,100 @@ pub fn find_routine_script(
     Err(DecreeError::RoutineNotFound(name.to_string()))
 }
 
-/// Run the pre-check for a routine by executing it with DECREE_PRE_CHECK=true.
-///
-/// Returns Ok(None) on success, Ok(Some(reason)) on failure.
-pub fn run_precheck(project_root: &Path, routine_name: &str) -> Result<Option<String>, DecreeError> {
-    let routines_dir = project_root
+/// Find a routine script checking project-local first, then shared directory.
+/// Does NOT check the registry — suitable for hooks which bypass the registry.
+pub fn find_routine_script_layered(
+    project_root: &Path,
+    config: &AppConfig,
+    name: &str,
+) -> Result<PathBuf, DecreeError> {
+    let project_dir = project_root
         .join(config::DECREE_DIR)
         .join(config::ROUTINES_DIR);
 
-    let script_path = find_routine_script(&routines_dir, routine_name)?;
+    if let Ok(path) = find_routine_script(&project_dir, name) {
+        return Ok(path);
+    }
+
+    if let Some(shared_dir) = config.resolved_routine_source() {
+        if let Ok(path) = find_routine_script(&shared_dir, name) {
+            return Ok(path);
+        }
+    }
+
+    Err(DecreeError::RoutineNotFound(name.to_string()))
+}
+
+/// Resolve a routine with registry check and layered directory lookup.
+///
+/// Returns error if the routine is disabled or not found.
+/// Project-local `.decree/routines/` takes precedence over the shared directory.
+pub fn resolve_routine(
+    project_root: &Path,
+    config: &AppConfig,
+    name: &str,
+) -> Result<PathBuf, DecreeError> {
+    let project_dir = project_root
+        .join(config::DECREE_DIR)
+        .join(config::ROUTINES_DIR);
+
+    // Check project-local
+    if let Ok(path) = find_routine_script(&project_dir, name) {
+        if let Some(ref routines) = config.routines {
+            // Strict mode: must be registered and active
+            match routines.get(name) {
+                Some(entry) if entry.is_active() => return Ok(path),
+                Some(_) => return Err(DecreeError::RoutineDisabled(name.to_string())),
+                None => {} // Not in project registry — check shared
+            }
+        } else {
+            // Legacy mode: all filesystem routines available
+            return Ok(path);
+        }
+    }
+
+    // Check shared directory
+    if let Some(shared_dir) = config.resolved_routine_source() {
+        if let Ok(path) = find_routine_script(&shared_dir, name) {
+            // shared_routines is always strict
+            if let Some(ref shared) = config.shared_routines {
+                match shared.get(name) {
+                    Some(entry) if entry.is_active() => return Ok(path),
+                    Some(_) => return Err(DecreeError::RoutineDisabled(name.to_string())),
+                    None => {}
+                }
+            }
+        }
+    }
+
+    // Determine best error: disabled vs not found
+    let is_disabled = config
+        .routines
+        .as_ref()
+        .and_then(|r| r.get(name))
+        .is_some_and(|e| !e.is_active())
+        || config
+            .shared_routines
+            .as_ref()
+            .and_then(|r| r.get(name))
+            .is_some_and(|e| !e.is_active());
+
+    if is_disabled {
+        Err(DecreeError::RoutineDisabled(name.to_string()))
+    } else {
+        Err(DecreeError::RoutineNotFound(name.to_string()))
+    }
+}
+
+/// Run the pre-check for a routine by executing it with DECREE_PRE_CHECK=true.
+///
+/// Returns Ok(None) on success, Ok(Some(reason)) on failure.
+pub fn run_precheck(
+    project_root: &Path,
+    config: &AppConfig,
+    routine_name: &str,
+) -> Result<Option<String>, DecreeError> {
+    let script_path = find_routine_script_layered(project_root, config, routine_name)?;
 
     let output = Command::new("bash")
         .arg(&script_path)

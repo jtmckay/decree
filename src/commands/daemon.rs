@@ -1,3 +1,4 @@
+use crate::commands::routine_sync;
 use crate::config::{self, AppConfig};
 use crate::cron::{self, CronTracker};
 use crate::error::DecreeError;
@@ -13,7 +14,12 @@ use std::time::Duration;
 
 /// Run the daemon polling loop.
 pub fn run(project_root: &Path, interval: u64) -> Result<(), DecreeError> {
-    let config = AppConfig::load_from_project(project_root)?;
+    let mut config = AppConfig::load_from_project(project_root)?;
+
+    // Run discovery at startup
+    if routine_sync::discover(project_root, &mut config, None)? {
+        config.save(project_root)?;
+    }
 
     // Set up signal handling for SIGINT and SIGTERM
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -23,7 +29,7 @@ pub fn run(project_root: &Path, interval: u64) -> Result<(), DecreeError> {
 
     // Run beforeAll hook
     let all_ctx = HookContext::default();
-    if let Err(e) = hooks::run_hook(project_root, &config.hooks, HookType::BeforeAll, &all_ctx) {
+    if let Err(e) = hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeAll, &all_ctx, Some(&config)) {
         eprintln!("beforeAll hook failed: {e}");
         return Err(DecreeError::Other(format!("beforeAll hook failed: {e}")));
     }
@@ -183,14 +189,11 @@ fn process_single_message(
     // Copy normalized message to run dir
     std::fs::write(run_dir.join("message.md"), msg.serialize())?;
 
-    // Find the routine script
-    let routines_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::ROUTINES_DIR);
-    let script_path = match routine::find_routine_script(&routines_dir, &routine_name) {
+    // Find the routine script (registry-aware layered lookup)
+    let script_path = match routine::resolve_routine(project_root, config, &routine_name) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("decree daemon: routine not found for {msg_id}: {e}");
+            eprintln!("decree daemon: routine resolution failed for {msg_id}: {e}");
             dead_letter(project_root, filename)?;
             return Err(e);
         }
@@ -221,7 +224,7 @@ fn process_single_message(
 
         // Run beforeEach hook
         if let Err(e) =
-            hooks::run_hook(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx)
+            hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config))
         {
             eprintln!("decree daemon: beforeEach hook failed for {msg_id}: {e}");
         }
@@ -271,7 +274,7 @@ fn process_single_message(
                 ..hook_ctx
             };
             if let Err(e) =
-                hooks::run_hook(project_root, &config.hooks, HookType::AfterEach, &after_ctx)
+                hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
             {
                 eprintln!("decree daemon: afterEach hook failed for {msg_id}: {e}");
             }
@@ -302,7 +305,7 @@ fn process_single_message(
             ..hook_ctx
         };
         if let Err(e) =
-            hooks::run_hook(project_root, &config.hooks, HookType::AfterEach, &after_ctx)
+            hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
         {
             eprintln!("decree daemon: afterEach hook failed for {msg_id}: {e}");
         }

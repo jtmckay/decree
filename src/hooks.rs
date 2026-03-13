@@ -1,4 +1,4 @@
-use crate::config::{self, HooksConfig};
+use crate::config::{self, AppConfig, HooksConfig};
 use crate::routine;
 use std::fmt;
 use std::path::Path;
@@ -105,28 +105,46 @@ pub fn configured_hook_names(hooks: &HooksConfig) -> Vec<(&str, HookType)> {
 ///
 /// Returns `Ok(())` if the hook ran successfully or was not configured.
 /// Returns `Err(HookError)` if the hook script failed.
+///
+/// Hooks bypass the routine registry — they only need the script to exist on disk.
 pub fn run_hook(
     project_root: &Path,
     hooks: &HooksConfig,
     hook_type: HookType,
     ctx: &HookContext,
 ) -> Result<(), HookError> {
+    run_hook_with_config(project_root, hooks, hook_type, ctx, None)
+}
+
+/// Run a lifecycle hook with optional config for layered directory lookup.
+pub fn run_hook_with_config(
+    project_root: &Path,
+    hooks: &HooksConfig,
+    hook_type: HookType,
+    ctx: &HookContext,
+    config: Option<&AppConfig>,
+) -> Result<(), HookError> {
     let routine_name = match hook_routine_name(hooks, hook_type) {
         Some(name) => name,
         None => return Ok(()),
     };
 
-    let routines_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::ROUTINES_DIR);
-
-    let script_path =
-        routine::find_routine_script(&routines_dir, routine_name).map_err(|e| HookError {
-            hook_type,
-            routine_name: routine_name.to_string(),
-            exit_code: 1,
-            message: e.to_string(),
-        })?;
+    // If we have config, use layered lookup (project + shared).
+    // Otherwise, fall back to project-local only.
+    let script_path = if let Some(cfg) = config {
+        routine::find_routine_script_layered(project_root, cfg, routine_name)
+    } else {
+        let routines_dir = project_root
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        routine::find_routine_script(&routines_dir, routine_name)
+    }
+    .map_err(|e| HookError {
+        hook_type,
+        routine_name: routine_name.to_string(),
+        exit_code: 1,
+        message: e.to_string(),
+    })?;
 
     let mut cmd = Command::new("bash");
     cmd.arg(&script_path)

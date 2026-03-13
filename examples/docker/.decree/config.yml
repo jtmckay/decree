@@ -1,10 +1,10 @@
 commands:
-  ai_router: "claude -p {prompt}"
-  ai_interactive: "claude"
+  ai_router: "opencode run {prompt}"
+  ai_interactive: "opencode"
 
 max_retries: 3
 max_depth: 10
-default_routine: transcribe
+default_routine: develop
 
 hooks:
   beforeAll: ""
@@ -13,5 +13,5 @@ hooks:
   afterEach: ""
 
 routines:
-  transcribe:
+  develop:
     enabled: true

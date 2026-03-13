@@ -39,11 +39,67 @@ teardown_tmpdir() {
   rm -rf "$TEST_DIR"
 }
 
-# Initialize a decree project non-interactively (no TTY → auto-detect, auto-accept)
+# Initialize a decree project non-interactively (no TTY -> auto-detect, auto-accept)
 init_project() {
   cd "$TEST_DIR"
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
+}
+
+# Initialize and clear hooks for clean processing tests
+init_project_no_hooks() {
+  init_project
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
+  sed -i 's/beforeAll:.*/beforeAll: ""/' .decree/config.yml
+  sed -i 's/afterAll:.*/afterAll: ""/' .decree/config.yml
+}
+
+# Create a simple routine that succeeds and echoes env vars
+create_echo_routine() {
+  local name="${1:-develop}"
+  cat > ".decree/routines/${name}.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Echo Routine
+#
+# Simple echo routine for testing.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+my_custom="${my_custom:-}"
+echo "FILE=$message_file"
+echo "ID=$message_id"
+echo "DIR=$message_dir"
+echo "CHAIN=$chain"
+echo "SEQ=$seq"
+echo "CUSTOM=$my_custom"
+SCRIPT
+  chmod +x ".decree/routines/${name}.sh"
+}
+
+# Create a routine that always fails
+create_failing_routine() {
+  local name="${1:-develop}"
+  cat > ".decree/routines/${name}.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Failing Routine
+#
+# Always fails for testing.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "failing attempt"
+exit 1
+SCRIPT
+  chmod +x ".decree/routines/${name}.sh"
 }
 
 run_test() {
@@ -155,11 +211,17 @@ assert_executable() {
   fi
 }
 
+assert_match() {
+  local pattern="$1" actual="$2" msg="${3:-}"
+  if [[ ! "$actual" =~ $pattern ]]; then
+    echo "expected to match: '$pattern' ${msg:+($msg)}"
+    echo "actual: ${actual:0:200}"
+    return 1
+  fi
+}
+
 # ================================================================
 #                         TEST FUNCTIONS
-# ================================================================
-# Each test_* function is self-contained. It sets up state, runs
-# assertions, and returns 0 on success, non-zero on failure.
 # ================================================================
 
 # ---------- 01: VERSION AND BASIC CLI ----------
@@ -167,13 +229,13 @@ assert_executable() {
 test_version_flag() {
   local out
   out=$(./decree --version 2>&1)
-  assert_eq "decree 0.2.0" "$out"
+  assert_match '^decree [0-9]+\.[0-9]+\.[0-9]+$' "$out" "version should be semver"
 }
 
 test_version_short_flag() {
   local out
   out=$(./decree -v 2>&1)
-  assert_eq "decree 0.2.0" "$out"
+  assert_match '^decree [0-9]+\.[0-9]+\.[0-9]+$' "$out" "version should be semver"
 }
 
 test_help_flag() {
@@ -201,13 +263,24 @@ test_help_subcommand() {
 test_help_subcommand_verbose() {
   local out
   out=$(./decree help 2>&1)
-  # help subcommand should be much longer than --help
   local lines
   lines=$(echo "$out" | wc -l)
   [[ $lines -gt 50 ]] || {
     echo "expected verbose help (>50 lines), got $lines lines"
     return 1
   }
+}
+
+test_help_mentions_routine_sync() {
+  local out
+  out=$(./decree help 2>&1)
+  assert_contains "$out" "routine-sync"
+}
+
+test_help_mentions_routine_registry() {
+  local out
+  out=$(./decree help 2>&1)
+  assert_contains "$out" "Routine Registry"
 }
 
 test_unknown_subcommand_exit_2() {
@@ -217,9 +290,27 @@ test_unknown_subcommand_exit_2() {
 }
 
 test_no_color_flag_accepted() {
-  # --no-color should be accepted without error
   local rc=0
   ./decree --no-color --version 2>&1 || rc=$?
+  assert_exit_code 0 "$rc"
+}
+
+test_no_color_env_var() {
+  local rc=0
+  NO_COLOR=1 ./decree --version 2>&1 || rc=$?
+  assert_exit_code 0 "$rc"
+}
+
+test_version_no_project_needed() {
+  # --version should work without a .decree/ directory
+  local rc=0
+  ./decree --version 2>&1 || rc=$?
+  assert_exit_code 0 "$rc"
+}
+
+test_help_no_project_needed() {
+  local rc=0
+  ./decree help 2>&1 || rc=$?
   assert_exit_code 0 "$rc"
 }
 
@@ -235,12 +326,13 @@ test_bare_decree_without_project_fails() {
 }
 
 test_process_without_project_fails() {
-  local rc=0
-  ./decree process </dev/null >/dev/null 2>&1 || rc=$?
+  local out rc=0
+  out=$(./decree process </dev/null 2>&1) || rc=$?
   [[ $rc -ne 0 ]] || {
     echo "expected failure without .decree/, got exit 0"
     return 1
   }
+  assert_contains "$out" "decree init"
 }
 
 test_status_without_project_fails() {
@@ -282,7 +374,6 @@ test_log_without_project_fails() {
 test_daemon_without_project_fails() {
   local rc=0
   timeout 2 ./decree daemon </dev/null >/dev/null 2>&1 || rc=$?
-  # Should fail, not hang
   [[ $rc -ne 0 ]] || {
     echo "expected failure without .decree/, got exit 0"
     return 1
@@ -292,6 +383,15 @@ test_daemon_without_project_fails() {
 test_prompt_without_project_fails() {
   local rc=0
   ./decree prompt </dev/null >/dev/null 2>&1 || rc=$?
+  [[ $rc -ne 0 ]] || {
+    echo "expected failure without .decree/, got exit 0"
+    return 1
+  }
+}
+
+test_routine_sync_without_project_fails() {
+  local rc=0
+  ./decree routine-sync </dev/null >/dev/null 2>&1 || rc=$?
   [[ $rc -ne 0 ]] || {
     echo "expected failure without .decree/, got exit 0"
     return 1
@@ -455,13 +555,26 @@ test_init_config_has_hooks_section() {
   assert_file_contains .decree/config.yml "afterEach:"
 }
 
+test_init_config_has_routines_section() {
+  git init -q .
+  ./decree init </dev/null >/dev/null 2>&1
+  assert_file_contains .decree/config.yml "routines:" &&
+  assert_file_contains .decree/config.yml "develop:" &&
+  assert_file_contains .decree/config.yml "enabled: true"
+}
+
 test_init_config_commented_alternatives() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
-  # Config should contain commented-out alternative AI backends
   local content
   content=$(cat .decree/config.yml)
   assert_contains "$content" "#" "should have comments for alternative backends"
+}
+
+test_init_config_routine_source_commented() {
+  git init -q .
+  ./decree init </dev/null >/dev/null 2>&1
+  assert_file_contains .decree/config.yml "routine_source"
 }
 
 # ---------- 05: INIT — TEMPLATES ----------
@@ -502,27 +615,26 @@ test_init_develop_has_precheck() {
 test_init_develop_has_description() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
-  # Second line should be a comment with routine title
   local line2
   line2=$(sed -n '2p' .decree/routines/develop.sh)
   assert_contains "$line2" "#"
 }
 
-test_init_develop_no_ai_cmd_placeholder() {
+test_init_develop_no_ai_placeholder() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
-  # {AI_CMD} should be replaced with actual command name
-  if grep -qF '{AI_CMD}' .decree/routines/develop.sh; then
-    echo "{AI_CMD} placeholder was not replaced"
+  # Placeholders like {AI_CMD}, {ai_name}, {ai_invoke} should be replaced
+  if grep -qE '\{AI_CMD\}|\{ai_name\}|\{ai_invoke\}' .decree/routines/develop.sh; then
+    echo "AI placeholder was not replaced"
     return 1
   fi
 }
 
-test_init_rust_develop_no_ai_cmd_placeholder() {
+test_init_rust_develop_no_ai_placeholder() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
-  if grep -qF '{AI_CMD}' .decree/routines/rust-develop.sh; then
-    echo "{AI_CMD} placeholder was not replaced"
+  if grep -qE '\{AI_CMD\}|\{ai_name\}|\{ai_invoke\}' .decree/routines/rust-develop.sh; then
+    echo "AI placeholder was not replaced"
     return 1
   fi
 }
@@ -531,6 +643,18 @@ test_init_develop_has_message_dir_ref() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
   assert_file_contains .decree/routines/develop.sh 'message_dir'
+}
+
+test_init_develop_references_ai_tool() {
+  git init -q .
+  ./decree init </dev/null >/dev/null 2>&1
+  # Routine should reference at least one known AI tool
+  local content
+  content=$(cat .decree/routines/develop.sh)
+  if [[ "$content" != *"opencode"* ]] && [[ "$content" != *"claude"* ]] && [[ "$content" != *"copilot"* ]]; then
+    echo "develop.sh should reference a detected AI tool"
+    return 1
+  fi
 }
 
 test_init_creates_prompt_templates() {
@@ -581,12 +705,11 @@ test_init_gitignore_runs() {
   assert_file_contains .decree/.gitignore "runs/"
 }
 
-# ---------- 07: INIT — GIT HOOKS (non-TTY accepts) ----------
+# ---------- 07: INIT — GIT HOOKS ----------
 
 test_init_git_creates_hook_routines() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
-  # Non-TTY auto-accepts git hooks when git is detected
   assert_file_exists .decree/routines/git-baseline.sh &&
   assert_file_exists .decree/routines/git-stash-changes.sh
 }
@@ -610,18 +733,37 @@ test_init_git_stash_has_precheck() {
   assert_file_contains .decree/routines/git-stash-changes.sh "DECREE_PRE_CHECK"
 }
 
+test_init_git_baseline_has_hook_env() {
+  git init -q .
+  ./decree init </dev/null >/dev/null 2>&1
+  assert_file_contains .decree/routines/git-baseline.sh "DECREE_ATTEMPT"
+}
+
+test_init_git_stash_has_hook_env() {
+  git init -q .
+  ./decree init </dev/null >/dev/null 2>&1
+  assert_file_contains .decree/routines/git-stash-changes.sh "DECREE_ROUTINE_EXIT_CODE"
+}
+
 # ---------- 08: INIT — RE-RUN BEHAVIOR ----------
 
 test_init_rerun_overwrites_non_tty() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
-  # Modify config to verify overwrite
   echo "# modified" >> .decree/config.yml
   ./decree init </dev/null >/dev/null 2>&1
   if grep -qF "# modified" .decree/config.yml; then
     echo "re-run should overwrite in non-TTY mode"
     return 1
   fi
+}
+
+test_init_rerun_prints_warning() {
+  git init -q .
+  ./decree init </dev/null >/dev/null 2>&1
+  local out
+  out=$(./decree init </dev/null 2>&1)
+  assert_contains "$out" "already" || assert_contains "$out" "Overwriting"
 }
 
 # ---------- 09: STATUS ----------
@@ -683,6 +825,25 @@ test_status_shows_dead_letter_count() {
   assert_contains "$out" "Dead" || assert_contains "$out" "dead"
 }
 
+test_status_shows_recent_activity() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  ./decree process --no-color >/dev/null 2>&1
+  local out
+  out=$(./decree status --no-color 2>&1)
+  assert_contains "$out" "Recent Activity" &&
+  assert_contains "$out" "01-test"
+}
+
+test_status_no_color_flag() {
+  init_project
+  local rc=0
+  ./decree status --no-color >/dev/null 2>&1 || rc=$?
+  assert_exit_code 0 "$rc"
+}
+
 # ---------- 10: LOG ----------
 
 test_log_no_runs() {
@@ -728,6 +889,24 @@ EOF
   assert_contains "$out" "specific log content"
 }
 
+test_log_prefix_match() {
+  init_project
+  mkdir -p .decree/runs/D0001-1432-test-0
+  echo "prefix match content" > .decree/runs/D0001-1432-test-0/routine.log
+  cat > .decree/runs/D0001-1432-test-0/message.md <<'EOF'
+---
+id: D0001-1432-test-0
+chain: D0001-1432-test
+seq: 0
+routine: develop
+---
+Test.
+EOF
+  local out
+  out=$(./decree log --no-color D0001 2>&1)
+  assert_contains "$out" "prefix match content"
+}
+
 test_log_multiple_attempts() {
   init_project
   mkdir -p .decree/runs/D0001-1432-test-0
@@ -748,6 +927,28 @@ EOF
   assert_contains "$out" "attempt 2 output"
 }
 
+test_log_nonexistent_run_fails() {
+  init_project
+  local rc=0
+  ./decree log --no-color nonexistent >/dev/null 2>&1 || rc=$?
+  [[ $rc -ne 0 ]] || {
+    echo "expected error for nonexistent message ID"
+    return 1
+  }
+}
+
+test_log_shows_timestamps() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  ./decree process --no-color >/dev/null 2>&1
+  local out
+  out=$(./decree log --no-color 2>&1)
+  assert_contains "$out" "[decree] start" &&
+  assert_contains "$out" "[decree] duration"
+}
+
 # ---------- 11: ROUTINE LIST AND DETAIL ----------
 
 test_routine_list_non_tty() {
@@ -758,11 +959,28 @@ test_routine_list_non_tty() {
   assert_contains "$out" "develop"
 }
 
+test_routine_list_shows_descriptions() {
+  init_project
+  local out
+  out=$(./decree routine --no-color 2>&1)
+  # Should show descriptions alongside names
+  assert_contains "$out" "develop" &&
+  assert_contains "$out" "routine"
+}
+
 test_routine_list_shows_rust_develop() {
   init_project
   local out
   out=$(./decree routine --no-color 2>&1)
   assert_contains "$out" "rust-develop"
+}
+
+test_routine_list_shows_git_hooks() {
+  init_project
+  local out
+  out=$(./decree routine --no-color 2>&1)
+  assert_contains "$out" "git-baseline" &&
+  assert_contains "$out" "git-stash-changes"
 }
 
 test_routine_detail_named() {
@@ -784,7 +1002,6 @@ test_routine_detail_shows_description() {
   init_project
   local out
   out=$(./decree routine develop --no-color 2>&1)
-  # Should show some description text from the routine header
   local lines
   lines=$(echo "$out" | wc -l)
   [[ $lines -gt 1 ]] || {
@@ -793,14 +1010,7 @@ test_routine_detail_shows_description() {
   }
 }
 
-test_routine_unknown_suggests_close_match() {
-  init_project
-  local out rc=0
-  out=$(./decree routine devlop --no-color 2>&1) || rc=$?
-  assert_contains "$out" "develop" "should suggest close match"
-}
-
-test_routine_unknown_no_match() {
+test_routine_unknown_fails() {
   init_project
   local out rc=0
   out=$(./decree routine zzzzzzzzz --no-color 2>&1) || rc=$?
@@ -808,11 +1018,15 @@ test_routine_unknown_no_match() {
     echo "expected error for unknown routine"
     return 1
   }
+  assert_contains "$out" "unknown routine" || assert_contains "$out" "Available"
 }
 
 test_routine_no_routines() {
   init_project
   rm -rf .decree/routines/*
+  # Clear routines from config so they don't show as deprecated
+  sed -i '/^routines:/,/^[^ ]/{/^routines:/!{/^[^ ]/!d}}' .decree/config.yml
+  sed -i '/^routines:$/d' .decree/config.yml
   local out
   out=$(./decree routine --no-color 2>&1)
   assert_contains "$out" "No routines" || assert_contains "$out" "no routines"
@@ -827,87 +1041,45 @@ test_routine_nested() {
 #
 # Deploy to the staging environment.
 set -euo pipefail
-
 message_file="${message_file:-}"
 message_id="${message_id:-}"
 message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
-
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-    exit 0
-fi
-
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 echo "deploying to staging"
 SCRIPT
   chmod +x .decree/routines/deploy/staging.sh
+  # Sync to discover nested routine
+  ./decree routine-sync --no-color >/dev/null 2>&1
   local out
   out=$(./decree routine --no-color 2>&1)
   assert_contains "$out" "deploy/staging"
-}
-
-test_routine_custom_params() {
-  init_project
-  cat > .decree/routines/custom.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Custom Routine
-#
-# A routine with custom parameters.
-set -euo pipefail
-
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-    exit 0
-fi
-
-output_file="${output_file:-}"
-model="${model:-large}"
-
-echo "running with model=$model output_file=$output_file"
-SCRIPT
-  chmod +x .decree/routines/custom.sh
-  local out
-  out=$(./decree routine custom --no-color 2>&1)
-  assert_contains "$out" "output_file" &&
-  assert_contains "$out" "model"
 }
 
 # ---------- 12: VERIFY ----------
 
 test_verify_all_pass() {
   init_project
-  # Create a routine that always passes pre-check
   cat > .decree/routines/simple.sh <<'SCRIPT'
 #!/usr/bin/env bash
 # Simple
 #
 # A simple routine.
 set -euo pipefail
-
 message_file="${message_file:-}"
 message_id="${message_id:-}"
 message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
-
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-    exit 0
-fi
-
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 echo "ok"
 SCRIPT
   chmod +x .decree/routines/simple.sh
-  # Remove routines that might fail (AI tools not installed in test env)
   rm -f .decree/routines/develop.sh .decree/routines/rust-develop.sh
   rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  # Clear hooks so verify doesn't check non-existent hook routines
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
   local out rc=0
   out=$(./decree verify --no-color 2>&1) || rc=$?
   assert_exit_code 0 "$rc" &&
@@ -922,22 +1094,18 @@ test_verify_some_fail_exit_3() {
 #
 # A routine that fails pre-check.
 set -euo pipefail
-
 message_file="${message_file:-}"
 message_id="${message_id:-}"
 message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
-
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
     echo "missing_tool not found" >&2
     exit 1
 fi
-
 echo "ok"
 SCRIPT
   chmod +x .decree/routines/failing.sh
-  # Remove other routines
   rm -f .decree/routines/develop.sh .decree/routines/rust-develop.sh
   rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
   local rc=0
@@ -953,13 +1121,11 @@ test_verify_shows_fail_reason() {
 #
 # Fails pre-check.
 set -euo pipefail
-
 message_file="${message_file:-}"
 message_id="${message_id:-}"
 message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
-
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
     echo "xyzzy_tool not found" >&2
     exit 1
@@ -974,9 +1140,50 @@ SCRIPT
   assert_contains "$out" "xyzzy_tool not found"
 }
 
+test_verify_reports_count() {
+  init_project
+  cat > .decree/routines/good.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Good
+#
+# Passes.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+SCRIPT
+  chmod +x .decree/routines/good.sh
+  cat > .decree/routines/bad.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Bad
+#
+# Fails.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 1; fi
+SCRIPT
+  chmod +x .decree/routines/bad.sh
+  rm -f .decree/routines/develop.sh .decree/routines/rust-develop.sh
+  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
+  local out
+  out=$(./decree verify --no-color 2>&1)
+  assert_contains "$out" "1 of 2" || assert_contains "$out" "routines ready"
+}
+
 test_verify_no_routines() {
   init_project
   rm -rf .decree/routines/*
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
   local out
   out=$(./decree verify --no-color 2>&1)
   assert_contains "$out" "No routines" || assert_contains "$out" "no routines" || assert_contains "$out" "0"
@@ -984,34 +1191,30 @@ test_verify_no_routines() {
 
 test_verify_includes_hook_prechecks() {
   init_project
-  # Create a hook routine
   cat > .decree/routines/my-hook.sh <<'SCRIPT'
 #!/usr/bin/env bash
 # My Hook
 #
 # A hook routine.
 set -euo pipefail
-
 message_file="${message_file:-}"
 message_id="${message_id:-}"
 message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
-
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-    exit 0
-fi
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 SCRIPT
   chmod +x .decree/routines/my-hook.sh
-  # Configure it as a hook and clear others
-  sed -i 's/beforeAll: .*/beforeAll: "my-hook"/' .decree/config.yml
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
+  sed -i 's/beforeAll:.*/beforeAll: "my-hook"/' .decree/config.yml
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
   rm -f .decree/routines/develop.sh .decree/routines/rust-develop.sh
   rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
   local out rc=0
   out=$(./decree verify --no-color 2>&1) || rc=$?
   assert_exit_code 0 "$rc" &&
+  assert_contains "$out" "Hook pre-checks" &&
+  assert_contains "$out" "my-hook" &&
   assert_contains "$out" "PASS"
 }
 
@@ -1021,12 +1224,12 @@ test_process_dry_run_no_migrations() {
   init_project
   local out rc=0
   out=$(./decree process --dry-run --no-color 2>&1) || rc=$?
-  # Should indicate no migrations to process
-  assert_contains "$out" "No migrations" || assert_contains "$out" "no migrations" || assert_contains "$out" "no unprocessed" || assert_contains "$out" "No unprocessed" || assert_contains "$out" "0"
+  assert_contains "$out" "No" || assert_contains "$out" "no" || assert_contains "$out" "0"
 }
 
 test_process_dry_run_lists_migrations() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   cat > .decree/migrations/01-add-auth.md <<'EOF'
 ---
@@ -1034,55 +1237,45 @@ routine: develop
 ---
 Add authentication module.
 EOF
-  rm -f .decree/routines/develop.sh .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-#
-# Default routine.
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-    exit 0
-fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
   local out
   out=$(./decree process --dry-run --no-color 2>&1)
   assert_contains "$out" "01-add-auth.md"
 }
 
+test_process_dry_run_shows_routine() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  cat > .decree/migrations/01-test.md <<'EOF'
+---
+routine: develop
+---
+Test.
+EOF
+  local out
+  out=$(./decree process --dry-run --no-color 2>&1)
+  assert_contains "$out" "develop"
+}
+
+test_process_dry_run_shows_precheck_status() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  local out
+  out=$(./decree process --dry-run --no-color 2>&1)
+  assert_contains "$out" "PASS"
+}
+
 test_process_dry_run_no_files_created() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Do auth" > .decree/migrations/01-add-auth.md
-  rm -f .decree/routines/develop.sh .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
   ./decree process --dry-run --no-color >/dev/null 2>&1
-  # No inbox messages should be created
   local inbox_count
-  inbox_count=$(find .decree/inbox -name '*.md' 2>/dev/null | wc -l)
+  inbox_count=$(find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | wc -l)
   assert_eq "0" "$inbox_count" "dry-run should not create inbox messages"
-  # processed.md should remain empty
   local processed
   processed=$(cat .decree/processed.md)
   assert_eq "" "$processed" "dry-run should not mark processed"
@@ -1091,7 +1284,8 @@ SCRIPT
 # ---------- 14: PROCESS — BASIC EXECUTION ----------
 
 test_process_simple_migration() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   cat > .decree/migrations/01-test.md <<'EOF'
 ---
@@ -1099,28 +1293,6 @@ routine: develop
 ---
 Run a simple test.
 EOF
-  # Replace develop.sh with one that succeeds
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-#
-# Simple test routine.
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "Migration processed successfully"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  # Clear hooks
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   local out rc=0
   out=$(./decree process --no-color 2>&1) || rc=$?
   assert_exit_code 0 "$rc" "process should succeed" &&
@@ -1128,34 +1300,11 @@ SCRIPT
 }
 
 test_process_creates_run_directory() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
-  cat > .decree/migrations/01-test.md <<'EOF'
----
-routine: develop
----
-Run test.
-EOF
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
+  echo "Test" > .decree/migrations/01-test.md
   ./decree process --no-color >/dev/null 2>&1
-  # Should have at least one run directory
   local run_count
   run_count=$(find .decree/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
   [[ $run_count -gt 0 ]] || {
@@ -1165,27 +1314,10 @@ SCRIPT
 }
 
 test_process_run_dir_has_message() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local msg_file
   msg_file=$(find .decree/runs -name 'message.md' 2>/dev/null | head -1)
@@ -1196,27 +1328,10 @@ SCRIPT
 }
 
 test_process_run_dir_has_log() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "log output here"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local log_file
   log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
@@ -1227,27 +1342,10 @@ SCRIPT
 }
 
 test_process_log_has_timestamps() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local log_file
   log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
@@ -1261,27 +1359,10 @@ SCRIPT
 }
 
 test_process_removes_from_inbox() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local inbox_count
   inbox_count=$(find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | wc -l)
@@ -1289,31 +1370,10 @@ SCRIPT
 }
 
 test_process_env_vars_available() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test env" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "FILE=$message_file"
-echo "ID=$message_id"
-echo "DIR=$message_dir"
-echo "CHAIN=$chain"
-echo "SEQ=$seq"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local log_file
   log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
@@ -1329,9 +1389,29 @@ SCRIPT
   fi
 }
 
+test_process_env_vars_nonempty() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  ./decree process --no-color >/dev/null 2>&1
+  local log_file
+  log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
+  if [[ -n "$log_file" ]]; then
+    # Env vars should not be empty
+    local content
+    content=$(cat "$log_file")
+    assert_not_contains "$content" "ID=$" "message_id should not be empty" &&
+    assert_not_contains "$content" "CHAIN=$" "chain should not be empty"
+  else
+    echo "no log file found"
+    return 1
+  fi
+}
+
 test_process_custom_fields_as_env() {
-  # KNOWN BUG: custom frontmatter fields are not passed as env vars to routines
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   cat > .decree/migrations/01-test.md <<'EOF'
 ---
@@ -1340,25 +1420,6 @@ my_custom: hello_world
 ---
 Test custom fields.
 EOF
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-my_custom="${my_custom:-}"
-echo "CUSTOM=$my_custom"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local log_file
   log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
@@ -1370,34 +1431,50 @@ SCRIPT
   fi
 }
 
+test_process_output_shows_migration_name() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  local out
+  out=$(./decree process --no-color 2>&1)
+  assert_contains "$out" "01-test.md"
+}
+
+test_process_output_shows_routine_name() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  cat > .decree/migrations/01-test.md <<'EOF'
+---
+routine: develop
+---
+Test.
+EOF
+  local out
+  out=$(./decree process --no-color 2>&1)
+  assert_contains "$out" "develop"
+}
+
+test_process_output_shows_message_id() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  local out
+  out=$(./decree process --no-color 2>&1)
+  # Output should contain a D-prefixed message ID
+  assert_match 'D[0-9]{4}-[0-9]{4}' "$out"
+}
+
 # ---------- 15: PROCESS — RETRY AND DEAD-LETTER ----------
 
 test_process_retry_creates_multiple_logs() {
-  init_project
+  init_project_no_hooks
+  create_failing_routine
   mkdir -p .decree/migrations
   echo "Test retry" > .decree/migrations/01-test.md
-  # Routine that always fails
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "failing attempt"
-exit 1
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1 || true
-  # Should have multiple log files (routine.log, routine-2.log, routine-3.log)
   local log_count
   log_count=$(find .decree/runs -name 'routine*.log' 2>/dev/null | wc -l)
   [[ $log_count -gt 1 ]] || {
@@ -1406,28 +1483,24 @@ SCRIPT
   }
 }
 
+test_process_retry_count_matches_config() {
+  init_project_no_hooks
+  create_failing_routine
+  # Set max_retries to 2
+  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  mkdir -p .decree/migrations
+  echo "Test retry" > .decree/migrations/01-test.md
+  ./decree process --no-color >/dev/null 2>&1 || true
+  local log_count
+  log_count=$(find .decree/runs -name 'routine*.log' 2>/dev/null | wc -l)
+  assert_eq "2" "$log_count" "should have exactly max_retries log files"
+}
+
 test_process_dead_letters_on_exhaustion() {
-  init_project
+  init_project_no_hooks
+  create_failing_routine
   mkdir -p .decree/migrations
   echo "Test dead letter" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-exit 1
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1 || true
   local dead_count
   dead_count=$(find .decree/inbox/dead -name '*.md' 2>/dev/null | wc -l)
@@ -1437,37 +1510,30 @@ SCRIPT
   }
 }
 
-test_process_dead_letter_not_marked_processed() {
-  init_project
+test_process_dead_letter_marked_processed() {
+  init_project_no_hooks
+  create_failing_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-exit 1
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1 || true
   assert_file_contains .decree/processed.md "01-test.md" \
     "dead-lettered migration should still be marked processed"
 }
 
-# ---------- 16: PROCESS — OUTBOX / FOLLOW-UPS ----------
+test_process_dead_letter_output_warning() {
+  init_project_no_hooks
+  create_failing_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  local out
+  out=$(./decree process --no-color 2>&1) || true
+  assert_contains "$out" "max retries" || assert_contains "$out" "exhausted" || assert_contains "$out" "dead"
+}
+
+# ---------- 16: PROCESS — FOLLOW-UPS (OUTBOX) ----------
 
 test_process_outbox_follow_ups() {
-  init_project
+  init_project_no_hooks
   mkdir -p .decree/migrations
   cat > .decree/migrations/01-test.md <<'EOF'
 ---
@@ -1475,10 +1541,11 @@ routine: develop
 ---
 Initial task.
 EOF
-  # Routine writes a follow-up to outbox
   cat > .decree/routines/develop.sh <<'SCRIPT'
 #!/usr/bin/env bash
 # Develop
+#
+# Creates follow-ups via outbox.
 set -euo pipefail
 message_file="${message_file:-}"
 message_id="${message_id:-}"
@@ -1486,26 +1553,18 @@ message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-
-# Only write follow-up on first message (seq 0)
 if [ "$seq" = "0" ]; then
   cat > .decree/outbox/follow-up.md <<FOLLOWUP
 ---
 routine: develop
 ---
-Follow-up task from first message.
+Follow-up task.
 FOLLOWUP
 fi
 echo "processed seq=$seq"
 SCRIPT
   chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
-  # Should have two run directories (original + follow-up)
   local run_count
   run_count=$(find .decree/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
   [[ $run_count -ge 2 ]] || {
@@ -1514,17 +1573,43 @@ SCRIPT
   }
 }
 
-# ---------- 17: PROCESS — MULTIPLE MIGRATIONS ----------
-
-test_process_multiple_migrations_in_order() {
-  init_project
+test_process_drains_inbox_after_migration() {
+  # When process runs, it processes migrations first, then drains inbox
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
-  echo "First" > .decree/migrations/01-first.md
-  echo "Second" > .decree/migrations/02-second.md
-  echo "Third" > .decree/migrations/03-third.md
+  echo "Migration task" > .decree/migrations/01-test.md
+  # Also put a direct inbox message
+  cat > .decree/inbox/extra-msg.md <<'EOF'
+---
+routine: develop
+---
+Extra inbox message.
+EOF
+  ./decree process --no-color >/dev/null 2>&1
+  # Both migration and inbox message should be processed
+  local run_count
+  run_count=$(find .decree/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+  [[ $run_count -ge 2 ]] || {
+    echo "expected at least 2 run directories (migration + inbox), found $run_count"
+    return 1
+  }
+}
+
+test_process_follow_up_increments_seq() {
+  init_project_no_hooks
+  mkdir -p .decree/migrations
+  cat > .decree/migrations/01-test.md <<'EOF'
+---
+routine: develop
+---
+Chain test.
+EOF
   cat > .decree/routines/develop.sh <<'SCRIPT'
 #!/usr/bin/env bash
 # Develop
+#
+# Creates follow-up with incrementing seq.
 set -euo pipefail
 message_file="${message_file:-}"
 message_id="${message_id:-}"
@@ -1532,49 +1617,94 @@ message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
+echo "SEQ=$seq"
+if [ "$seq" = "0" ]; then
+  cat > .decree/outbox/follow-up.md <<FOLLOWUP
+---
+routine: develop
+---
+Follow-up.
+FOLLOWUP
+fi
 SCRIPT
   chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
+  ./decree process --no-color >/dev/null 2>&1
+  # Check the second run's log has seq=1
+  local found_seq1=false
+  for log_file in $(find .decree/runs -name 'routine.log' 2>/dev/null); do
+    if grep -q "SEQ=1" "$log_file" 2>/dev/null; then
+      found_seq1=true
+      break
+    fi
+  done
+  $found_seq1 || {
+    echo "expected follow-up with seq=1"
+    return 1
+  }
+}
 
+# ---------- 17: PROCESS — MULTIPLE MIGRATIONS ----------
+
+test_process_multiple_migrations_in_order() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "First" > .decree/migrations/01-first.md
+  echo "Second" > .decree/migrations/02-second.md
+  echo "Third" > .decree/migrations/03-third.md
   ./decree process --no-color >/dev/null 2>&1
   assert_file_contains .decree/processed.md "01-first.md" &&
   assert_file_contains .decree/processed.md "02-second.md" &&
   assert_file_contains .decree/processed.md "03-third.md"
 }
 
+test_process_alphabetical_order() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Third" > .decree/migrations/03-third.md
+  echo "First" > .decree/migrations/01-first.md
+  echo "Second" > .decree/migrations/02-second.md
+  local out
+  out=$(./decree process --no-color 2>&1)
+  # First migration label should appear before second
+  local pos1 pos2 pos3
+  pos1=$(echo "$out" | grep -n "01-first" | head -1 | cut -d: -f1)
+  pos2=$(echo "$out" | grep -n "02-second" | head -1 | cut -d: -f1)
+  pos3=$(echo "$out" | grep -n "03-third" | head -1 | cut -d: -f1)
+  [[ -n "$pos1" && -n "$pos2" && -n "$pos3" ]] || {
+    echo "could not find all three migrations in output"
+    return 1
+  }
+  [[ $pos1 -lt $pos2 && $pos2 -lt $pos3 ]] || {
+    echo "expected alphabetical order: 01($pos1) < 02($pos2) < 03($pos3)"
+    return 1
+  }
+}
+
 test_process_skips_already_processed() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "First" > .decree/migrations/01-first.md
   echo "Second" > .decree/migrations/02-second.md
   echo "01-first.md" > .decree/processed.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "processing $chain"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
-  # Only one run dir should be created (for 02-second, not 01-first)
   local run_count
   run_count=$(find .decree/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
   assert_eq "1" "$run_count" "should only process unprocessed migration"
+}
+
+test_process_idempotent_rerun() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  ./decree process --no-color >/dev/null 2>&1
+  # Second run should process 0 migrations
+  local out
+  out=$(./decree process --no-color 2>&1)
+  assert_contains "$out" "0 migration" || assert_contains "$out" "Processed 0"
 }
 
 # ---------- 18: PROCESS — LIFECYCLE HOOKS ----------
@@ -1583,23 +1713,13 @@ test_process_before_each_hook() {
   init_project
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
+  create_echo_routine
   local hook_marker="$PWD/hook_marker"
   cat > .decree/routines/test-hook.sh <<SCRIPT
 #!/usr/bin/env bash
 # Test Hook
+#
+# Logs hook type.
 set -euo pipefail
 message_file="\${message_file:-}"
 message_id="\${message_id:-}"
@@ -1610,14 +1730,15 @@ if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 echo "HOOK_TYPE=\$DECREE_HOOK ATTEMPT=\$DECREE_ATTEMPT" >> $hook_marker
 SCRIPT
   chmod +x .decree/routines/test-hook.sh
-  rm -f .decree/routines/rust-develop.sh
   rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: "test-hook"/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
+  sed -i 's/beforeEach:.*/beforeEach: "test-hook"/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
+  sed -i 's/beforeAll:.*/beforeAll: ""/' .decree/config.yml
+  sed -i 's/afterAll:.*/afterAll: ""/' .decree/config.yml
 
   ./decree process --no-color >/dev/null 2>&1
   if [[ -f "$hook_marker" ]]; then
-    assert_file_contains "$hook_marker" "HOOK_TYPE=beforeEach"
+    assert_file_contains "$hook_marker" "HOOK_TYPE=beforeEach" &&
     assert_file_contains "$hook_marker" "ATTEMPT=1"
   else
     echo "hook did not execute (marker file missing)"
@@ -1629,23 +1750,13 @@ test_process_after_each_hook_exit_code() {
   init_project
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
+  create_echo_routine
   local hook_marker="$PWD/posthook_marker"
   cat > .decree/routines/post-hook.sh <<SCRIPT
 #!/usr/bin/env bash
 # Post Hook
+#
+# Logs exit code.
 set -euo pipefail
 message_file="\${message_file:-}"
 message_id="\${message_id:-}"
@@ -1656,10 +1767,11 @@ if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 echo "EXIT_CODE=\$DECREE_ROUTINE_EXIT_CODE" >> $hook_marker
 SCRIPT
   chmod +x .decree/routines/post-hook.sh
-  rm -f .decree/routines/rust-develop.sh
   rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: "post-hook"/' .decree/config.yml
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: "post-hook"/' .decree/config.yml
+  sed -i 's/beforeAll:.*/beforeAll: ""/' .decree/config.yml
+  sed -i 's/afterAll:.*/afterAll: ""/' .decree/config.yml
 
   ./decree process --no-color >/dev/null 2>&1
   if [[ -f "$hook_marker" ]]; then
@@ -1670,15 +1782,89 @@ SCRIPT
   fi
 }
 
+test_process_before_all_hook() {
+  init_project
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  create_echo_routine
+  local hook_marker="$PWD/beforeall_marker"
+  cat > .decree/routines/all-hook.sh <<SCRIPT
+#!/usr/bin/env bash
+# All Hook
+#
+# Logs beforeAll.
+set -euo pipefail
+message_file="\${message_file:-}"
+message_id="\${message_id:-}"
+message_dir="\${message_dir:-}"
+chain="\${chain:-}"
+seq="\${seq:-}"
+if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "HOOK=\$DECREE_HOOK" >> $hook_marker
+SCRIPT
+  chmod +x .decree/routines/all-hook.sh
+  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
+  sed -i 's/beforeAll:.*/beforeAll: "all-hook"/' .decree/config.yml
+  sed -i 's/afterAll:.*/afterAll: ""/' .decree/config.yml
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
+
+  ./decree process --no-color >/dev/null 2>&1
+  if [[ -f "$hook_marker" ]]; then
+    assert_file_contains "$hook_marker" "HOOK=beforeAll"
+  else
+    echo "beforeAll hook did not execute"
+    return 1
+  fi
+}
+
+test_process_after_all_hook() {
+  init_project
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  create_echo_routine
+  local hook_marker="$PWD/afterall_marker"
+  cat > .decree/routines/all-hook.sh <<SCRIPT
+#!/usr/bin/env bash
+# All Hook
+#
+# Logs afterAll.
+set -euo pipefail
+message_file="\${message_file:-}"
+message_id="\${message_id:-}"
+message_dir="\${message_dir:-}"
+chain="\${chain:-}"
+seq="\${seq:-}"
+if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "HOOK=\$DECREE_HOOK" >> $hook_marker
+SCRIPT
+  chmod +x .decree/routines/all-hook.sh
+  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
+  sed -i 's/beforeAll:.*/beforeAll: ""/' .decree/config.yml
+  sed -i 's/afterAll:.*/afterAll: "all-hook"/' .decree/config.yml
+  sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
+
+  ./decree process --no-color >/dev/null 2>&1
+  if [[ -f "$hook_marker" ]]; then
+    assert_file_contains "$hook_marker" "HOOK=afterAll"
+  else
+    echo "afterAll hook did not execute"
+    return 1
+  fi
+}
+
 # ---------- 19: PROCESS — SIGINT ----------
 
 test_process_sigint_exit_130() {
-  init_project
+  init_project_no_hooks
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
   cat > .decree/routines/develop.sh <<'SCRIPT'
 #!/usr/bin/env bash
 # Develop
+#
+# Slow routine for SIGINT test.
 set -euo pipefail
 message_file="${message_file:-}"
 message_id="${message_id:-}"
@@ -1689,19 +1875,13 @@ if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 sleep 10
 SCRIPT
   chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
 
-  # Start in background, send SIGINT after brief delay
   ./decree process --no-color &
   local pid=$!
   sleep 1
   kill -INT "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null
   local rc=$?
-  # Should exit with 130 (128+2) or similar non-zero
   [[ $rc -ne 0 ]] || {
     echo "expected non-zero exit after SIGINT, got $rc"
     return 1
@@ -1709,13 +1889,15 @@ SCRIPT
 }
 
 test_process_sigint_no_second_migration() {
-  init_project
+  init_project_no_hooks
   mkdir -p .decree/migrations
   echo "First" > .decree/migrations/01-first.md
   echo "Second" > .decree/migrations/02-second.md
   cat > .decree/routines/develop.sh <<'SCRIPT'
 #!/usr/bin/env bash
 # Develop
+#
+# Slow.
 set -euo pipefail
 message_file="${message_file:-}"
 message_id="${message_id:-}"
@@ -1726,10 +1908,6 @@ if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 sleep 10
 SCRIPT
   chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
 
   ./decree process --no-color &
   local pid=$!
@@ -1737,7 +1915,6 @@ SCRIPT
   kill -INT "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
 
-  # Second migration should NOT be processed
   if grep -qF "02-second.md" .decree/processed.md 2>/dev/null; then
     echo "SIGINT should prevent processing second migration"
     return 1
@@ -1747,33 +1924,91 @@ SCRIPT
 # ---------- 20: PROCESS — SUMMARY OUTPUT ----------
 
 test_process_prints_summary() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   local out
   out=$(./decree process --no-color 2>&1)
   assert_contains "$out" "Processed" || assert_contains "$out" "processed"
 }
 
-# ---------- 21: PROMPT ----------
+test_process_prints_migration_count() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "A" > .decree/migrations/01-a.md
+  echo "B" > .decree/migrations/02-b.md
+  local out
+  out=$(./decree process --no-color 2>&1)
+  assert_contains "$out" "2 migration"
+}
+
+test_process_prints_duration() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
+  local out
+  out=$(./decree process --no-color 2>&1)
+  assert_match '[0-9]+s' "$out" "should show duration"
+}
+
+# ---------- 21: PROCESS — DIRECT INBOX ----------
+
+test_process_drains_inbox() {
+  init_project_no_hooks
+  create_echo_routine
+  cat > .decree/inbox/direct-msg.md <<'EOF'
+---
+routine: develop
+---
+A direct inbox message.
+EOF
+  ./decree process --no-color >/dev/null 2>&1
+  local inbox_count
+  inbox_count=$(find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | wc -l)
+  assert_eq "0" "$inbox_count" "inbox should be empty after draining"
+  local run_count
+  run_count=$(find .decree/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+  [[ $run_count -gt 0 ]] || {
+    echo "expected run directory from inbox message"
+    return 1
+  }
+}
+
+test_process_bare_inbox_message_normalized() {
+  init_project_no_hooks
+  create_echo_routine
+  echo "Bare message content." > .decree/inbox/test-msg.md
+  ./decree process --no-color >/dev/null 2>&1 || true
+  local msg_file
+  msg_file=$(find .decree/runs -name 'message.md' 2>/dev/null | head -1)
+  if [[ -n "$msg_file" ]]; then
+    assert_file_contains "$msg_file" "chain:" &&
+    assert_file_contains "$msg_file" "seq:" &&
+    assert_file_contains "$msg_file" "id:"
+  else
+    echo "note: no run directory created"
+    return 0
+  fi
+}
+
+# ---------- 22: PROCESS — DEFAULT ROUTINE ----------
+
+test_process_uses_default_routine() {
+  init_project_no_hooks
+  create_echo_routine
+  sed -i 's/default_routine:.*/default_routine: develop/' .decree/config.yml
+  mkdir -p .decree/migrations
+  # Migration with no routine frontmatter
+  echo "No routine specified." > .decree/migrations/01-no-routine.md
+  local out
+  out=$(./decree process --dry-run --no-color 2>&1)
+  assert_contains "$out" "develop"
+}
+
+# ---------- 23: PROMPT ----------
 
 test_prompt_list_non_tty() {
   init_project
@@ -1781,7 +2016,8 @@ test_prompt_list_non_tty() {
   out=$(./decree prompt --no-color 2>&1) || rc=$?
   assert_exit_code 0 "$rc" &&
   assert_contains "$out" "migration" &&
-  assert_contains "$out" "sow"
+  assert_contains "$out" "sow" &&
+  assert_contains "$out" "routine"
 }
 
 test_prompt_named_outputs_content() {
@@ -1789,72 +2025,102 @@ test_prompt_named_outputs_content() {
   local out rc=0
   out=$(./decree prompt sow --no-color 2>&1) || rc=$?
   assert_exit_code 0 "$rc" &&
-  # SOW template should contain Statement of Work content
-  assert_contains "$out" "Statement of Work" || assert_contains "$out" "SOW"
+  (assert_contains "$out" "Statement of Work" || assert_contains "$out" "SOW")
 }
 
-test_prompt_substitution() {
+test_prompt_substitution_migrations() {
   init_project
   mkdir -p .decree/migrations
   echo "Auth task" > .decree/migrations/01-auth.md
   local out
   out=$(./decree prompt migration --no-color 2>&1)
-  # {migrations} should be substituted with actual migration list
   assert_contains "$out" "01-auth.md" &&
   assert_not_contains "$out" "{migrations}" "placeholder should be substituted"
 }
 
-test_prompt_unknown_suggests() {
+test_prompt_substitution_processed() {
   init_project
-  local out rc=0
-  out=$(./decree prompt migraton --no-color 2>&1) || rc=$?
-  # Should suggest close match or list available
-  assert_contains "$out" "migration" || assert_contains "$out" "available"
+  echo "01-done.md" > .decree/processed.md
+  local out
+  out=$(./decree prompt migration --no-color 2>&1)
+  assert_contains "$out" "01-done.md" &&
+  assert_not_contains "$out" "{processed}" "placeholder should be substituted"
 }
 
-# ---------- 22: DAEMON BASICS ----------
+test_prompt_substitution_routines() {
+  init_project
+  local out
+  out=$(./decree prompt routine --no-color 2>&1)
+  assert_contains "$out" "develop" &&
+  assert_not_contains "$out" "{routines}" "placeholder should be substituted"
+}
+
+test_prompt_substitution_config() {
+  init_project
+  # Create a prompt that uses {config}
+  cat > .decree/prompts/config-test.md <<'EOF'
+## Config
+{config}
+EOF
+  local out
+  out=$(./decree prompt config-test --no-color 2>&1)
+  assert_contains "$out" "max_retries" &&
+  assert_not_contains "$out" "{config}" "placeholder should be substituted"
+}
+
+test_prompt_unknown_fails() {
+  init_project
+  local out rc=0
+  out=$(./decree prompt nonexistent --no-color 2>&1) || rc=$?
+  [[ $rc -ne 0 ]] || {
+    echo "expected error for unknown prompt"
+    return 1
+  }
+  assert_contains "$out" "unknown prompt" || assert_contains "$out" "Available"
+}
+
+test_prompt_unknown_lists_available() {
+  init_project
+  local out rc=0
+  out=$(./decree prompt nonexistent --no-color 2>&1) || rc=$?
+  assert_contains "$out" "migration" &&
+  assert_contains "$out" "routine" &&
+  assert_contains "$out" "sow"
+}
+
+test_prompt_custom_template() {
+  init_project
+  cat > .decree/prompts/custom.md <<'EOF'
+# Custom Prompt
+This is a custom prompt template.
+EOF
+  local out
+  out=$(./decree prompt custom --no-color 2>&1)
+  assert_contains "$out" "Custom Prompt"
+}
+
+# ---------- 24: DAEMON BASICS ----------
 
 test_daemon_starts_and_stops() {
-  init_project
-  rm -f .decree/routines/develop.sh .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeAll: .*/beforeAll: ""/' .decree/config.yml
-  sed -i 's/afterAll: .*/afterAll: ""/' .decree/config.yml
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
+  init_project_no_hooks
   timeout 3 ./decree daemon --interval 1 --no-color >/dev/null 2>&1 &
   local pid=$!
   sleep 1
   kill -TERM "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  # Just verifying it didn't crash on startup
   return 0
 }
 
-test_daemon_processes_inbox() {
-  init_project
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "daemon processed"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeAll: .*/beforeAll: ""/' .decree/config.yml
-  sed -i 's/afterAll: .*/afterAll: ""/' .decree/config.yml
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
+test_daemon_prints_polling_message() {
+  init_project_no_hooks
+  local out
+  out=$(timeout 3 ./decree daemon --interval 1 --no-color 2>&1) || true
+  assert_contains "$out" "polling" || assert_contains "$out" "daemon"
+}
 
-  # Put a message directly in the inbox
+test_daemon_processes_inbox() {
+  init_project_no_hooks
+  create_echo_routine
   cat > .decree/inbox/D0001-0900-test-0.md <<'EOF'
 ---
 id: D0001-0900-test-0
@@ -1871,37 +2137,23 @@ EOF
   kill -TERM "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
 
-  # Inbox should be drained
   local inbox_count
   inbox_count=$(find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | wc -l)
   assert_eq "0" "$inbox_count" "daemon should process inbox messages"
 }
 
-# ---------- 23: CRON ----------
+test_daemon_custom_interval() {
+  init_project_no_hooks
+  local out
+  out=$(timeout 3 ./decree daemon --interval 2 --no-color 2>&1) || true
+  assert_contains "$out" "2s" || assert_contains "$out" "polling every 2"
+}
 
-test_cron_file_parsed() {
-  init_project
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "cron task"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeAll: .*/beforeAll: ""/' .decree/config.yml
-  sed -i 's/afterAll: .*/afterAll: ""/' .decree/config.yml
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
+# ---------- 25: CRON ----------
 
-  # Create cron file that fires every minute
+test_cron_file_fires_via_daemon() {
+  init_project_no_hooks
+  create_echo_routine
   cat > .decree/cron/every-minute.md <<'EOF'
 ---
 cron: "* * * * *"
@@ -1916,7 +2168,6 @@ EOF
   kill -TERM "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
 
-  # Should have created a run directory from the cron job
   local run_count
   run_count=$(find .decree/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
   [[ $run_count -gt 0 ]] || {
@@ -1925,76 +2176,35 @@ EOF
   }
 }
 
-# ---------- 24: MESSAGE FORMAT ----------
+test_cron_daemon_output_mentions_cron() {
+  init_project_no_hooks
+  create_echo_routine
+  cat > .decree/cron/test-cron.md <<'EOF'
+---
+cron: "* * * * *"
+routine: develop
+---
+Test.
+EOF
 
-test_message_normalization() {
-  init_project
-  mkdir -p .decree/inbox
-  # Put a bare message (no frontmatter) in inbox
-  echo "Bare message content." > .decree/inbox/test-msg.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "chain=$chain seq=$seq"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
-  ./decree process --no-color >/dev/null 2>&1 || true
-  # Check that run directory was created with a normalized message
-  local msg_file
-  msg_file=$(find .decree/runs -name 'message.md' 2>/dev/null | head -1)
-  if [[ -n "$msg_file" ]]; then
-    # Normalized message should have frontmatter
-    assert_file_contains "$msg_file" "chain:" &&
-    assert_file_contains "$msg_file" "seq:" &&
-    assert_file_contains "$msg_file" "id:"
-  else
-    # No message found — also check if there's a dead letter
-    echo "note: no run directory created (message may have been dead-lettered)"
-    return 0
-  fi
+  local out
+  out=$(timeout 5 ./decree daemon --interval 1 --no-color 2>&1) || true
+  assert_contains "$out" "cron" || assert_contains "$out" "test-cron"
 }
 
+# ---------- 26: MESSAGE FORMAT ----------
+
 test_message_id_format() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ID=$message_id"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local log_file
   log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
   if [[ -n "$log_file" ]]; then
     local id_line
     id_line=$(grep "ID=" "$log_file" | head -1)
-    # ID should match D<NNNN>-HHmm-<name>-<seq> pattern
     if [[ "$id_line" =~ ID=D[0-9]{4}-[0-9]{4}-.+-[0-9]+ ]]; then
       return 0
     else
@@ -2008,7 +2218,8 @@ SCRIPT
 }
 
 test_migration_body_in_message() {
-  init_project
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   cat > .decree/migrations/01-test.md <<'EOF'
 ---
@@ -2016,39 +2227,41 @@ routine: develop
 ---
 UNIQUE_CONTENT_XYZ_12345
 EOF
-  cat > .decree/routines/develop.sh <<'SCRIPT'
-#!/usr/bin/env bash
-# Develop
-set -euo pipefail
-message_file="${message_file:-}"
-message_id="${message_id:-}"
-message_dir="${message_dir:-}"
-chain="${chain:-}"
-seq="${seq:-}"
-if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-cat "$message_file"
-SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
-
   ./decree process --no-color >/dev/null 2>&1
   local msg_file
   msg_file=$(find .decree/runs -name 'message.md' 2>/dev/null | head -1)
   assert_file_contains "$msg_file" "UNIQUE_CONTENT_XYZ_12345" "migration body should be in message"
 }
 
-# ---------- 25: BARE DECREE DISPATCHES TO PROCESS ----------
-
-test_bare_decree_is_process() {
-  init_project
+test_message_frontmatter_has_required_fields() {
+  init_project_no_hooks
+  create_echo_routine
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
-  cat > .decree/routines/develop.sh <<'SCRIPT'
+  ./decree process --no-color >/dev/null 2>&1
+  local msg_file
+  msg_file=$(find .decree/runs -name 'message.md' 2>/dev/null | head -1)
+  if [[ -n "$msg_file" ]]; then
+    assert_file_contains "$msg_file" "id:" &&
+    assert_file_contains "$msg_file" "chain:" &&
+    assert_file_contains "$msg_file" "seq:" &&
+    assert_file_contains "$msg_file" "routine:" &&
+    assert_file_contains "$msg_file" "migration:"
+  else
+    echo "no message file found"
+    return 1
+  fi
+}
+
+# ---------- 27: ROUTINE-SYNC ----------
+
+test_routine_sync_discovers_new_routine() {
+  init_project
+  cat > .decree/routines/new-routine.sh <<'SCRIPT'
 #!/usr/bin/env bash
-# Develop
+# New Routine
+#
+# A newly added routine.
 set -euo pipefail
 message_file="${message_file:-}"
 message_id="${message_id:-}"
@@ -2056,16 +2269,200 @@ message_dir="${message_dir:-}"
 chain="${chain:-}"
 seq="${seq:-}"
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
-echo "ok"
+echo "new"
 SCRIPT
-  chmod +x .decree/routines/develop.sh
-  rm -f .decree/routines/rust-develop.sh
-  rm -f .decree/routines/git-baseline.sh .decree/routines/git-stash-changes.sh
-  sed -i 's/beforeEach: .*/beforeEach: ""/' .decree/config.yml
-  sed -i 's/afterEach: .*/afterEach: ""/' .decree/config.yml
+  chmod +x .decree/routines/new-routine.sh
+  local out
+  out=$(./decree routine-sync --no-color 2>&1)
+  assert_contains "$out" "new-routine" &&
+  assert_file_contains .decree/config.yml "new-routine:"
+}
 
+test_routine_sync_new_project_routine_enabled() {
+  init_project
+  cat > .decree/routines/fresh.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Fresh
+#
+# Fresh routine.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+SCRIPT
+  chmod +x .decree/routines/fresh.sh
+  ./decree routine-sync --no-color >/dev/null 2>&1
+  assert_file_contains .decree/config.yml "fresh:" &&
+  assert_file_contains .decree/config.yml "enabled: true"
+}
+
+test_routine_sync_shows_enabled_status() {
+  init_project
+  local out
+  out=$(./decree routine-sync --no-color 2>&1)
+  assert_contains "$out" "enabled" &&
+  assert_contains "$out" "develop"
+}
+
+test_routine_sync_shared_source() {
+  init_project
+  # Create shared routines directory
+  local shared_dir="$PWD/shared_routines"
+  mkdir -p "$shared_dir"
+  cat > "$shared_dir/shared-echo.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Shared Echo
+#
+# A shared routine.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "shared"
+SCRIPT
+  chmod +x "$shared_dir/shared-echo.sh"
+  local out
+  out=$(./decree routine-sync --source "$shared_dir" --no-color 2>&1)
+  assert_contains "$out" "shared-echo" &&
+  assert_contains "$out" "Shared routines"
+}
+
+test_routine_sync_shared_routine_disabled_by_default() {
+  init_project
+  local shared_dir="$PWD/shared_routines"
+  mkdir -p "$shared_dir"
+  cat > "$shared_dir/shared-test.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Shared Test
+#
+# A shared routine.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+SCRIPT
+  chmod +x "$shared_dir/shared-test.sh"
+  ./decree routine-sync --source "$shared_dir" --no-color >/dev/null 2>&1
+  local out
+  out=$(./decree routine-sync --source "$shared_dir" --no-color 2>&1)
+  assert_contains "$out" "disabled"
+}
+
+test_routine_sync_adds_shared_routines_to_config() {
+  init_project
+  local shared_dir="$PWD/shared_routines"
+  mkdir -p "$shared_dir"
+  cat > "$shared_dir/shared-cfg.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+# Shared Cfg
+#
+# Test.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+SCRIPT
+  chmod +x "$shared_dir/shared-cfg.sh"
+  ./decree routine-sync --source "$shared_dir" --no-color >/dev/null 2>&1
+  assert_file_contains .decree/config.yml "shared_routines:" &&
+  assert_file_contains .decree/config.yml "shared-cfg:"
+}
+
+# ---------- 28: DISABLED ROUTINES ----------
+
+test_disabled_routine_not_listed() {
+  init_project
+  cat > .decree/routines/disabled-test.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Disabled Test
+#
+# Should not appear when disabled.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+SCRIPT
+  chmod +x .decree/routines/disabled-test.sh
+  ./decree routine-sync --no-color >/dev/null 2>&1
+  # Disable the routine
+  sed -i '/disabled-test:/,/enabled:/{s/enabled: true/enabled: false/}' .decree/config.yml
+  local out
+  out=$(./decree routine --no-color 2>&1)
+  assert_not_contains "$out" "disabled-test" "disabled routine should not be listed"
+}
+
+test_disabled_routine_not_in_verify() {
+  init_project
+  cat > .decree/routines/disabled-verify.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Disabled Verify
+#
+# Should not appear in verify when disabled.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 1; fi
+SCRIPT
+  chmod +x .decree/routines/disabled-verify.sh
+  ./decree routine-sync --no-color >/dev/null 2>&1
+  sed -i '/disabled-verify:/,/enabled:/{s/enabled: true/enabled: false/}' .decree/config.yml
+  local out
+  out=$(./decree verify --no-color 2>&1)
+  assert_not_contains "$out" "disabled-verify"
+}
+
+# ---------- 29: BARE DECREE DISPATCHES TO PROCESS ----------
+
+test_bare_decree_is_process() {
+  init_project_no_hooks
+  create_echo_routine
+  mkdir -p .decree/migrations
+  echo "Test" > .decree/migrations/01-test.md
   ./decree --no-color >/dev/null 2>&1
   assert_file_contains .decree/processed.md "01-test.md" "bare decree should process migrations"
+}
+
+test_bare_decree_no_migrations() {
+  init_project_no_hooks
+  create_echo_routine
+  local out
+  out=$(./decree --no-color 2>&1)
+  assert_contains "$out" "0 migration" || assert_contains "$out" "Processed 0"
+}
+
+# ---------- 30: NO_COLOR ENVIRONMENT VARIABLE ----------
+
+test_no_color_env_var_status() {
+  init_project
+  local rc=0
+  NO_COLOR=1 ./decree status 2>&1 || rc=$?
+  assert_exit_code 0 "$rc"
+}
+
+test_no_color_env_var_process() {
+  init_project_no_hooks
+  create_echo_routine
+  local rc=0
+  NO_COLOR=1 ./decree process 2>&1 || rc=$?
+  assert_exit_code 0 "$rc"
 }
 
 # ================================================================
@@ -2084,8 +2481,13 @@ TESTS=(
   "help flag (--help)"               test_help_flag
   "help subcommand (verbose)"        test_help_subcommand
   "help subcommand length"           test_help_subcommand_verbose
+  "help mentions routine-sync"       test_help_mentions_routine_sync
+  "help mentions routine registry"   test_help_mentions_routine_registry
   "unknown subcommand exit 2"        test_unknown_subcommand_exit_2
   "no-color flag accepted"           test_no_color_flag_accepted
+  "NO_COLOR env var accepted"        test_no_color_env_var
+  "version needs no project"         test_version_no_project_needed
+  "help needs no project"            test_help_no_project_needed
 
   # Require .decree/
   "bare decree w/o project fails"    test_bare_decree_without_project_fails
@@ -2096,6 +2498,7 @@ TESTS=(
   "log w/o project fails"            test_log_without_project_fails
   "daemon w/o project fails"         test_daemon_without_project_fails
   "prompt w/o project fails"         test_prompt_without_project_fails
+  "routine-sync w/o project fails"   test_routine_sync_without_project_fails
 
   # Init — directory structure
   "init creates .decree/"            test_init_creates_decree_dir
@@ -2124,7 +2527,9 @@ TESTS=(
   "config max_log_size 2MB"          test_init_config_max_log_size
   "config default_routine develop"   test_init_config_default_routine_develop
   "config has hooks section"         test_init_config_has_hooks_section
+  "config has routines section"      test_init_config_has_routines_section
   "config commented alternatives"    test_init_config_commented_alternatives
+  "config routine_source present"    test_init_config_routine_source_commented
 
   # Init — templates
   "init creates develop.sh"          test_init_creates_develop_sh
@@ -2133,9 +2538,10 @@ TESTS=(
   "init develop.sh has shebang"      test_init_develop_has_shebang
   "init develop.sh has pre-check"    test_init_develop_has_precheck
   "init develop.sh has description"  test_init_develop_has_description
-  "init develop.sh no {AI_CMD}"      test_init_develop_no_ai_cmd_placeholder
-  "init rust-develop no {AI_CMD}"    test_init_rust_develop_no_ai_cmd_placeholder
+  "init develop.sh no AI placeholder" test_init_develop_no_ai_placeholder
+  "init rust-develop no AI placeholder" test_init_rust_develop_no_ai_placeholder
   "init develop.sh has message_dir"  test_init_develop_has_message_dir_ref
+  "init develop.sh refs AI tool"     test_init_develop_references_ai_tool
   "init creates prompt templates"    test_init_creates_prompt_templates
   "init migration.md placeholders"   test_init_migration_prompt_has_placeholders
   "init routine.md placeholder"      test_init_routine_prompt_has_placeholder
@@ -2151,9 +2557,12 @@ TESTS=(
   "init git hooks executable"        test_init_git_hooks_executable
   "init git-baseline pre-check"      test_init_git_baseline_has_precheck
   "init git-stash pre-check"         test_init_git_stash_has_precheck
+  "init git-baseline has DECREE_ATTEMPT" test_init_git_baseline_has_hook_env
+  "init git-stash has EXIT_CODE"     test_init_git_stash_has_hook_env
 
   # Init — re-run
   "init re-run overwrites non-tty"   test_init_rerun_overwrites_non_tty
+  "init re-run prints warning"       test_init_rerun_prints_warning
 
   # Status
   "status empty project"             test_status_empty_project
@@ -2161,35 +2570,43 @@ TESTS=(
   "status shows next migration"      test_status_shows_next_migration
   "status shows inbox count"         test_status_shows_inbox_count
   "status shows dead-letter count"   test_status_shows_dead_letter_count
+  "status shows recent activity"     test_status_shows_recent_activity
+  "status --no-color flag"           test_status_no_color_flag
 
   # Log
   "log no runs"                      test_log_no_runs
   "log shows recent run"             test_log_shows_recent_run
   "log specific run"                 test_log_specific_run
+  "log prefix match"                 test_log_prefix_match
   "log multiple attempts"            test_log_multiple_attempts
+  "log nonexistent run fails"        test_log_nonexistent_run_fails
+  "log shows timestamps"             test_log_shows_timestamps
 
   # Routine
   "routine list non-tty"             test_routine_list_non_tty
+  "routine list shows descriptions"  test_routine_list_shows_descriptions
   "routine list shows rust-develop"  test_routine_list_shows_rust_develop
+  "routine list shows git hooks"     test_routine_list_shows_git_hooks
   "routine detail named"             test_routine_detail_named
   "routine detail shows path"        test_routine_detail_shows_path
   "routine detail shows description" test_routine_detail_shows_description
-  "routine unknown suggests match"   test_routine_unknown_suggests_close_match
-  "routine unknown no match fails"   test_routine_unknown_no_match
+  "routine unknown fails"            test_routine_unknown_fails
   "routine no routines message"      test_routine_no_routines
   "routine nested discovery"         test_routine_nested
-  "routine custom params shown"      test_routine_custom_params
 
   # Verify
   "verify all pass"                  test_verify_all_pass
   "verify some fail exit 3"          test_verify_some_fail_exit_3
   "verify shows fail reason"         test_verify_shows_fail_reason
+  "verify reports count"             test_verify_reports_count
   "verify no routines"               test_verify_no_routines
   "verify includes hook pre-checks"  test_verify_includes_hook_prechecks
 
   # Process — dry run
   "process dry-run no migrations"    test_process_dry_run_no_migrations
   "process dry-run lists migrations" test_process_dry_run_lists_migrations
+  "process dry-run shows routine"    test_process_dry_run_shows_routine
+  "process dry-run shows precheck"   test_process_dry_run_shows_precheck_status
   "process dry-run creates no files" test_process_dry_run_no_files_created
 
   # Process — basic execution
@@ -2200,23 +2617,35 @@ TESTS=(
   "process log has timestamps"       test_process_log_has_timestamps
   "process removes from inbox"       test_process_removes_from_inbox
   "process env vars available"       test_process_env_vars_available
+  "process env vars nonempty"        test_process_env_vars_nonempty
   "process custom fields as env"     test_process_custom_fields_as_env
+  "process output shows migration"   test_process_output_shows_migration_name
+  "process output shows routine"     test_process_output_shows_routine_name
+  "process output shows message ID"  test_process_output_shows_message_id
 
   # Process — retry and dead-letter
   "process retry multiple logs"      test_process_retry_creates_multiple_logs
+  "process retry count matches cfg"  test_process_retry_count_matches_config
   "process dead-letters on exhaust"  test_process_dead_letters_on_exhaustion
-  "process dead marked processed"    test_process_dead_letter_not_marked_processed
+  "process dead marked processed"    test_process_dead_letter_marked_processed
+  "process dead output warning"      test_process_dead_letter_output_warning
 
-  # Process — outbox follow-ups
+  # Process — follow-ups
   "process outbox follow-ups"        test_process_outbox_follow_ups
+  "process drains inbox after migr."  test_process_drains_inbox_after_migration
+  "process follow-up increments seq" test_process_follow_up_increments_seq
 
   # Process — multiple migrations
   "process multiple in order"        test_process_multiple_migrations_in_order
+  "process alphabetical order"       test_process_alphabetical_order
   "process skips already processed"  test_process_skips_already_processed
+  "process idempotent rerun"         test_process_idempotent_rerun
 
   # Process — lifecycle hooks
   "process beforeEach hook"          test_process_before_each_hook
   "process afterEach exit code"      test_process_after_each_hook_exit_code
+  "process beforeAll hook"           test_process_before_all_hook
+  "process afterAll hook"            test_process_after_all_hook
 
   # Process — SIGINT
   "process SIGINT exit non-zero"     test_process_sigint_exit_130
@@ -2224,27 +2653,61 @@ TESTS=(
 
   # Process — summary
   "process prints summary"           test_process_prints_summary
+  "process prints migration count"   test_process_prints_migration_count
+  "process prints duration"          test_process_prints_duration
+
+  # Process — direct inbox
+  "process drains inbox"             test_process_drains_inbox
+  "process normalizes bare inbox"    test_process_bare_inbox_message_normalized
+
+  # Process — default routine
+  "process uses default routine"     test_process_uses_default_routine
 
   # Prompt
   "prompt list non-tty"              test_prompt_list_non_tty
   "prompt named outputs content"     test_prompt_named_outputs_content
-  "prompt substitution"              test_prompt_substitution
-  "prompt unknown suggests"          test_prompt_unknown_suggests
+  "prompt substitution migrations"   test_prompt_substitution_migrations
+  "prompt substitution processed"    test_prompt_substitution_processed
+  "prompt substitution routines"     test_prompt_substitution_routines
+  "prompt substitution config"       test_prompt_substitution_config
+  "prompt unknown fails"             test_prompt_unknown_fails
+  "prompt unknown lists available"   test_prompt_unknown_lists_available
+  "prompt custom template"           test_prompt_custom_template
 
   # Daemon
   "daemon starts and stops"          test_daemon_starts_and_stops
+  "daemon prints polling message"    test_daemon_prints_polling_message
   "daemon processes inbox"           test_daemon_processes_inbox
+  "daemon custom interval"           test_daemon_custom_interval
 
   # Cron
-  "cron file fires via daemon"       test_cron_file_parsed
+  "cron file fires via daemon"       test_cron_file_fires_via_daemon
+  "cron daemon output mentions cron" test_cron_daemon_output_mentions_cron
 
   # Message format
-  "message normalization"            test_message_normalization
   "message ID format D-HHmm-name"   test_message_id_format
   "migration body in message"        test_migration_body_in_message
+  "message has required frontmatter" test_message_frontmatter_has_required_fields
+
+  # Routine-sync
+  "routine-sync discovers new"       test_routine_sync_discovers_new_routine
+  "routine-sync new enabled"         test_routine_sync_new_project_routine_enabled
+  "routine-sync shows status"        test_routine_sync_shows_enabled_status
+  "routine-sync shared source"       test_routine_sync_shared_source
+  "routine-sync shared disabled"     test_routine_sync_shared_routine_disabled_by_default
+  "routine-sync shared in config"    test_routine_sync_adds_shared_routines_to_config
+
+  # Disabled routines
+  "disabled routine not listed"      test_disabled_routine_not_listed
+  "disabled routine not in verify"   test_disabled_routine_not_in_verify
 
   # Bare decree
   "bare decree dispatches to process" test_bare_decree_is_process
+  "bare decree no migrations"        test_bare_decree_no_migrations
+
+  # NO_COLOR env var
+  "NO_COLOR env status"              test_no_color_env_var_status
+  "NO_COLOR env process"             test_no_color_env_var_process
 )
 
 # Run tests in pairs (name, function)

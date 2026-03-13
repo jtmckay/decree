@@ -64,6 +64,14 @@ pub enum Command {
         id: Option<String>,
     },
 
+    /// Sync routine registry with filesystem
+    #[command(name = "routine-sync")]
+    RoutineSync {
+        /// Override shared routines directory
+        #[arg(long)]
+        source: Option<String>,
+    },
+
     /// Verbose help
     Help,
 }

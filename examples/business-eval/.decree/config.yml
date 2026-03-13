@@ -4,7 +4,7 @@ commands:
 
 max_retries: 3
 max_depth: 10
-default_routine: transcribe
+default_routine: market-analysis
 
 hooks:
   beforeAll: ""
@@ -13,5 +13,11 @@ hooks:
   afterEach: ""
 
 routines:
-  transcribe:
+  market-analysis:
+    enabled: true
+  competitive-landscape:
+    enabled: true
+  financial-model:
+    enabled: true
+  executive-summary:
     enabled: true

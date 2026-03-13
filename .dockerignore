@@ -2,9 +2,6 @@ target/
 .decree/
 .git/
 .github/
-docker/README.md
-docker/docker-compose.example.yml
-docker/test-routine-sync.sh
 tests/
 blackbox_test/
 examples/

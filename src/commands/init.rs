@@ -68,6 +68,28 @@ fn ai_invoke_prefix(ai_router: &str) -> String {
         .to_string()
 }
 
+/// Detect shared routines in `~/.decree/routines/`.
+fn detect_shared_routines() -> Vec<String> {
+    let shared_dir = config::expand_tilde("~/.decree/routines");
+    if !shared_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&shared_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "sh") {
+                if let Some(stem) = path.file_stem() {
+                    names.push(stem.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
 /// Replace AI placeholders in a routine template.
 fn replace_ai_placeholders(template: &str, ai_name: &str, ai_router: &str) -> String {
     let invoke = ai_invoke_prefix(ai_router);
@@ -77,7 +99,14 @@ fn replace_ai_placeholders(template: &str, ai_name: &str, ai_router: &str) -> St
 }
 
 /// Generate config.yml content with the selected AI command.
-fn generate_config(ai_name: &str, ai_router: &str, ai_interactive: &str, git_hooks: bool) -> String {
+fn generate_config(
+    ai_name: &str,
+    ai_router: &str,
+    ai_interactive: &str,
+    git_hooks: bool,
+    routine_names: &[&str],
+    shared_routine_names: &[String],
+) -> String {
     let mut config = String::new();
 
     config.push_str("commands:\n");
@@ -97,6 +126,7 @@ fn generate_config(ai_name: &str, ai_router: &str, ai_interactive: &str, git_hoo
     config.push_str("max_depth: 10\n");
     config.push_str("max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable\n");
     config.push_str("default_routine: develop\n");
+    config.push_str("# routine_source: \"~/.decree/routines\"\n");
     config.push('\n');
 
     config.push_str("hooks:\n");
@@ -114,6 +144,28 @@ fn generate_config(ai_name: &str, ai_router: &str, ai_interactive: &str, git_hoo
     config.push_str("  # --- Git stash workflow (uncomment to enable) ---\n");
     config.push_str("  # beforeEach: \"git-baseline\"\n");
     config.push_str("  # afterEach: \"git-stash-changes\"\n");
+
+    // Routine registry
+    if !routine_names.is_empty() {
+        config.push('\n');
+        config.push_str("routines:\n");
+        let mut sorted: Vec<&str> = routine_names.to_vec();
+        sorted.sort();
+        for name in sorted {
+            config.push_str(&format!("  {name}:\n    enabled: true\n"));
+        }
+    }
+
+    // Shared routine registry
+    if !shared_routine_names.is_empty() {
+        config.push('\n');
+        config.push_str("shared_routines:\n");
+        let mut sorted = shared_routine_names.to_vec();
+        sorted.sort();
+        for name in sorted {
+            config.push_str(&format!("  {name}:\n    enabled: false\n"));
+        }
+    }
 
     config
 }
@@ -205,7 +257,23 @@ pub fn run() -> Result<(), DecreeError> {
     }
 
     // 4. Write config.yml
-    let config_content = generate_config(ai_name, ai_router, ai_interactive, git_hooks);
+    let mut routine_names: Vec<&str> = vec!["develop", "rust-develop"];
+    if git_hooks {
+        routine_names.push("git-baseline");
+        routine_names.push("git-stash-changes");
+    }
+
+    // Check for shared routines at ~/.decree/routines/
+    let shared_routine_names = detect_shared_routines();
+
+    let config_content = generate_config(
+        ai_name,
+        ai_router,
+        ai_interactive,
+        git_hooks,
+        &routine_names,
+        &shared_routine_names,
+    );
     std::fs::write(
         format!("{}/{}", config::DECREE_DIR, config::CONFIG_FILE),
         &config_content,
@@ -284,33 +352,76 @@ mod tests {
 
     #[test]
     fn test_generate_config_without_git_hooks() {
-        let config = generate_config("claude", "claude -p {prompt}", "claude", false);
+        let config = generate_config(
+            "claude",
+            "claude -p {prompt}",
+            "claude",
+            false,
+            &["develop", "rust-develop"],
+            &[],
+        );
         assert!(config.contains("ai_router: \"claude -p {prompt}\""));
         assert!(config.contains("ai_interactive: \"claude\""));
         assert!(!config.contains("ai_command"));
         assert!(config.contains("max_retries: 3"));
         assert!(config.contains("beforeEach: \"\""));
         assert!(config.contains("# beforeEach: \"git-baseline\""));
+        assert!(config.contains("# routine_source:"));
+        assert!(config.contains("routines:\n"));
+        assert!(config.contains("  develop:\n    enabled: true"));
+        assert!(config.contains("  rust-develop:\n    enabled: true"));
     }
 
     #[test]
     fn test_generate_config_with_git_hooks() {
-        let config = generate_config("opencode", "opencode run {prompt}", "opencode", true);
+        let config = generate_config(
+            "opencode",
+            "opencode run {prompt}",
+            "opencode",
+            true,
+            &["develop", "rust-develop", "git-baseline", "git-stash-changes"],
+            &[],
+        );
         assert!(config.contains("ai_router: \"opencode run {prompt}\""));
         assert!(config.contains("beforeEach: \"git-baseline\""));
         assert!(config.contains("afterEach: \"git-stash-changes\""));
         // Should still contain commented versions
         assert!(config.contains("# beforeEach: \"git-baseline\""));
+        // Routines section should include hook routines
+        assert!(config.contains("  git-baseline:\n    enabled: true"));
+        assert!(config.contains("  git-stash-changes:\n    enabled: true"));
     }
 
     #[test]
     fn test_generate_config_includes_alternatives() {
-        let config = generate_config("claude", "claude -p {prompt}", "claude", false);
+        let config = generate_config(
+            "claude",
+            "claude -p {prompt}",
+            "claude",
+            false,
+            &["develop"],
+            &[],
+        );
         // Other backends should be commented out
         assert!(config.contains("# ai_router: \"opencode run {prompt}\""));
         assert!(config.contains("# ai_router: \"copilot -p {prompt}\""));
         // Selected should not be commented
         assert!(config.contains("  ai_router: \"claude -p {prompt}\"\n"));
+    }
+
+    #[test]
+    fn test_generate_config_with_shared_routines() {
+        let config = generate_config(
+            "claude",
+            "claude -p {prompt}",
+            "claude",
+            false,
+            &["develop"],
+            &["deploy".to_string(), "notify".to_string()],
+        );
+        assert!(config.contains("shared_routines:\n"));
+        assert!(config.contains("  deploy:\n    enabled: false"));
+        assert!(config.contains("  notify:\n    enabled: false"));
     }
 
     #[test]

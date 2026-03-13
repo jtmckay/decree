@@ -1,3 +1,4 @@
+use crate::commands::routine_sync;
 use crate::config::{self, AppConfig};
 use crate::error::{color, DecreeError, EXIT_PRECHECK};
 use crate::hooks::{self, HookContext, HookType};
@@ -19,7 +20,13 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
         return run_dry(project_root);
     }
 
-    let config = AppConfig::load_from_project(project_root)?;
+    let mut config = AppConfig::load_from_project(project_root)?;
+
+    // Run discovery before processing
+    if routine_sync::discover(project_root, &mut config, None)? {
+        config.save(project_root)?;
+    }
+
     let shutdown = Arc::new(AtomicBool::new(false));
     register_signal_handlers(Arc::clone(&shutdown))?;
 
@@ -27,7 +34,7 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
 
     // Step 1: Run beforeAll hook
     let all_ctx = HookContext::default();
-    if let Err(e) = hooks::run_hook(project_root, &config.hooks, HookType::BeforeAll, &all_ctx) {
+    if let Err(e) = hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeAll, &all_ctx, Some(&config)) {
         eprintln!("{} hook failed: {e}", HookType::BeforeAll);
         return Err(DecreeError::Other(format!("beforeAll hook failed: {e}")));
     }
@@ -99,7 +106,7 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
     }
 
     // Step 7: Run afterAll hook
-    if let Err(e) = hooks::run_hook(project_root, &config.hooks, HookType::AfterAll, &all_ctx) {
+    if let Err(e) = hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterAll, &all_ctx, Some(&config)) {
         eprintln!("{}: afterAll hook failed: {e}", color::warning("warning"));
         // afterAll failure: log warning, exit with hook's code
         return Err(DecreeError::Other(format!("afterAll hook failed: {e}")));
@@ -233,14 +240,11 @@ fn process_single_message(
     // Copy normalized message to run dir
     std::fs::write(run_dir.join("message.md"), msg.serialize())?;
 
-    // Find the routine script
-    let routines_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::ROUTINES_DIR);
-    let script_path = match routine::find_routine_script(&routines_dir, &routine_name) {
+    // Find the routine script (registry-aware layered lookup)
+    let script_path = match routine::resolve_routine(project_root, config, &routine_name) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("routine not found for {msg_id}: {e}");
+            eprintln!("routine resolution failed for {msg_id}: {e}");
             mark_migration_processed_if_present(project_root, &msg)?;
             dead_letter(project_root, filename)?;
             return Err(e);
@@ -287,7 +291,7 @@ fn process_single_message(
 
         // Run beforeEach hook
         if let Err(e) =
-            hooks::run_hook(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx)
+            hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config))
         {
             eprintln!("{}: beforeEach hook failed for {msg_id}: {e}", color::warning("warning"));
             // beforeEach failure: skip and dead-letter
@@ -354,7 +358,7 @@ fn process_single_message(
                 ..hook_ctx
             };
             if let Err(e) =
-                hooks::run_hook(project_root, &config.hooks, HookType::AfterEach, &after_ctx)
+                hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
             {
                 eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
             }
@@ -385,7 +389,7 @@ fn process_single_message(
             ..hook_ctx
         };
         if let Err(e) =
-            hooks::run_hook(project_root, &config.hooks, HookType::AfterEach, &after_ctx)
+            hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
         {
             eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
         }
@@ -766,7 +770,13 @@ fn value_as_env_string(v: &serde_yaml::Value) -> Option<String> {
 
 /// `decree process --dry-run`: list migrations, resolve routines, run pre-checks.
 fn run_dry(project_root: &Path) -> Result<(), DecreeError> {
-    let config = AppConfig::load_from_project(project_root)?;
+    let mut config = AppConfig::load_from_project(project_root)?;
+
+    // Run discovery for dry-run too
+    if routine_sync::discover(project_root, &mut config, None)? {
+        config.save(project_root)?;
+    }
+
     let unprocessed = message::unprocessed_migrations(project_root)?;
 
     if unprocessed.is_empty() {
@@ -795,7 +805,7 @@ fn run_dry(project_root: &Path) -> Result<(), DecreeError> {
             .unwrap_or(&config.default_routine);
 
         // Run pre-check
-        let result = routine::run_precheck(project_root, routine_name);
+        let result = routine::run_precheck(project_root, &config, routine_name);
         match result {
             Ok(None) => {
                 println!(

@@ -12,6 +12,9 @@ pub enum DecreeError {
     #[error("routine not found: {0}")]
     RoutineNotFound(String),
 
+    #[error("routine disabled: {0}")]
+    RoutineDisabled(String),
+
     #[error("max retries exhausted for message {0}")]
     MaxRetriesExhausted(String),
 
