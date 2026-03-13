@@ -1,0 +1,11 @@
+target/
+.decree/
+.git/
+.github/
+docker/
+tests/
+blackbox_test/
+examples/
+*.md
+LICENSE
+.dockerignore
