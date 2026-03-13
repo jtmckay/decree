@@ -11,3 +11,4 @@
 11-daemon-and-cron.spec.md
 12-cli-help.spec.md
 13-post-cleanup.spec.md
+14-docker.spec.md

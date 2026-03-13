@@ -1,0 +1,12 @@
+services:
+  decree:
+    image: ghcr.io/jtmckay/decree:latest
+    volumes:
+      - .:/work
+      - ${HOME}/.config/opencode:/root/.config/opencode
+      - ~/shared-routines:/routines # optional: shared routines
+    environment:
+      - DECREE_DAEMON=true
+      - DECREE_INTERVAL=2
+      - DECREE_CONTAINER=decree_1
+    restart: unless-stopped
