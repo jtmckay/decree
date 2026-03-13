@@ -6,9 +6,9 @@ An AI orchestrator for spec-driven development. Write specs, run `decree process
 
 AI coding assistants are powerful but ad hoc. You prompt, you review, you prompt again. Nothing is repeatable, nothing is tracked, and multi-step workflows need constant babysitting.
 
-Decree treats AI work like database migrations. You write spec files describing what you want built. Routines define *how* AI processes each spec — implement, build, test, fix. Processing runs them in order, one at a time, each building on the last. Everything is logged.
+Decree treats AI work like database migrations. You write spec files describing what you want built. Routines define _how_ AI processes each spec — implement, build, test, fix. Processing runs them in order, one at a time, each building on the last. Everything is logged.
 
-The result: you focus on *what* to build. The routines handle *how*.
+The result: you focus on _what_ to build. The routines handle _how_.
 
 ## Quick Start
 
@@ -19,7 +19,17 @@ decree init          # scaffold project, pick your AI tool
 
 This creates `.decree/` with routines, prompts, config, and a router.
 
-## Workflow: Spec-Driven Development
+## Prompts
+
+Interactive prompt templates live in `.decree/prompts/`. They inject project context — processed migrations, available routines, config — so your AI conversations start informed:
+
+```bash
+decree prompt sow    # plan a new statement of work for a new project
+decree prompt routine      # get help writing a new routine (flow)
+decree prompt migration    # plan next batch of specs
+```
+
+## Workflow example: Spec-Driven Development
 
 **1. Write specs**
 
@@ -38,16 +48,19 @@ Each spec is markdown with optional YAML frontmatter:
 ---
 routine: develop
 ---
+
 # Auth System
 
 Implement email/password authentication with session tokens.
 
 ## Requirements
+
 - POST /auth/register creates a user
 - POST /auth/login returns a session token
 - Sessions expire after 24 hours
 
 ## Acceptance Criteria
+
 - Registration with duplicate email returns 409
 - Invalid credentials return 401
 - Expired tokens are rejected
@@ -70,7 +83,7 @@ decree log 01        # see execution output for a spec
 
 ## Blackbox Testing with Specs
 
-Specs work well as blackbox test cases. Define inputs and expected outputs. The routine implements code to satisfy them. You never describe *how* — only *what*.
+Specs work well as blackbox test cases. Define inputs and expected outputs. The routine implements code to satisfy them. You never describe _how_ — only _what_.
 
 Write specs around observable behavior:
 
@@ -80,6 +93,7 @@ Write specs around observable behavior:
 Parse markdown to HTML.
 
 ## Acceptance Criteria
+
 - `# Hello` produces `<h1>Hello</h1>`
 - `**bold**` produces `<strong>bold</strong>`
 - Empty input produces empty output
@@ -93,10 +107,12 @@ The AI figures out the implementation. The acceptance criteria are the tests.
 Routines are shell scripts in `.decree/routines/` that define how work gets done. They receive the spec as a message file and call your AI tool directly.
 
 The default `develop` routine:
+
 1. Sends the spec to your AI tool for implementation
 2. Sends it again for verification against acceptance criteria
 
 The `rust-develop` routine adds build and test steps:
+
 1. AI implements the spec
 2. `cargo build --release && cargo test`
 3. AI reads build/test output and fixes failures
@@ -169,16 +185,8 @@ It polls `.decree/cron/` for scheduled messages and `.decree/inbox/` for new wor
 cron: "0 9 * * 1-5"
 routine: daily-review
 ---
+
 Run the morning code review.
-```
-
-## Prompts
-
-Interactive prompt templates live in `.decree/prompts/`. They inject project context — processed migrations, available routines, config — so your AI conversations start informed:
-
-```bash
-decree prompt migration    # plan next batch of specs
-decree prompt routine      # get help writing a new routine
 ```
 
 ## Project Structure
