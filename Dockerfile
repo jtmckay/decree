@@ -1,5 +1,5 @@
 # Build stage: compile decree
-FROM rust:1-slim AS builder
+FROM rust:1-slim-bookworm AS builder
 
 WORKDIR /build
 
@@ -27,9 +27,6 @@ RUN ARCH=$(dpkg --print-architecture) && \
         -o /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
 
-# Install opencode
-RUN npm i -g opencode-ai
-
 # Copy decree binary
 COPY --from=builder /build/target/release/decree /usr/local/bin/decree
 
@@ -39,6 +36,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/routine-sync.sh
 
 WORKDIR /work
 
-VOLUME ["/work", "/routines", "/root/.config/opencode"]
+VOLUME ["/work", "/routines"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

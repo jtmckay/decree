@@ -2,13 +2,13 @@
 
 ## Overview
 
-Pre-built Docker image containing **decree** (AI orchestrator) and **opencode** (AI coding tool). Runs as a daemon that watches for migrations and processes them automatically.
+Pre-built Docker image containing **decree** (AI orchestrator). Choose your AI tool at runtime via the `DECREE_AI` environment variable. Runs as a daemon that watches for migrations and processes them automatically.
 
 ## Quick Start
 
 ```bash
 docker run --rm -v "$(pwd):/work" \
-  -v "$HOME/.config/opencode:/root/.config/opencode" \
+  -e DECREE_AI=opencode \
   ghcr.io/jtmckay/decree:latest
 ```
 
@@ -26,6 +26,7 @@ docker compose up -d
 
 | Variable           | Default     | Purpose                                 |
 | ------------------ | ----------- | --------------------------------------- |
+| `DECREE_AI`        | *(none)*    | AI tool to install: `opencode`, `claude`, or `copilot` |
 | `DECREE_DAEMON`    | `true`      | Start in daemon mode when `true`        |
 | `DECREE_INTERVAL`  | `2`         | Daemon polling interval in seconds      |
 | `DECREE_CONTAINER` | `$HOSTNAME` | Container identity for routine variants |
@@ -34,11 +35,10 @@ docker compose up -d
 
 ## Volumes
 
-| Mount                    | Purpose                                                     |
-| ------------------------ | ----------------------------------------------------------- |
-| `/work`                  | Project working directory (primary). `.decree/` lives here. |
-| `/routines`              | Shared/global routines (optional)                           |
-| `/root/.config/opencode` | Opencode config + API keys                                  |
+| Mount       | Purpose                                                     |
+| ----------- | ----------------------------------------------------------- |
+| `/work`     | Project working directory (primary). `.decree/` lives here. |
+| `/routines` | Shared/global routines (optional)                           |
 
 ## Shared Routines
 
@@ -110,7 +110,7 @@ docker push ghcr.io/jtmckay/decree:latest
 
 ## Troubleshooting
 
-**API key not mounted**: If opencode fails with auth errors, ensure your config is mounted at `/root/.config/opencode`.
+**AI tool not installed**: If the AI command is not found, ensure `DECREE_AI` is set to one of `opencode`, `claude`, or `copilot`. The tool is installed on first startup and cached for subsequent runs.
 
 **`decree init` prompts for input**: The entrypoint passes `</dev/null` and `--no-color` to ensure non-interactive mode. If you see prompts, check that your decree version supports `--no-color`.
 

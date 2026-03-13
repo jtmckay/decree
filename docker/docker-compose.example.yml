@@ -3,9 +3,9 @@ services:
     image: ghcr.io/jtmckay/decree:latest
     volumes:
       - .:/work
-      - ${HOME}/.config/opencode:/root/.config/opencode
       - ~/shared-routines:/routines # optional: shared routines
     environment:
+      - DECREE_AI=opencode # opencode, claude, or copilot
       - DECREE_DAEMON=true
       - DECREE_INTERVAL=2
       - DECREE_CONTAINER=decree_1

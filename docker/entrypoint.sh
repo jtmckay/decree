@@ -19,6 +19,41 @@ if ! [[ "$DECREE_CONTAINER" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   exit 1
 fi
 
+# Install AI tool if requested
+DECREE_AI="${DECREE_AI:-}"
+if [[ -n "$DECREE_AI" ]]; then
+  case "$DECREE_AI" in
+    opencode)
+      if ! command -v opencode &>/dev/null; then
+        echo "Installing opencode-ai..."
+        npm i -g opencode-ai
+      fi
+      ;;
+    claude)
+      if ! command -v claude &>/dev/null; then
+        echo "Installing claude-code..."
+        npm i -g @anthropic-ai/claude-code
+      fi
+      ;;
+    copilot)
+      if ! command -v gh &>/dev/null; then
+        echo "Installing GitHub CLI..."
+        ARCH=$(dpkg --print-architecture)
+        GH_VERSION=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+        curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.deb" -o /tmp/gh.deb
+        dpkg -i /tmp/gh.deb && rm /tmp/gh.deb
+      fi
+      if ! gh extension list 2>/dev/null | grep -q copilot; then
+        echo "Installing GitHub Copilot extension..."
+        gh extension install github/gh-copilot
+      fi
+      ;;
+    *)
+      echo "WARNING: Unknown DECREE_AI value: $DECREE_AI (supported: opencode, claude, copilot)" >&2
+      ;;
+  esac
+fi
+
 # Initialize decree if .decree/ doesn't exist
 if [[ ! -d /work/.decree ]]; then
   decree init --no-color </dev/null
