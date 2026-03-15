@@ -11,3 +11,7 @@ hooks:
   afterAll: ""
   beforeEach: ""
   afterEach: ""
+
+routines:
+  tts:
+    enabled: true

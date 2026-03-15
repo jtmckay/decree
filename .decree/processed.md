@@ -12,3 +12,6 @@
 12-cli-help.spec.md
 13-post-cleanup.spec.md
 14-docker.spec.md
+15-docker-fixes.spec.md
+16-routine-registry.spec.md
+17-qa-pass.md

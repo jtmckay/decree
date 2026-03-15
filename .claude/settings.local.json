@@ -7,7 +7,8 @@
       "Bash(npx tsc:*)",
       "Bash(npx vitest:*)",
       "Write",
-      "Edit"
+      "Edit",
+      "Bash(bash blackbox_test/test_decree.sh 2>&1)"
     ]
   }
 }

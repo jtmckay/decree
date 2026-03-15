@@ -8,7 +8,8 @@ use std::path::Path;
 
 /// Run `decree prompt [name]`.
 pub fn run(project_root: &Path, name: Option<&str>) -> Result<(), DecreeError> {
-    let prompts = list_prompts(project_root)?;
+    let config = AppConfig::load_from_project(project_root)?;
+    let prompts = list_prompts(project_root, &config)?;
 
     if prompts.is_empty() {
         println!("No prompts found in .decree/prompts/");
@@ -28,17 +29,42 @@ struct PromptInfo {
     description: String,
 }
 
-/// List all `.md` prompt templates in `.decree/prompts/`.
-fn list_prompts(project_root: &Path) -> Result<Vec<PromptInfo>, DecreeError> {
+/// List all `.md` prompt templates, checking project-local first, then shared.
+/// Prompts do NOT require config registration.
+fn list_prompts(project_root: &Path, config: &AppConfig) -> Result<Vec<PromptInfo>, DecreeError> {
     let prompts_dir = project_root
         .join(config::DECREE_DIR)
         .join(config::PROMPTS_DIR);
 
-    if !prompts_dir.exists() {
-        return Ok(Vec::new());
+    let mut seen = std::collections::HashSet::new();
+    let mut prompts = Vec::new();
+
+    // Project-local prompts first
+    if prompts_dir.exists() {
+        for info in scan_prompts_dir(&prompts_dir)? {
+            seen.insert(info.name.clone());
+            prompts.push(info);
+        }
     }
 
-    let mut entries: Vec<String> = std::fs::read_dir(&prompts_dir)?
+    // Shared prompts (fallback)
+    if let Some(shared_prompts_dir) = config.resolved_shared_prompts_dir() {
+        if shared_prompts_dir.exists() {
+            for info in scan_prompts_dir(&shared_prompts_dir)? {
+                if !seen.contains(&info.name) {
+                    prompts.push(info);
+                }
+            }
+        }
+    }
+
+    prompts.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(prompts)
+}
+
+/// Scan a directory for `.md` prompt templates.
+fn scan_prompts_dir(dir: &Path) -> Result<Vec<PromptInfo>, DecreeError> {
+    let mut entries: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
         .filter_map(|e| e.file_name().into_string().ok())
@@ -49,7 +75,7 @@ fn list_prompts(project_root: &Path) -> Result<Vec<PromptInfo>, DecreeError> {
     let mut prompts = Vec::new();
     for filename in entries {
         let name = filename.strip_suffix(".md").unwrap_or(&filename).to_string();
-        let path = prompts_dir.join(&filename);
+        let path = dir.join(&filename);
         let content = std::fs::read_to_string(&path)?;
         let description = extract_description(&content);
         prompts.push(PromptInfo { name, description });
@@ -84,7 +110,8 @@ fn run_named(
         None => return prompt_not_found(name, prompts),
     };
 
-    let prompt_text = build_prompt(project_root, &info.name)?;
+    let config = AppConfig::load_from_project(project_root)?;
+    let prompt_text = build_prompt(project_root, &config, &info.name)?;
 
     if !color::is_tty() {
         // Non-TTY: print substituted prompt and exit
@@ -129,18 +156,34 @@ fn run_select(
 
     let selected_name = selection.split_whitespace().next().unwrap_or(&selection);
 
-    let prompt_text = build_prompt(project_root, selected_name)?;
+    let config = AppConfig::load_from_project(project_root)?;
+    let prompt_text = build_prompt(project_root, &config, selected_name)?;
     guided_flow(project_root, &prompt_text)
 }
 
 /// Build the prompt by reading the template and substituting variables.
-fn build_prompt(project_root: &Path, name: &str) -> Result<String, DecreeError> {
+/// Checks project-local first, then shared prompts.
+fn build_prompt(project_root: &Path, config: &AppConfig, name: &str) -> Result<String, DecreeError> {
     let prompts_dir = project_root
         .join(config::DECREE_DIR)
         .join(config::PROMPTS_DIR);
     let path = prompts_dir.join(format!("{name}.md"));
 
-    let template = std::fs::read_to_string(&path)?;
+    // Check project-local first, then shared
+    let template_path = if path.is_file() {
+        path
+    } else if let Some(shared_dir) = config.resolved_shared_prompts_dir() {
+        let shared_path = shared_dir.join(format!("{name}.md"));
+        if shared_path.is_file() {
+            shared_path
+        } else {
+            return Err(DecreeError::Other(format!("prompt template not found: {name}")));
+        }
+    } else {
+        return Err(DecreeError::Other(format!("prompt template not found: {name}")));
+    };
+
+    let template = std::fs::read_to_string(&template_path)?;
 
     // Substitute known variables
     let prompt = substitute_variables(project_root, &template)?;
@@ -210,7 +253,8 @@ fn build_migrations_text(project_root: &Path) -> Result<String, DecreeError> {
 
 /// Build the `{routines}` substitution text.
 fn build_routines_text(project_root: &Path) -> Result<String, DecreeError> {
-    let routines = message::list_routines(project_root)?;
+    let config = AppConfig::load_from_project(project_root)?;
+    let routines = message::list_routines(project_root, &config)?;
 
     if routines.is_empty() {
         return Ok("None yet".to_string());
@@ -473,7 +517,8 @@ mod tests {
         )
         .unwrap();
 
-        let prompts = list_prompts(dir.path()).unwrap();
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let prompts = list_prompts(dir.path(), &config).unwrap();
         assert_eq!(prompts.len(), 2);
         assert_eq!(prompts[0].name, "migration");
         assert_eq!(prompts[1].name, "sow");

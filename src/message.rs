@@ -536,26 +536,81 @@ pub struct RoutineInfo {
     pub description: String,
 }
 
-/// List all routines in `.decree/routines/`, including nested directories.
-pub fn list_routines(project_root: &Path) -> Result<Vec<RoutineInfo>, DecreeError> {
+/// List available routines, respecting the config registry.
+///
+/// - With a `routines` section: only enabled project-local routines are listed.
+/// - Without a `routines` section (legacy): all filesystem routines are listed.
+/// - With `routine_source`: enabled shared routines are also included.
+pub fn list_routines(project_root: &Path, config: &AppConfig) -> Result<Vec<RoutineInfo>, DecreeError> {
     let routines_dir = project_root
         .join(config::DECREE_DIR)
         .join(config::ROUTINES_DIR);
 
+    let mut routines = Vec::new();
+
+    if let Some(ref registry) = config.routines {
+        // Strict mode: only enabled routines from registry
+        for (name, entry) in registry {
+            if !entry.is_active() {
+                continue;
+            }
+            if let Ok(path) = crate::routine::find_routine_script(&routines_dir, name) {
+                let content = std::fs::read_to_string(&path)?;
+                let description = extract_routine_description(&content);
+                routines.push(RoutineInfo {
+                    name: name.clone(),
+                    description,
+                });
+            }
+        }
+    } else {
+        // Legacy mode: all filesystem routines
+        routines = scan_routines_dir(&routines_dir)?;
+    }
+
+    // Add enabled shared routines
+    if let Some(shared_dir) = config.resolved_routine_source() {
+        if let Some(ref shared_registry) = config.shared_routines {
+            for (name, entry) in shared_registry {
+                if !entry.is_active() {
+                    continue;
+                }
+                // Skip if already listed from project-local (precedence)
+                if routines.iter().any(|r| r.name == *name) {
+                    continue;
+                }
+                if let Ok(path) = crate::routine::find_routine_script(&shared_dir, name) {
+                    let content = std::fs::read_to_string(&path)?;
+                    let description = extract_routine_description(&content);
+                    routines.push(RoutineInfo {
+                        name: name.clone(),
+                        description,
+                    });
+                }
+            }
+        }
+    }
+
+    routines.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(routines)
+}
+
+/// Scan a routines directory for all script files (legacy mode).
+fn scan_routines_dir(routines_dir: &Path) -> Result<Vec<RoutineInfo>, DecreeError> {
     if !routines_dir.exists() {
         return Ok(Vec::new());
     }
 
     let mut routines = Vec::new();
 
-    for entry in WalkDir::new(&routines_dir)
+    for entry in WalkDir::new(routines_dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
     {
         let path = entry.path();
         let rel = path
-            .strip_prefix(&routines_dir)
+            .strip_prefix(routines_dir)
             .map_err(|e| DecreeError::Other(e.to_string()))?;
 
         let name = rel.with_extension("").to_string_lossy().to_string();
@@ -569,7 +624,6 @@ pub fn list_routines(project_root: &Path) -> Result<Vec<RoutineInfo>, DecreeErro
         routines.push(RoutineInfo { name, description });
     }
 
-    routines.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(routines)
 }
 
@@ -656,7 +710,7 @@ fn select_routine(
 ) -> Result<String, DecreeError> {
     // Try AI router if provided
     if let Some(router_fn) = ai_router {
-        let routines = list_routines(project_root)?;
+        let routines = list_routines(project_root, config)?;
         if !routines.is_empty() {
             if let Ok(prompt) = build_router_prompt(project_root, &routines, message_body) {
                 if let Ok(selected) = router_fn(&prompt) {
@@ -1512,7 +1566,8 @@ mod tests {
         )
         .unwrap();
 
-        let routines = list_routines(dir.path()).unwrap();
+        let config = AppConfig::default();
+        let routines = list_routines(dir.path(), &config).unwrap();
         assert_eq!(routines.len(), 2);
         assert_eq!(routines[0].name, "develop");
         assert_eq!(routines[0].description, "General purpose.");
@@ -1538,7 +1593,8 @@ mod tests {
         )
         .unwrap();
 
-        let routines = list_routines(dir.path()).unwrap();
+        let config = AppConfig::default();
+        let routines = list_routines(dir.path(), &config).unwrap();
         assert_eq!(routines.len(), 2);
         let names: Vec<&str> = routines.iter().map(|r| r.name.as_str()).collect();
         assert!(names.contains(&"develop"));
@@ -1548,7 +1604,8 @@ mod tests {
     #[test]
     fn test_list_routines_no_dir() {
         let dir = TempDir::new().unwrap();
-        let routines = list_routines(dir.path()).unwrap();
+        let config = AppConfig::default();
+        let routines = list_routines(dir.path(), &config).unwrap();
         assert!(routines.is_empty());
     }
 

@@ -1,5 +1,6 @@
 use crate::error::DecreeError;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Directory and file constants.
@@ -46,6 +47,38 @@ pub struct HooksConfig {
     pub after_each: String,
 }
 
+/// A routine entry in the registry (routines/shared_routines sections).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutineEntry {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deprecated: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
+impl RoutineEntry {
+    /// Create a new entry with the given enabled state.
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            deprecated: false,
+        }
+    }
+
+    /// A routine is active only if enabled AND not deprecated.
+    pub fn is_active(&self) -> bool {
+        self.enabled && !self.deprecated
+    }
+}
+
 /// Top-level application config (deserialized from config.yml).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -58,8 +91,14 @@ pub struct AppConfig {
     pub max_log_size: u64,
     #[serde(default = "default_routine")]
     pub default_routine: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine_source: Option<String>,
     #[serde(default)]
     pub hooks: HooksConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routines: Option<BTreeMap<String, RoutineEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_routines: Option<BTreeMap<String, RoutineEntry>>,
 }
 
 fn default_max_retries() -> u32 {
@@ -83,7 +122,10 @@ impl Default for AppConfig {
             max_depth: default_max_depth(),
             max_log_size: default_max_log_size(),
             default_routine: default_routine(),
+            routine_source: None,
             hooks: HooksConfig::default(),
+            routines: None,
+            shared_routines: None,
         }
     }
 }
@@ -106,6 +148,41 @@ impl AppConfig {
     pub fn decree_dir(project_root: &Path) -> PathBuf {
         project_root.join(DECREE_DIR)
     }
+
+    /// Resolve `routine_source` with tilde expansion.
+    pub fn resolved_routine_source(&self) -> Option<PathBuf> {
+        self.routine_source.as_ref().map(|s| expand_tilde(s))
+    }
+
+    /// Derive the shared prompts directory from `routine_source`.
+    ///
+    /// If `routine_source` is `~/.decree/routines`, this returns `~/.decree/prompts`.
+    pub fn resolved_shared_prompts_dir(&self) -> Option<PathBuf> {
+        self.resolved_routine_source()
+            .and_then(|p| p.parent().map(|parent| parent.join(PROMPTS_DIR)))
+    }
+
+    /// Save config to the project's `.decree/config.yml`.
+    pub fn save(&self, project_root: &Path) -> Result<(), DecreeError> {
+        let path = project_root.join(DECREE_DIR).join(CONFIG_FILE);
+        let yaml = serde_yaml::to_string(self)?;
+        std::fs::write(&path, yaml)?;
+        Ok(())
+    }
+}
+
+/// Expand a leading `~` to the user's home directory.
+pub fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    } else if path == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home);
+        }
+    }
+    PathBuf::from(path)
 }
 
 #[cfg(test)]
@@ -121,6 +198,9 @@ mod tests {
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_log_size, 2_097_152);
         assert_eq!(config.default_routine, "develop");
+        assert!(config.routine_source.is_none());
+        assert!(config.routines.is_none());
+        assert!(config.shared_routines.is_none());
     }
 
     #[test]
@@ -161,5 +241,115 @@ commands:
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.default_routine, "develop");
+        assert!(config.routines.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_config_with_routines() {
+        let yaml = r#"
+commands:
+  ai_router: "claude -p {prompt}"
+  ai_interactive: "claude"
+routine_source: "~/.decree/routines"
+routines:
+  develop:
+    enabled: true
+  rust-develop:
+    enabled: true
+  old-routine:
+    enabled: true
+    deprecated: true
+shared_routines:
+  deploy:
+    enabled: true
+  notify:
+    enabled: false
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.routine_source.as_deref(),
+            Some("~/.decree/routines")
+        );
+
+        let routines = config.routines.as_ref().unwrap();
+        assert_eq!(routines.len(), 3);
+        assert!(routines["develop"].is_active());
+        assert!(routines["rust-develop"].is_active());
+        assert!(!routines["old-routine"].is_active()); // deprecated
+
+        let shared = config.shared_routines.as_ref().unwrap();
+        assert_eq!(shared.len(), 2);
+        assert!(shared["deploy"].is_active());
+        assert!(!shared["notify"].is_active()); // disabled
+    }
+
+    #[test]
+    fn test_routine_entry_defaults() {
+        // enabled defaults to true, deprecated to false
+        let yaml = "{}";
+        let entry: RoutineEntry = serde_yaml::from_str(yaml).unwrap();
+        assert!(entry.enabled);
+        assert!(!entry.deprecated);
+        assert!(entry.is_active());
+    }
+
+    #[test]
+    fn test_routine_entry_deprecated_overrides_enabled() {
+        let entry = RoutineEntry {
+            enabled: true,
+            deprecated: true,
+        };
+        assert!(!entry.is_active());
+    }
+
+    #[test]
+    fn test_expand_tilde() {
+        // Can't test with actual HOME since it varies, but test the non-tilde case
+        assert_eq!(expand_tilde("/absolute/path"), PathBuf::from("/absolute/path"));
+        assert_eq!(expand_tilde("relative/path"), PathBuf::from("relative/path"));
+    }
+
+    #[test]
+    fn test_expand_tilde_with_home() {
+        let home = std::env::var("HOME").unwrap();
+        let expanded = expand_tilde("~/.decree/routines");
+        assert_eq!(expanded, PathBuf::from(&home).join(".decree/routines"));
+
+        let expanded = expand_tilde("~");
+        assert_eq!(expanded, PathBuf::from(&home));
+    }
+
+    #[test]
+    fn test_resolved_routine_source() {
+        let config = AppConfig {
+            routine_source: Some("~/.decree/routines".to_string()),
+            ..AppConfig::default()
+        };
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            config.resolved_routine_source().unwrap(),
+            PathBuf::from(&home).join(".decree/routines")
+        );
+    }
+
+    #[test]
+    fn test_resolved_shared_prompts_dir() {
+        let config = AppConfig {
+            routine_source: Some("~/.decree/routines".to_string()),
+            ..AppConfig::default()
+        };
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            config.resolved_shared_prompts_dir().unwrap(),
+            PathBuf::from(&home).join(".decree/prompts")
+        );
+    }
+
+    #[test]
+    fn test_routine_entry_serialization_skips_deprecated_false() {
+        let entry = RoutineEntry::new(true);
+        let yaml = serde_yaml::to_string(&entry).unwrap();
+        assert!(yaml.contains("enabled: true"));
+        assert!(!yaml.contains("deprecated"));
     }
 }

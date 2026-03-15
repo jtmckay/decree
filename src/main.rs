@@ -44,6 +44,9 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
                 Command::Daemon { interval } => commands::daemon::run(&root, interval),
                 Command::Status => commands::status::run(&root),
                 Command::Log { id } => commands::log::run(&root, id.as_deref()),
+                Command::RoutineSync { source } => {
+                    commands::routine_sync::run(&root, source.as_deref())
+                }
                 // Already handled above
                 Command::Init | Command::Help => unreachable!(),
             }

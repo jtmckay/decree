@@ -16,6 +16,7 @@ Commands:
   decree routine <name>       Show routine detail + run pre-checks
   decree verify               Run all routine pre-checks
   decree daemon [--interval]  Continuous inbox + cron monitoring
+  decree routine-sync         Sync routine registry with filesystem
   decree status               Show processing progress
   decree log [ID]             Show routine execution output
   decree init                 Initialize a new decree project
@@ -115,6 +116,36 @@ Defining Routines:
 
   Run `decree verify` to check all routines' pre-checks at once.
   Run `decree prompt routine` for an AI-assisted routine authoring guide.
+
+Routine Registry & Shared Routines:
+  Routines are registered in config.yml under `routines` (project-local) and
+  `shared_routines` (shared library). A routine must be registered AND enabled
+  to be discoverable or executable. Deprecated routines are treated as disabled.
+
+  Config layout:
+    routine_source: "~/.decree/routines"    # shared routines directory
+    routines:
+      develop:
+        enabled: true
+    shared_routines:
+      deploy:
+        enabled: true
+
+  Directory layering:
+    1. .decree/routines/       — project-local (wins if present)
+    2. routine_source path     — shared library (fallback)
+
+  The same layering applies to prompts (.decree/prompts/ vs shared).
+
+  Discovery runs automatically at `decree process`, `decree daemon`, and
+  `decree init`. New project routines are registered as enabled; new shared
+  routines as disabled. Routines whose files disappear are marked deprecated.
+
+  Run `decree routine-sync` to trigger discovery manually:
+    decree routine-sync                    # use routine_source from config
+    decree routine-sync --source ~/other   # override shared directory
+
+  Hooks bypass the registry — they only need the script to exist on disk.
 
 Lifecycle Hooks (config.yml):
   hooks:

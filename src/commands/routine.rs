@@ -10,14 +10,19 @@ use std::path::Path;
 
 /// Run the `decree routine [name]` command.
 pub fn run(project_root: &Path, name: Option<&str>) -> Result<(), DecreeError> {
-    let routines = message::list_routines(project_root)?;
+    let mut config = AppConfig::load_from_project(project_root)?;
+
+    // Run discovery so we see newly added routines
+    if super::routine_sync::discover(project_root, &mut config, None)? {
+        config.save(project_root)?;
+    }
+
+    let routines = message::list_routines(project_root, &config)?;
 
     if routines.is_empty() {
         println!("No routines found in .decree/routines/");
         return Ok(());
     }
-
-    let config = AppConfig::load_from_project(project_root)?;
 
     match name {
         Some(name) => run_named(project_root, &config, &routines, name),
@@ -38,14 +43,14 @@ fn run_named(
         None => return routine_not_found(name, routines),
     };
 
-    let detail = routine::routine_detail(project_root, info)?;
+    let detail = routine::routine_detail(project_root, &config, info)?;
 
     if !color::is_tty() {
         print_detail_view(&detail);
         return Ok(());
     }
 
-    guided_flow(project_root, config, &detail)
+    guided_flow(project_root, &config, &detail)
 }
 
 /// Run with interactive selection (no name given).
@@ -89,7 +94,7 @@ fn run_select(
         .find(|r| r.name == selected_name)
         .ok_or_else(|| DecreeError::Other("selected routine not found".into()))?;
 
-    let detail = routine::routine_detail(project_root, info)?;
+    let detail = routine::routine_detail(project_root, config, info)?;
     guided_flow(project_root, config, &detail)
 }
 
@@ -138,7 +143,7 @@ fn guided_flow(
     print_detail_view(detail);
     println!();
 
-    let precheck_result = routine::run_precheck(project_root, &detail.info.name)?;
+    let precheck_result = routine::run_precheck(project_root, config, &detail.info.name)?;
     match &precheck_result {
         None => {
             println!("  Pre-check: {}", color::success("PASS"));
@@ -227,10 +232,17 @@ fn prompt_body() -> Result<String, DecreeError> {
     Ok(lines.join("\n"))
 }
 
-/// Create an inbox message and trigger processing.
+/// Create an inbox message and process only that single message.
+///
+/// Unlike `process::run()`, this does NOT:
+/// - Run beforeAll/afterAll hooks
+/// - Scan for pending migrations
+/// - Drain other inbox messages
+///
+/// It DOES run beforeEach/afterEach hooks, retry logic, and dead-lettering.
 fn execute_routine(
     project_root: &Path,
-    _config: &AppConfig,
+    config: &AppConfig,
     detail: &RoutineDetail,
     param_values: &[(String, String)],
     body: &str,
@@ -259,7 +271,7 @@ fn execute_routine(
         migration: None,
         body: body.to_string(),
         custom_fields,
-        filename,
+        filename: filename.clone(),
     };
 
     // Write to inbox
@@ -271,8 +283,9 @@ fn execute_routine(
 
     println!("Message created: {}", msg.filename);
 
-    // Process the message through the pipeline
-    super::process::run(project_root, false)
+    // Process only this single message (no beforeAll/afterAll, no inbox drain)
+    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    super::process::process_single_message(project_root, config, &filename, &shutdown)
 }
 
 /// Handle unknown routine: fuzzy match or list available.
@@ -296,8 +309,14 @@ fn routine_not_found(name: &str, routines: &[RoutineInfo]) -> Result<(), DecreeE
 
 /// Run the `decree verify` command — run all pre-checks.
 pub fn verify(project_root: &Path) -> Result<(), DecreeError> {
-    let routines = message::list_routines(project_root)?;
-    let config = AppConfig::load_from_project(project_root)?;
+    let mut config = AppConfig::load_from_project(project_root)?;
+
+    // Run discovery so verify sees newly added/removed routines
+    if super::routine_sync::discover(project_root, &mut config, None)? {
+        config.save(project_root)?;
+    }
+
+    let routines = message::list_routines(project_root, &config)?;
 
     if routines.is_empty() {
         println!("No routines found in .decree/routines/");
@@ -311,7 +330,7 @@ pub fn verify(project_root: &Path) -> Result<(), DecreeError> {
     let total = routines.len();
 
     for r in &routines {
-        let result = routine::run_precheck(project_root, &r.name)?;
+        let result = routine::run_precheck(project_root, &config, &r.name)?;
         match result {
             None => {
                 println!("  {:<16} {}", r.name, color::success("PASS"));
@@ -346,7 +365,7 @@ pub fn verify(project_root: &Path) -> Result<(), DecreeError> {
             let label = format!("{name} ({hook_type})");
 
             if routine_names.contains(name) {
-                let result = routine::run_precheck(project_root, name)?;
+                let result = routine::run_precheck(project_root, &config, name)?;
                 match result {
                     None => {
                         println!("  {:<32} {}", label, color::success("PASS"));

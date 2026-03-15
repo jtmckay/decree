@@ -3,10 +3,10 @@ services:
     image: ghcr.io/jtmckay/decree:latest
     volumes:
       - .:/work
-      - ~/shared-routines:/routines # optional: shared routines
     environment:
-      - DECREE_AI=opencode # opencode, claude, or copilot
+      - DECREE_AI=opencode
       - DECREE_DAEMON=true
       - DECREE_INTERVAL=2
-      - DECREE_CONTAINER=decree_1
+      - DECREE_CONTAINER=decree_docker_example
+    tty: false
     restart: unless-stopped

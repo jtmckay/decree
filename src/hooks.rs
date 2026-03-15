@@ -1,4 +1,4 @@
-use crate::config::{self, HooksConfig};
+use crate::config::{self, AppConfig, HooksConfig};
 use crate::routine;
 use std::fmt;
 use std::path::Path;
@@ -52,6 +52,20 @@ pub struct HookContext {
     pub routine_exit_code: Option<i32>,
 }
 
+/// Captured output from a successful hook execution.
+#[derive(Debug, Clone, Default)]
+pub struct HookOutput {
+    /// Combined stdout and stderr from the hook.
+    pub output: String,
+}
+
+impl HookOutput {
+    /// Returns true if the hook produced no output.
+    pub fn is_empty(&self) -> bool {
+        self.output.is_empty()
+    }
+}
+
 /// Result of a failed hook execution.
 #[derive(Debug)]
 pub struct HookError {
@@ -59,6 +73,8 @@ pub struct HookError {
     pub routine_name: String,
     pub exit_code: i32,
     pub message: String,
+    /// Captured output from the hook before it failed.
+    pub output: String,
 }
 
 impl fmt::Display for HookError {
@@ -103,30 +119,49 @@ pub fn configured_hook_names(hooks: &HooksConfig) -> Vec<(&str, HookType)> {
 
 /// Run a lifecycle hook.
 ///
-/// Returns `Ok(())` if the hook ran successfully or was not configured.
+/// Returns `Ok(HookOutput)` if the hook ran successfully or was not configured.
 /// Returns `Err(HookError)` if the hook script failed.
+///
+/// Hooks bypass the routine registry — they only need the script to exist on disk.
 pub fn run_hook(
     project_root: &Path,
     hooks: &HooksConfig,
     hook_type: HookType,
     ctx: &HookContext,
-) -> Result<(), HookError> {
+) -> Result<HookOutput, HookError> {
+    run_hook_with_config(project_root, hooks, hook_type, ctx, None)
+}
+
+/// Run a lifecycle hook with optional config for layered directory lookup.
+pub fn run_hook_with_config(
+    project_root: &Path,
+    hooks: &HooksConfig,
+    hook_type: HookType,
+    ctx: &HookContext,
+    config: Option<&AppConfig>,
+) -> Result<HookOutput, HookError> {
     let routine_name = match hook_routine_name(hooks, hook_type) {
         Some(name) => name,
-        None => return Ok(()),
+        None => return Ok(HookOutput::default()),
     };
 
-    let routines_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::ROUTINES_DIR);
-
-    let script_path =
-        routine::find_routine_script(&routines_dir, routine_name).map_err(|e| HookError {
-            hook_type,
-            routine_name: routine_name.to_string(),
-            exit_code: 1,
-            message: e.to_string(),
-        })?;
+    // If we have config, use layered lookup (project + shared).
+    // Otherwise, fall back to project-local only.
+    let script_path = if let Some(cfg) = config {
+        routine::find_routine_script_layered(project_root, cfg, routine_name)
+    } else {
+        let routines_dir = project_root
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        routine::find_routine_script(&routines_dir, routine_name)
+    }
+    .map_err(|e| HookError {
+        hook_type,
+        routine_name: routine_name.to_string(),
+        exit_code: 1,
+        message: e.to_string(),
+        output: String::new(),
+    })?;
 
     let mut cmd = Command::new("bash");
     cmd.arg(&script_path)
@@ -148,27 +183,34 @@ pub fn run_hook(
         cmd.env("DECREE_ROUTINE_EXIT_CODE", exit_code.to_string());
     }
 
-    let output = cmd.output().map_err(|e| HookError {
+    let cmd_output = cmd.output().map_err(|e| HookError {
         hook_type,
         routine_name: routine_name.to_string(),
         exit_code: 1,
         message: format!("failed to execute hook: {e}"),
+        output: String::new(),
     })?;
 
-    if output.status.success() {
-        Ok(())
+    // Combine stdout and stderr into a single output string
+    let stdout = String::from_utf8_lossy(&cmd_output.stdout);
+    let stderr = String::from_utf8_lossy(&cmd_output.stderr);
+    let combined = format!("{}{}", stdout, stderr);
+    let combined = combined.trim().to_string();
+
+    if cmd_output.status.success() {
+        Ok(HookOutput { output: combined })
     } else {
-        let exit_code = output.status.code().unwrap_or(1);
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let exit_code = cmd_output.status.code().unwrap_or(1);
         Err(HookError {
             hook_type,
             routine_name: routine_name.to_string(),
             exit_code,
-            message: if stderr.is_empty() {
+            message: if stderr.trim().is_empty() {
                 format!("hook exited with code {exit_code}")
             } else {
-                stderr
+                stderr.trim().to_string()
             },
+            output: combined,
         })
     }
 }
@@ -408,12 +450,110 @@ exit 0
     }
 
     #[test]
+    fn test_run_hook_captures_stdout() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let routines_dir = dir
+            .path()
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        std::fs::create_dir_all(&routines_dir).unwrap();
+
+        std::fs::write(
+            routines_dir.join("echo-hook.sh"),
+            "#!/usr/bin/env bash\necho 'BASELINE SAVED'\n",
+        )
+        .unwrap();
+
+        let hooks = HooksConfig {
+            before_each: "echo-hook".to_string(),
+            ..HooksConfig::default()
+        };
+        let ctx = HookContext::default();
+        let result = run_hook(dir.path(), &hooks, HookType::BeforeEach, &ctx).unwrap();
+        assert!(result.output.contains("BASELINE SAVED"));
+    }
+
+    #[test]
+    fn test_run_hook_captures_stderr() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let routines_dir = dir
+            .path()
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        std::fs::create_dir_all(&routines_dir).unwrap();
+
+        std::fs::write(
+            routines_dir.join("stderr-hook.sh"),
+            "#!/usr/bin/env bash\necho 'stderr output' >&2\n",
+        )
+        .unwrap();
+
+        let hooks = HooksConfig {
+            after_each: "stderr-hook".to_string(),
+            ..HooksConfig::default()
+        };
+        let ctx = HookContext::default();
+        let result = run_hook(dir.path(), &hooks, HookType::AfterEach, &ctx).unwrap();
+        assert!(result.output.contains("stderr output"));
+    }
+
+    #[test]
+    fn test_run_hook_no_output_returns_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let routines_dir = dir
+            .path()
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        std::fs::create_dir_all(&routines_dir).unwrap();
+
+        std::fs::write(
+            routines_dir.join("silent.sh"),
+            "#!/usr/bin/env bash\nexit 0\n",
+        )
+        .unwrap();
+
+        let hooks = HooksConfig {
+            before_each: "silent".to_string(),
+            ..HooksConfig::default()
+        };
+        let ctx = HookContext::default();
+        let result = run_hook(dir.path(), &hooks, HookType::BeforeEach, &ctx).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_run_hook_failure_includes_output() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let routines_dir = dir
+            .path()
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        std::fs::create_dir_all(&routines_dir).unwrap();
+
+        std::fs::write(
+            routines_dir.join("fail-verbose.sh"),
+            "#!/usr/bin/env bash\necho 'partial work done'\necho 'error details' >&2\nexit 1\n",
+        )
+        .unwrap();
+
+        let hooks = HooksConfig {
+            before_each: "fail-verbose".to_string(),
+            ..HooksConfig::default()
+        };
+        let ctx = HookContext::default();
+        let err = run_hook(dir.path(), &hooks, HookType::BeforeEach, &ctx).unwrap_err();
+        assert!(err.output.contains("partial work done"));
+        assert!(err.output.contains("error details"));
+    }
+
+    #[test]
     fn test_hook_error_display() {
         let err = HookError {
             hook_type: HookType::BeforeAll,
             routine_name: "setup".to_string(),
             exit_code: 1,
             message: "setup failed".to_string(),
+            output: String::new(),
         };
         let s = format!("{err}");
         assert!(s.contains("beforeAll"));

@@ -121,8 +121,37 @@ Write your own routines for any workflow — linting passes, documentation gener
 
 ```bash
 decree routine       # list available routines
+decree routine-sync  # sync routine registry with filesystem
 decree verify        # check all routine pre-checks pass
 ```
+
+## Shared Routines
+
+Build a library of routines and share them across projects. Set `routine_source` in config to point at a shared directory:
+
+```yaml
+routine_source: "~/.decree/routines"
+```
+
+Project-local routines in `.decree/routines/` take precedence. Shared routines are fallbacks. The same layering applies to prompts.
+
+Routines are tracked in a registry in `config.yml`. Discovery runs automatically at `decree init`, `decree process`, and `decree daemon` — or manually with `decree routine-sync`:
+
+```yaml
+routines:
+  develop:
+    enabled: true
+  rust-develop:
+    enabled: true
+
+shared_routines:
+  deploy:
+    enabled: true
+  notify:
+    enabled: false
+```
+
+New project-local routines default to enabled. New shared routines default to disabled. Routines whose files disappear are marked deprecated. Hooks bypass the registry — they only need the script to exist on disk.
 
 ## Chaining
 
@@ -189,11 +218,38 @@ routine: daily-review
 Run the morning code review.
 ```
 
+## Docker
+
+Run decree in a container with no local install. The Docker image installs your AI tool on startup:
+
+```yaml
+services:
+  decree:
+    image: ghcr.io/jtmckay/decree:latest
+    volumes:
+      - .:/work
+    environment:
+      - DECREE_AI=opencode  # opencode, claude, or copilot
+      - DECREE_DAEMON=true
+      - DECREE_INTERVAL=2
+    restart: unless-stopped
+```
+
+Mount a shared routine library:
+
+```yaml
+    volumes:
+      - .:/work
+      - ~/.decree/routines:/routines
+```
+
+See `examples/docker/` for a working setup.
+
 ## Project Structure
 
 ```
 .decree/
-├── config.yml          # AI tool config, retries, hooks
+├── config.yml          # AI tool config, retries, hooks, routine registry
 ├── router.md           # instructions for automatic routine selection
 ├── processed.md        # tracks completed migrations
 ├── migrations/         # spec files (your input)

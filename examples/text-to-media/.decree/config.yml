@@ -11,3 +11,11 @@ hooks:
   afterAll: ""
   beforeEach: ""
   afterEach: ""
+
+routines:
+  comfy-image-text:
+    enabled: true
+  comfy-image-text-image:
+    enabled: true
+  comfy-video-i2v:
+    enabled: true

@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(./decree:*)",
-      "Bash(./test_decree.sh:*)"
+      "Bash(./test_decree.sh:*)",
+      "Bash(/var/home/taylor/GitHub/decree/blackbox_test/decree:*)",
+      "Read(//tmp/decree_explore3/**)",
+      "Bash(.decree/routines/followup-test.sh:*)",
+      "Bash(chmod +x .decree/routines/followup-test.sh)",
+      "Bash(sed -i \"s/beforeEach: git-baseline/beforeEach: ''''/\" .decree/config.yml)",
+      "Bash(sed -i \"s/afterEach: git-stash-changes/afterEach: ''''/\" .decree/config.yml)",
+      "Bash(bash test_decree.sh 2>&1)",
+      "Bash(bash test_decree.sh -v 2>&1)"
     ]
   }
 }
