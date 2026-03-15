@@ -126,7 +126,7 @@ fn generate_config(
     config.push_str("max_depth: 10\n");
     config.push_str("max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable\n");
     config.push_str("default_routine: develop\n");
-    config.push_str("# routine_source: \"~/.decree/routines\"\n");
+    config.push_str("routine_source: \"~/.decree/routines\" # optional, shared routines directory\n");
     config.push('\n');
 
     config.push_str("hooks:\n");
@@ -366,7 +366,7 @@ mod tests {
         assert!(config.contains("max_retries: 3"));
         assert!(config.contains("beforeEach: \"\""));
         assert!(config.contains("# beforeEach: \"git-baseline\""));
-        assert!(config.contains("# routine_source:"));
+        assert!(config.contains("routine_source: \"~/.decree/routines\""));
         assert!(config.contains("routines:\n"));
         assert!(config.contains("  develop:\n    enabled: true"));
         assert!(config.contains("  rust-develop:\n    enabled: true"));

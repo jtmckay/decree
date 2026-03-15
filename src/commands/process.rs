@@ -34,9 +34,19 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
 
     // Step 1: Run beforeAll hook
     let all_ctx = HookContext::default();
-    if let Err(e) = hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeAll, &all_ctx, Some(&config)) {
-        eprintln!("{} hook failed: {e}", HookType::BeforeAll);
-        return Err(DecreeError::Other(format!("beforeAll hook failed: {e}")));
+    match hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeAll, &all_ctx, Some(&config)) {
+        Ok(hook_output) => {
+            if !hook_output.is_empty() {
+                eprintln!("{}", hook_output.output);
+            }
+        }
+        Err(e) => {
+            if !e.output.is_empty() {
+                eprintln!("{}", e.output);
+            }
+            eprintln!("{} hook failed: {e}", HookType::BeforeAll);
+            return Err(DecreeError::Other(format!("beforeAll hook failed: {e}")));
+        }
     }
 
     let mut migrations_processed = 0u32;
@@ -106,10 +116,19 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
     }
 
     // Step 7: Run afterAll hook
-    if let Err(e) = hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterAll, &all_ctx, Some(&config)) {
-        eprintln!("{}: afterAll hook failed: {e}", color::warning("warning"));
-        // afterAll failure: log warning, exit with hook's code
-        return Err(DecreeError::Other(format!("afterAll hook failed: {e}")));
+    match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterAll, &all_ctx, Some(&config)) {
+        Ok(hook_output) => {
+            if !hook_output.is_empty() {
+                eprintln!("{}", hook_output.output);
+            }
+        }
+        Err(e) => {
+            if !e.output.is_empty() {
+                eprintln!("{}", e.output);
+            }
+            eprintln!("{}: afterAll hook failed: {e}", color::warning("warning"));
+            return Err(DecreeError::Other(format!("afterAll hook failed: {e}")));
+        }
     }
 
     // Step 8: Print total duration summary
@@ -197,7 +216,11 @@ fn extract_seq(filename: &str) -> u32 {
 }
 
 /// Process a single inbox message through the full pipeline.
-fn process_single_message(
+///
+/// This handles normalization, routine resolution, the retry loop with
+/// beforeEach/afterEach hooks, outbox collection, and dead-lettering.
+/// It does NOT run beforeAll/afterAll hooks or drain the inbox.
+pub fn process_single_message(
     project_root: &Path,
     config: &AppConfig,
     filename: &str,
@@ -205,7 +228,21 @@ fn process_single_message(
 ) -> Result<(), DecreeError> {
     // Parse and normalize the message
     let mut msg = InboxMessage::from_file(project_root, filename)?;
-    let was_modified = msg.normalize(project_root, config, None)?;
+
+    // Build the AI router callback if configured
+    let ai_router_cmd = config.commands.ai_router.clone();
+    let ai_router_fn: Option<Box<dyn Fn(&str) -> Result<String, DecreeError>>> =
+        if ai_router_cmd.is_empty() {
+            None
+        } else {
+            Some(Box::new(move |prompt: &str| {
+                invoke_ai_router(&ai_router_cmd, prompt)
+            }))
+        };
+    let ai_router_ref = ai_router_fn
+        .as_ref()
+        .map(|f| f.as_ref() as &dyn Fn(&str) -> Result<String, DecreeError>);
+    let was_modified = msg.normalize(project_root, config, ai_router_ref)?;
 
     if was_modified {
         msg.write_to_inbox(project_root)?;
@@ -289,18 +326,7 @@ fn process_single_message(
             routine_exit_code: None,
         };
 
-        // Run beforeEach hook
-        if let Err(e) =
-            hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config))
-        {
-            eprintln!("{}: beforeEach hook failed for {msg_id}: {e}", color::warning("warning"));
-            // beforeEach failure: skip and dead-letter
-            mark_migration_processed_if_present(project_root, &msg)?;
-            dead_letter(project_root, filename)?;
-            return Err(DecreeError::Other(format!("beforeEach failed: {e}")));
-        }
-
-        // Execute routine
+        // Initialize log file for this attempt
         let log_file = if attempt == 1 {
             "routine.log".to_string()
         } else {
@@ -308,12 +334,28 @@ fn process_single_message(
         };
         let log_path = run_dir.join(&log_file);
 
-        let progress = format!("{msg_id} (attempt {attempt}/{}) via {routine_name}", config.max_retries);
-        print_progress(&progress);
-
         let start = chrono::Local::now();
         let start_line = format!("[decree] start {}\n", start.format("%Y-%m-%dT%H:%M:%S"));
         std::fs::write(&log_path, &start_line)?;
+
+        // Run beforeEach hook
+        match hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config)) {
+            Ok(hook_output) => {
+                write_hook_log(&log_path, HookType::BeforeEach, &hook_output.output)?;
+            }
+            Err(e) => {
+                write_hook_log(&log_path, HookType::BeforeEach, &e.output)?;
+                eprintln!("{}: beforeEach hook failed for {msg_id}: {e}", color::warning("warning"));
+                // beforeEach failure: skip and dead-letter
+                mark_migration_processed_if_present(project_root, &msg)?;
+                dead_letter(project_root, filename)?;
+                return Err(DecreeError::Other(format!("beforeEach failed: {e}")));
+            }
+        }
+
+        // Execute routine
+        let progress = format!("{msg_id} (attempt {attempt}/{}) via {routine_name}", config.max_retries);
+        print_progress(&progress);
 
         let exit_code = execute_routine(
             project_root,
@@ -355,12 +397,16 @@ fn process_single_message(
             // SUCCESS
             let after_ctx = HookContext {
                 routine_exit_code: Some(0),
-                ..hook_ctx
+                ..hook_ctx.clone()
             };
-            if let Err(e) =
-                hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
-            {
-                eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
+            match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config)) {
+                Ok(hook_output) => {
+                    let _ = write_hook_log(&log_path, HookType::AfterEach, &hook_output.output);
+                }
+                Err(e) => {
+                    let _ = write_hook_log(&log_path, HookType::AfterEach, &e.output);
+                    eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
+                }
             }
 
             // Collect outbox
@@ -388,10 +434,14 @@ fn process_single_message(
             routine_exit_code: Some(exit_code),
             ..hook_ctx
         };
-        if let Err(e) =
-            hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
-        {
-            eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
+        match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config)) {
+            Ok(hook_output) => {
+                let _ = write_hook_log(&log_path, HookType::AfterEach, &hook_output.output);
+            }
+            Err(e) => {
+                let _ = write_hook_log(&log_path, HookType::AfterEach, &e.output);
+                eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
+            }
         }
 
         if attempt == config.max_retries {
@@ -690,6 +740,63 @@ fn print_progress(msg: &str) {
     } else {
         println!("{msg}");
     }
+}
+
+/// Invoke the AI router command with the given prompt.
+///
+/// The router command template uses `{prompt}` as a placeholder for the actual prompt.
+/// Falls back to passing the prompt as a trailing argument if no placeholder is found.
+fn invoke_ai_router(cmd_template: &str, prompt: &str) -> Result<String, DecreeError> {
+    let cmd_str = if cmd_template.contains("{prompt}") {
+        cmd_template.replace("{prompt}", &shell_escape(prompt))
+    } else {
+        format!("{} {}", cmd_template, shell_escape(prompt))
+    };
+
+    let output = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(&cmd_str)
+        .output()
+        .map_err(|e| DecreeError::Other(format!("failed to run AI router: {e}")))?;
+
+    if !output.status.success() {
+        return Err(DecreeError::Other(format!(
+            "AI router exited with code {}",
+            output.status.code().unwrap_or(1)
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Write hook output to a log file.
+///
+/// Format:
+/// ```text
+/// [decree] hook beforeEach start 2026-03-13T17:00:00
+/// <hook output>
+/// [decree] hook beforeEach end 2026-03-13T17:00:01
+/// ```
+///
+/// If the hook produced no output, nothing is written.
+fn write_hook_log(
+    log_path: &Path,
+    hook_type: HookType,
+    output: &str,
+) -> Result<(), DecreeError> {
+    if output.is_empty() {
+        return Ok(());
+    }
+
+    let now = chrono::Local::now();
+    let timestamp = now.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+    let block = format!(
+        "[decree] hook {} start {}\n{}\n[decree] hook {} end {}\n",
+        hook_type, timestamp, output, hook_type, timestamp,
+    );
+
+    append_to_file(log_path, &block)
 }
 
 /// Append text to a file.
@@ -1228,5 +1335,321 @@ mod tests {
         // No migrations dir content
         let result = run_dry(dir.path());
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hook_output_captured_in_log() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // Create routine and hook scripts
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".decree/routines/git-baseline.sh"),
+            "#!/usr/bin/env bash\necho 'BASELINE SAVED'\n",
+        )
+        .unwrap();
+
+        // Config with beforeEach hook
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: git-baseline\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest body.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        let log = std::fs::read_to_string(
+            dir.path().join(".decree/runs/D0001-1432-test-0/routine.log"),
+        )
+        .unwrap();
+        assert!(log.contains("[decree] hook beforeEach start"));
+        assert!(log.contains("BASELINE SAVED"));
+        assert!(log.contains("[decree] hook beforeEach end"));
+    }
+
+    #[test]
+    fn test_hook_no_output_no_log_block() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".decree/routines/silent.sh"),
+            "#!/usr/bin/env bash\nexit 0\n",
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: silent\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown).unwrap();
+
+        let log = std::fs::read_to_string(
+            dir.path().join(".decree/runs/D0001-1432-test-0/routine.log"),
+        )
+        .unwrap();
+        // Silent hook should produce no hook log block
+        assert!(!log.contains("[decree] hook"));
+    }
+
+    #[test]
+    fn test_hook_failure_output_in_log() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".decree/routines/fail-hook.sh"),
+            "#!/usr/bin/env bash\necho 'partial output'\necho 'error info' >&2\nexit 1\n",
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: fail-hook\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_err());
+
+        let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
+        let log = std::fs::read_to_string(run_dir.join("routine.log")).unwrap();
+        assert!(log.contains("partial output"));
+        assert!(log.contains("error info"));
+    }
+
+    #[test]
+    fn test_write_hook_log_empty_no_write() {
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("routine.log");
+
+        write_hook_log(&log_path, HookType::BeforeEach, "").unwrap();
+
+        // No log file should be created
+        assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn test_write_hook_log_with_output() {
+        let dir = TempDir::new().unwrap();
+        let log_path = dir.path().join("routine.log");
+
+        write_hook_log(&log_path, HookType::AfterEach, "hook output here").unwrap();
+
+        let log = std::fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("[decree] hook afterEach start"));
+        assert!(log.contains("hook output here"));
+        assert!(log.contains("[decree] hook afterEach end"));
+    }
+
+    #[test]
+    fn test_invoke_ai_router_success() {
+        // Use printf to avoid trailing args from the prompt
+        let result = invoke_ai_router("printf rust-develop", "ignored prompt");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "rust-develop");
+    }
+
+    #[test]
+    fn test_invoke_ai_router_failure() {
+        let result = invoke_ai_router("exit 1", "test prompt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invoke_ai_router_with_prompt_placeholder() {
+        let result = invoke_ai_router("echo {prompt}", "hello world");
+        assert!(result.is_ok());
+        // The prompt is shell-escaped, so it comes through as the literal string
+        assert!(result.unwrap().contains("hello world"));
+    }
+
+    #[test]
+    fn test_ai_router_used_in_normalize() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // Create both routines
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".decree/routines/rust-develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+
+        // Router template
+        std::fs::write(
+            dir.path().join(".decree/router.md"),
+            "Select routine.\n\n{routines}\n\n{message}\n",
+        )
+        .unwrap();
+
+        // Config with ai_router that prints "rust-develop" (printf ignores extra args)
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: printf rust-develop\n  ai_interactive: echo\n",
+        )
+        .unwrap();
+
+        // Message with NO routine field — should trigger router
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\n---\nTest body.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        // Verify the message was normalized with "rust-develop" routine
+        let run_msg = std::fs::read_to_string(
+            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
+        )
+        .unwrap();
+        assert!(run_msg.contains("routine: rust-develop"));
+    }
+
+    #[test]
+    fn test_ai_router_fallback_on_empty_config() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+
+        // Config with empty ai_router
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: ''\n  ai_interactive: echo\ndefault_routine: develop\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        let run_msg = std::fs::read_to_string(
+            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
+        )
+        .unwrap();
+        assert!(run_msg.contains("routine: develop"));
+    }
+
+    #[test]
+    fn test_ai_router_fallback_on_failure() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join(".decree/router.md"),
+            "{routines}\n{message}\n",
+        )
+        .unwrap();
+
+        // Router command that fails
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: 'exit 1'\n  ai_interactive: echo\ndefault_routine: develop\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        // Should succeed with fallback to default_routine
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        let run_msg = std::fs::read_to_string(
+            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
+        )
+        .unwrap();
+        assert!(run_msg.contains("routine: develop"));
     }
 }

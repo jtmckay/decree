@@ -232,10 +232,17 @@ fn prompt_body() -> Result<String, DecreeError> {
     Ok(lines.join("\n"))
 }
 
-/// Create an inbox message and trigger processing.
+/// Create an inbox message and process only that single message.
+///
+/// Unlike `process::run()`, this does NOT:
+/// - Run beforeAll/afterAll hooks
+/// - Scan for pending migrations
+/// - Drain other inbox messages
+///
+/// It DOES run beforeEach/afterEach hooks, retry logic, and dead-lettering.
 fn execute_routine(
     project_root: &Path,
-    _config: &AppConfig,
+    config: &AppConfig,
     detail: &RoutineDetail,
     param_values: &[(String, String)],
     body: &str,
@@ -264,7 +271,7 @@ fn execute_routine(
         migration: None,
         body: body.to_string(),
         custom_fields,
-        filename,
+        filename: filename.clone(),
     };
 
     // Write to inbox
@@ -276,8 +283,9 @@ fn execute_routine(
 
     println!("Message created: {}", msg.filename);
 
-    // Process the message through the pipeline
-    super::process::run(project_root, false)
+    // Process only this single message (no beforeAll/afterAll, no inbox drain)
+    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    super::process::process_single_message(project_root, config, &filename, &shutdown)
 }
 
 /// Handle unknown routine: fuzzy match or list available.
