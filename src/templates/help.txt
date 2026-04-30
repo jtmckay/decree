@@ -11,13 +11,14 @@ Core workflow:
 
 Commands:
   decree process              Process all pending migrations + drain inbox
-  decree prompt [NAME]        Build prompt from template, copy or launch AI
   decree routine              List routines (interactive select + run)
   decree routine <name>       Show routine detail + run pre-checks
   decree verify               Run all routine pre-checks
   decree daemon [--interval]  Continuous inbox + cron monitoring
   decree routine-sync         Sync routine registry with filesystem
   decree status               Show processing progress
+  decree cron list            List cron schedules with last/next run times
+  decree skill                Install AI assistant skill/instructions
   decree log [ID]             Show routine execution output
   decree init                 Initialize a new decree project
   decree help                 This help text
@@ -42,9 +43,14 @@ Processing Pipeline:
   3. Messages are normalized (missing fields filled, routine selected)
   4. Lifecycle hooks run (beforeEach — e.g. git stash baseline)
   5. The selected routine executes with parameters as env vars
-  6. On success: afterEach hook runs, message deleted from inbox (run dir is the record)
-  7. On failure: retry strategy applies (hooks handle state management)
-  8. After all retries: dead-letter the message
+  6. On success: afterEach hook runs, message deleted from inbox; run.json is
+     written to the run directory with metadata about the completed run
+  7. On failure: retry strategy applies (hooks handle state management).
+     If the run log contains "usage limit" + "reset", decree waits until the
+     reset time (SIGINT-aware, exits 130) then retries the migration from scratch.
+  8. After all retries: dead-letter the message. If the dead-lettered message
+     was a migration, decree process stops immediately and exits non-zero —
+     subsequent migrations are not started.
   9. Follow-up messages from routines are processed depth-first
   10. Inbox is fully drained before the next migration starts
 
@@ -63,6 +69,11 @@ Environment Variables:
   DECREE_MAX_RETRIES     Configured max retries (beforeEach/afterEach)
   DECREE_ROUTINE_EXIT_CODE  Routine exit code (afterEach only)
   DECREE_PRE_CHECK       Set to "true" during pre-check runs
+  DECREE_FINAL_ATTEMPT   "true" on final retry attempt (afterEach only)
+  DECREE_TRIGGER         How the run was initiated: inbox | cron:<stem> | chain
+
+  Retry env vars (set on token-exhaustion retry):
+  DECREE_PREVIOUS_SESSION_ID  Claude session ID from the prior attempt, if captured
 
   Custom frontmatter fields are also passed as env vars.
 
@@ -111,11 +122,10 @@ Defining Routines:
     - Pre-check failures should print to stderr
     - Use ${message_dir} for prior attempt logs as AI context on retries
     - Call your AI tool directly (e.g., claude -p, copilot -p, opencode run)
-    - Routines are non-interactive — only `decree prompt` launches interactive AI
     - Use --no-color flag or NO_COLOR env var to disable color output
 
   Run `decree verify` to check all routines' pre-checks at once.
-  Run `decree prompt routine` for an AI-assisted routine authoring guide.
+  Run `decree skill` to install the decree-routine skill for AI-assisted authoring.
 
 Routine Registry & Shared Routines:
   Routines are registered in config.yml under `routines` (project-local) and
@@ -124,18 +134,28 @@ Routine Registry & Shared Routines:
 
   Config layout:
     routine_source: "~/.decree/routines"    # shared routines directory
+    max_retries: 3                          # global default
     routines:
       develop:
         enabled: true
+      gmail-sync:
+        enabled: true
+        max_retries: 5        # overrides global max_retries for this routine
+      actual-budget:
+        enabled: true
+        timeout_s: 60         # kill with SIGTERM after 60 s; treated as exit 1
     shared_routines:
       deploy:
         enabled: true
 
+  Per-routine overrides:
+    max_retries  Overrides the global retry cap for that routine only.
+    timeout_s    If set, the routine process is killed with SIGTERM after the
+                 given seconds and the attempt is treated as exit code 1.
+
   Directory layering:
     1. .decree/routines/       — project-local (wins if present)
     2. routine_source path     — shared library (fallback)
-
-  The same layering applies to prompts (.decree/prompts/ vs shared).
 
   Discovery runs automatically at `decree process`, `decree daemon`, and
   `decree init`. New project routines are registered as enabled; new shared
@@ -153,12 +173,24 @@ Lifecycle Hooks (config.yml):
     afterAll: ""       # Routine to run after all processing
     beforeEach: ""     # Routine to run before each message
     afterEach: ""      # Routine to run after each message
+    onDeadLetter: ""   # Routine to run when a message is dead-lettered
+
+  onDeadLetter fires exactly once when a message moves to inbox/dead/ after
+  exhausting all retries. It does NOT fire on beforeEach failures.
 
   Hooks receive additional env vars:
     DECREE_HOOK            — hook type name
     DECREE_ATTEMPT         — current attempt number (beforeEach/afterEach)
     DECREE_MAX_RETRIES     — configured max retries (beforeEach/afterEach)
     DECREE_ROUTINE_EXIT_CODE — routine exit code (afterEach only)
+    DECREE_FINAL_ATTEMPT   — "true" in afterEach on the last attempt only
+    DECREE_TRIGGER         — how the run was initiated (inbox/cron:<stem>/chain)
+
+  onDeadLetter additional env vars:
+    DECREE_ATTEMPT              Equals max_retries (all retries were exhausted)
+    DECREE_MAX_RETRIES          Configured max retries
+    DECREE_ROUTINE_EXIT_CODE    Exit code of the last attempt
+    DECREE_TRIGGER              How the run was initiated
 
 Cron Scheduling:
   Place .md files with a `cron` frontmatter field in .decree/cron/:
@@ -179,11 +211,58 @@ Cron Scheduling:
     */15 * * * *    Every 15 minutes
 
   Run `decree daemon` to start monitoring cron and inbox.
+  Run `decree cron list` to inspect live schedule status (last run, next fire).
+
+run.json:
+  After every completed run (success or dead-letter), decree writes run.json
+  to the run directory. Fields:
+
+    message_id    Full message ID
+    routine       Routine name used for processing
+    trigger       How the run was initiated (inbox, cron:<stem>, chain)
+    migration     Migration filename, if this was a migration run
+    attempts      Number of attempts made
+    exit_code     Exit code of the final attempt
+    start         ISO-8601 timestamp when the run started
+    end           ISO-8601 timestamp when the run ended
+    duration_s    Total elapsed seconds
+
+AI Skill Installation:
+  Install Decree guidance for Claude or GitHub Copilot:
+
+    decree skill --scope project --target claude
+        Presents an interactive selection of Claude skills to install.
+        Skills are installed under .claude/skills/<name>/SKILL.md.
+
+    decree skill --scope project --target copilot
+        Installs skills under .github/skills/<name>/SKILL.md.
+
+    decree skill --scope user --target claude
+        Installs Claude skills under ~/.claude/skills/<name>/SKILL.md.
+
+    decree skill --scope user --target copilot
+        Not supported; exits non-zero.
+
+  Available Claude skills:
+    decree          Work within the Decree migration ecosystem safely and idiomatically
+                    (.claude/skills/decree/SKILL.md)
+    decree-routine  Authoring guide for Decree routine scripts
+                    (.claude/skills/decree-routine/SKILL.md)
+    sow             Guide for writing a Statement of Work document
+                    (.claude/skills/sow/SKILL.md)
+
+  Flags:
+    --skill <name>  Install a specific skill (repeatable; for scripting/non-TTY)
+    --all           Install all available skills for the selected target
+    --force         Overwrite an existing file that differs from the bundled
+                    template (default: no-op if already matching).
+
+  The command is idempotent — if the installed file already matches the
+  bundled template, it does nothing.
 
 Getting Started:
-  1. decree init                    # Set up project
-  2. decree prompt migration        # Plan work with AI → migration files
-  3. decree verify                  # Check routines are ready
-  4. decree process                 # Execute all migrations
-  5. decree routine                 # Run individual routines interactively
-  6. decree prompt routine          # Get AI help building new routines
+  1. decree init                            # Set up project
+  2. decree skill --target claude --all     # Install AI skills (decree, decree-routine, sow)
+  3. decree verify                          # Check routines are ready
+  4. decree process                         # Execute all migrations
+  5. decree routine                         # Run individual routines interactively

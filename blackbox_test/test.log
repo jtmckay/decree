@@ -1,0 +1,203 @@
+decree test suite
+=================
+
+  PASS  version flag
+  PASS  version short flag (-v)
+  PASS  help flag (--help)
+  PASS  help subcommand (verbose)
+  PASS  help subcommand length
+  PASS  help mentions routine-sync
+  PASS  help mentions routine registry
+  PASS  unknown subcommand exit 2
+  PASS  no-color flag accepted
+  PASS  NO_COLOR env var accepted
+  PASS  version needs no project
+  PASS  help needs no project
+  PASS  bare decree w/o project fails
+  PASS  process w/o project fails
+  PASS  status w/o project fails
+  PASS  routine w/o project fails
+  PASS  verify w/o project fails
+  PASS  log w/o project fails
+  PASS  daemon w/o project fails
+  PASS  prompt w/o project fails
+  PASS  routine-sync w/o project fails
+  PASS  init creates .decree/
+  PASS  init creates routines/
+  PASS  init creates prompts/
+  PASS  init creates cron/
+  PASS  init creates inbox/
+  PASS  init creates inbox/dead/
+  PASS  init creates outbox/
+  PASS  init creates outbox/dead/
+  PASS  init creates runs/
+  PASS  init creates migrations/
+  PASS  init creates config.yml
+  PASS  init creates .gitignore
+  PASS  init creates processed.md
+  PASS  init processed.md empty
+  PASS  init creates router.md
+  PASS  init router.md not in prompts/
+  PASS  config no ai_command (deprecated)
+  PASS  config has ai_router
+  PASS  config has ai_interactive
+  PASS  config max_retries 3
+  PASS  config max_depth 10
+  PASS  config max_log_size 2MB
+  PASS  config default_routine develop
+  PASS  config has hooks section
+  PASS  config has routines section
+  PASS  config commented alternatives
+  PASS  config routine_source present
+  PASS  init creates develop.sh
+  PASS  init creates rust-develop.sh
+  PASS  init routines executable
+  PASS  init develop.sh has shebang
+  PASS  init develop.sh has pre-check
+  PASS  init develop.sh has description
+  PASS  init develop.sh no AI placeholder
+  PASS  init rust-develop no AI placeholder
+  PASS  init develop.sh has message_dir
+  PASS  init develop.sh refs AI tool
+  PASS  init creates prompt templates
+  PASS  init migration.md placeholders
+  PASS  init routine.md placeholder
+  PASS  init router.md placeholders
+  PASS  gitignore inbox/
+  PASS  gitignore outbox/
+  PASS  gitignore runs/
+  PASS  init creates git hook routines
+  PASS  init git hooks executable
+  PASS  init git-baseline pre-check
+  PASS  init git-stash pre-check
+  PASS  init git-baseline has DECREE_ATTEMPT
+  PASS  init git-stash has EXIT_CODE
+  PASS  init re-run overwrites non-tty
+  PASS  init re-run prints warning
+  PASS  status empty project
+  PASS  status shows migration count
+  PASS  status shows next migration
+  PASS  status shows inbox count
+  PASS  status shows dead-letter count
+  PASS  status shows recent activity
+  PASS  status --no-color flag
+  PASS  log no runs
+  PASS  log shows recent run
+  PASS  log specific run
+  PASS  log prefix match
+  PASS  log multiple attempts
+  PASS  log nonexistent run fails
+  PASS  log shows timestamps
+  PASS  routine list non-tty
+  PASS  routine list shows descriptions
+  PASS  routine list shows rust-develop
+  PASS  routine list shows git hooks
+  PASS  routine detail named
+  PASS  routine detail shows path
+  PASS  routine detail shows description
+  PASS  routine unknown fails
+  PASS  routine no routines message
+  PASS  routine nested discovery
+  PASS  verify all pass
+  PASS  verify some fail exit 3
+  PASS  verify shows fail reason
+  PASS  verify reports count
+  PASS  verify no routines
+  PASS  verify includes hook pre-checks
+  PASS  process dry-run no migrations
+  PASS  process dry-run lists migrations
+  PASS  process dry-run shows routine
+  PASS  process dry-run shows precheck
+  PASS  process dry-run creates no files
+  PASS  process simple migration
+  PASS  process creates run directory
+  PASS  process run dir has message.md
+  PASS  process run dir has routine.log
+  PASS  process log has timestamps
+  PASS  process removes from inbox
+  PASS  process env vars available
+  PASS  process env vars nonempty
+  PASS  process custom fields as env
+  PASS  process output shows migration
+  PASS  process output shows routine
+  PASS  process output shows message ID
+  PASS  process retry multiple logs
+  PASS  process retry count matches cfg
+  PASS  process dead-letters on exhaust
+  PASS  process dead marked processed
+  PASS  process dead output warning
+  PASS  process outbox follow-ups
+  PASS  process drains inbox after migr.
+  PASS  process follow-up increments seq
+  PASS  process multiple in order
+  PASS  process alphabetical order
+  PASS  process skips already processed
+  PASS  process idempotent rerun
+  PASS  process beforeEach hook
+  PASS  process afterEach exit code
+  PASS  process beforeAll hook
+  PASS  process afterAll hook
+  PASS  process SIGINT exit non-zero
+  PASS  process SIGINT no second migr.
+  PASS  process prints summary
+  PASS  process prints migration count
+  PASS  process prints duration
+  PASS  process drains inbox
+  PASS  process normalizes bare inbox
+  PASS  process uses default routine
+  PASS  prompt list non-tty
+  PASS  prompt named outputs content
+  PASS  prompt substitution migrations
+  PASS  prompt substitution processed
+  PASS  prompt substitution routines
+  PASS  prompt substitution config
+  PASS  prompt unknown fails
+  PASS  prompt unknown lists available
+  PASS  prompt custom template
+  PASS  daemon starts and stops
+  PASS  daemon prints polling message
+  PASS  daemon processes inbox
+  PASS  daemon custom interval
+  PASS  cron file fires via daemon
+  PASS  cron daemon output mentions cron
+  PASS  message ID format D-HHmm-name
+  PASS  migration body in message
+  PASS  message has required frontmatter
+  PASS  routine-sync discovers new
+  PASS  routine-sync new enabled
+  PASS  routine-sync shows status
+  PASS  routine-sync shared source
+  PASS  routine-sync shared disabled
+  PASS  routine-sync shared in config
+  PASS  disabled routine not listed
+  PASS  disabled routine not in verify
+  PASS  bare decree dispatches to process
+  PASS  bare decree no migrations
+  PASS  NO_COLOR env status
+  PASS  NO_COLOR env process
+  PASS  yaml array as JSON env var
+  PASS  inbox normalized to file stem
+  PASS  DECREE_FINAL_ATTEMPT on last
+  PASS  DECREE_FINAL_ATTEMPT absent
+  PASS  run.json created
+  PASS  run.json has required fields
+  PASS  run.json has trigger field
+  PASS  onDeadLetter hook fires
+  PASS  onDeadLetter receives exit code
+  PASS  DECREE_TRIGGER inbox
+  PASS  DECREE_TRIGGER chain followup
+  PASS  status dead-letter timestamp
+  PASS  cron list no files
+  PASS  cron list shows cron file
+  PASS  cron list shows routine column
+  PASS  skill install project claude
+  PASS  skill install idempotent
+  PASS  skill project scope output
+  PASS  process stops on dead-letter
+  PASS  process dead-letter stop message
+  PASS  process dead-letter skips next
+
+=================
+Results: 195 passed, 0 failed, 0 skipped
+
+All tests passed.

@@ -5,7 +5,7 @@ max_retries: 3
 max_depth: 10
 max_log_size: 2097152
 default_routine: develop
-routine_source: "~/.decree/routines" # optional, shared routines directory
+routine_source: ~/.decree/routines
 hooks:
   beforeAll: ''
   afterAll: ''
@@ -18,3 +18,18 @@ routines:
     enabled: true
   rust-develop:
     enabled: true
+shared_routines:
+  comfy-image-text:
+    enabled: false
+  comfy-image-text-image:
+    enabled: false
+  comfy-video-i2v:
+    enabled: false
+  develop:
+    enabled: false
+  process-images:
+    enabled: false
+  rust-develop:
+    enabled: false
+  tts:
+    enabled: false

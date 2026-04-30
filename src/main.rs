@@ -1,5 +1,5 @@
 use clap::Parser;
-use decree::cli::{Cli, Command};
+use decree::cli::{Cli, Command, CronSubcommand};
 use decree::commands;
 use decree::error::{self, color, DecreeError, EXIT_SUCCESS};
 use std::process;
@@ -23,9 +23,12 @@ fn main() {
 
 fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     match command {
-        // `decree init` and `decree help` don't require an existing project
+        // `decree init`, `decree help`, and `decree skill` don't require an existing project
         Some(Command::Init) => commands::init::run(),
         Some(Command::Help) => commands::help(),
+        Some(Command::Skill { scope, target, force, skills, all }) => {
+            commands::skill::run(scope, target, force, skills, all)
+        }
 
         // Bare `decree` defaults to `decree process`
         None => {
@@ -38,7 +41,6 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             let root = error::require_project_root()?;
             match cmd {
                 Command::Process { dry_run } => commands::process::run(&root, dry_run),
-                Command::Prompt { name } => commands::prompt::run(&root, name.as_deref()),
                 Command::Routine { name } => commands::routine::run(&root, name.as_deref()),
                 Command::Verify => commands::routine::verify(&root),
                 Command::Daemon { interval } => commands::daemon::run(&root, interval),
@@ -47,8 +49,10 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
                 Command::RoutineSync { source } => {
                     commands::routine_sync::run(&root, source.as_deref())
                 }
-                // Already handled above
-                Command::Init | Command::Help => unreachable!(),
+                Command::Cron { subcommand } => match subcommand {
+                    CronSubcommand::List => commands::cron_list::run(&root),
+                },
+                Command::Init | Command::Help | Command::Skill { .. } => unreachable!(),
             }
         }
     }

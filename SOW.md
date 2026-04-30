@@ -89,13 +89,21 @@ migration files.
 - Migration-driven processing pipeline with alphabetical ordering
 - Message system with YAML frontmatter, chain/sequence tracking, and routing
 - Shell-based routine system with pre-checks, custom parameters, and chaining
-- Lifecycle hooks (beforeAll, afterAll, beforeEach, afterEach)
+- Lifecycle hooks (beforeAll, afterAll, beforeEach, afterEach, onDeadLetter)
 - Retry with configurable max attempts and dead-letter queue
+- Per-routine `max_retries` and `timeout_s` configuration overrides
+- `DECREE_TRIGGER`, `DECREE_FINAL_ATTEMPT`, and `DECREE_PREVIOUS_SESSION_ID` env vars
+- Claude token-exhaustion detection with automatic wait-and-retry
+- Claude session resume (`DECREE_PREVIOUS_SESSION_ID`) after token-exhaustion wait
+- Migration dead-letter stops the process loop and exits non-zero
+- Machine-readable `run.json` written to each run directory
 - Cron scheduling and daemon mode for continuous operation
+- `decree cron list` command for live schedule inspection
 - Run directory logging and execution audit trail
 - Prompt templates with variable substitution and project context injection
-- CLI for process, prompt, routine, verify, daemon, status, log, init, help
+- CLI for process, prompt, routine, verify, daemon, status, log, init, help, cron list, skill
 - Git stash hooks for change isolation per routine execution
+- `decree skill` command for AI assistant integration (Claude and Copilot)
 
 **Out of scope (future work):**
 
@@ -113,12 +121,15 @@ migration files.
 3. Migration processing pipeline with inbox/outbox message passing
 4. Routine system with shell scripts, pre-checks, parameter discovery, and
    chaining
-5. Lifecycle hook system for cross-cutting concerns (git stash, notifications)
-6. Daemon with cron-based scheduling and inbox polling
+5. Lifecycle hook system for cross-cutting concerns (git stash, notifications,
+   onDeadLetter for dead-letter events)
+6. Daemon with cron-based scheduling, inbox polling, and `decree cron list`
+   for live schedule inspection
 7. Prompt template system with context-aware variable substitution
-8. Execution logging with run directories, attempt tracking, and dead-letter
-   queue
-9. Example projects demonstrating different workflow patterns
+8. Execution logging with run directories, attempt tracking, machine-readable
+   `run.json`, and dead-letter queue
+9. AI skill installation via `decree skill` for Claude and GitHub Copilot
+10. Example projects demonstrating different workflow patterns
 
 ## Acceptance Criteria
 
@@ -144,6 +155,26 @@ migration files.
   retries or hooks
 - The tool is AI-agnostic — routines invoke whichever AI tool the user
   configures
+- Per-routine `max_retries` overrides the global value for that routine;
+  `timeout_s` kills the process after the given seconds and treats it as exit 1
+- `onDeadLetter` hook fires exactly once when a message exhausts retries; does
+  not fire on `beforeEach` failure
+- `DECREE_TRIGGER` is set in routines and all hook phases to `inbox`,
+  `cron:<stem>`, or `chain`
+- `DECREE_FINAL_ATTEMPT=true` is present in `afterEach` on the last attempt only
+- `run.json` is written to the run directory after every completed run
+  (success or dead-letter)
+- `decree cron list` shows all cron files with schedule, last-run age, and
+  next-fire countdown
+- `decree skill --scope project --target claude` installs
+  `.claude/skills/decree/SKILL.md`
+- `decree skill --scope project --target copilot` installs
+  `.github/copilot-instructions.md`
+- Token-exhaustion detection pauses processing, waits until the reset time,
+  then retries the migration
+- SIGINT during a token-exhaustion wait exits with code 130
+- A migration that is dead-lettered stops `decree process` immediately;
+  subsequent migrations do not run
 
 ## Assumptions & Constraints
 

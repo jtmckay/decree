@@ -18,6 +18,11 @@ pub enum DecreeError {
     #[error("max retries exhausted for message {0}")]
     MaxRetriesExhausted(String),
 
+    #[error("Claude token limit exhausted")]
+    TokenLimitExhausted {
+        reset_at: Option<chrono::DateTime<chrono::Local>>,
+    },
+
     #[error("max depth exceeded (limit: {0})")]
     MaxDepthExceeded(u32),
 

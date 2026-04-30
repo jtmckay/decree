@@ -10,7 +10,21 @@
       "Bash(sed -i \"s/beforeEach: git-baseline/beforeEach: ''''/\" .decree/config.yml)",
       "Bash(sed -i \"s/afterEach: git-stash-changes/afterEach: ''''/\" .decree/config.yml)",
       "Bash(bash test_decree.sh 2>&1)",
-      "Bash(bash test_decree.sh -v 2>&1)"
+      "Bash(bash test_decree.sh -v 2>&1)",
+      "Read(//tmp/decree_probe/**)",
+      "Bash(mkdir -p .decree/migrations)",
+      "Bash(echo \"Test\")",
+      "Bash(echo \"exit: $?\")",
+      "Read(//tmp/decree_probe2/**)",
+      "Bash(sed -i 's/ai_router:.*/ai_router: \"\"/' .decree/config.yml)",
+      "Bash(sed -i 's/beforeEach:.*/beforeEach: \"\"/' .decree/config.yml)",
+      "Bash(sed -i 's/afterEach:.*/afterEach: \"\"/' .decree/config.yml)",
+      "Bash(chmod +x .decree/routines/develop.sh)",
+      "Read(//tmp/decree_probe3/**)",
+      "Bash(chmod +x .decree/routines/on-dead.sh)",
+      "Bash(chmod +x .decree/routines/failing.sh)",
+      "Bash(sed -i '/on-dead:/,/enabled:/{s/enabled: false/enabled: true/}' .decree/config.yml)",
+      "Bash(sed -i '/failing:/,/enabled:/{s/enabled: false/enabled: true/}' .decree/config.yml)"
     ]
   }
 }

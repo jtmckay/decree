@@ -6,6 +6,7 @@ use crate::hooks::{self, HookContext, HookType};
 use crate::message::{self, InboxMessage};
 use crate::routine;
 use std::collections::BTreeMap;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -146,9 +147,36 @@ fn process_single_message(
     let mut msg = InboxMessage::from_file(project_root, filename)?;
     let was_modified = msg.normalize(project_root, config, None)?;
 
-    if was_modified {
-        msg.write_to_inbox(project_root)?;
-    }
+    // If normalization changed the message (including possible rename), update on disk
+    // and track the new filename for all subsequent operations.
+    let active_filename: String = if was_modified {
+        let new_filename = msg
+            .id
+            .as_ref()
+            .map(|id| format!("{id}.md"))
+            .unwrap_or_else(|| filename.to_string());
+        if new_filename != filename {
+            let old_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(filename);
+            let new_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(&new_filename);
+            if old_path.exists() {
+                std::fs::rename(&old_path, &new_path)?;
+            }
+            msg.filename = new_filename.clone();
+            msg.write_to_inbox(project_root)?;
+            new_filename
+        } else {
+            msg.write_to_inbox(project_root)?;
+            filename.to_string()
+        }
+    } else {
+        filename.to_string()
+    };
 
     let chain = msg
         .chain
@@ -168,6 +196,20 @@ fn process_single_message(
         .as_ref()
         .ok_or_else(|| DecreeError::Other("message has no routine after normalization".into()))?
         .clone();
+    let trigger = msg.trigger.clone().unwrap_or_else(|| "inbox".to_string());
+
+    // Resolve per-routine max_retries and timeout_s
+    let effective_max_retries = config
+        .routines
+        .as_ref()
+        .and_then(|r| r.get(&routine_name))
+        .and_then(|e| e.max_retries)
+        .unwrap_or(config.max_retries);
+    let timeout_s = config
+        .routines
+        .as_ref()
+        .and_then(|r| r.get(&routine_name))
+        .and_then(|e| e.timeout_s);
 
     // Check depth limit
     if seq >= config.max_depth {
@@ -175,7 +217,7 @@ fn process_single_message(
             "decree daemon: max depth exceeded for {msg_id} (seq={seq}, limit={})",
             config.max_depth
         );
-        dead_letter(project_root, filename)?;
+        dead_letter(project_root, &active_filename)?;
         return Err(DecreeError::MaxDepthExceeded(config.max_depth));
     }
 
@@ -194,7 +236,7 @@ fn process_single_message(
         Ok(p) => p,
         Err(e) => {
             eprintln!("decree daemon: routine resolution failed for {msg_id}: {e}");
-            dead_letter(project_root, filename)?;
+            dead_letter(project_root, &active_filename)?;
             return Err(e);
         }
     };
@@ -202,13 +244,21 @@ fn process_single_message(
     let msg_file_path = project_root
         .join(config::DECREE_DIR)
         .join(config::INBOX_DIR)
-        .join(filename);
+        .join(&active_filename);
+
+    let run_start = chrono::Local::now();
+    let mut last_exit_code: i32 = 1;
+    let mut total_attempts: u32 = 0;
 
     // Retry loop
-    for attempt in 1..=config.max_retries {
+    for attempt in 1..=effective_max_retries {
+        total_attempts = attempt;
+
         if shutdown.load(Ordering::Relaxed) {
             return Ok(());
         }
+
+        let is_final = attempt == effective_max_retries;
 
         // Build hook context
         let hook_ctx = HookContext {
@@ -218,15 +268,21 @@ fn process_single_message(
             chain: chain.clone(),
             seq: seq.to_string(),
             attempt: Some(attempt),
-            max_retries: Some(config.max_retries),
+            max_retries: Some(effective_max_retries),
             routine_exit_code: None,
+            final_attempt: false,
+            trigger: trigger.clone(),
         };
 
         // Run beforeEach hook
-        if let Err(e) =
-            hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config))
-        {
-            eprintln!("decree daemon: beforeEach hook failed for {msg_id}: {e}");
+        match hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config)) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("decree daemon: beforeEach hook failed for {msg_id}: {e}");
+                // beforeEach failure: dead-letter immediately; onDeadLetter does NOT fire
+                dead_letter(project_root, &active_filename)?;
+                return Err(DecreeError::Other(format!("beforeEach failed: {e}")));
+            }
         }
 
         // Execute routine
@@ -237,12 +293,10 @@ fn process_single_message(
         };
         let log_path = run_dir.join(&log_file);
 
-        println!("decree daemon: processing {msg_id} (attempt {attempt}/{}) via {routine_name}", config.max_retries);
+        println!("decree daemon: processing {msg_id} (attempt {attempt}/{effective_max_retries}) via {routine_name}");
 
         let start = chrono::Local::now();
         let start_line = format!("[decree] start {}\n", start.format("%Y-%m-%dT%H:%M:%S"));
-
-        // Write start timestamp to log
         std::fs::write(&log_path, &start_line)?;
 
         let exit_code = execute_routine(
@@ -251,7 +305,24 @@ fn process_single_message(
             &msg,
             &run_dir,
             &log_path,
+            &trigger,
+            timeout_s,
+            shutdown,
         )?;
+        last_exit_code = exit_code;
+
+        // Check for shutdown after routine completes
+        if shutdown.load(Ordering::Relaxed) {
+            let end = chrono::Local::now();
+            let duration = end.signed_duration_since(start);
+            let end_line = format!(
+                "[decree] duration {} end {}\n",
+                format_duration(duration),
+                end.format("%Y-%m-%dT%H:%M:%S")
+            );
+            let _ = append_to_file(&log_path, &end_line);
+            return Ok(());
+        }
 
         // Write end timestamp to log
         let end = chrono::Local::now();
@@ -271,7 +342,8 @@ fn process_single_message(
             // SUCCESS
             let after_ctx = HookContext {
                 routine_exit_code: Some(0),
-                ..hook_ctx
+                final_attempt: is_final,
+                ..hook_ctx.clone()
             };
             if let Err(e) =
                 hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
@@ -286,7 +358,7 @@ fn process_single_message(
             let inbox_path = project_root
                 .join(config::DECREE_DIR)
                 .join(config::INBOX_DIR)
-                .join(filename);
+                .join(&active_filename);
             if inbox_path.exists() {
                 std::fs::remove_file(&inbox_path)?;
             }
@@ -296,12 +368,27 @@ fn process_single_message(
                 message::mark_processed(project_root, migration)?;
             }
 
+            // Write run.json
+            let run_end = chrono::Local::now();
+            write_run_json(
+                &run_dir,
+                &msg_id,
+                &routine_name,
+                &trigger,
+                msg.migration.as_deref(),
+                attempt,
+                0,
+                &run_start,
+                &run_end,
+            )?;
+
             return Ok(());
         }
 
         // FAILURE
         let after_ctx = HookContext {
             routine_exit_code: Some(exit_code),
+            final_attempt: is_final,
             ..hook_ctx
         };
         if let Err(e) =
@@ -310,7 +397,7 @@ fn process_single_message(
             eprintln!("decree daemon: afterEach hook failed for {msg_id}: {e}");
         }
 
-        if attempt == config.max_retries {
+        if attempt == effective_max_retries {
             // EXHAUSTION — all retries failed
             eprintln!(
                 "decree daemon: max retries exhausted for {msg_id} (exit code: {exit_code})"
@@ -320,11 +407,67 @@ fn process_single_message(
             clear_outbox(project_root)?;
 
             // Dead-letter the message
-            dead_letter(project_root, filename)?;
+            dead_letter(project_root, &active_filename)?;
+
+            // Write run.json before firing hook
+            let run_end = chrono::Local::now();
+            write_run_json(
+                &run_dir,
+                &msg_id,
+                &routine_name,
+                &trigger,
+                msg.migration.as_deref(),
+                attempt,
+                exit_code,
+                &run_start,
+                &run_end,
+            )?;
+
+            // Fire onDeadLetter hook (warning-only on failure)
+            let dead_file_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(config::DEAD_DIR)
+                .join(&active_filename);
+            let dead_ctx = HookContext {
+                message_file: dead_file_path.to_string_lossy().to_string(),
+                message_id: msg_id.clone(),
+                message_dir: run_dir.to_string_lossy().to_string(),
+                chain: chain.clone(),
+                seq: seq.to_string(),
+                attempt: Some(effective_max_retries),
+                max_retries: Some(effective_max_retries),
+                routine_exit_code: Some(exit_code),
+                final_attempt: false,
+                trigger: trigger.clone(),
+            };
+            if let Err(e) = hooks::run_hook_with_config(
+                project_root,
+                &config.hooks,
+                HookType::OnDeadLetter,
+                &dead_ctx,
+                Some(config),
+            ) {
+                eprintln!("decree daemon: onDeadLetter hook failed for {msg_id}: {e}");
+            }
 
             return Err(DecreeError::MaxRetriesExhausted(msg_id));
         }
     }
+
+    // Unexpected loop exit (shouldn't happen)
+    let run_end = chrono::Local::now();
+    let _ = write_run_json(
+        &run_dir,
+        &msg_id,
+        &routine_name,
+        &trigger,
+        msg.migration.as_deref(),
+        total_attempts,
+        last_exit_code,
+        &run_start,
+        &run_end,
+    );
 
     Ok(())
 }
@@ -336,6 +479,9 @@ fn execute_routine(
     msg: &InboxMessage,
     run_dir: &Path,
     log_path: &Path,
+    trigger: &str,
+    timeout_s: Option<u32>,
+    shutdown: &AtomicBool,
 ) -> Result<i32, DecreeError> {
     let msg_file_path = project_root
         .join(config::DECREE_DIR)
@@ -362,7 +508,8 @@ fn execute_routine(
         .env("message_id", msg_id)
         .env("message_dir", run_dir.to_string_lossy().as_ref())
         .env("chain", chain)
-        .env("seq", &seq);
+        .env("seq", &seq)
+        .env("DECREE_TRIGGER", trigger);
 
     // Pass custom fields as env vars
     for (key, value) in &msg.custom_fields {
@@ -371,9 +518,45 @@ fn execute_routine(
         }
     }
 
-    let status = cmd.status()?;
+    // Put child in its own process group so we can kill the entire tree.
+    cmd.process_group(0);
 
-    Ok(status.code().unwrap_or(1))
+    // Routines run unattended — no terminal input needed.
+    cmd.stdin(std::process::Stdio::null());
+
+    let mut child = cmd.spawn()?;
+    let child_id = child.id();
+
+    let start_time = std::time::Instant::now();
+
+    // Poll for completion, checking for shutdown and timeout between iterations.
+    let exit_code = loop {
+        match child.try_wait()? {
+            Some(status) => break status.code().unwrap_or(1),
+            None => {
+                if shutdown.load(Ordering::Relaxed) {
+                    unsafe {
+                        libc::kill(-(child_id as i32), libc::SIGTERM);
+                    }
+                    let _ = child.wait();
+                    // Return — caller sees shutdown flag and returns Ok
+                    return Ok(130);
+                }
+                if let Some(t) = timeout_s {
+                    if start_time.elapsed() >= std::time::Duration::from_secs(t as u64) {
+                        unsafe {
+                            libc::kill(-(child_id as i32), libc::SIGTERM);
+                        }
+                        let _ = child.wait();
+                        return Ok(1);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    };
+
+    Ok(exit_code)
 }
 
 /// Collect outbox messages and move them to inbox.
@@ -447,7 +630,7 @@ fn collect_outbox(
         });
 
         // Collect custom fields (strip known message fields)
-        let known: &[&str] = &["id", "chain", "seq", "routine", "migration"];
+        let known: &[&str] = &["id", "chain", "seq", "routine", "migration", "trigger"];
         let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
             .into_iter()
             .filter(|(k, _)| !known.contains(&k.as_str()))
@@ -459,6 +642,7 @@ fn collect_outbox(
             seq: Some(next_seq),
             routine,
             migration: None,
+            trigger: Some("chain".to_string()),
             body,
             custom_fields,
             filename: inbox_filename,
@@ -549,6 +733,41 @@ fn truncate_log_if_needed(path: &Path, max_size: u64) -> Result<(), DecreeError>
     Ok(())
 }
 
+/// Write run.json metadata to the run directory.
+#[allow(clippy::too_many_arguments)]
+fn write_run_json(
+    run_dir: &Path,
+    message_id: &str,
+    routine: &str,
+    trigger: &str,
+    migration: Option<&str>,
+    attempts: u32,
+    exit_code: i32,
+    start: &chrono::DateTime<chrono::Local>,
+    end: &chrono::DateTime<chrono::Local>,
+) -> Result<(), DecreeError> {
+    let duration_s = end.signed_duration_since(*start).num_seconds();
+
+    let mut obj = serde_json::Map::new();
+    obj.insert("message_id".into(), serde_json::Value::String(message_id.into()));
+    obj.insert("routine".into(), serde_json::Value::String(routine.into()));
+    obj.insert("trigger".into(), serde_json::Value::String(trigger.into()));
+    if let Some(m) = migration {
+        obj.insert("migration".into(), serde_json::Value::String(m.into()));
+    }
+    obj.insert("attempts".into(), serde_json::Value::Number(attempts.into()));
+    obj.insert("exit_code".into(), serde_json::Value::Number(exit_code.into()));
+    obj.insert("start".into(), serde_json::Value::String(start.format("%Y-%m-%dT%H:%M:%S").to_string()));
+    obj.insert("end".into(), serde_json::Value::String(end.format("%Y-%m-%dT%H:%M:%S").to_string()));
+    obj.insert("duration_s".into(), serde_json::Value::Number(duration_s.into()));
+
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+        .map_err(|e| DecreeError::Other(format!("failed to serialize run.json: {e}")))?;
+
+    std::fs::write(run_dir.join("run.json"), json)?;
+    Ok(())
+}
+
 /// Format a byte count for the truncation marker.
 fn format_bytes(bytes: u64) -> String {
     if bytes >= 1_048_576 {
@@ -583,6 +802,11 @@ fn value_as_env_string(v: &serde_yaml::Value) -> Option<String> {
         serde_yaml::Value::String(s) => Some(s.clone()),
         serde_yaml::Value::Number(n) => Some(n.to_string()),
         serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml::Value::Null => None,
+        serde_yaml::Value::Sequence(_) | serde_yaml::Value::Mapping(_) => {
+            let json_val: serde_json::Value = serde_json::to_value(v).ok()?;
+            Some(json_val.to_string())
+        }
         _ => None,
     }
 }
@@ -721,6 +945,7 @@ mod tests {
         assert!(content.contains("seq: 1"));
         assert!(content.contains("routine: develop"));
         assert!(content.contains("Follow-up task."));
+        assert!(content.contains("trigger: chain"));
     }
 
     #[test]
@@ -833,7 +1058,7 @@ mod tests {
         .unwrap();
 
         // Write an inbox message
-        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest body.\n";
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\ntrigger: inbox\n---\nTest body.\n";
         std::fs::write(
             dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
             content,
@@ -865,6 +1090,40 @@ mod tests {
     }
 
     #[test]
+    fn test_process_single_message_writes_run_json() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\ntrigger: inbox\n---\nBody.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = AtomicBool::new(false);
+
+        process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown).unwrap();
+
+        let run_json_path = dir.path().join(".decree/runs/D0001-1432-test-0/run.json");
+        assert!(run_json_path.exists());
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&run_json_path).unwrap()).unwrap();
+        assert_eq!(json["exit_code"], 0);
+        assert_eq!(json["attempts"], 1);
+        assert_eq!(json["trigger"], "inbox");
+        assert_eq!(json["routine"], "develop");
+    }
+
+    #[test]
     fn test_process_single_message_failure_dead_letters() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
@@ -876,7 +1135,7 @@ mod tests {
         )
         .unwrap();
 
-        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\ntrigger: inbox\n---\nTest.\n";
         std::fs::write(
             dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
             content,
@@ -912,7 +1171,7 @@ mod tests {
         )
         .unwrap();
 
-        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\ntrigger: inbox\n---\nTest.\n";
         std::fs::write(
             dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
             content,
@@ -947,7 +1206,7 @@ mod tests {
         )
         .unwrap();
 
-        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\nmigration: 01-auth.md\n---\nAdd auth.\n";
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\nmigration: 01-auth.md\ntrigger: inbox\n---\nAdd auth.\n";
         std::fs::write(
             dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
             content,
@@ -961,6 +1220,51 @@ mod tests {
 
         let processed = std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
         assert!(processed.contains("01-auth.md"));
+    }
+
+    #[test]
+    fn test_per_routine_max_retries() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\ntrigger: inbox\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let mut routines = std::collections::BTreeMap::new();
+        routines.insert(
+            "develop".to_string(),
+            crate::config::RoutineEntry {
+                enabled: true,
+                deprecated: false,
+                max_retries: Some(1),
+                timeout_s: None,
+            },
+        );
+
+        let config = AppConfig {
+            max_retries: 5,
+            routines: Some(routines),
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = AtomicBool::new(false);
+
+        process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown)
+            .unwrap_err();
+
+        // Only 1 log file (1 attempt, not 5)
+        let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
+        assert!(run_dir.join("routine.log").exists());
+        assert!(!run_dir.join("routine-2.log").exists());
     }
 
     #[test]
@@ -989,8 +1293,9 @@ mod tests {
         .unwrap();
         assert!(content.contains("routine: develop"));
         assert!(content.contains("Minutely task."));
-        // cron field should NOT be present
-        assert!(!content.contains("cron:"));
+        assert!(content.contains("trigger: cron:every-minute"));
+        // cron field should NOT be present as a standalone YAML key
+        assert!(!content.lines().any(|l| l.starts_with("cron:")));
 
         // Second fire within same minute should not create duplicate
         fire_due_cron_jobs(dir.path(), &mut tracker);
@@ -1009,5 +1314,29 @@ mod tests {
             Some("true".to_string())
         );
         assert_eq!(value_as_env_string(&serde_yaml::Value::Null), None);
+    }
+
+    #[test]
+    fn test_value_as_env_string_array() {
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            "- input_image: some_path.png [output]\n  output_prefix: some_prefix",
+        )
+        .unwrap();
+        assert_eq!(
+            value_as_env_string(&yaml),
+            Some(
+                r#"[{"input_image":"some_path.png [output]","output_prefix":"some_prefix"}]"#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_value_as_env_string_mapping() {
+        let yaml: serde_yaml::Value = serde_yaml::from_str("key: val").unwrap();
+        assert_eq!(
+            value_as_env_string(&yaml),
+            Some(r#"{"key":"val"}"#.to_string())
+        );
     }
 }

@@ -269,6 +269,7 @@ fn execute_routine(
         seq: Some(seq),
         routine: Some(detail.info.name.clone()),
         migration: None,
+        trigger: None,
         body: body.to_string(),
         custom_fields,
         filename: filename.clone(),

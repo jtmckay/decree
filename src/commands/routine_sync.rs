@@ -311,6 +311,8 @@ mod tests {
             RoutineEntry {
                 enabled: true,
                 deprecated: true,
+                max_retries: None,
+                timeout_s: None,
             },
         );
         config.routines = Some(routines);
@@ -359,21 +361,27 @@ mod tests {
         assert_eq!(
             entry_status(&RoutineEntry {
                 enabled: true,
-                deprecated: false
+                deprecated: false,
+                max_retries: None,
+                timeout_s: None,
             }),
             "enabled"
         );
         assert_eq!(
             entry_status(&RoutineEntry {
                 enabled: false,
-                deprecated: false
+                deprecated: false,
+                max_retries: None,
+                timeout_s: None,
             }),
             "disabled"
         );
         assert_eq!(
             entry_status(&RoutineEntry {
                 enabled: true,
-                deprecated: true
+                deprecated: true,
+                max_retries: None,
+                timeout_s: None,
             }),
             "deprecated"
         );

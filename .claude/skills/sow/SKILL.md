@@ -1,3 +1,8 @@
+---
+name: sow
+description: Guide for writing a Statement of Work document
+---
+
 # Statement of Work Template
 
 A Statement of Work (SOW) captures the business intent behind a body of work.

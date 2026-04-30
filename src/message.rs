@@ -6,7 +6,7 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 // Known frontmatter field names (everything else is "custom").
-const KNOWN_FIELDS: &[&str] = &["id", "chain", "seq", "routine", "migration"];
+const KNOWN_FIELDS: &[&str] = &["id", "chain", "seq", "routine", "migration", "trigger"];
 
 /// A parsed message ID with the form `<chain>-<seq>`.
 ///
@@ -287,6 +287,31 @@ pub fn mark_processed(project_root: &Path, filename: &str) -> Result<(), DecreeE
     Ok(())
 }
 
+/// Remove a filename from `.decree/processed.md` (for token-exhaustion retry).
+pub fn unmark_processed(project_root: &Path, filename: &str) -> Result<(), DecreeError> {
+    let path = project_root
+        .join(config::DECREE_DIR)
+        .join(config::PROCESSED_FILE);
+
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&path)?;
+    let new_lines: Vec<&str> = content
+        .lines()
+        .filter(|line| line.trim() != filename.trim())
+        .collect();
+
+    let mut new_content = new_lines.join("\n");
+    if !new_content.is_empty() {
+        new_content.push('\n');
+    }
+
+    std::fs::write(&path, new_content)?;
+    Ok(())
+}
+
 /// Parse a migration file's content into a `MigrationFile`.
 pub fn parse_migration(filename: &str, content: &str) -> Result<MigrationFile, DecreeError> {
     let (fields, body) = parse_frontmatter(content)?;
@@ -322,6 +347,8 @@ pub struct InboxMessage {
     pub seq: Option<u32>,
     pub routine: Option<String>,
     pub migration: Option<String>,
+    /// How the run was triggered: "inbox", "chain", or "cron:<stem>".
+    pub trigger: Option<String>,
     pub body: String,
     pub custom_fields: BTreeMap<String, serde_yaml::Value>,
     pub filename: String,
@@ -337,6 +364,7 @@ impl InboxMessage {
         let seq = fields.get("seq").and_then(value_as_u32);
         let routine = fields.get("routine").and_then(value_as_string);
         let migration = fields.get("migration").and_then(value_as_string);
+        let trigger = fields.get("trigger").and_then(value_as_string);
 
         let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
             .into_iter()
@@ -349,6 +377,7 @@ impl InboxMessage {
             seq,
             routine,
             migration,
+            trigger,
             body,
             custom_fields,
             filename: filename.to_string(),
@@ -386,8 +415,16 @@ impl InboxMessage {
         config: &AppConfig,
         ai_router: Option<&dyn Fn(&str) -> Result<String, DecreeError>>,
     ) -> Result<bool, DecreeError> {
+        let mut modified = false;
+
+        // Default trigger to "inbox" when absent (applies even to otherwise-complete messages).
+        if self.trigger.is_none() {
+            self.trigger = Some("inbox".to_string());
+            modified = true;
+        }
+
         if self.is_complete() {
-            return Ok(false);
+            return Ok(modified);
         }
 
         // 1. Derive chain and seq from filename if missing
@@ -402,17 +439,20 @@ impl InboxMessage {
             }
         }
 
-        // 2. Generate new chain if still missing
+        // 2. Generate new chain if still missing; use migration stem, then filename stem.
         if self.chain.is_none() {
             let now = Local::now();
             let hhmm = now.format("%H%M").to_string();
             let day = next_day_counter(project_root, &hhmm)?;
-            let name = self
-                .migration
-                .as_deref()
-                .map(|m| m.trim_end_matches(".md"))
-                .unwrap_or("message");
-            self.chain = Some(build_chain_id(&day, &hhmm, name));
+            let name: String = if let Some(ref mig) = self.migration {
+                mig.trim_end_matches(".md").to_string()
+            } else {
+                self.filename
+                    .strip_suffix(".md")
+                    .unwrap_or(&self.filename)
+                    .to_string()
+            };
+            self.chain = Some(build_chain_id(&day, &hhmm, &name));
         }
 
         // 3. Default seq to 0 if still missing
@@ -460,6 +500,9 @@ impl InboxMessage {
         }
         if let Some(ref v) = self.migration {
             map.insert(str_key("migration"), str_val(v));
+        }
+        if let Some(ref v) = self.trigger {
+            map.insert(str_key("trigger"), str_val(v));
         }
 
         for (k, v) in &self.custom_fields {
@@ -1187,6 +1230,7 @@ mod tests {
             seq: Some(0),
             routine: Some("develop".into()),
             migration: None,
+            trigger: Some("inbox".into()),
             body: "Test.".into(),
             custom_fields: BTreeMap::new(),
             filename: "D0001-1432-test-0.md".into(),
@@ -1373,6 +1417,76 @@ mod tests {
         assert_eq!(msg.migration.as_deref(), Some("01-auth.md"));
     }
 
+    #[test]
+    fn test_normalize_trigger_defaults_to_inbox() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        let config = AppConfig::default();
+
+        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
+        assert!(msg.trigger.is_none());
+        msg.normalize(dir.path(), &config, None).unwrap();
+        assert_eq!(msg.trigger.as_deref(), Some("inbox"));
+    }
+
+    #[test]
+    fn test_normalize_trigger_preserved_when_set() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        let config = AppConfig::default();
+
+        let content = "---\ntrigger: chain\n---\nBody.\n";
+        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", content).unwrap();
+        msg.normalize(dir.path(), &config, None).unwrap();
+        assert_eq!(msg.trigger.as_deref(), Some("chain"));
+    }
+
+    #[test]
+    fn test_normalize_trigger_defaults_on_complete_message() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        let config = AppConfig::default();
+
+        // Complete message but no trigger — should still be defaulted
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nBody.\n";
+        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", content).unwrap();
+        assert!(msg.trigger.is_none());
+        let modified = msg.normalize(dir.path(), &config, None).unwrap();
+        assert!(modified);
+        assert_eq!(msg.trigger.as_deref(), Some("inbox"));
+    }
+
+    #[test]
+    fn test_normalize_filename_stem_as_chain_fallback() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        let config = AppConfig::default();
+
+        // File "fix-errors.md" has no chain-seq pattern and no migration field
+        let mut msg = InboxMessage::parse("fix-errors.md", "Body.\n").unwrap();
+        msg.normalize(dir.path(), &config, None).unwrap();
+
+        let chain = msg.chain.as_deref().unwrap();
+        assert!(chain.contains("fix-errors"), "chain should use filename stem: {chain}");
+        assert_eq!(msg.id.as_deref().unwrap(), format!("{chain}-0"));
+    }
+
+    #[test]
+    fn test_normalize_migration_stem_takes_priority_over_filename() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        let config = AppConfig::default();
+
+        // File "random.md" with migration: 01-auth.md — migration stem wins
+        let content = "---\nmigration: 01-auth.md\n---\nBody.\n";
+        let mut msg = InboxMessage::parse("random.md", content).unwrap();
+        msg.normalize(dir.path(), &config, None).unwrap();
+
+        let chain = msg.chain.as_deref().unwrap();
+        assert!(chain.contains("01-auth"), "migration stem should take priority: {chain}");
+        assert!(!chain.contains("random"), "filename stem should not appear: {chain}");
+    }
+
     // --- Serialization tests ---
 
     #[test]
@@ -1383,6 +1497,7 @@ mod tests {
             seq: Some(0),
             routine: Some("develop".into()),
             migration: Some("01-test.md".into()),
+            trigger: Some("inbox".into()),
             body: "Hello.\n".into(),
             custom_fields: BTreeMap::new(),
             filename: "D0001-1432-test-0.md".into(),
@@ -1412,6 +1527,7 @@ mod tests {
             seq: Some(0),
             routine: Some("develop".into()),
             migration: None,
+            trigger: None,
             body: "Body.\n".into(),
             custom_fields: custom,
             filename: "D0001-1432-test-0.md".into(),
@@ -1429,6 +1545,7 @@ mod tests {
             seq: Some(0),
             routine: Some("develop".into()),
             migration: None,
+            trigger: None,
             body: String::new(),
             custom_fields: BTreeMap::new(),
             filename: "D0001-1432-test-0.md".into(),
@@ -1447,6 +1564,7 @@ mod tests {
             seq: Some(0),
             routine: Some("develop".into()),
             migration: Some("01-test.md".into()),
+            trigger: Some("chain".into()),
             body: "Hello world.\n".into(),
             custom_fields: BTreeMap::new(),
             filename: "D0001-1432-test-0.md".into(),
@@ -1460,6 +1578,7 @@ mod tests {
         assert_eq!(parsed.seq, original.seq);
         assert_eq!(parsed.routine, original.routine);
         assert_eq!(parsed.migration, original.migration);
+        assert_eq!(parsed.trigger, original.trigger);
         assert_eq!(parsed.body, original.body);
     }
 
@@ -1476,6 +1595,7 @@ mod tests {
             seq: Some(0),
             routine: Some("develop".into()),
             migration: None,
+            trigger: Some("inbox".into()),
             body: "Hello.\n".into(),
             custom_fields: BTreeMap::new(),
             filename: "D0001-1432-test-0.md".into(),

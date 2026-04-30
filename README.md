@@ -195,9 +195,23 @@ Configure hooks in `.decree/config.yml` for cross-cutting concerns:
 hooks:
   beforeEach: git-baseline
   afterEach: git-stash-changes
+  onDeadLetter: notify-failure
 ```
 
 The built-in git hooks stash a baseline before each spec and checkpoint changes after. Failed specs restore to baseline before retrying. Every attempt is preserved as a named stash.
+
+`onDeadLetter` fires exactly once when a message is moved to `inbox/dead/` after exhausting all retries. It does **not** fire on `beforeEach` failures.
+
+Hooks receive these additional env vars:
+
+| Variable | Available in |
+|---|---|
+| `DECREE_HOOK` | All hooks |
+| `DECREE_TRIGGER` | All hooks — `inbox`, `cron:<stem>`, or `chain` |
+| `DECREE_ATTEMPT` | `beforeEach`, `afterEach`, `onDeadLetter` |
+| `DECREE_MAX_RETRIES` | `beforeEach`, `afterEach`, `onDeadLetter` |
+| `DECREE_ROUTINE_EXIT_CODE` | `afterEach`, `onDeadLetter` |
+| `DECREE_FINAL_ATTEMPT` | `afterEach` only — `"true"` on the last attempt |
 
 ## Daemon & Cron
 
@@ -217,6 +231,85 @@ routine: daily-review
 
 Run the morning code review.
 ```
+
+### decree cron list
+
+Inspect live schedule status for all cron files:
+
+```bash
+decree cron list
+```
+
+Output shows each cron file with its schedule, inferred routine, how long ago it last ran, and the countdown to its next fire:
+
+```
+FILE                SCHEDULE        ROUTINE        LAST RUN    NEXT
+daily-review.md     0 9 * * 1-5     daily-review   2m ago      23h
+hourly-sync.md      0 * * * *       gmail-sync     never       13m
+```
+
+## Retry & Dead-Letter
+
+### Per-routine overrides
+
+Individual routines can override the global `max_retries` and add a `timeout_s` cap:
+
+```yaml
+routines:
+  gmail-sync:
+    enabled: true
+    max_retries: 5
+  actual-budget:
+    enabled: true
+    timeout_s: 60
+```
+
+When `timeout_s` is set, the process is killed with SIGTERM after that many seconds and the attempt is treated as exit code 1.
+
+### Migration dead-letter stops the loop
+
+When a migration's inbox message exhausts all retries and is dead-lettered, `decree process` stops immediately and exits non-zero. Subsequent migrations are not started. Non-migration inbox messages (inline drains) are unaffected.
+
+### Claude token exhaustion
+
+After a non-zero routine exit, Decree scans the run log for `usage limit` + `reset`. If found:
+
+1. Parses the reset time (falls back to +1 hour if unparseable)
+2. Prints a waiting message and sleeps until reset (SIGINT exits with code 130)
+3. Removes the migration from `processed.md` and any dead-letter copy
+4. Retries the migration from scratch
+
+On the retry, `DECREE_PREVIOUS_SESSION_ID` is set to the Claude session ID from the previous run (extracted from `Session ID: <id>` in the run log). Routines opt in:
+
+```bash
+resume_flag=""
+if [ -n "${DECREE_PREVIOUS_SESSION_ID:-}" ]; then
+  resume_flag="--resume $DECREE_PREVIOUS_SESSION_ID"
+fi
+claude $resume_flag -p "$prompt"
+```
+
+The default `develop.sh` and `rust-develop.sh` templates use this pattern.
+
+## run.json
+
+After every completed run (success or dead-letter), Decree writes `run.json` to the run directory:
+
+```json
+{
+  "message_id": "D0001-0900-01-add-auth-0",
+  "routine": "rust-develop",
+  "trigger": "inbox",
+  "migration": "01-add-auth.md",
+  "attempts": 2,
+  "exit_code": 0,
+  "start": "2026-04-29T09:00:00Z",
+  "end": "2026-04-29T09:03:42Z",
+  "duration_s": 222
+}
+```
+
+`trigger` is one of `inbox`, `cron:<stem>`, or `chain`. `migration` is omitted for non-migration messages.
 
 ## Docker
 
@@ -245,6 +338,30 @@ Mount a shared routine library:
 
 See `examples/docker/` for a working setup.
 
+## AI Assistant Integration
+
+Install Decree guidance into your AI assistant so it understands the Decree project layout, conventions, and workflow:
+
+```bash
+# Install for Claude Code (project scope)
+decree skill --scope project --target claude
+
+# Install for GitHub Copilot (project scope)
+decree skill --scope project --target copilot
+
+# Install for Claude Code (user scope — applies to all projects)
+decree skill --scope user --target claude
+```
+
+| Scope | Target | Installed path |
+|---|---|---|
+| `project` | `claude` | `.claude/skills/decree/SKILL.md` |
+| `project` | `copilot` | `.github/skills/<name>/SKILL.md` |
+| `user` | `claude` | `~/.claude/skills/decree/SKILL.md` |
+| `user` | `copilot` | Not supported |
+
+The command is idempotent — it no-ops if the installed file already matches the bundled template. Use `--force` to overwrite a file that has diverged.
+
 ## Project Structure
 
 ```
@@ -259,5 +376,6 @@ See `examples/docker/` for a working setup.
 ├── inbox/              # messages being processed
 ├── outbox/             # follow-up messages from routines
 ├── runs/               # execution logs (the audit trail)
+│   └── <id>/           # per-run directory: logs, message.md, run.json
 └── dead/               # exhausted messages for review
 ```

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 /// Directory and file constants.
 pub const DECREE_DIR: &str = ".decree";
 pub const ROUTINES_DIR: &str = "routines";
-pub const PROMPTS_DIR: &str = "prompts";
 pub const CRON_DIR: &str = "cron";
 pub const INBOX_DIR: &str = "inbox";
 pub const OUTBOX_DIR: &str = "outbox";
@@ -45,6 +44,8 @@ pub struct HooksConfig {
     pub before_each: String,
     #[serde(default, rename = "afterEach")]
     pub after_each: String,
+    #[serde(default, rename = "onDeadLetter")]
+    pub on_dead_letter: String,
 }
 
 /// A routine entry in the registry (routines/shared_routines sections).
@@ -54,6 +55,10 @@ pub struct RoutineEntry {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub deprecated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_s: Option<u32>,
 }
 
 fn default_true() -> bool {
@@ -70,6 +75,8 @@ impl RoutineEntry {
         Self {
             enabled,
             deprecated: false,
+            max_retries: None,
+            timeout_s: None,
         }
     }
 
@@ -152,14 +159,6 @@ impl AppConfig {
     /// Resolve `routine_source` with tilde expansion.
     pub fn resolved_routine_source(&self) -> Option<PathBuf> {
         self.routine_source.as_ref().map(|s| expand_tilde(s))
-    }
-
-    /// Derive the shared prompts directory from `routine_source`.
-    ///
-    /// If `routine_source` is `~/.decree/routines`, this returns `~/.decree/prompts`.
-    pub fn resolved_shared_prompts_dir(&self) -> Option<PathBuf> {
-        self.resolved_routine_source()
-            .and_then(|p| p.parent().map(|parent| parent.join(PROMPTS_DIR)))
     }
 
     /// Save config to the project's `.decree/config.yml`.
@@ -298,6 +297,8 @@ shared_routines:
         let entry = RoutineEntry {
             enabled: true,
             deprecated: true,
+            max_retries: None,
+            timeout_s: None,
         };
         assert!(!entry.is_active());
     }
@@ -329,19 +330,6 @@ shared_routines:
         assert_eq!(
             config.resolved_routine_source().unwrap(),
             PathBuf::from(&home).join(".decree/routines")
-        );
-    }
-
-    #[test]
-    fn test_resolved_shared_prompts_dir() {
-        let config = AppConfig {
-            routine_source: Some("~/.decree/routines".to_string()),
-            ..AppConfig::default()
-        };
-        let home = std::env::var("HOME").unwrap();
-        assert_eq!(
-            config.resolved_shared_prompts_dir().unwrap(),
-            PathBuf::from(&home).join(".decree/prompts")
         );
     }
 

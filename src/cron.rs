@@ -13,6 +13,8 @@ pub struct CronFile {
     pub filename: String,
     /// The stem used for chain ID naming (e.g., `hourly-maintenance`).
     pub name_stem: String,
+    /// Raw cron expression as written in the frontmatter (e.g., `*/15 * * * *`).
+    pub cron_expr: String,
     /// Parsed cron schedule.
     pub schedule: cron::Schedule,
     /// Optional routine override.
@@ -101,6 +103,7 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
     Ok(CronFile {
         filename: filename.to_string(),
         name_stem,
+        cron_expr,
         schedule,
         routine,
         custom_fields,
@@ -170,6 +173,7 @@ pub fn cron_to_inbox_message(
         seq: Some(0),
         routine: cron_file.routine.clone(),
         migration: None,
+        trigger: Some(format!("cron:{}", cron_file.name_stem)),
         body: cron_file.body.clone(),
         custom_fields: cron_file.custom_fields.clone(),
         filename,

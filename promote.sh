@@ -1,2 +1,3 @@
-cp ./target/release/decree ~/miniconda3/bin/decree.new
-mv ~/miniconda3/bin/decree.new ~/miniconda3/bin/decree
+cp ./target/release/decree ~/.cargo/bin/decree.new
+cp ~/.cargo/bin/decree decree.backup
+mv ~/.cargo/bin/decree.new ~/.cargo/bin/decree

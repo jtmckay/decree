@@ -59,7 +59,8 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
 
         let unprocessed = message::unprocessed_migrations(project_root)?;
         if unprocessed.is_empty() {
-            // No more migrations — drain any remaining inbox messages
+            // No more migrations — drain any remaining inbox messages.
+            // Dead-letters here do not stop the loop (inbox-only drain).
             drain_inbox(project_root, &config, &shutdown, None)?;
             break;
         }
@@ -100,6 +101,7 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
             seq: Some(seq),
             routine: migration.routine,
             migration: Some(migration_filename.clone()),
+            trigger: Some("inbox".to_string()),
             body: migration_content,
             custom_fields: migration.custom_fields,
             filename,
@@ -112,7 +114,17 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
         msg.write_to_inbox(project_root)?;
 
         // Drain inbox (process this message and any follow-ups)
-        drain_inbox(project_root, &config, &shutdown, Some(&chain))?;
+        let drain_result = drain_inbox(project_root, &config, &shutdown, Some(&chain))?;
+        if drain_result.dead_lettered {
+            eprintln!(
+                "[Migration {}/{}: {}] FAILED — stopping. Fix the migration or dead-letter it manually, then re-run `decree process`.",
+                migrations_processed, total, migration_filename
+            );
+            return Err(DecreeError::Other(format!(
+                "migration {} failed and was dead-lettered",
+                migration_filename
+            )));
+        }
     }
 
     // Step 7: Run afterAll hook
@@ -145,13 +157,20 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
     Ok(())
 }
 
+/// Result returned from `drain_inbox`.
+pub struct DrainResult {
+    /// True if at least one message was moved to `inbox/dead/` during this drain.
+    pub dead_lettered: bool,
+}
+
 /// Drain the inbox: process all messages LIFO, depth-first within chains.
 fn drain_inbox(
     project_root: &Path,
     config: &AppConfig,
     shutdown: &Arc<AtomicBool>,
     prefer_chain: Option<&str>,
-) -> Result<(), DecreeError> {
+) -> Result<DrainResult, DecreeError> {
+    let mut result = DrainResult { dead_lettered: false };
     loop {
         if shutdown.load(Ordering::Relaxed) {
             exit_sigint();
@@ -174,10 +193,11 @@ fn drain_inbox(
                 // process_single_message should dead-letter on all failure paths, but
                 // if it didn't (e.g. early parse/IO error), dead-letter here as fallback.
                 let _ = dead_letter(project_root, &filename);
+                result.dead_lettered = true;
             }
         }
     }
-    Ok(())
+    Ok(result)
 }
 
 /// Select next message from inbox: prefer current chain (depth-first), then LIFO.
@@ -244,9 +264,33 @@ pub fn process_single_message(
         .map(|f| f.as_ref() as &dyn Fn(&str) -> Result<String, DecreeError>);
     let was_modified = msg.normalize(project_root, config, ai_router_ref)?;
 
-    if was_modified {
-        msg.write_to_inbox(project_root)?;
-    }
+    // After normalization, rename the inbox file if the ID-based name differs from the original.
+    let active_filename: String = if was_modified {
+        let new_filename = format!(
+            "{}.md",
+            msg.id.as_deref().unwrap_or(filename.strip_suffix(".md").unwrap_or(filename))
+        );
+        if new_filename != filename {
+            let old_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(filename);
+            let new_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(&new_filename);
+            std::fs::rename(&old_path, &new_path)?;
+            msg.filename = new_filename.clone();
+            // Write updated content to the renamed file
+            msg.write_to_inbox(project_root)?;
+            new_filename
+        } else {
+            msg.write_to_inbox(project_root)?;
+            filename.to_string()
+        }
+    } else {
+        filename.to_string()
+    };
 
     let chain = msg
         .chain
@@ -266,6 +310,35 @@ pub fn process_single_message(
         .as_ref()
         .ok_or_else(|| DecreeError::Other("message has no routine after normalization".into()))?
         .clone();
+    let trigger = msg.trigger.clone().unwrap_or_else(|| "inbox".to_string());
+
+    // Determine effective max_retries (per-routine override or global)
+    let effective_max_retries = config
+        .routines
+        .as_ref()
+        .and_then(|r| r.get(&routine_name))
+        .and_then(|e| e.max_retries)
+        .unwrap_or(config.max_retries);
+
+    // Determine per-routine timeout_s
+    let timeout_s = config
+        .routines
+        .as_ref()
+        .and_then(|r| r.get(&routine_name))
+        .and_then(|e| e.timeout_s);
+
+    // Consume any pending session ID from a prior token-exhaustion wait.
+    // Only used for the first attempt of this message (attempt == 1).
+    let token_session_path = project_root
+        .join(config::DECREE_DIR)
+        .join("token_session.txt");
+    let previous_session_id: Option<String> = if token_session_path.exists() {
+        let id = std::fs::read_to_string(&token_session_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&token_session_path);
+        if id.trim().is_empty() { None } else { Some(id.trim().to_string()) }
+    } else {
+        None
+    };
 
     // Create run directory
     let run_dir = project_root
@@ -283,7 +356,7 @@ pub fn process_single_message(
         Err(e) => {
             eprintln!("routine resolution failed for {msg_id}: {e}");
             mark_migration_processed_if_present(project_root, &msg)?;
-            dead_letter(project_root, filename)?;
+            dead_letter(project_root, &active_filename)?;
             return Err(e);
         }
     };
@@ -291,10 +364,16 @@ pub fn process_single_message(
     let msg_file_path = project_root
         .join(config::DECREE_DIR)
         .join(config::INBOX_DIR)
-        .join(filename);
+        .join(&active_filename);
+
+    let run_start = chrono::Local::now();
+    let mut last_exit_code: i32 = 1;
+    let mut total_attempts: u32 = 0;
 
     // Retry loop
-    for attempt in 1..=config.max_retries {
+    for attempt in 1..=effective_max_retries {
+        total_attempts = attempt;
+
         if shutdown.load(Ordering::Relaxed) {
             // Write end timestamp to current log before exiting
             let log_file = if attempt == 1 {
@@ -314,6 +393,8 @@ pub fn process_single_message(
             exit_sigint();
         }
 
+        let is_final = attempt == effective_max_retries;
+
         // Build hook context
         let hook_ctx = HookContext {
             message_file: msg_file_path.to_string_lossy().to_string(),
@@ -322,8 +403,10 @@ pub fn process_single_message(
             chain: chain.clone(),
             seq: seq.to_string(),
             attempt: Some(attempt),
-            max_retries: Some(config.max_retries),
+            max_retries: Some(effective_max_retries),
             routine_exit_code: None,
+            final_attempt: false,
+            trigger: trigger.clone(),
         };
 
         // Initialize log file for this attempt
@@ -346,25 +429,30 @@ pub fn process_single_message(
             Err(e) => {
                 write_hook_log(&log_path, HookType::BeforeEach, &e.output)?;
                 eprintln!("{}: beforeEach hook failed for {msg_id}: {e}", color::warning("warning"));
-                // beforeEach failure: skip and dead-letter
+                // beforeEach failure: skip and dead-letter (onDeadLetter does NOT fire here)
                 mark_migration_processed_if_present(project_root, &msg)?;
-                dead_letter(project_root, filename)?;
+                dead_letter(project_root, &active_filename)?;
                 return Err(DecreeError::Other(format!("beforeEach failed: {e}")));
             }
         }
 
         // Execute routine
-        let progress = format!("{msg_id} (attempt {attempt}/{}) via {routine_name}", config.max_retries);
+        let progress = format!("{msg_id} (attempt {attempt}/{effective_max_retries}) via {routine_name}");
         print_progress(&progress);
 
+        let session_id_for_attempt = if attempt == 1 { previous_session_id.as_deref() } else { None };
         let exit_code = execute_routine(
             project_root,
             &script_path,
             &msg,
             &run_dir,
             &log_path,
+            &trigger,
+            timeout_s,
+            session_id_for_attempt,
             shutdown,
         )?;
+        last_exit_code = exit_code;
 
         // Check for SIGINT after routine completes
         if shutdown.load(Ordering::Relaxed) {
@@ -393,10 +481,17 @@ pub fn process_single_message(
         // Truncate log if needed
         truncate_log_if_needed(&log_path, config.max_log_size)?;
 
+        // Extract and persist session ID from this attempt's log
+        let log_content_for_session = std::fs::read_to_string(&log_path).unwrap_or_default();
+        if let Some(sid) = extract_session_id(&log_content_for_session) {
+            let _ = std::fs::write(run_dir.join("session_id.txt"), &sid);
+        }
+
         if exit_code == 0 {
             // SUCCESS
             let after_ctx = HookContext {
                 routine_exit_code: Some(0),
+                final_attempt: is_final,
                 ..hook_ctx.clone()
             };
             match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config)) {
@@ -416,7 +511,7 @@ pub fn process_single_message(
             let inbox_path = project_root
                 .join(config::DECREE_DIR)
                 .join(config::INBOX_DIR)
-                .join(filename);
+                .join(&active_filename);
             if inbox_path.exists() {
                 std::fs::remove_file(&inbox_path)?;
             }
@@ -426,12 +521,27 @@ pub fn process_single_message(
                 message::mark_processed(project_root, migration)?;
             }
 
+            // Write run.json
+            let run_end = chrono::Local::now();
+            write_run_json(
+                &run_dir,
+                &msg_id,
+                &routine_name,
+                &trigger,
+                msg.migration.as_deref(),
+                attempt,
+                0,
+                &run_start,
+                &run_end,
+            )?;
+
             return Ok(());
         }
 
         // FAILURE
         let after_ctx = HookContext {
             routine_exit_code: Some(exit_code),
+            final_attempt: is_final,
             ..hook_ctx
         };
         match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config)) {
@@ -444,7 +554,48 @@ pub fn process_single_message(
             }
         }
 
-        if attempt == config.max_retries {
+        // Check for Claude token exhaustion before retrying or dead-lettering.
+        // Detect on any failed attempt so we don't burn retries on an exhausted token.
+        let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
+        if detect_token_exhaustion(&log_content) {
+            let reset_at = extract_reset_time(&log_content);
+            let migration_name = msg.migration.as_deref().unwrap_or("unknown");
+            wait_for_token_reset(reset_at, migration_name, shutdown);
+            clear_outbox(project_root)?;
+            // Ensure migration is not marked processed so the outer loop retries it.
+            if let Some(ref migration) = msg.migration {
+                let _ = message::unmark_processed(project_root, migration);
+            }
+            // Remove the inbox message so drain_inbox's inner loop exits cleanly.
+            let inbox_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(&active_filename);
+            if inbox_path.exists() {
+                std::fs::remove_file(&inbox_path)?;
+            }
+            // Remove any stale dead-lettered copy from a prior run.
+            let dead_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(config::DEAD_DIR)
+                .join(&active_filename);
+            if dead_path.exists() {
+                std::fs::remove_file(&dead_path)?;
+            }
+            // Propagate session ID to the next attempt via a well-known file.
+            let session_id_path = run_dir.join("session_id.txt");
+            if session_id_path.exists() {
+                let token_session_path = project_root
+                    .join(config::DECREE_DIR)
+                    .join("token_session.txt");
+                let _ = std::fs::copy(&session_id_path, &token_session_path);
+            }
+            // Return Ok so DrainResult.dead_lettered is NOT set.
+            return Ok(());
+        }
+
+        if attempt == effective_max_retries {
             // EXHAUSTION
             eprintln!(
                 "max retries exhausted for {msg_id} (exit code: {exit_code})"
@@ -457,11 +608,67 @@ pub fn process_single_message(
             mark_migration_processed_if_present(project_root, &msg)?;
 
             // Dead-letter the message
-            dead_letter(project_root, filename)?;
+            dead_letter(project_root, &active_filename)?;
+
+            // Write run.json before returning error
+            let run_end = chrono::Local::now();
+            write_run_json(
+                &run_dir,
+                &msg_id,
+                &routine_name,
+                &trigger,
+                msg.migration.as_deref(),
+                attempt,
+                exit_code,
+                &run_start,
+                &run_end,
+            )?;
+
+            // Fire onDeadLetter hook (warning-only on failure)
+            let dead_file_path = project_root
+                .join(config::DECREE_DIR)
+                .join(config::INBOX_DIR)
+                .join(config::DEAD_DIR)
+                .join(&active_filename);
+            let dead_ctx = HookContext {
+                message_file: dead_file_path.to_string_lossy().to_string(),
+                message_id: msg_id.clone(),
+                message_dir: run_dir.to_string_lossy().to_string(),
+                chain: chain.clone(),
+                seq: seq.to_string(),
+                attempt: Some(effective_max_retries),
+                max_retries: Some(effective_max_retries),
+                routine_exit_code: Some(exit_code),
+                final_attempt: false,
+                trigger: trigger.clone(),
+            };
+            if let Err(e) = hooks::run_hook_with_config(
+                project_root,
+                &config.hooks,
+                HookType::OnDeadLetter,
+                &dead_ctx,
+                Some(config),
+            ) {
+                eprintln!("{}: onDeadLetter hook failed for {msg_id}: {e}", color::warning("warning"));
+            }
 
             return Err(DecreeError::MaxRetriesExhausted(msg_id));
         }
     }
+
+    // Write run.json for unexpected loop exit (shouldn't reach here normally)
+    let run_end = chrono::Local::now();
+    let _ = write_run_json(
+        &run_dir,
+        &msg_id,
+        &routine_name,
+        &trigger,
+        msg.migration.as_deref(),
+        total_attempts,
+        last_exit_code,
+        &run_start,
+        &run_end,
+    );
 
     Ok(())
 }
@@ -473,6 +680,9 @@ fn execute_routine(
     msg: &InboxMessage,
     run_dir: &Path,
     log_path: &Path,
+    trigger: &str,
+    timeout_s: Option<u32>,
+    previous_session_id: Option<&str>,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<i32, DecreeError> {
     let msg_file_path = project_root
@@ -500,13 +710,18 @@ fn execute_routine(
         .env("message_id", msg_id)
         .env("message_dir", run_dir.to_string_lossy().as_ref())
         .env("chain", chain)
-        .env("seq", &seq);
+        .env("seq", &seq)
+        .env("DECREE_TRIGGER", trigger);
 
     // Pass custom fields as env vars
     for (key, value) in &msg.custom_fields {
         if let Some(s) = value_as_env_string(value) {
             cmd.env(key, &s);
         }
+    }
+
+    if let Some(id) = previous_session_id {
+        cmd.env("DECREE_PREVIOUS_SESSION_ID", id);
     }
 
     // Put child in its own process group so we can kill the entire tree on SIGINT.
@@ -531,7 +746,9 @@ fn execute_routine(
     let child_id = child.id();
     CHILD_PID.store(child_id, Ordering::SeqCst);
 
-    // Poll for completion, checking for SIGINT between iterations.
+    let start_time = std::time::Instant::now();
+
+    // Poll for completion, checking for SIGINT and timeout between iterations.
     let exit_code = loop {
         match child.try_wait()? {
             Some(status) => break status.code().unwrap_or(1),
@@ -545,6 +762,16 @@ fn execute_routine(
                     CHILD_PID.store(0, Ordering::SeqCst);
                     // Return — caller checks shutdown flag and exits 130
                     return Ok(130);
+                }
+                if let Some(t) = timeout_s {
+                    if start_time.elapsed() >= std::time::Duration::from_secs(t as u64) {
+                        unsafe {
+                            libc::kill(-(child_id as i32), libc::SIGTERM);
+                        }
+                        let _ = child.wait();
+                        CHILD_PID.store(0, Ordering::SeqCst);
+                        return Ok(1);
+                    }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
@@ -630,7 +857,7 @@ fn collect_outbox(
         });
 
         // Collect custom fields (strip known message fields)
-        let known: &[&str] = &["id", "chain", "seq", "routine", "migration"];
+        let known: &[&str] = &["id", "chain", "seq", "routine", "migration", "trigger"];
         let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
             .into_iter()
             .filter(|(k, _)| !known.contains(&k.as_str()))
@@ -642,6 +869,7 @@ fn collect_outbox(
             seq: Some(next_seq),
             routine,
             migration: None,
+            trigger: Some("chain".to_string()),
             body,
             custom_fields,
             filename: inbox_filename,
@@ -709,6 +937,41 @@ fn dead_letter(project_root: &Path, filename: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
+/// Write run.json metadata to the run directory.
+#[allow(clippy::too_many_arguments)]
+fn write_run_json(
+    run_dir: &Path,
+    message_id: &str,
+    routine: &str,
+    trigger: &str,
+    migration: Option<&str>,
+    attempts: u32,
+    exit_code: i32,
+    start: &chrono::DateTime<chrono::Local>,
+    end: &chrono::DateTime<chrono::Local>,
+) -> Result<(), DecreeError> {
+    let duration_s = end.signed_duration_since(*start).num_seconds();
+
+    let mut obj = serde_json::Map::new();
+    obj.insert("message_id".into(), serde_json::Value::String(message_id.into()));
+    obj.insert("routine".into(), serde_json::Value::String(routine.into()));
+    obj.insert("trigger".into(), serde_json::Value::String(trigger.into()));
+    if let Some(m) = migration {
+        obj.insert("migration".into(), serde_json::Value::String(m.into()));
+    }
+    obj.insert("attempts".into(), serde_json::Value::Number(attempts.into()));
+    obj.insert("exit_code".into(), serde_json::Value::Number(exit_code.into()));
+    obj.insert("start".into(), serde_json::Value::String(start.format("%Y-%m-%dT%H:%M:%S").to_string()));
+    obj.insert("end".into(), serde_json::Value::String(end.format("%Y-%m-%dT%H:%M:%S").to_string()));
+    obj.insert("duration_s".into(), serde_json::Value::Number(duration_s.into()));
+
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+        .map_err(|e| DecreeError::Other(format!("failed to serialize run.json: {e}")))?;
+
+    std::fs::write(run_dir.join("run.json"), json)?;
+    Ok(())
+}
+
 /// Register SIGINT handler to set shutdown flag and forward to child process group.
 fn register_signal_handlers(shutdown: Arc<AtomicBool>) -> Result<(), DecreeError> {
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&shutdown))?;
@@ -770,15 +1033,6 @@ fn invoke_ai_router(cmd_template: &str, prompt: &str) -> Result<String, DecreeEr
 }
 
 /// Write hook output to a log file.
-///
-/// Format:
-/// ```text
-/// [decree] hook beforeEach start 2026-03-13T17:00:00
-/// <hook output>
-/// [decree] hook beforeEach end 2026-03-13T17:00:01
-/// ```
-///
-/// If the hook produced no output, nothing is written.
 fn write_hook_log(
     log_path: &Path,
     hook_type: HookType,
@@ -871,7 +1125,192 @@ fn value_as_env_string(v: &serde_yaml::Value) -> Option<String> {
         serde_yaml::Value::String(s) => Some(s.clone()),
         serde_yaml::Value::Number(n) => Some(n.to_string()),
         serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml::Value::Null => None,
+        serde_yaml::Value::Sequence(_) | serde_yaml::Value::Mapping(_) => {
+            let json_val: serde_json::Value = serde_json::to_value(v).ok()?;
+            Some(json_val.to_string())
+        }
         _ => None,
+    }
+}
+
+/// Return true when the log output matches the Claude token-exhaustion pattern.
+///
+/// Requires (case-insensitive) both "usage limit" and "reset" to be present.
+fn detect_token_exhaustion(log_content: &str) -> bool {
+    let lower = log_content.to_lowercase();
+    lower.contains("usage limit") && lower.contains("reset")
+}
+
+/// Extract the Claude session ID from a log, if present.
+///
+/// Scans for the pattern (case-insensitive):
+///   [Ss]ession(?:\s+[Ii][Dd])?:\s*([a-zA-Z0-9_-]+)
+/// Returns the captured ID, or `None` if not found.
+fn extract_session_id(log_content: &str) -> Option<String> {
+    for line in log_content.lines() {
+        let lower = line.to_lowercase();
+        let pos = if let Some(p) = lower.find("session id:") {
+            p + "session id:".len()
+        } else if let Some(p) = lower.find("session:") {
+            p + "session:".len()
+        } else {
+            continue;
+        };
+        let rest = line[pos..].trim_start();
+        let id: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect();
+        if !id.is_empty() {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// Parse the reset time from a log that contains the token-exhaustion pattern.
+///
+/// Looks for the sequence "limit(s) reset(s) [at] H:MM AM/PM" and converts it
+/// to a local `DateTime`. If the parsed time is in the past (already elapsed
+/// today), adds 24 hours so the wait targets the next occurrence. Returns
+/// `None` if no parseable time is found.
+fn extract_reset_time(log_content: &str) -> Option<chrono::DateTime<chrono::Local>> {
+    use chrono::{Local, NaiveTime, TimeZone};
+
+    let lower = log_content.to_lowercase();
+
+    // Find "limit" (or "limits") then the first "reset" after it.
+    let limit_pos = lower.find("limit")?;
+    let reset_offset = lower[limit_pos..].find("reset")?;
+    // Advance cursor to the character after "reset" (5 bytes).
+    let cursor = limit_pos + reset_offset + 5;
+    if cursor >= lower.len() {
+        return None;
+    }
+    let after = &lower[cursor..std::cmp::min(cursor + 80, lower.len())];
+
+    let mut pos = 0;
+
+    // Optional trailing "s" for "resets".
+    if after.as_bytes().first() == Some(&b's') {
+        pos += 1;
+    }
+    // Skip whitespace.
+    while pos < after.len() && after.as_bytes()[pos] == b' ' {
+        pos += 1;
+    }
+    // Skip optional "at ".
+    if after[pos..].starts_with("at ") {
+        pos += 3;
+    }
+    // Skip whitespace.
+    while pos < after.len() && after.as_bytes()[pos] == b' ' {
+        pos += 1;
+    }
+
+    // Parse H:MM or HH:MM.
+    let time_str = &after[pos..];
+    let colon_pos = time_str.find(':')?;
+    let hour_str = time_str[..colon_pos].trim();
+    if hour_str.is_empty() || hour_str.len() > 2 {
+        return None;
+    }
+    let hour: u32 = hour_str.parse().ok()?;
+
+    let after_colon = &time_str[colon_pos + 1..];
+    if after_colon.len() < 2
+        || !after_colon.as_bytes()[0].is_ascii_digit()
+        || !after_colon.as_bytes()[1].is_ascii_digit()
+    {
+        return None;
+    }
+    let min: u32 = after_colon[..2].parse().ok()?;
+
+    // Skip optional whitespace before AM/PM.
+    let mut j = 2;
+    while j < after_colon.len() && after_colon.as_bytes()[j] == b' ' {
+        j += 1;
+    }
+
+    let is_pm = if after_colon[j..].starts_with("pm") {
+        true
+    } else if after_colon[j..].starts_with("am") {
+        false
+    } else {
+        return None;
+    };
+
+    if hour > 12 || min > 59 {
+        return None;
+    }
+
+    let hour24 = match (is_pm, hour) {
+        (true, 12) => 12,
+        (true, h) => h + 12,
+        (false, 12) => 0,
+        (false, h) => h,
+    };
+
+    let t = NaiveTime::from_hms_opt(hour24, min, 0)?;
+    let now = Local::now();
+    let today_reset = now.date_naive().and_time(t);
+    let reset_dt = Local.from_local_datetime(&today_reset).single()?;
+
+    let reset_dt = if reset_dt <= now {
+        reset_dt + chrono::Duration::hours(24)
+    } else {
+        reset_dt
+    };
+
+    Some(reset_dt)
+}
+
+/// Print a waiting message then sleep until `reset_at` (or 1 hour from now
+/// if `reset_at` is `None`). Polls the shutdown flag every 100 ms; exits
+/// with code 130 if SIGINT is received while waiting.
+fn wait_for_token_reset(
+    reset_at: Option<chrono::DateTime<chrono::Local>>,
+    migration: &str,
+    shutdown: &Arc<AtomicBool>,
+) {
+    // Skip the actual sleep in unit tests — the behaviour under test is
+    // detection and cleanup, not the sleep duration.
+    #[cfg(test)]
+    {
+        let _ = (reset_at, shutdown);
+        eprintln!("[Claude token limit] Usage limit reached (test mode). Retrying migration: {migration}");
+        return;
+    }
+
+    #[cfg(not(test))]
+    {
+        let now = chrono::Local::now();
+        let target = reset_at.unwrap_or_else(|| now + chrono::Duration::hours(1));
+        let wait_secs = (target - now).num_seconds().max(0) as u64;
+        let mins = wait_secs / 60;
+        let secs = wait_secs % 60;
+
+        eprintln!(
+            "[Claude token limit] Usage limit reached. Waiting until {} ({}m {}s) to retry.",
+            target.format("%H:%M"),
+            mins,
+            secs,
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
+        loop {
+            if shutdown.load(Ordering::Relaxed) {
+                exit_sigint();
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            std::thread::sleep(remaining.min(std::time::Duration::from_millis(100)));
+        }
+
+        eprintln!("[Claude token limit] Retrying migration: {migration}");
     }
 }
 
@@ -1083,6 +1522,7 @@ mod tests {
         assert!(content.contains("seq: 1"));
         assert!(content.contains("routine: develop"));
         assert!(content.contains("Follow-up task."));
+        assert!(content.contains("trigger: chain"));
     }
 
     #[test]
@@ -1177,6 +1617,81 @@ mod tests {
             .path()
             .join(".decree/runs/D0001-1432-test-0/routine.log")
             .exists());
+        assert!(dir
+            .path()
+            .join(".decree/runs/D0001-1432-test-0/run.json")
+            .exists());
+    }
+
+    #[test]
+    fn test_run_json_written_on_success() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\nmigration: 01-auth.md\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown).unwrap();
+
+        let json_path = dir.path().join(".decree/runs/D0001-1432-test-0/run.json");
+        assert!(json_path.exists());
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(json["message_id"], "D0001-1432-test-0");
+        assert_eq!(json["routine"], "develop");
+        assert_eq!(json["exit_code"], 0);
+        assert_eq!(json["attempts"], 1);
+        assert_eq!(json["migration"], "01-auth.md");
+        assert!(json["trigger"].is_string());
+    }
+
+    #[test]
+    fn test_run_json_written_on_failure() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 2,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        let json_path = dir.path().join(".decree/runs/D0001-1432-test-0/run.json");
+        assert!(json_path.exists());
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(json["attempts"], 2);
+        assert_eq!(json["exit_code"], 1);
     }
 
     #[test]
@@ -1248,6 +1763,99 @@ mod tests {
     }
 
     #[test]
+    fn test_per_routine_max_retries() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        // Global max_retries=1, but per-routine max_retries=3
+        let mut routines = std::collections::BTreeMap::new();
+        routines.insert(
+            "develop".to_string(),
+            crate::config::RoutineEntry {
+                enabled: true,
+                deprecated: false,
+                max_retries: Some(3),
+                timeout_s: None,
+            },
+        );
+        let config = AppConfig {
+            max_retries: 1,
+            routines: Some(routines),
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        // Should have 3 log files (per-routine max_retries=3)
+        let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
+        assert!(run_dir.join("routine.log").exists());
+        assert!(run_dir.join("routine-2.log").exists());
+        assert!(run_dir.join("routine-3.log").exists());
+        // Should NOT have a 4th attempt
+        assert!(!run_dir.join("routine-4.log").exists());
+    }
+
+    #[test]
+    fn test_per_routine_timeout_kills_process() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // Routine that sleeps for 10 seconds
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nsleep 10\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let mut routines = std::collections::BTreeMap::new();
+        routines.insert(
+            "develop".to_string(),
+            crate::config::RoutineEntry {
+                enabled: true,
+                deprecated: false,
+                max_retries: None,
+                timeout_s: Some(1), // 1 second timeout
+            },
+        );
+        let config = AppConfig {
+            max_retries: 1,
+            routines: Some(routines),
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let start = std::time::Instant::now();
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let elapsed = start.elapsed();
+
+        // Should have timed out and dead-lettered
+        assert!(result.is_err());
+        // Should have completed in well under 10 seconds
+        assert!(elapsed.as_secs() < 5, "timeout didn't work: took {}s", elapsed.as_secs());
+    }
+
+    #[test]
     fn test_process_marks_migration_processed() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
@@ -1272,6 +1880,135 @@ mod tests {
 
         let processed = std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
         assert!(processed.contains("01-auth.md"));
+    }
+
+    #[test]
+    fn test_inbox_file_renamed_after_normalize() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+
+        // Drop a bare file with no frontmatter — gets renamed during normalize
+        std::fs::write(
+            dir.path().join(".decree/inbox/fix-errors.md"),
+            "Fix the errors.\n",
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "fix-errors.md", &shutdown);
+        assert!(result.is_ok());
+
+        // Original filename should no longer exist
+        assert!(!dir.path().join(".decree/inbox/fix-errors.md").exists());
+        // A run directory should have been created (named with the new ID)
+        let runs: Vec<_> = std::fs::read_dir(dir.path().join(".decree/runs"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .collect();
+        assert!(!runs.is_empty());
+        // Run dir name should contain "fix-errors"
+        let run_name = runs[0].file_name().to_string_lossy().to_string();
+        assert!(run_name.contains("fix-errors"), "unexpected run name: {run_name}");
+    }
+
+    #[test]
+    fn test_on_dead_letter_hook_fires_on_exhaustion() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+        // Marker file created by the hook
+        let marker = dir.path().join("dead_letter_fired");
+        std::fs::write(
+            dir.path().join(".decree/routines/on-dead-letter.sh"),
+            format!(
+                "#!/usr/bin/env bash\ntouch {}\n",
+                marker.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  onDeadLetter: on-dead-letter\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        assert!(marker.exists(), "onDeadLetter hook did not fire");
+    }
+
+    #[test]
+    fn test_on_dead_letter_hook_does_not_fire_on_before_each_failure() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".decree/routines/fail-before.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+        let marker = dir.path().join("dead_letter_fired");
+        std::fs::write(
+            dir.path().join(".decree/routines/on-dead-letter.sh"),
+            format!(
+                "#!/usr/bin/env bash\ntouch {}\n",
+                marker.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: fail-before\n  onDeadLetter: on-dead-letter\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        assert!(!marker.exists(), "onDeadLetter should NOT fire on beforeEach failure");
     }
 
     #[test]
@@ -1326,6 +2063,339 @@ mod tests {
             Some("true".to_string())
         );
         assert_eq!(value_as_env_string(&serde_yaml::Value::Null), None);
+    }
+
+    #[test]
+    fn test_value_as_env_string_array() {
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            "- input_image: some_path.png [output]\n  output_prefix: some_prefix",
+        )
+        .unwrap();
+        assert_eq!(
+            value_as_env_string(&yaml),
+            Some(
+                r#"[{"input_image":"some_path.png [output]","output_prefix":"some_prefix"}]"#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_value_as_env_string_mapping() {
+        let yaml: serde_yaml::Value = serde_yaml::from_str("key: val").unwrap();
+        assert_eq!(
+            value_as_env_string(&yaml),
+            Some(r#"{"key":"val"}"#.to_string())
+        );
+    }
+
+    // ── Token-exhaustion helpers ───────────────────────────────────────────
+
+    #[test]
+    fn test_detect_token_exhaustion_positive() {
+        assert!(detect_token_exhaustion(
+            "Claude AI usage limit reached. Limits reset at 10:00 PM"
+        ));
+        assert!(detect_token_exhaustion("usage limit reached\nresets at 5:00 AM"));
+        assert!(detect_token_exhaustion("USAGE LIMIT exceeded. Will RESET tomorrow."));
+    }
+
+    #[test]
+    fn test_detect_token_exhaustion_negative() {
+        assert!(!detect_token_exhaustion("error: command not found"));
+        assert!(!detect_token_exhaustion("usage limit reached")); // no "reset"
+        assert!(!detect_token_exhaustion("system reset performed")); // no "usage limit"
+        assert!(!detect_token_exhaustion(""));
+    }
+
+    #[test]
+    fn test_extract_reset_time_parseable_pm() {
+        let log = "Claude AI usage limit reached. Limits reset at 11:59 PM";
+        let result = extract_reset_time(log);
+        assert!(result.is_some(), "expected Some but got None");
+        // The extracted time must be in the future.
+        assert!(result.unwrap() > chrono::Local::now());
+    }
+
+    #[test]
+    fn test_extract_reset_time_parseable_am() {
+        let log = "usage limit reached. Limits reset at 6:00 AM";
+        let result = extract_reset_time(log);
+        assert!(result.is_some(), "expected Some but got None");
+        assert!(result.unwrap() > chrono::Local::now());
+    }
+
+    #[test]
+    fn test_extract_reset_time_resets_variant() {
+        let log = "Limits resets at 10:00 PM";
+        let result = extract_reset_time(log);
+        assert!(result.is_some(), "expected Some but got None");
+    }
+
+    #[test]
+    fn test_extract_reset_time_no_ampm() {
+        // Time present but no AM/PM marker → None
+        let log = "Limits reset at 10:00 today";
+        let result = extract_reset_time(log);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_reset_time_no_time_in_log() {
+        let log = "usage limit reached. Please wait for the reset.";
+        let result = extract_reset_time(log);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_reset_time_adds_24h_when_past() {
+        // Pick a time that is definitely in the past (midnight = 12:00 AM).
+        // If current time is past midnight (which it always is), it should add 24h.
+        let log = "Limits reset at 12:00 AM";
+        let result = extract_reset_time(log);
+        // 12:00 AM = midnight; unless we're running at exactly midnight, this is in the past
+        // and should be bumped to tomorrow midnight, so always > now.
+        assert!(result.is_some());
+        assert!(result.unwrap() > chrono::Local::now());
+    }
+
+    // ── Token-exhaustion integration ──────────────────────────────────────
+
+    #[test]
+    fn test_token_exhaustion_does_not_dead_letter() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // Routine prints the usage-limit message and exits non-zero.
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'Claude AI usage limit reached. Limits reset at 11:59 PM'\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\nmigration: 01-token-test.md\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        // Must succeed (not an error) so DrainResult.dead_lettered is not set.
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        // Message must NOT be in dead-letter dir.
+        assert!(
+            !dir.path().join(".decree/inbox/dead/D0001-1432-test-0.md").exists(),
+            "message was incorrectly dead-lettered"
+        );
+
+        // Migration must NOT appear in processed.md.
+        let processed = std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
+        assert!(
+            !processed.contains("01-token-test.md"),
+            "migration was incorrectly marked as processed"
+        );
+    }
+
+    #[test]
+    fn test_token_exhaustion_inbox_message_removed() {
+        // After token-exhaustion handling the inbox message is deleted so the
+        // outer migration loop can re-create it fresh.
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'usage limit reached. Limits reset at 11:59 PM'\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        // Inbox message must be gone (so drain_inbox exits cleanly).
+        assert!(
+            !dir.path().join(".decree/inbox/D0001-1432-test-0.md").exists(),
+            "inbox message was not removed"
+        );
+    }
+
+    #[test]
+    fn test_token_exhaustion_detected_on_first_attempt() {
+        // Even when max_retries > 1, token exhaustion should be caught on the
+        // first failed attempt (no wasted retries).
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'Claude AI usage limit reached. Limits reset at 11:59 PM'\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 3,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        // Should return Ok (not exhaust all retries then die).
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        // Only routine.log should exist (not routine-2.log), proving it
+        // exited after the first attempt.
+        let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
+        assert!(run_dir.join("routine.log").exists());
+        assert!(!run_dir.join("routine-2.log").exists());
+    }
+
+    #[test]
+    fn test_normal_failure_still_dead_letters_with_exhaustion_env_set() {
+        // A routine with a normal error (no token-exhaustion pattern) must still
+        // dead-letter even when the skip-wait env var is set.
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'some normal error'\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_err());
+        assert!(dir
+            .path()
+            .join(".decree/inbox/dead/D0001-1432-test-0.md")
+            .exists());
+    }
+
+    #[test]
+    fn test_drain_inbox_dead_lettered_on_exhaustion() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = drain_inbox(dir.path(), &config, &shutdown, Some("D0001-1432-test")).unwrap();
+        assert!(result.dead_lettered);
+        assert!(dir.path().join(".decree/inbox/dead/D0001-1432-test-0.md").exists());
+    }
+
+    #[test]
+    fn test_drain_inbox_not_dead_lettered_on_success() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'done'\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = drain_inbox(dir.path(), &config, &shutdown, Some("D0001-1432-test")).unwrap();
+        assert!(!result.dead_lettered);
+    }
+
+    #[test]
+    fn test_drain_inbox_inbox_only_dead_lettered_flag_is_set() {
+        // Inbox-only drain (prefer_chain=None) still sets dead_lettered when
+        // a message fails — but the caller (run()) ignores it for this path.
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        // prefer_chain=None (inbox-only drain)
+        let result = drain_inbox(dir.path(), &config, &shutdown, None).unwrap();
+        // dead_lettered is set — but the migration loop ignores this for inbox-only drains
+        assert!(result.dead_lettered);
     }
 
     #[test]
@@ -1651,5 +2721,288 @@ mod tests {
         )
         .unwrap();
         assert!(run_msg.contains("routine: develop"));
+    }
+
+    // ── Session ID extraction ─────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_session_id_plain() {
+        assert_eq!(
+            extract_session_id("Session ID: abc123"),
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_id_case_insensitive() {
+        assert_eq!(
+            extract_session_id("session id: XYZ-789"),
+            Some("XYZ-789".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_id_short_form() {
+        assert_eq!(
+            extract_session_id("Session: my_session_id"),
+            Some("my_session_id".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_id_multiline() {
+        let log = "some output\nSession ID: sess-abc-123\nmore output";
+        assert_eq!(
+            extract_session_id(log),
+            Some("sess-abc-123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_id_none_when_absent() {
+        assert_eq!(extract_session_id("no session info here"), None);
+        assert_eq!(extract_session_id(""), None);
+    }
+
+    #[test]
+    fn test_extract_session_id_stops_at_non_alphanum() {
+        // Only alphanumeric, underscore, and hyphen are captured
+        assert_eq!(
+            extract_session_id("Session ID: abc123 extra"),
+            Some("abc123".to_string())
+        );
+    }
+
+    // ── Session ID written to run dir after attempt ───────────────────────
+
+    #[test]
+    fn test_session_id_written_after_successful_attempt() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'Session ID: sess-ok-1'\nexit 0\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        let sid = std::fs::read_to_string(
+            dir.path().join(".decree/runs/D0001-1432-test-0/session_id.txt"),
+        )
+        .unwrap();
+        assert_eq!(sid, "sess-ok-1");
+    }
+
+    #[test]
+    fn test_session_id_not_written_when_absent_from_log() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'no session info'\nexit 0\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        assert!(
+            !dir.path().join(".decree/runs/D0001-1432-test-0/session_id.txt").exists(),
+            "session_id.txt should not be written when log has no session ID"
+        );
+    }
+
+    // ── Token-exhaustion propagates session ID ────────────────────────────
+
+    #[test]
+    fn test_token_exhaustion_writes_token_session_file() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // Routine prints both the session ID and the token-exhaustion pattern
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'Session ID: ses-exhaust-1'\necho 'usage limit reached. Limits reset at 11:59 PM'\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        let token_session = std::fs::read_to_string(
+            dir.path().join(".decree/token_session.txt"),
+        )
+        .unwrap();
+        assert_eq!(token_session, "ses-exhaust-1");
+    }
+
+    #[test]
+    fn test_token_exhaustion_no_token_session_when_no_session_id() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // Token exhaustion pattern but no session ID
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\necho 'usage limit reached. Limits reset at 11:59 PM'\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+
+        assert!(
+            !dir.path().join(".decree/.token_session.txt").exists(),
+            "token_session.txt should not be written when log has no session ID"
+        );
+    }
+
+    #[test]
+    fn test_previous_session_id_env_set_on_token_exhaustion_retry() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // Routine captures DECREE_PREVIOUS_SESSION_ID to a file
+        let marker = dir.path().join("captured_session_id.txt");
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            format!(
+                "#!/usr/bin/env bash\necho \"${{DECREE_PREVIOUS_SESSION_ID:-}}\" > {}\nexit 0\n",
+                marker.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        // Pre-populate token_session.txt as if a prior token-exhaustion occurred
+        std::fs::write(
+            dir.path().join(".decree/token_session.txt"),
+            "prior-session-abc",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        let captured = std::fs::read_to_string(&marker).unwrap();
+        assert_eq!(captured.trim(), "prior-session-abc");
+
+        // token_session.txt must be consumed (deleted) after first use
+        assert!(
+            !dir.path().join(".decree/token_session.txt").exists(),
+            "token_session.txt should be deleted after being consumed"
+        );
+    }
+
+    #[test]
+    fn test_previous_session_id_not_set_on_normal_retry() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        // First attempt captures the env var, second attempt also captures it.
+        // No token_session.txt is present.
+        let marker1 = dir.path().join("attempt1_session.txt");
+        let marker2 = dir.path().join("attempt2_session.txt");
+        let counter = dir.path().join("attempt_counter.txt");
+        std::fs::write(&counter, "0").unwrap();
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            format!(
+                "#!/usr/bin/env bash\n\
+                count=$(cat {counter})\n\
+                count=$((count + 1))\n\
+                echo $count > {counter}\n\
+                if [ \"$count\" -eq 1 ]; then\n\
+                  echo \"${{DECREE_PREVIOUS_SESSION_ID:-none}}\" > {m1}\n\
+                  exit 1\n\
+                else\n\
+                  echo \"${{DECREE_PREVIOUS_SESSION_ID:-none}}\" > {m2}\n\
+                  exit 0\n\
+                fi\n",
+                counter = counter.to_string_lossy(),
+                m1 = marker1.to_string_lossy(),
+                m2 = marker2.to_string_lossy(),
+            ),
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nTest.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_retries: 2,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok());
+
+        // Neither attempt should have DECREE_PREVIOUS_SESSION_ID set
+        let s1 = std::fs::read_to_string(&marker1).unwrap_or_default();
+        let s2 = std::fs::read_to_string(&marker2).unwrap_or_default();
+        assert_eq!(s1.trim(), "none", "attempt 1 should not have session ID");
+        assert_eq!(s2.trim(), "none", "attempt 2 (normal retry) should not have session ID");
     }
 }

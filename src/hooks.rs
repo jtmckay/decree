@@ -4,13 +4,14 @@ use std::fmt;
 use std::path::Path;
 use std::process::Command;
 
-/// The four lifecycle hook types.
+/// The lifecycle hook types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookType {
     BeforeAll,
     AfterAll,
     BeforeEach,
     AfterEach,
+    OnDeadLetter,
 }
 
 impl HookType {
@@ -21,6 +22,7 @@ impl HookType {
             HookType::AfterAll => "afterAll",
             HookType::BeforeEach => "beforeEach",
             HookType::AfterEach => "afterEach",
+            HookType::OnDeadLetter => "onDeadLetter",
         }
     }
 }
@@ -48,8 +50,12 @@ pub struct HookContext {
     pub attempt: Option<u32>,
     /// Configured max retries (beforeEach/afterEach only).
     pub max_retries: Option<u32>,
-    /// Exit code of the routine (afterEach only).
+    /// Exit code of the routine (afterEach/onDeadLetter only).
     pub routine_exit_code: Option<i32>,
+    /// Whether this is the final attempt (afterEach only); sets DECREE_FINAL_ATTEMPT=true.
+    pub final_attempt: bool,
+    /// How the run was triggered (inbox, chain, cron:<stem>).
+    pub trigger: String,
 }
 
 /// Captured output from a successful hook execution.
@@ -95,6 +101,7 @@ pub fn hook_routine_name<'a>(hooks: &'a HooksConfig, hook_type: HookType) -> Opt
         HookType::AfterAll => &hooks.after_all,
         HookType::BeforeEach => &hooks.before_each,
         HookType::AfterEach => &hooks.after_each,
+        HookType::OnDeadLetter => &hooks.on_dead_letter,
     };
     if name.is_empty() {
         None
@@ -110,6 +117,7 @@ pub fn configured_hook_names(hooks: &HooksConfig) -> Vec<(&str, HookType)> {
         HookType::AfterAll,
         HookType::BeforeEach,
         HookType::AfterEach,
+        HookType::OnDeadLetter,
     ];
     types
         .into_iter()
@@ -182,6 +190,12 @@ pub fn run_hook_with_config(
     if let Some(exit_code) = ctx.routine_exit_code {
         cmd.env("DECREE_ROUTINE_EXIT_CODE", exit_code.to_string());
     }
+    if ctx.final_attempt {
+        cmd.env("DECREE_FINAL_ATTEMPT", "true");
+    }
+    if !ctx.trigger.is_empty() {
+        cmd.env("DECREE_TRIGGER", &ctx.trigger);
+    }
 
     let cmd_output = cmd.output().map_err(|e| HookError {
         hook_type,
@@ -226,12 +240,14 @@ mod tests {
         assert_eq!(HookType::AfterAll.as_str(), "afterAll");
         assert_eq!(HookType::BeforeEach.as_str(), "beforeEach");
         assert_eq!(HookType::AfterEach.as_str(), "afterEach");
+        assert_eq!(HookType::OnDeadLetter.as_str(), "onDeadLetter");
     }
 
     #[test]
     fn test_hook_type_display() {
         assert_eq!(format!("{}", HookType::BeforeAll), "beforeAll");
         assert_eq!(format!("{}", HookType::AfterEach), "afterEach");
+        assert_eq!(format!("{}", HookType::OnDeadLetter), "onDeadLetter");
     }
 
     #[test]
@@ -241,6 +257,7 @@ mod tests {
         assert_eq!(hook_routine_name(&hooks, HookType::AfterAll), None);
         assert_eq!(hook_routine_name(&hooks, HookType::BeforeEach), None);
         assert_eq!(hook_routine_name(&hooks, HookType::AfterEach), None);
+        assert_eq!(hook_routine_name(&hooks, HookType::OnDeadLetter), None);
     }
 
     #[test]
@@ -250,6 +267,7 @@ mod tests {
             after_all: "".to_string(),
             before_each: "git-baseline".to_string(),
             after_each: "git-stash-changes".to_string(),
+            on_dead_letter: "on-dead-letter".to_string(),
         };
         assert_eq!(
             hook_routine_name(&hooks, HookType::BeforeAll),
@@ -263,6 +281,10 @@ mod tests {
         assert_eq!(
             hook_routine_name(&hooks, HookType::AfterEach),
             Some("git-stash-changes")
+        );
+        assert_eq!(
+            hook_routine_name(&hooks, HookType::OnDeadLetter),
+            Some("on-dead-letter")
         );
     }
 
@@ -279,6 +301,7 @@ mod tests {
             after_all: "".to_string(),
             before_each: "pre-flight".to_string(),
             after_each: "post-flight".to_string(),
+            on_dead_letter: "".to_string(),
         };
         let names = configured_hook_names(&hooks);
         assert_eq!(names.len(), 2);
@@ -287,11 +310,29 @@ mod tests {
     }
 
     #[test]
+    fn test_configured_hook_names_includes_on_dead_letter() {
+        let hooks = HooksConfig {
+            on_dead_letter: "dead-hook".to_string(),
+            ..HooksConfig::default()
+        };
+        let names = configured_hook_names(&hooks);
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0], ("dead-hook", HookType::OnDeadLetter));
+    }
+
+    #[test]
     fn test_run_hook_no_hook_configured() {
         let hooks = HooksConfig::default();
         let ctx = HookContext::default();
         // Should return Ok since no hook is configured
         assert!(run_hook(Path::new("/nonexistent"), &hooks, HookType::BeforeAll, &ctx).is_ok());
+    }
+
+    #[test]
+    fn test_run_hook_on_dead_letter_not_configured() {
+        let hooks = HooksConfig::default();
+        let ctx = HookContext::default();
+        assert!(run_hook(Path::new("/nonexistent"), &hooks, HookType::OnDeadLetter, &ctx).is_ok());
     }
 
     #[test]
@@ -437,6 +478,102 @@ exit 0
     }
 
     #[test]
+    fn test_run_hook_final_attempt_env() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let routines_dir = dir
+            .path()
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        std::fs::create_dir_all(&routines_dir).unwrap();
+
+        std::fs::write(
+            routines_dir.join("check-final.sh"),
+            r#"#!/usr/bin/env bash
+[ "$DECREE_FINAL_ATTEMPT" = "true" ] || { echo "DECREE_FINAL_ATTEMPT wrong: $DECREE_FINAL_ATTEMPT" >&2; exit 1; }
+exit 0
+"#,
+        )
+        .unwrap();
+
+        let hooks = HooksConfig {
+            after_each: "check-final".to_string(),
+            ..HooksConfig::default()
+        };
+        let ctx = HookContext {
+            attempt: Some(3),
+            max_retries: Some(3),
+            final_attempt: true,
+            ..HookContext::default()
+        };
+        let result = run_hook(dir.path(), &hooks, HookType::AfterEach, &ctx);
+        if let Err(ref e) = result {
+            panic!("hook failed: {}", e.message);
+        }
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_hook_final_attempt_not_set_when_false() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let routines_dir = dir
+            .path()
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        std::fs::create_dir_all(&routines_dir).unwrap();
+
+        // Script fails if DECREE_FINAL_ATTEMPT is set
+        std::fs::write(
+            routines_dir.join("check-not-final.sh"),
+            r#"#!/usr/bin/env bash
+[ -z "$DECREE_FINAL_ATTEMPT" ] || { echo "DECREE_FINAL_ATTEMPT should not be set" >&2; exit 1; }
+exit 0
+"#,
+        )
+        .unwrap();
+
+        let hooks = HooksConfig {
+            after_each: "check-not-final".to_string(),
+            ..HooksConfig::default()
+        };
+        let ctx = HookContext {
+            attempt: Some(1),
+            max_retries: Some(3),
+            final_attempt: false,
+            ..HookContext::default()
+        };
+        assert!(run_hook(dir.path(), &hooks, HookType::AfterEach, &ctx).is_ok());
+    }
+
+    #[test]
+    fn test_run_hook_trigger_env() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let routines_dir = dir
+            .path()
+            .join(config::DECREE_DIR)
+            .join(config::ROUTINES_DIR);
+        std::fs::create_dir_all(&routines_dir).unwrap();
+
+        std::fs::write(
+            routines_dir.join("check-trigger.sh"),
+            r#"#!/usr/bin/env bash
+[ "$DECREE_TRIGGER" = "inbox" ] || { echo "DECREE_TRIGGER wrong: $DECREE_TRIGGER" >&2; exit 1; }
+exit 0
+"#,
+        )
+        .unwrap();
+
+        let hooks = HooksConfig {
+            before_each: "check-trigger".to_string(),
+            ..HooksConfig::default()
+        };
+        let ctx = HookContext {
+            trigger: "inbox".to_string(),
+            ..HookContext::default()
+        };
+        assert!(run_hook(dir.path(), &hooks, HookType::BeforeEach, &ctx).is_ok());
+    }
+
+    #[test]
     fn test_hook_context_default() {
         let ctx = HookContext::default();
         assert_eq!(ctx.message_file, "");
@@ -447,6 +584,8 @@ exit 0
         assert_eq!(ctx.attempt, None);
         assert_eq!(ctx.max_retries, None);
         assert_eq!(ctx.routine_exit_code, None);
+        assert!(!ctx.final_attempt);
+        assert_eq!(ctx.trigger, "");
     }
 
     #[test]

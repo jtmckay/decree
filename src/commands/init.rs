@@ -23,9 +23,6 @@ const GIT_STASH_CHANGES_SH: &str = include_str!("../templates/git-stash-changes.
 const DEVELOP_SH: &str = include_str!("../templates/develop.sh");
 const RUST_DEVELOP_SH: &str = include_str!("../templates/rust-develop.sh");
 const ROUTER_MD: &str = include_str!("../templates/router.md");
-const SOW_PROMPT_MD: &str = include_str!("../templates/sow.md");
-const MIGRATION_PROMPT_MD: &str = include_str!("../templates/migration.md");
-const ROUTINE_PROMPT_MD: &str = include_str!("../templates/routine.md");
 const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
 
 /// Check if a command exists on PATH.
@@ -96,6 +93,45 @@ fn replace_ai_placeholders(template: &str, ai_name: &str, ai_router: &str) -> St
     template
         .replace("{ai_name}", ai_name)
         .replace("{ai_invoke}", &invoke)
+}
+
+/// Create a default permissions file for the selected AI backend.
+fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
+    match ai_name {
+        "claude" => {
+            std::fs::create_dir_all(".claude")?;
+            let settings_path = ".claude/settings.json";
+            if Path::new(settings_path).exists() {
+                println!(
+                    "Note: .claude/settings.json already exists — add \"Write\" and \"Edit\" to the allow list manually."
+                );
+            } else {
+                std::fs::write(
+                    settings_path,
+                    "{\n  \"permissions\": {\n    \"allow\": [\n      \"Write\",\n      \"Edit\"\n    ]\n  }\n}\n",
+                )?;
+                println!("Created .claude/settings.json with Write and Edit permissions.");
+            }
+        }
+        "opencode" => {
+            let settings_path = "opencode.json";
+            if Path::new(settings_path).exists() {
+                println!("Note: opencode.json already exists — add Write and Edit permissions manually.");
+            } else {
+                std::fs::write(
+                    settings_path,
+                    "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"autoshare\": false\n}\n",
+                )?;
+                println!("Created opencode.json (configure permissions via opencode's settings).");
+            }
+        }
+        _ => {
+            println!(
+                "Note: Automatic permission setup is not supported for {ai_name}. Configure Write and Edit permissions in your AI tool's project settings."
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Generate config.yml content with the selected AI command.
@@ -218,32 +254,28 @@ pub fn run() -> Result<(), DecreeError> {
         available[0]
     };
 
-    // 2. Detect git and ask about lifecycle hooks
-    let has_git = command_exists("git") && is_git_repo();
-    let git_hooks = if has_git {
-        if is_tty() {
-            eprint!("Enable git stash hooks for change tracking? [Y/n] ");
-            std::io::stderr().flush()?;
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            let trimmed = input.trim();
-            trimmed.is_empty() || trimmed.eq_ignore_ascii_case("y")
-        } else {
-            // Non-TTY: accept git hooks if detected
-            true
+    // 2. Offer to create default permissions for the selected AI backend
+    if is_tty() {
+        eprint!(
+            "Create default {ai_name} permissions (Write, Edit)? [Y/n] "
+        );
+        std::io::stderr().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("y") {
+            create_permissions_file(ai_name)?;
         }
-    } else {
-        if !command_exists("git") || !is_git_repo() {
-            println!("git not found — skipping lifecycle hook setup");
-        }
-        false
-    };
+    }
 
-    // 3. Create directory structure
+    // 3. Detect git (hook scripts are written but not enabled by default)
+    let has_git = command_exists("git") && is_git_repo();
+    let git_hooks = false;
+
+    // 4. Create directory structure
     let dirs = [
         config::DECREE_DIR,
         &format!("{}/{}", config::DECREE_DIR, config::ROUTINES_DIR),
-        &format!("{}/{}", config::DECREE_DIR, config::PROMPTS_DIR),
         &format!("{}/{}", config::DECREE_DIR, config::CRON_DIR),
         &format!("{}/{}", config::DECREE_DIR, config::INBOX_DIR),
         &format!("{}/{}/{}", config::DECREE_DIR, config::INBOX_DIR, config::DEAD_DIR),
@@ -256,9 +288,9 @@ pub fn run() -> Result<(), DecreeError> {
         std::fs::create_dir_all(dir)?;
     }
 
-    // 4. Write config.yml
+    // 5. Write config.yml
     let mut routine_names: Vec<&str> = vec!["develop", "rust-develop"];
-    if git_hooks {
+    if has_git {
         routine_names.push("git-baseline");
         routine_names.push("git-stash-changes");
     }
@@ -291,13 +323,7 @@ pub fn run() -> Result<(), DecreeError> {
         ROUTER_MD,
     )?;
 
-    // 7. Write prompt templates
-    let prompts_base = format!("{}/{}", config::DECREE_DIR, config::PROMPTS_DIR);
-    std::fs::write(format!("{prompts_base}/migration.md"), MIGRATION_PROMPT_MD)?;
-    std::fs::write(format!("{prompts_base}/sow.md"), SOW_PROMPT_MD)?;
-    std::fs::write(format!("{prompts_base}/routine.md"), ROUTINE_PROMPT_MD)?;
-
-    // 8. Write routine templates (replace {ai_name}/{ai_invoke} with detected backend)
+    // 7. Write routine templates (replace {ai_name}/{ai_invoke} with detected backend)
     let routines_base = format!("{}/{}", config::DECREE_DIR, config::ROUTINES_DIR);
     std::fs::write(
         format!("{routines_base}/develop.sh"),
@@ -308,8 +334,8 @@ pub fn run() -> Result<(), DecreeError> {
         replace_ai_placeholders(RUST_DEVELOP_SH, ai_name, ai_router),
     )?;
 
-    // 9. Write git hook routines if accepted
-    if git_hooks {
+    // 9. Write git hook routines when inside a git repo (not enabled by default)
+    if has_git {
         std::fs::write(
             format!("{routines_base}/git-baseline.sh"),
             GIT_BASELINE_SH,
@@ -343,6 +369,12 @@ pub fn run() -> Result<(), DecreeError> {
     }
 
     println!("Decree initialized successfully.");
+    if has_git {
+        println!(
+            "Tip: Git lifecycle hooks are available (git-baseline, git-stash-changes).\n     \
+             To enable them, set beforeEach/afterEach in .decree/config.yml."
+        );
+    }
     Ok(())
 }
 

@@ -46,11 +46,21 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
         pending,
         if pending == 1 { "" } else { "s" }
     );
-    println!(
-        "  Dead-lettered: {} message{}",
-        dead,
-        if dead == 1 { "" } else { "s" }
-    );
+
+    if dead == 0 {
+        println!("  Dead-lettered: 0 messages");
+    } else {
+        let oldest = oldest_file_mtime(&inbox_dead_dir)?;
+        let suffix = oldest
+            .map(|t| format!("  (oldest: {})", t.format("%Y-%m-%dT%H:%M:%S")))
+            .unwrap_or_default();
+        println!(
+            "  Dead-lettered: {} message{}{}",
+            dead,
+            if dead == 1 { "" } else { "s" },
+            suffix,
+        );
+    }
 
     println!();
 
@@ -123,6 +133,21 @@ fn read_processed(path: &Path) -> Result<Vec<String>, DecreeError> {
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect())
+}
+
+/// Return the modification time of the oldest regular file in a directory.
+fn oldest_file_mtime(
+    dir: &Path,
+) -> Result<Option<chrono::DateTime<chrono::Local>>, DecreeError> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+    let oldest = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
+        .min();
+    Ok(oldest.map(chrono::DateTime::from))
 }
 
 /// Count regular files in a directory (non-recursive).

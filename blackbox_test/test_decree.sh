@@ -9,7 +9,7 @@
 # Each test runs in an isolated temp directory with a fresh ./decree binary.
 set -uo pipefail
 
-DECREE_BIN="$(cd "$(dirname "$0")" && pwd)/decree"
+DECREE_BIN="$(cd "$(dirname "$0")" && pwd)/../target/release/decree"
 VERBOSE=false
 FILTER=""
 PASSED=0
@@ -49,10 +49,19 @@ init_project() {
 # Initialize and clear hooks for clean processing tests
 init_project_no_hooks() {
   init_project
+  sed -i 's/ai_router:.*/ai_router: ""/' .decree/config.yml
   sed -i 's/beforeEach:.*/beforeEach: ""/' .decree/config.yml
   sed -i 's/afterEach:.*/afterEach: ""/' .decree/config.yml
   sed -i 's/beforeAll:.*/beforeAll: ""/' .decree/config.yml
   sed -i 's/afterAll:.*/afterAll: ""/' .decree/config.yml
+}
+
+# Create a migration file with routine: develop frontmatter to avoid AI router
+create_simple_migration() {
+  local name="${1:-01-test.md}"
+  local body="${2:-Test.}"
+  mkdir -p .decree/migrations
+  printf -- "---\nroutine: develop\n---\n%s\n" "$body" > ".decree/migrations/${name}"
 }
 
 # Create a simple routine that succeeds and echoes env vars
@@ -380,15 +389,6 @@ test_daemon_without_project_fails() {
   }
 }
 
-test_prompt_without_project_fails() {
-  local rc=0
-  ./decree prompt </dev/null >/dev/null 2>&1 || rc=$?
-  [[ $rc -ne 0 ]] || {
-    echo "expected failure without .decree/, got exit 0"
-    return 1
-  }
-}
-
 test_routine_sync_without_project_fails() {
   local rc=0
   ./decree routine-sync </dev/null >/dev/null 2>&1 || rc=$?
@@ -410,12 +410,6 @@ test_init_creates_routines_dir() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
   assert_dir_exists .decree/routines
-}
-
-test_init_creates_prompts_dir() {
-  git init -q .
-  ./decree init </dev/null >/dev/null 2>&1
-  assert_dir_exists .decree/prompts
 }
 
 test_init_creates_cron_dir() {
@@ -490,15 +484,6 @@ test_init_creates_router_md() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
   assert_file_exists .decree/router.md
-}
-
-test_init_router_not_in_prompts() {
-  git init -q .
-  ./decree init </dev/null >/dev/null 2>&1
-  if [[ -f .decree/prompts/router.md ]]; then
-    echo "router.md should NOT be in prompts/"
-    return 1
-  fi
 }
 
 # ---------- 04: INIT — CONFIG FILE ----------
@@ -657,26 +642,6 @@ test_init_develop_references_ai_tool() {
   fi
 }
 
-test_init_creates_prompt_templates() {
-  git init -q .
-  ./decree init </dev/null >/dev/null 2>&1
-  assert_file_exists .decree/prompts/migration.md &&
-  assert_file_exists .decree/prompts/sow.md &&
-  assert_file_exists .decree/prompts/routine.md
-}
-
-test_init_migration_prompt_has_placeholders() {
-  git init -q .
-  ./decree init </dev/null >/dev/null 2>&1
-  assert_file_contains .decree/prompts/migration.md "{migrations}" &&
-  assert_file_contains .decree/prompts/migration.md "{processed}"
-}
-
-test_init_routine_prompt_has_placeholder() {
-  git init -q .
-  ./decree init </dev/null >/dev/null 2>&1
-  assert_file_contains .decree/prompts/routine.md "{routines}"
-}
 
 test_init_router_has_placeholders() {
   git init -q .
@@ -1710,7 +1675,7 @@ test_process_idempotent_rerun() {
 # ---------- 18: PROCESS — LIFECYCLE HOOKS ----------
 
 test_process_before_each_hook() {
-  init_project
+  init_project_no_hooks
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
   create_echo_routine
@@ -1747,7 +1712,7 @@ SCRIPT
 }
 
 test_process_after_each_hook_exit_code() {
-  init_project
+  init_project_no_hooks
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
   create_echo_routine
@@ -1783,7 +1748,7 @@ SCRIPT
 }
 
 test_process_before_all_hook() {
-  init_project
+  init_project_no_hooks
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
   create_echo_routine
@@ -1819,7 +1784,7 @@ SCRIPT
 }
 
 test_process_after_all_hook() {
-  init_project
+  init_project_no_hooks
   mkdir -p .decree/migrations
   echo "Test" > .decree/migrations/01-test.md
   create_echo_routine
@@ -2006,97 +1971,6 @@ test_process_uses_default_routine() {
   local out
   out=$(./decree process --dry-run --no-color 2>&1)
   assert_contains "$out" "develop"
-}
-
-# ---------- 23: PROMPT ----------
-
-test_prompt_list_non_tty() {
-  init_project
-  local out rc=0
-  out=$(./decree prompt --no-color 2>&1) || rc=$?
-  assert_exit_code 0 "$rc" &&
-  assert_contains "$out" "migration" &&
-  assert_contains "$out" "sow" &&
-  assert_contains "$out" "routine"
-}
-
-test_prompt_named_outputs_content() {
-  init_project
-  local out rc=0
-  out=$(./decree prompt sow --no-color 2>&1) || rc=$?
-  assert_exit_code 0 "$rc" &&
-  (assert_contains "$out" "Statement of Work" || assert_contains "$out" "SOW")
-}
-
-test_prompt_substitution_migrations() {
-  init_project
-  mkdir -p .decree/migrations
-  echo "Auth task" > .decree/migrations/01-auth.md
-  local out
-  out=$(./decree prompt migration --no-color 2>&1)
-  assert_contains "$out" "01-auth.md" &&
-  assert_not_contains "$out" "{migrations}" "placeholder should be substituted"
-}
-
-test_prompt_substitution_processed() {
-  init_project
-  echo "01-done.md" > .decree/processed.md
-  local out
-  out=$(./decree prompt migration --no-color 2>&1)
-  assert_contains "$out" "01-done.md" &&
-  assert_not_contains "$out" "{processed}" "placeholder should be substituted"
-}
-
-test_prompt_substitution_routines() {
-  init_project
-  local out
-  out=$(./decree prompt routine --no-color 2>&1)
-  assert_contains "$out" "develop" &&
-  assert_not_contains "$out" "{routines}" "placeholder should be substituted"
-}
-
-test_prompt_substitution_config() {
-  init_project
-  # Create a prompt that uses {config}
-  cat > .decree/prompts/config-test.md <<'EOF'
-## Config
-{config}
-EOF
-  local out
-  out=$(./decree prompt config-test --no-color 2>&1)
-  assert_contains "$out" "max_retries" &&
-  assert_not_contains "$out" "{config}" "placeholder should be substituted"
-}
-
-test_prompt_unknown_fails() {
-  init_project
-  local out rc=0
-  out=$(./decree prompt nonexistent --no-color 2>&1) || rc=$?
-  [[ $rc -ne 0 ]] || {
-    echo "expected error for unknown prompt"
-    return 1
-  }
-  assert_contains "$out" "unknown prompt" || assert_contains "$out" "Available"
-}
-
-test_prompt_unknown_lists_available() {
-  init_project
-  local out rc=0
-  out=$(./decree prompt nonexistent --no-color 2>&1) || rc=$?
-  assert_contains "$out" "migration" &&
-  assert_contains "$out" "routine" &&
-  assert_contains "$out" "sow"
-}
-
-test_prompt_custom_template() {
-  init_project
-  cat > .decree/prompts/custom.md <<'EOF'
-# Custom Prompt
-This is a custom prompt template.
-EOF
-  local out
-  out=$(./decree prompt custom --no-color 2>&1)
-  assert_contains "$out" "Custom Prompt"
 }
 
 # ---------- 24: DAEMON BASICS ----------
@@ -2465,6 +2339,436 @@ test_no_color_env_var_process() {
   assert_exit_code 0 "$rc"
 }
 
+# ---------- 31: YAML ARRAY/OBJECT ENV VARS (migration 18) ----------
+
+test_yaml_array_env_var() {
+  init_project_no_hooks
+  cat > .decree/routines/develop.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Develop
+#
+# Echoes YAML array env var.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "INPUT_IMAGE=${input_image:-unset}"
+SCRIPT
+  chmod +x .decree/routines/develop.sh
+  mkdir -p .decree/migrations
+  cat > .decree/migrations/01-yaml-array.md <<'EOF'
+---
+routine: develop
+input_image:
+  - input_image: some_path.png
+    output_prefix: some_prefix
+---
+YAML array test.
+EOF
+  ./decree process --no-color >/dev/null 2>&1
+  local log_file
+  log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
+  if [[ -n "$log_file" ]]; then
+    assert_file_contains "$log_file" 'INPUT_IMAGE=[' &&
+    assert_file_contains "$log_file" '"input_image"' &&
+    assert_file_contains "$log_file" 'some_path.png'
+  else
+    echo "no log file found"
+    return 1
+  fi
+}
+
+# ---------- 32: INBOX FILENAME NORMALIZATION (migration 19) ----------
+
+test_inbox_normalized_to_file_stem() {
+  init_project_no_hooks
+  create_echo_routine
+  echo "Bare message." > .decree/inbox/fix-errors.md
+  ./decree process --no-color >/dev/null 2>&1
+  local run_count
+  run_count=$(find .decree/runs -mindepth 1 -maxdepth 1 -type d -name '*fix-errors*' 2>/dev/null | wc -l)
+  [[ $run_count -gt 0 ]] || {
+    echo "expected run directory with 'fix-errors' stem in name"
+    return 1
+  }
+}
+
+# ---------- 33: DECREE_FINAL_ATTEMPT (migration 20) ----------
+
+test_final_attempt_on_last_retry() {
+  init_project_no_hooks
+  create_failing_routine
+  local hook_marker="$PWD/final_attempt_marker"
+  cat > .decree/routines/after-hook.sh <<SCRIPT
+#!/usr/bin/env bash
+# After Hook
+#
+# Records DECREE_FINAL_ATTEMPT.
+set -euo pipefail
+message_file="\${message_file:-}"
+message_id="\${message_id:-}"
+message_dir="\${message_dir:-}"
+chain="\${chain:-}"
+seq="\${seq:-}"
+if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "ATTEMPT=\${DECREE_ATTEMPT:-} FINAL=\${DECREE_FINAL_ATTEMPT:-absent}" >> $hook_marker
+SCRIPT
+  chmod +x .decree/routines/after-hook.sh
+  ./decree routine-sync --no-color >/dev/null 2>&1
+  sed -i '/after-hook:/,/enabled:/{s/enabled: false/enabled: true/}' .decree/config.yml
+  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: "after-hook"/' .decree/config.yml
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1 || true
+  if [[ -f "$hook_marker" ]]; then
+    assert_file_contains "$hook_marker" "FINAL=true"
+  else
+    echo "afterEach hook did not execute"
+    return 1
+  fi
+}
+
+test_final_attempt_absent_non_final() {
+  init_project_no_hooks
+  create_failing_routine
+  local hook_marker="$PWD/non_final_marker"
+  cat > .decree/routines/after-hook.sh <<SCRIPT
+#!/usr/bin/env bash
+# After Hook
+#
+# Records DECREE_FINAL_ATTEMPT on each attempt.
+set -euo pipefail
+message_file="\${message_file:-}"
+message_id="\${message_id:-}"
+message_dir="\${message_dir:-}"
+chain="\${chain:-}"
+seq="\${seq:-}"
+if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "ATTEMPT=\${DECREE_ATTEMPT:-} FINAL=\${DECREE_FINAL_ATTEMPT:-absent}" >> $hook_marker
+SCRIPT
+  chmod +x .decree/routines/after-hook.sh
+  ./decree routine-sync --no-color >/dev/null 2>&1
+  sed -i '/after-hook:/,/enabled:/{s/enabled: false/enabled: true/}' .decree/config.yml
+  sed -i 's/max_retries:.*/max_retries: 3/' .decree/config.yml
+  sed -i 's/afterEach:.*/afterEach: "after-hook"/' .decree/config.yml
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1 || true
+  if [[ -f "$hook_marker" ]]; then
+    local first_line
+    first_line=$(head -1 "$hook_marker")
+    assert_contains "$first_line" "FINAL=absent" "first retry should not have DECREE_FINAL_ATTEMPT"
+  else
+    echo "afterEach hook did not execute"
+    return 1
+  fi
+}
+
+# ---------- 34: RUN.JSON METADATA (migration 21) ----------
+
+test_run_json_created() {
+  init_project_no_hooks
+  create_echo_routine
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1
+  local json_file
+  json_file=$(find .decree/runs -name 'run.json' 2>/dev/null | head -1)
+  [[ -n "$json_file" ]] || {
+    echo "expected run.json in run directory"
+    return 1
+  }
+}
+
+test_run_json_has_required_fields() {
+  init_project_no_hooks
+  create_echo_routine
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1
+  local json_file
+  json_file=$(find .decree/runs -name 'run.json' 2>/dev/null | head -1)
+  if [[ -n "$json_file" ]]; then
+    assert_file_contains "$json_file" '"message_id"' &&
+    assert_file_contains "$json_file" '"routine"' &&
+    assert_file_contains "$json_file" '"attempts"' &&
+    assert_file_contains "$json_file" '"exit_code"' &&
+    assert_file_contains "$json_file" '"start"' &&
+    assert_file_contains "$json_file" '"duration_s"'
+  else
+    echo "no run.json found"
+    return 1
+  fi
+}
+
+test_run_json_has_trigger_field() {
+  init_project_no_hooks
+  create_echo_routine
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1
+  local json_file
+  json_file=$(find .decree/runs -name 'run.json' 2>/dev/null | head -1)
+  if [[ -n "$json_file" ]]; then
+    assert_file_contains "$json_file" '"trigger"'
+  else
+    echo "no run.json found"
+    return 1
+  fi
+}
+
+# ---------- 35: ON-DEAD-LETTER HOOK (migration 23) ----------
+
+test_on_dead_letter_hook_fires() {
+  init_project_no_hooks
+  create_failing_routine
+  local hook_marker="$PWD/dead_letter_marker"
+  cat > .decree/routines/dead-hook.sh <<SCRIPT
+#!/usr/bin/env bash
+# Dead Hook
+#
+# Fires when message is dead-lettered.
+set -euo pipefail
+message_file="\${message_file:-}"
+message_id="\${message_id:-}"
+message_dir="\${message_dir:-}"
+chain="\${chain:-}"
+seq="\${seq:-}"
+if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "DEAD_HOOK exit=\${DECREE_ROUTINE_EXIT_CODE:-}" >> $hook_marker
+SCRIPT
+  chmod +x .decree/routines/dead-hook.sh
+  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  sed -i '/^  afterEach:/a\  onDeadLetter: "dead-hook"' .decree/config.yml
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1 || true
+  if [[ -f "$hook_marker" ]]; then
+    assert_file_contains "$hook_marker" "DEAD_HOOK"
+  else
+    echo "onDeadLetter hook did not fire"
+    return 1
+  fi
+}
+
+test_on_dead_letter_hook_receives_exit_code() {
+  init_project_no_hooks
+  create_failing_routine
+  local hook_marker="$PWD/dead_exit_marker"
+  cat > .decree/routines/dead-hook.sh <<SCRIPT
+#!/usr/bin/env bash
+# Dead Hook
+#
+# Records exit code.
+set -euo pipefail
+message_file="\${message_file:-}"
+message_id="\${message_id:-}"
+message_dir="\${message_dir:-}"
+chain="\${chain:-}"
+seq="\${seq:-}"
+if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "EXIT=\${DECREE_ROUTINE_EXIT_CODE:-}" >> $hook_marker
+SCRIPT
+  chmod +x .decree/routines/dead-hook.sh
+  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  sed -i '/^  afterEach:/a\  onDeadLetter: "dead-hook"' .decree/config.yml
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1 || true
+  if [[ -f "$hook_marker" ]]; then
+    assert_file_contains "$hook_marker" "EXIT=1"
+  else
+    echo "onDeadLetter hook did not fire"
+    return 1
+  fi
+}
+
+# ---------- 36: DECREE_TRIGGER (migration 24) ----------
+
+test_decree_trigger_inbox() {
+  init_project_no_hooks
+  cat > .decree/routines/develop.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Develop
+#
+# Echoes DECREE_TRIGGER.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "TRIGGER=${DECREE_TRIGGER:-unset}"
+SCRIPT
+  chmod +x .decree/routines/develop.sh
+  create_simple_migration
+  ./decree process --no-color >/dev/null 2>&1
+  local log_file
+  log_file=$(find .decree/runs -name 'routine.log' 2>/dev/null | head -1)
+  if [[ -n "$log_file" ]]; then
+    assert_file_contains "$log_file" "TRIGGER=inbox"
+  else
+    echo "no log file found"
+    return 1
+  fi
+}
+
+test_decree_trigger_chain_followup() {
+  init_project_no_hooks
+  mkdir -p .decree/migrations
+  cat > .decree/migrations/01-chain.md <<'EOF'
+---
+routine: develop
+---
+Chain trigger test.
+EOF
+  cat > .decree/routines/develop.sh <<'SCRIPT'
+#!/usr/bin/env bash
+# Develop
+#
+# Creates follow-up and echoes trigger.
+set -euo pipefail
+message_file="${message_file:-}"
+message_id="${message_id:-}"
+message_dir="${message_dir:-}"
+chain="${chain:-}"
+seq="${seq:-}"
+if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
+echo "TRIGGER=${DECREE_TRIGGER:-unset} SEQ=$seq"
+if [ "$seq" = "0" ]; then
+  cat > .decree/outbox/follow-up.md <<FOLLOWUP
+---
+routine: develop
+---
+Follow-up.
+FOLLOWUP
+fi
+SCRIPT
+  chmod +x .decree/routines/develop.sh
+  ./decree process --no-color >/dev/null 2>&1
+  local found_chain_trigger=false
+  for log_file in $(find .decree/runs -name 'routine.log' 2>/dev/null); do
+    if grep -q "TRIGGER=chain" "$log_file" 2>/dev/null; then
+      found_chain_trigger=true
+      break
+    fi
+  done
+  $found_chain_trigger || {
+    echo "expected follow-up run to have TRIGGER=chain"
+    return 1
+  }
+}
+
+# ---------- 37: STATUS DEAD-LETTER TIMESTAMP (migration 25) ----------
+
+test_status_dead_letter_shows_timestamp() {
+  init_project
+  mkdir -p .decree/inbox/dead
+  echo "dead msg" > ".decree/inbox/dead/D0001-1432-test-0.md"
+  local out
+  out=$(./decree status --no-color 2>&1)
+  assert_contains "$out" "oldest" &&
+  assert_match '[0-9]{4}-[0-9]{2}-[0-9]{2}' "$out"
+}
+
+# ---------- 38: DECREE CRON LIST (migration 26) ----------
+
+test_cron_list_no_files() {
+  init_project
+  local out rc=0
+  out=$(./decree cron list --no-color 2>&1) || rc=$?
+  assert_exit_code 0 "$rc" &&
+  (assert_contains "$out" "No cron" || assert_contains "$out" "CRON FILE")
+}
+
+test_cron_list_shows_cron_file() {
+  init_project
+  cat > .decree/cron/sync.md <<'EOF'
+---
+cron: "*/15 * * * *"
+routine: develop
+---
+Sync task.
+EOF
+  local out
+  out=$(./decree cron list --no-color 2>&1)
+  assert_contains "$out" "sync.md" &&
+  assert_contains "$out" "*/15"
+}
+
+test_cron_list_shows_routine_column() {
+  init_project
+  cat > .decree/cron/test-job.md <<'EOF'
+---
+cron: "0 * * * *"
+routine: develop
+---
+Test job.
+EOF
+  local out
+  out=$(./decree cron list --no-color 2>&1)
+  assert_contains "$out" "develop"
+}
+
+# ---------- 39: DECREE SKILL COMMAND (migration 27) ----------
+
+test_skill_install_project_claude() {
+  init_project
+  local out rc=0
+  out=$(./decree skill --scope project --target claude --all --no-color 2>&1) || rc=$?
+  assert_exit_code 0 "$rc" &&
+  assert_file_exists .claude/skills/decree/SKILL.md
+}
+
+test_skill_install_idempotent() {
+  init_project
+  ./decree skill --scope project --target claude --all --no-color >/dev/null 2>&1
+  local rc=0
+  ./decree skill --scope project --target claude --all --no-color >/dev/null 2>&1 || rc=$?
+  assert_exit_code 0 "$rc" "re-running skill install should succeed"
+}
+
+test_skill_project_scope_output() {
+  init_project
+  local out
+  out=$(./decree skill --scope project --target claude --all --no-color 2>&1)
+  assert_contains "$out" "claude" || assert_contains "$out" "SKILL.md" || assert_contains "$out" "Installed"
+}
+
+# ---------- 40: STOP ON DEAD-LETTER (migration 28) ----------
+
+test_process_stops_on_dead_letter() {
+  init_project_no_hooks
+  create_failing_routine
+  create_simple_migration 01-fail.md "Will fail."
+  create_simple_migration 02-second.md "Should not run."
+  local rc=0
+  ./decree process --no-color >/dev/null 2>&1 || rc=$?
+  [[ $rc -ne 0 ]] || {
+    echo "expected non-zero exit when migration is dead-lettered"
+    return 1
+  }
+}
+
+test_process_dead_letter_stop_message() {
+  init_project_no_hooks
+  create_failing_routine
+  create_simple_migration
+  local out
+  out=$(./decree process --no-color 2>&1) || true
+  assert_contains "$out" "FAILED" || assert_contains "$out" "stopping"
+}
+
+test_process_dead_letter_skips_subsequent() {
+  init_project_no_hooks
+  create_failing_routine
+  create_simple_migration 01-fail.md "Will fail."
+  create_simple_migration 02-second.md "Should not run."
+  ./decree process --no-color >/dev/null 2>&1 || true
+  if grep -qF "02-second.md" .decree/processed.md 2>/dev/null; then
+    echo "second migration should not be processed after first dead-letters"
+    return 1
+  fi
+}
+
 # ================================================================
 #                         RUN ALL TESTS
 # ================================================================
@@ -2497,13 +2801,11 @@ TESTS=(
   "verify w/o project fails"         test_verify_without_project_fails
   "log w/o project fails"            test_log_without_project_fails
   "daemon w/o project fails"         test_daemon_without_project_fails
-  "prompt w/o project fails"         test_prompt_without_project_fails
   "routine-sync w/o project fails"   test_routine_sync_without_project_fails
 
   # Init — directory structure
   "init creates .decree/"            test_init_creates_decree_dir
   "init creates routines/"           test_init_creates_routines_dir
-  "init creates prompts/"            test_init_creates_prompts_dir
   "init creates cron/"               test_init_creates_cron_dir
   "init creates inbox/"              test_init_creates_inbox_dir
   "init creates inbox/dead/"         test_init_creates_inbox_dead_dir
@@ -2516,7 +2818,6 @@ TESTS=(
   "init creates processed.md"        test_init_creates_processed_md
   "init processed.md empty"          test_init_processed_md_empty
   "init creates router.md"           test_init_creates_router_md
-  "init router.md not in prompts/"   test_init_router_not_in_prompts
 
   # Init — config
   "config no ai_command (deprecated)" test_init_config_no_ai_command
@@ -2542,9 +2843,6 @@ TESTS=(
   "init rust-develop no AI placeholder" test_init_rust_develop_no_ai_placeholder
   "init develop.sh has message_dir"  test_init_develop_has_message_dir_ref
   "init develop.sh refs AI tool"     test_init_develop_references_ai_tool
-  "init creates prompt templates"    test_init_creates_prompt_templates
-  "init migration.md placeholders"   test_init_migration_prompt_has_placeholders
-  "init routine.md placeholder"      test_init_routine_prompt_has_placeholder
   "init router.md placeholders"      test_init_router_has_placeholders
 
   # Init — gitignore
@@ -2663,17 +2961,6 @@ TESTS=(
   # Process — default routine
   "process uses default routine"     test_process_uses_default_routine
 
-  # Prompt
-  "prompt list non-tty"              test_prompt_list_non_tty
-  "prompt named outputs content"     test_prompt_named_outputs_content
-  "prompt substitution migrations"   test_prompt_substitution_migrations
-  "prompt substitution processed"    test_prompt_substitution_processed
-  "prompt substitution routines"     test_prompt_substitution_routines
-  "prompt substitution config"       test_prompt_substitution_config
-  "prompt unknown fails"             test_prompt_unknown_fails
-  "prompt unknown lists available"   test_prompt_unknown_lists_available
-  "prompt custom template"           test_prompt_custom_template
-
   # Daemon
   "daemon starts and stops"          test_daemon_starts_and_stops
   "daemon prints polling message"    test_daemon_prints_polling_message
@@ -2708,6 +2995,47 @@ TESTS=(
   # NO_COLOR env var
   "NO_COLOR env status"              test_no_color_env_var_status
   "NO_COLOR env process"             test_no_color_env_var_process
+
+  # YAML array/object env vars (migration 18)
+  "yaml array as JSON env var"       test_yaml_array_env_var
+
+  # Inbox filename normalization (migration 19)
+  "inbox normalized to file stem"    test_inbox_normalized_to_file_stem
+
+  # DECREE_FINAL_ATTEMPT (migration 20)
+  "DECREE_FINAL_ATTEMPT on last"     test_final_attempt_on_last_retry
+  "DECREE_FINAL_ATTEMPT absent"      test_final_attempt_absent_non_final
+
+  # run.json metadata (migration 21)
+  "run.json created"                 test_run_json_created
+  "run.json has required fields"     test_run_json_has_required_fields
+  "run.json has trigger field"       test_run_json_has_trigger_field
+
+  # onDeadLetter hook (migration 23)
+  "onDeadLetter hook fires"          test_on_dead_letter_hook_fires
+  "onDeadLetter receives exit code"  test_on_dead_letter_hook_receives_exit_code
+
+  # DECREE_TRIGGER (migration 24)
+  "DECREE_TRIGGER inbox"             test_decree_trigger_inbox
+  "DECREE_TRIGGER chain followup"    test_decree_trigger_chain_followup
+
+  # Status dead-letter timestamp (migration 25)
+  "status dead-letter timestamp"     test_status_dead_letter_shows_timestamp
+
+  # decree cron list (migration 26)
+  "cron list no files"               test_cron_list_no_files
+  "cron list shows cron file"        test_cron_list_shows_cron_file
+  "cron list shows routine column"   test_cron_list_shows_routine_column
+
+  # decree skill command (migration 27)
+  "skill install project claude"     test_skill_install_project_claude
+  "skill install idempotent"         test_skill_install_idempotent
+  "skill project scope output"       test_skill_project_scope_output
+
+  # Stop on dead-letter (migration 28)
+  "process stops on dead-letter"     test_process_stops_on_dead_letter
+  "process dead-letter stop message" test_process_dead_letter_stop_message
+  "process dead-letter skips next"   test_process_dead_letter_skips_subsequent
 )
 
 # Run tests in pairs (name, function)

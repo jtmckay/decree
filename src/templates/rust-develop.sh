@@ -24,8 +24,13 @@ if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
     exit 0
 fi
 
+resume_flag=""
+if [ -n "${DECREE_PREVIOUS_SESSION_ID:-}" ]; then
+  resume_flag="--resume ${DECREE_PREVIOUS_SESSION_ID}"
+fi
+
 # Step 1: Implementation
-{ai_invoke} "You are a senior Rust engineer. Read ${message_file} and
+{ai_invoke} ${resume_flag} "You are a senior Rust engineer. Read ${message_file} and
 implement all requirements with proper error handling and tests.
 Previous attempt logs (if any) are in ${message_dir} for context."
 

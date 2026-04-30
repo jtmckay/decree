@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -31,12 +31,6 @@ pub enum Command {
         /// Show what would be processed without executing
         #[arg(long)]
         dry_run: bool,
-    },
-
-    /// Build prompt, copy or launch AI
-    Prompt {
-        /// Prompt template name
-        name: Option<String>,
     },
 
     /// List routines or show routine detail
@@ -72,6 +66,53 @@ pub enum Command {
         source: Option<String>,
     },
 
+    /// Manage cron schedules
+    Cron {
+        #[command(subcommand)]
+        subcommand: CronSubcommand,
+    },
+
+    /// Install AI assistant skill/instructions
+    Skill {
+        /// Installation scope: project (current repo) or user (home directory)
+        #[arg(long, value_enum)]
+        scope: Option<SkillScope>,
+
+        /// Target AI assistant: claude or copilot
+        #[arg(long, value_enum)]
+        target: Option<SkillTarget>,
+
+        /// Overwrite existing file even if it differs from the bundled template
+        #[arg(long)]
+        force: bool,
+
+        /// Skill name(s) to install (repeatable; for non-TTY / scripting)
+        #[arg(long = "skill", value_name = "NAME")]
+        skills: Vec<String>,
+
+        /// Install all available skills for the selected target
+        #[arg(long)]
+        all: bool,
+    },
+
     /// Verbose help
     Help,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum SkillScope {
+    Project,
+    User,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum SkillTarget {
+    Claude,
+    Copilot,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CronSubcommand {
+    /// List all cron schedules with last/next run times
+    List,
 }
