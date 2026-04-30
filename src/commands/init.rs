@@ -1,3 +1,4 @@
+use crate::commands::skill;
 use crate::config;
 use crate::error::color::is_tty;
 use crate::error::DecreeError;
@@ -367,6 +368,9 @@ pub fn run() -> Result<(), DecreeError> {
             }
         }
     }
+
+    // Install the decree skill for the selected AI at project scope.
+    skill::install_for_init(ai_name)?;
 
     println!("Decree initialized successfully.");
     if has_git {

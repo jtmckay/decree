@@ -3,7 +3,6 @@
     "allow": [
       "Bash(./decree:*)",
       "Bash(./test_decree.sh:*)",
-      "Bash(/var/home/taylor/GitHub/decree/blackbox_test/decree:*)",
       "Read(//tmp/decree_explore3/**)",
       "Bash(.decree/routines/followup-test.sh:*)",
       "Bash(chmod +x .decree/routines/followup-test.sh)",

@@ -9,7 +9,6 @@
       "Write",
       "Edit",
       "Bash(bash blackbox_test/test_decree.sh 2>&1)",
-      "Bash(git -C /home/taylor/GitHub/existential status --short)",
       "Bash(docker exec *)",
       "Bash(cargo *)",
       "Bash(LIBCLANG_PATH=* cargo *)",
@@ -25,8 +24,6 @@
       "Bash(while read:*)",
       "Bash(decree --help)",
       "Bash(node -e \":*)",
-      "Bash(git -C /home/taylor/GitHub/existential log --oneline --follow -- automations/routines/actual-budget.sh)",
-      "Bash(git -C /home/taylor/GitHub/existential log --oneline --follow -- automations/routines/actual-budget-parse.sh)",
       "WebFetch(domain:github.com)",
       "Bash(bash test_decree.sh -v)"
     ]

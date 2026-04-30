@@ -429,7 +429,7 @@ fn test_version_flag() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("decree 0.4.0"));
+        .stdout(predicate::str::contains("decree 0.4.1"));
 }
 
 // --- decree --no-color ---
@@ -933,23 +933,24 @@ fn test_skill_claude_content_has_required_sections() {
         .assert()
         .success();
 
-    let content =
-        fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
+    let skill_dir = dir.path().join(".claude/skills/decree");
+    let content = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+    let ref_migrations = fs::read_to_string(skill_dir.join("reference/migrations.md")).unwrap();
 
     assert!(content.contains("mmutab"), "must cover immutability");
     assert!(content.contains("Given"), "must cover Given/When/Then");
     assert!(content.contains("When"), "must cover Given/When/Then");
     assert!(content.contains("Then"), "must cover Given/When/Then");
     assert!(
-        content.to_lowercase().contains("day-sized"),
+        content.to_lowercase().contains("day-sized") || ref_migrations.to_lowercase().contains("day-sized"),
         "must mention day-sized"
     );
     assert!(
-        content.contains("smallest feasible"),
+        content.contains("smallest feasible") || ref_migrations.contains("smallest feasible"),
         "must mention smallest feasible chunks"
     );
     assert!(
-        content.contains(".decree/migrations"),
+        content.contains(".decree/migrations") || ref_migrations.contains(".decree/migrations"),
         "must specify migration directory"
     );
 }
@@ -963,20 +964,21 @@ fn test_skill_copilot_content_has_required_sections() {
         .assert()
         .success();
 
-    let content =
-        fs::read_to_string(dir.path().join(".github/skills/decree/SKILL.md")).unwrap();
+    let skill_dir = dir.path().join(".github/skills/decree");
+    let content = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+    let ref_migrations = fs::read_to_string(skill_dir.join("reference/migrations.md")).unwrap();
 
     assert!(content.contains("mmutab"), "must cover immutability");
     assert!(
-        content.to_lowercase().contains("migration"),
+        content.to_lowercase().contains("migration") || ref_migrations.to_lowercase().contains("migration"),
         "must describe the migration contract"
     );
     assert!(
-        content.contains("smallest feasible"),
+        content.contains("smallest feasible") || ref_migrations.contains("smallest feasible"),
         "must mention smallest feasible chunks"
     );
     assert!(
-        content.to_lowercase().contains("bypass"),
+        content.to_lowercase().contains("bypass") || ref_migrations.to_lowercase().contains("bypass"),
         "must warn against bypassing the workflow"
     );
 }
@@ -1056,7 +1058,7 @@ fn test_skill_all_installs_two_claude_skills() {
         .args(["skill", "--scope", "project", "--target", "claude", "--all"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("2 skill(s) installed"));
+        .stdout(predicate::str::contains("6 skill file(s) installed"));
 
     assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
     assert!(dir.path().join(".claude/skills/sow/SKILL.md").is_file());

@@ -3,36 +3,61 @@ use crate::config::expand_tilde;
 use crate::error::{color, DecreeError};
 use std::path::PathBuf;
 
-const CLAUDE_DECREE_SKILL_MD: &str =
+const DECREE_SKILL_MD: &str =
     include_str!("../templates/skills/decree/SKILL.md");
-const CLAUDE_SOW_SKILL_MD: &str =
+const DECREE_REF_HOOKS_MD: &str =
+    include_str!("../templates/skills/decree/reference/hooks-and-cron.md");
+const DECREE_REF_MIGRATIONS_MD: &str =
+    include_str!("../templates/skills/decree/reference/migrations.md");
+const DECREE_REF_PIPELINE_MD: &str =
+    include_str!("../templates/skills/decree/reference/pipeline-and-vars.md");
+const DECREE_REF_ROUTINES_MD: &str =
+    include_str!("../templates/skills/decree/reference/routines.md");
+const SOW_SKILL_MD: &str =
     include_str!("../templates/skills/sow/SKILL.md");
+
+struct SkillFile {
+    path: &'static str,
+    content: &'static str,
+}
 
 struct SkillEntry {
     name: &'static str,
     description: &'static str,
-    content: &'static str,
-    claude_project_path: &'static str,
-    claude_user_path: &'static str,
-    copilot_project_path: &'static str,
+    files: &'static [SkillFile],
+    claude_project_dir: &'static str,
+    claude_user_dir: &'static str,
+    copilot_project_dir: &'static str,
 }
+
+const DECREE_FILES: &[SkillFile] = &[
+    SkillFile { path: "SKILL.md", content: DECREE_SKILL_MD },
+    SkillFile { path: "reference/hooks-and-cron.md", content: DECREE_REF_HOOKS_MD },
+    SkillFile { path: "reference/migrations.md", content: DECREE_REF_MIGRATIONS_MD },
+    SkillFile { path: "reference/pipeline-and-vars.md", content: DECREE_REF_PIPELINE_MD },
+    SkillFile { path: "reference/routines.md", content: DECREE_REF_ROUTINES_MD },
+];
+
+const SOW_FILES: &[SkillFile] = &[
+    SkillFile { path: "SKILL.md", content: SOW_SKILL_MD },
+];
 
 const SKILLS: &[SkillEntry] = &[
     SkillEntry {
         name: "decree",
         description: "Work within the Decree migration ecosystem safely and idiomatically",
-        content: CLAUDE_DECREE_SKILL_MD,
-        claude_project_path: ".claude/skills/decree/SKILL.md",
-        claude_user_path: "~/.claude/skills/decree/SKILL.md",
-        copilot_project_path: ".github/skills/decree/SKILL.md",
+        files: DECREE_FILES,
+        claude_project_dir: ".claude/skills/decree",
+        claude_user_dir: "~/.claude/skills/decree",
+        copilot_project_dir: ".github/skills/decree",
     },
     SkillEntry {
         name: "sow",
         description: "Guide for writing a Statement of Work document",
-        content: CLAUDE_SOW_SKILL_MD,
-        claude_project_path: ".claude/skills/sow/SKILL.md",
-        claude_user_path: "~/.claude/skills/sow/SKILL.md",
-        copilot_project_path: ".github/skills/sow/SKILL.md",
+        files: SOW_FILES,
+        claude_project_dir: ".claude/skills/sow",
+        claude_user_dir: "~/.claude/skills/sow",
+        copilot_project_dir: ".github/skills/sow",
     },
 ];
 
@@ -78,11 +103,11 @@ fn resolve_target(target: Option<SkillTarget>) -> Result<SkillTarget, DecreeErro
     }
 }
 
-fn skill_dest(entry: &SkillEntry, scope: &SkillScope, target: &SkillTarget) -> Result<PathBuf, DecreeError> {
+fn skill_dest_dir(entry: &SkillEntry, scope: &SkillScope, target: &SkillTarget) -> Result<PathBuf, DecreeError> {
     match (target, scope) {
-        (SkillTarget::Claude, SkillScope::Project) => Ok(std::env::current_dir()?.join(entry.claude_project_path)),
-        (SkillTarget::Claude, SkillScope::User) => Ok(expand_tilde(entry.claude_user_path)),
-        (SkillTarget::Copilot, SkillScope::Project) => Ok(std::env::current_dir()?.join(entry.copilot_project_path)),
+        (SkillTarget::Claude, SkillScope::Project) => Ok(std::env::current_dir()?.join(entry.claude_project_dir)),
+        (SkillTarget::Claude, SkillScope::User) => Ok(expand_tilde(entry.claude_user_dir)),
+        (SkillTarget::Copilot, SkillScope::Project) => Ok(std::env::current_dir()?.join(entry.copilot_project_dir)),
         (SkillTarget::Copilot, SkillScope::User) => Err(DecreeError::Other(
             "user-scope Copilot installation is not supported; use --scope project".to_string(),
         )),
@@ -95,7 +120,6 @@ fn scope_label(scope: &SkillScope) -> &'static str {
         SkillScope::User => "user",
     }
 }
-
 
 fn install_one(dest: &PathBuf, content: &str, force: bool) -> InstallResult {
     let content = content.trim_end_matches('\n').to_string() + "\n";
@@ -137,6 +161,59 @@ enum InstallResult {
     UpToDate,
     Conflict,
     Error(String),
+}
+
+fn install_entry(
+    entry: &SkillEntry,
+    dest_dir: &PathBuf,
+    force: bool,
+    installed: &mut usize,
+    up_to_date: &mut usize,
+    conflicts: &mut usize,
+) -> Result<(), DecreeError> {
+    let total = entry.files.len();
+    for file in entry.files {
+        let dest = dest_dir.join(file.path);
+        let result = install_one(&dest, file.content, force);
+        let is_root = file.path == "SKILL.md";
+        match result {
+            InstallResult::UpToDate => {
+                if is_root {
+                    let suffix = if total > 1 { format!(" ({total} files)") } else { String::new() };
+                    println!(
+                        "Already up to date: {}{}",
+                        color::dim(&dest.display().to_string()),
+                        suffix
+                    );
+                }
+                *up_to_date += 1;
+            }
+            InstallResult::Installed => {
+                if is_root {
+                    let suffix = if total > 1 { format!(" ({total} files)") } else { String::new() };
+                    println!("{}: {}{}", color::success("Installed"), dest.display(), suffix);
+                }
+                *installed += 1;
+            }
+            InstallResult::Overwrote => {
+                if is_root {
+                    let suffix = if total > 1 { format!(" ({total} files)") } else { String::new() };
+                    println!("{}: {}{}", color::success("Overwrote"), dest.display(), suffix);
+                }
+                *installed += 1;
+            }
+            InstallResult::Conflict => {
+                eprintln!(
+                    "{}: {} already exists with different content. Use --force to overwrite.",
+                    color::error("conflict"),
+                    dest.display()
+                );
+                *conflicts += 1;
+            }
+            InstallResult::Error(e) => return Err(DecreeError::Other(e)),
+        }
+    }
+    Ok(())
 }
 
 fn select_skills(
@@ -213,6 +290,28 @@ fn select_skills(
     }
 }
 
+/// Install the decree skill at project scope for the given AI backend.
+/// Called automatically by `decree init`. Silently skips unsupported backends.
+pub fn install_for_init(ai_name: &str) -> Result<(), DecreeError> {
+    let target = match ai_name {
+        "claude" => SkillTarget::Claude,
+        "copilot" => SkillTarget::Copilot,
+        _ => return Ok(()),
+    };
+    let entry = &SKILLS[0]; // decree skill
+    let dest_dir = skill_dest_dir(entry, &SkillScope::Project, &target)?;
+    let mut installed = 0usize;
+    let mut up_to_date = 0usize;
+    let mut conflicts = 0usize;
+    install_entry(entry, &dest_dir, false, &mut installed, &mut up_to_date, &mut conflicts)?;
+    if installed > 0 {
+        println!("Installed decree skill ({} file(s)).", installed);
+    } else if up_to_date > 0 && conflicts == 0 {
+        println!("Decree skill already up to date.");
+    }
+    Ok(())
+}
+
 pub fn run(
     scope: Option<SkillScope>,
     target: Option<SkillTarget>,
@@ -231,43 +330,17 @@ pub fn run(
 
     for idx in &indices {
         let entry = &SKILLS[*idx];
-        let dest = skill_dest(entry, &scope, &target)?;
-        let result = install_one(&dest, entry.content, force);
-        match result {
-            InstallResult::UpToDate => {
-                println!(
-                    "Already up to date: {}",
-                    color::dim(&dest.display().to_string())
-                );
-                up_to_date += 1;
-            }
-            InstallResult::Installed => {
-                println!("{}: {}", color::success("Installed"), dest.display());
-                installed += 1;
-            }
-            InstallResult::Overwrote => {
-                println!("{}: {}", color::success("Overwrote"), dest.display());
-                installed += 1;
-            }
-            InstallResult::Conflict => {
-                eprintln!(
-                    "{}: {} already exists with different content. Use --force to overwrite.",
-                    color::error("conflict"),
-                    dest.display()
-                );
-                conflicts += 1;
-            }
-            InstallResult::Error(e) => return Err(DecreeError::Other(e)),
-        }
+        let dest_dir = skill_dest_dir(entry, &scope, &target)?;
+        install_entry(entry, &dest_dir, force, &mut installed, &mut up_to_date, &mut conflicts)?;
     }
 
     println!(
-        "{} skill(s) installed, {} already up to date, {} conflict(s).",
+        "{} skill file(s) installed, {} already up to date, {} conflict(s).",
         installed, up_to_date, conflicts
     );
     println!("Next: reopen your session in this repository to load the new skill.");
 
-    if conflicts > 0 && installed == 0 {
+    if conflicts > 0 {
         return Err(DecreeError::Other(format!(
             "{conflict}(s) prevented installation; re-run with --force to overwrite",
             conflict = conflicts
@@ -282,69 +355,98 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_bundled_claude_skill_not_empty() {
-        assert!(!CLAUDE_DECREE_SKILL_MD.is_empty());
+    fn test_bundled_decree_skill_not_empty() {
+        assert!(!DECREE_SKILL_MD.is_empty());
     }
 
     #[test]
     fn test_bundled_sow_skill_not_empty() {
-        assert!(!CLAUDE_SOW_SKILL_MD.is_empty());
+        assert!(!SOW_SKILL_MD.is_empty());
+    }
+
+    #[test]
+    fn test_bundled_reference_files_not_empty() {
+        assert!(!DECREE_REF_HOOKS_MD.is_empty());
+        assert!(!DECREE_REF_MIGRATIONS_MD.is_empty());
+        assert!(!DECREE_REF_PIPELINE_MD.is_empty());
+        assert!(!DECREE_REF_ROUTINES_MD.is_empty());
+    }
+
+    #[test]
+    fn test_decree_skill_has_five_files() {
+        assert_eq!(DECREE_FILES.len(), 5);
+        assert_eq!(DECREE_FILES[0].path, "SKILL.md");
+        assert_eq!(DECREE_FILES[1].path, "reference/hooks-and-cron.md");
+        assert_eq!(DECREE_FILES[2].path, "reference/migrations.md");
+        assert_eq!(DECREE_FILES[3].path, "reference/pipeline-and-vars.md");
+        assert_eq!(DECREE_FILES[4].path, "reference/routines.md");
+    }
+
+    #[test]
+    fn test_sow_skill_has_one_file() {
+        assert_eq!(SOW_FILES.len(), 1);
+        assert_eq!(SOW_FILES[0].path, "SKILL.md");
     }
 
     #[test]
     fn test_claude_skill_covers_immutability() {
         assert!(
-            CLAUDE_DECREE_SKILL_MD.contains("mmutab"),
+            DECREE_SKILL_MD.contains("mmutab"),
             "SKILL.md must cover migration immutability"
         );
     }
 
     #[test]
     fn test_claude_skill_covers_given_when_then() {
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("Given"));
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("When"));
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("Then"));
+        assert!(DECREE_SKILL_MD.contains("Given"));
+        assert!(DECREE_SKILL_MD.contains("When"));
+        assert!(DECREE_SKILL_MD.contains("Then"));
     }
 
     #[test]
     fn test_claude_skill_covers_day_sized() {
         assert!(
-            CLAUDE_DECREE_SKILL_MD.to_lowercase().contains("day-sized")
-                || CLAUDE_DECREE_SKILL_MD.to_lowercase().contains("day sized"),
+            DECREE_SKILL_MD.to_lowercase().contains("day-sized")
+                || DECREE_SKILL_MD.to_lowercase().contains("day sized"),
             "SKILL.md must mention day-sized migrations"
         );
+    }
+
+    fn decree_all_content() -> String {
+        DECREE_FILES.iter().map(|f| f.content).collect::<Vec<_>>().join("\n")
     }
 
     #[test]
     fn test_claude_skill_covers_splitting() {
         assert!(
-            CLAUDE_DECREE_SKILL_MD.contains("smallest feasible"),
-            "SKILL.md must instruct splitting into smallest feasible chunks"
+            decree_all_content().contains("smallest feasible"),
+            "decree skill must instruct splitting into smallest feasible chunks"
         );
     }
 
     #[test]
     fn test_claude_skill_covers_migrations_location() {
         assert!(
-            CLAUDE_DECREE_SKILL_MD.contains(".decree/migrations"),
-            "SKILL.md must specify the correct migration directory"
+            decree_all_content().contains(".decree/migrations"),
+            "decree skill must specify the correct migration directory"
         );
     }
 
     #[test]
     fn test_decree_skill_has_routine_authoring_content() {
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("Pre-Check Section"));
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("Custom Parameter Discovery"));
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("DECREE_PRE_CHECK"));
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("set -euo pipefail"));
-        assert!(CLAUDE_DECREE_SKILL_MD.contains("Nested Routines"));
+        let all = decree_all_content();
+        assert!(all.contains("Pre-Check"));
+        assert!(all.contains("Custom Parameter Discovery"));
+        assert!(all.contains("DECREE_PRE_CHECK"));
+        assert!(all.contains("set -euo pipefail"));
+        assert!(all.contains("Nested Routines"));
     }
 
     #[test]
     fn test_sow_skill_has_required_content() {
-        assert!(CLAUDE_SOW_SKILL_MD.contains("# Statement of Work Template"));
-        assert!(CLAUDE_SOW_SKILL_MD.contains("Jobs to Be Done"));
-        assert!(CLAUDE_SOW_SKILL_MD.contains("Acceptance Criteria"));
+        assert!(SOW_SKILL_MD.contains("# Statement of Work Template"));
+        assert!(SOW_SKILL_MD.contains("Jobs to Be Done"));
+        assert!(SOW_SKILL_MD.contains("Acceptance Criteria"));
     }
 
     #[test]
