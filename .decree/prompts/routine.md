@@ -59,7 +59,7 @@ Additional env vars set for lifecycle hooks only:
 |---|---|---|
 | `DECREE_HOOK` | all hooks | Hook type name (`beforeAll`, `afterAll`, `beforeEach`, `afterEach`) |
 | `DECREE_ATTEMPT` | beforeEach, afterEach | Current attempt number (1-indexed) |
-| `DECREE_MAX_RETRIES` | beforeEach, afterEach | Configured max retries |
+| `DECREE_MAX_ATTEMPTS` | beforeEach, afterEach | Configured max attempts |
 | `DECREE_ROUTINE_EXIT_CODE` | afterEach | Exit code of the routine that just ran |
 | `DECREE_PRE_CHECK` | pre-check | Set to `"true"` during pre-check runs |
 

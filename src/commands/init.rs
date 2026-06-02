@@ -159,7 +159,7 @@ fn generate_config(
     }
 
     config.push('\n');
-    config.push_str("max_retries: 3\n");
+    config.push_str("max_attempts: 3\n");
     config.push_str("max_depth: 10\n");
     config.push_str("max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable\n");
     config.push_str("default_routine: develop\n");
@@ -399,7 +399,7 @@ mod tests {
         assert!(config.contains("ai_router: \"claude -p {prompt}\""));
         assert!(config.contains("ai_interactive: \"claude\""));
         assert!(!config.contains("ai_command"));
-        assert!(config.contains("max_retries: 3"));
+        assert!(config.contains("max_attempts: 3"));
         assert!(config.contains("beforeEach: \"\""));
         assert!(config.contains("# beforeEach: \"git-baseline\""));
         assert!(config.contains("routine_source: \"~/.decree/routines\""));
@@ -537,7 +537,10 @@ mod tests {
     #[test]
     fn test_ai_placeholder_replacement() {
         let replaced = replace_ai_placeholders(DEVELOP_SH, "claude", "claude -p {prompt}");
-        assert!(replaced.contains("claude -p \"Read"));
+        // {ai_invoke} is replaced with the command; the prompt is built into a
+        // variable that is echoed (for visibility) then passed to the AI.
+        assert!(replaced.contains("claude -p ${resume_flag} \"${implement_prompt}\""));
+        assert!(replaced.contains("implement_prompt=\"Read"));
         assert!(replaced.contains("command -v claude"));
         assert!(!replaced.contains("{ai_name}"));
         assert!(!replaced.contains("{ai_invoke}"));
@@ -567,7 +570,7 @@ mod tests {
     #[test]
     fn test_git_baseline_uses_env_vars() {
         assert!(GIT_BASELINE_SH.contains("DECREE_ATTEMPT"));
-        assert!(GIT_BASELINE_SH.contains("DECREE_MAX_RETRIES"));
+        assert!(GIT_BASELINE_SH.contains("DECREE_MAX_ATTEMPTS"));
     }
 
     #[test]
@@ -608,7 +611,7 @@ mod tests {
     #[test]
     fn test_git_stash_changes_uses_env_vars() {
         assert!(GIT_STASH_CHANGES_SH.contains("DECREE_ATTEMPT"));
-        assert!(GIT_STASH_CHANGES_SH.contains("DECREE_MAX_RETRIES"));
+        assert!(GIT_STASH_CHANGES_SH.contains("DECREE_MAX_ATTEMPTS"));
         assert!(GIT_STASH_CHANGES_SH.contains("DECREE_ROUTINE_EXIT_CODE"));
     }
 
@@ -636,16 +639,16 @@ mod tests {
 
     #[test]
     fn test_git_stash_changes_restores_baseline_on_exhaustion() {
-        // Should restore baseline when exit code != 0 and attempt == max_retries
+        // Should restore baseline when exit code != 0 and attempt == max_attempts
         assert!(GIT_STASH_CHANGES_SH.contains("EXIT_CODE\" -ne 0"));
-        assert!(GIT_STASH_CHANGES_SH.contains("ATTEMPT\" -eq \"$MAX_RETRIES\""));
+        assert!(GIT_STASH_CHANGES_SH.contains("ATTEMPT\" -eq \"$MAX_ATTEMPTS\""));
         assert!(GIT_STASH_CHANGES_SH.contains("decree-baseline: ${message_id}"));
     }
 
     #[test]
     fn test_git_baseline_restores_on_final_retry() {
-        // Final retry should stash failed changes and restore baseline
-        assert!(GIT_BASELINE_SH.contains("ATTEMPT\" -eq \"$MAX_RETRIES\""));
+        // Final attempt should stash failed changes and restore baseline
+        assert!(GIT_BASELINE_SH.contains("ATTEMPT\" -eq \"$MAX_ATTEMPTS\""));
         assert!(GIT_BASELINE_SH.contains("git stash apply"));
     }
 }

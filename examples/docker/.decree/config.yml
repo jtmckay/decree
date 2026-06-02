@@ -2,7 +2,7 @@ commands:
   ai_router: "opencode run {prompt}"
   ai_interactive: "opencode"
 
-max_retries: 3
+max_attempts: 3
 max_depth: 10
 default_routine: develop
 

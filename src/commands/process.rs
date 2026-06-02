@@ -312,13 +312,13 @@ pub fn process_single_message(
         .clone();
     let trigger = msg.trigger.clone().unwrap_or_else(|| "inbox".to_string());
 
-    // Determine effective max_retries (per-routine override or global)
-    let effective_max_retries = config
+    // Determine effective max_attempts (per-routine override or global)
+    let effective_max_attempts = config
         .routines
         .as_ref()
         .and_then(|r| r.get(&routine_name))
-        .and_then(|e| e.max_retries)
-        .unwrap_or(config.max_retries);
+        .and_then(|e| e.max_attempts)
+        .unwrap_or(config.max_attempts);
 
     // Determine per-routine timeout_s
     let timeout_s = config
@@ -355,7 +355,8 @@ pub fn process_single_message(
         Ok(p) => p,
         Err(e) => {
             eprintln!("routine resolution failed for {msg_id}: {e}");
-            mark_migration_processed_if_present(project_root, &msg)?;
+            // Do NOT mark the migration processed — it failed and must be
+            // retried on the next `decree process` run.
             dead_letter(project_root, &active_filename)?;
             return Err(e);
         }
@@ -371,7 +372,7 @@ pub fn process_single_message(
     let mut total_attempts: u32 = 0;
 
     // Retry loop
-    for attempt in 1..=effective_max_retries {
+    for attempt in 1..=effective_max_attempts {
         total_attempts = attempt;
 
         if shutdown.load(Ordering::Relaxed) {
@@ -393,7 +394,7 @@ pub fn process_single_message(
             exit_sigint();
         }
 
-        let is_final = attempt == effective_max_retries;
+        let is_final = attempt == effective_max_attempts;
 
         // Build hook context
         let hook_ctx = HookContext {
@@ -403,7 +404,7 @@ pub fn process_single_message(
             chain: chain.clone(),
             seq: seq.to_string(),
             attempt: Some(attempt),
-            max_retries: Some(effective_max_retries),
+            max_attempts: Some(effective_max_attempts),
             routine_exit_code: None,
             final_attempt: false,
             trigger: trigger.clone(),
@@ -429,15 +430,15 @@ pub fn process_single_message(
             Err(e) => {
                 write_hook_log(&log_path, HookType::BeforeEach, &e.output)?;
                 eprintln!("{}: beforeEach hook failed for {msg_id}: {e}", color::warning("warning"));
-                // beforeEach failure: skip and dead-letter (onDeadLetter does NOT fire here)
-                mark_migration_processed_if_present(project_root, &msg)?;
+                // beforeEach failure: skip and dead-letter (onDeadLetter does NOT fire here).
+                // Do NOT mark the migration processed — it failed and must be retried.
                 dead_letter(project_root, &active_filename)?;
                 return Err(DecreeError::Other(format!("beforeEach failed: {e}")));
             }
         }
 
         // Execute routine
-        let progress = format!("{msg_id} (attempt {attempt}/{effective_max_retries}) via {routine_name}");
+        let progress = format!("{msg_id} (attempt {attempt}/{effective_max_attempts}) via {routine_name}");
         print_progress(&progress);
 
         let session_id_for_attempt = if attempt == 1 { previous_session_id.as_deref() } else { None };
@@ -595,7 +596,7 @@ pub fn process_single_message(
             return Ok(());
         }
 
-        if attempt == effective_max_retries {
+        if attempt == effective_max_attempts {
             // EXHAUSTION
             eprintln!(
                 "max retries exhausted for {msg_id} (exit code: {exit_code})"
@@ -604,9 +605,10 @@ pub fn process_single_message(
             // Clear outbox
             clear_outbox(project_root)?;
 
-            // Mark migration as processed so it doesn't loop forever
-            mark_migration_processed_if_present(project_root, &msg)?;
-
+            // Do NOT mark the migration processed — it exhausted all retries and
+            // failed. The outer migration loop in `run()` halts on a dead-lettered
+            // message (returns Err), so there is no infinite-retry risk, and the
+            // migration stays unprocessed so a later `decree process` retries it.
             // Dead-letter the message
             dead_letter(project_root, &active_filename)?;
 
@@ -636,8 +638,8 @@ pub fn process_single_message(
                 message_dir: run_dir.to_string_lossy().to_string(),
                 chain: chain.clone(),
                 seq: seq.to_string(),
-                attempt: Some(effective_max_retries),
-                max_retries: Some(effective_max_retries),
+                attempt: Some(effective_max_attempts),
+                max_attempts: Some(effective_max_attempts),
                 routine_exit_code: Some(exit_code),
                 final_attempt: false,
                 trigger: trigger.clone(),
@@ -903,18 +905,6 @@ fn clear_outbox(project_root: &Path) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// If the message originated from a migration, mark it as processed
-/// so the outer migration loop doesn't retry it infinitely.
-fn mark_migration_processed_if_present(
-    project_root: &Path,
-    msg: &InboxMessage,
-) -> Result<(), DecreeError> {
-    if let Some(ref migration) = msg.migration {
-        message::mark_processed(project_root, migration)?;
-    }
-    Ok(())
-}
-
 /// Move a message to the dead-letter directory.
 fn dead_letter(project_root: &Path, filename: &str) -> Result<(), DecreeError> {
     let inbox_path = project_root
@@ -1005,11 +995,28 @@ fn print_progress(msg: &str) {
     }
 }
 
+/// Format a log block exposing the literal prompt sent to an AI invocation.
+///
+/// Makes decree's own AI calls (currently the routing call) visible so the
+/// user can see exactly what prompt/context was handed to the AI.
+fn format_ai_call_log(label: &str, command: &str, prompt: &str) -> String {
+    format!(
+        "[decree] AI call ({label}) — command: {command}\n\
+         [decree] ──── prompt ────\n\
+         {prompt}\n\
+         [decree] ──── end prompt ────"
+    )
+}
+
 /// Invoke the AI router command with the given prompt.
 ///
 /// The router command template uses `{prompt}` as a placeholder for the actual prompt.
 /// Falls back to passing the prompt as a trailing argument if no placeholder is found.
 fn invoke_ai_router(cmd_template: &str, prompt: &str) -> Result<String, DecreeError> {
+    // Surface the literal prompt before invoking, so it is visible even if the
+    // AI call hangs or fails.
+    eprintln!("{}", format_ai_call_log("router", cmd_template, prompt));
+
     let cmd_str = if cmd_template.contains("{prompt}") {
         cmd_template.replace("{prompt}", &shell_escape(prompt))
     } else {
@@ -1029,7 +1036,9 @@ fn invoke_ai_router(cmd_template: &str, prompt: &str) -> Result<String, DecreeEr
         )));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    let response = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    eprintln!("[decree] AI response (router): {response}");
+    Ok(response)
 }
 
 /// Write hook output to a log file.
@@ -1581,6 +1590,74 @@ mod tests {
     }
 
     #[test]
+    fn test_array_frontmatter_field_passed_to_routine_as_json() {
+        // Full YAML frontmatter support: a custom field whose value is a
+        // sequence of mappings must round-trip through normalization and be
+        // exposed to the routine as a JSON-encoded env var.
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        let marker = dir.path().join("captured.txt");
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            format!(
+                "#!/usr/bin/env bash\nprintf '%s' \"${{input_image}}\" > {}\n",
+                marker.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let content = [
+            "---",
+            "id: D0001-1432-test-0",
+            "chain: D0001-1432-test",
+            "seq: 0",
+            "routine: develop",
+            "input_image:",
+            "  - input_image: some_path.png [output]",
+            "    output_prefix: some_prefix",
+            "  - input_image: other.png",
+            "    output_prefix: pfx2",
+            "---",
+            "Process the images.",
+            "",
+        ]
+        .join("\n");
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+
+        // The routine should have received the array as a JSON string.
+        let captured = std::fs::read_to_string(&marker).unwrap();
+        assert_eq!(
+            captured,
+            r#"[{"input_image":"some_path.png [output]","output_prefix":"some_prefix"},{"input_image":"other.png","output_prefix":"pfx2"}]"#,
+        );
+
+        // The normalized message on disk must preserve the array structure
+        // (round-trips through serialize → parse).
+        let run_msg = std::fs::read_to_string(
+            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
+        )
+        .unwrap();
+        let parsed = InboxMessage::parse("D0001-1432-test-0.md", &run_msg).unwrap();
+        let field = parsed.custom_fields.get("input_image").unwrap();
+        assert!(
+            matches!(field, serde_yaml::Value::Sequence(s) if s.len() == 2),
+            "input_image should be a 2-element sequence after round-trip: {field:?}"
+        );
+    }
+
+    #[test]
     fn test_process_single_message_success() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
@@ -1678,7 +1755,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 2,
+            max_attempts: 2,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -1713,7 +1790,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -1747,7 +1824,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 3,
+            max_attempts: 3,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -1763,7 +1840,7 @@ mod tests {
     }
 
     #[test]
-    fn test_per_routine_max_retries() {
+    fn test_per_routine_max_attempts() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
 
@@ -1780,19 +1857,19 @@ mod tests {
         )
         .unwrap();
 
-        // Global max_retries=1, but per-routine max_retries=3
+        // Global max_attempts=1, but per-routine max_attempts=3
         let mut routines = std::collections::BTreeMap::new();
         routines.insert(
             "develop".to_string(),
             crate::config::RoutineEntry {
                 enabled: true,
                 deprecated: false,
-                max_retries: Some(3),
+                max_attempts: Some(3),
                 timeout_s: None,
             },
         );
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             routines: Some(routines),
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
@@ -1800,7 +1877,7 @@ mod tests {
 
         let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
 
-        // Should have 3 log files (per-routine max_retries=3)
+        // Should have 3 log files (per-routine max_attempts=3)
         let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
         assert!(run_dir.join("routine.log").exists());
         assert!(run_dir.join("routine-2.log").exists());
@@ -1834,12 +1911,12 @@ mod tests {
             crate::config::RoutineEntry {
                 enabled: true,
                 deprecated: false,
-                max_retries: None,
+                max_attempts: None,
                 timeout_s: Some(1), // 1 second timeout
             },
         );
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             routines: Some(routines),
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
@@ -1880,6 +1957,96 @@ mod tests {
 
         let processed = std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
         assert!(processed.contains("01-auth.md"));
+    }
+
+    #[test]
+    fn test_migration_not_marked_processed_on_exhaustion() {
+        // A migration whose routine fails every attempt must NOT be recorded in
+        // processed.md. Otherwise re-running `decree process` (after fixing the
+        // problem) would skip the migration as if it had succeeded.
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\nmigration: 01-auth.md\n---\nAdd auth.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig {
+            max_attempts: 1,
+            ..AppConfig::load_from_project(dir.path()).unwrap()
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        // Exhaustion is an error and the message is dead-lettered.
+        assert!(result.is_err());
+        assert!(dir
+            .path()
+            .join(".decree/inbox/dead/D0001-1432-test-0.md")
+            .exists());
+
+        // The migration must NOT be marked processed — it failed.
+        let processed =
+            std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
+        assert!(
+            !processed.contains("01-auth.md"),
+            "failed migration was incorrectly marked as processed: {processed:?}"
+        );
+    }
+
+    #[test]
+    fn test_migration_not_marked_processed_on_before_each_failure() {
+        // If a beforeEach hook fails the migration is dead-lettered but must
+        // remain unprocessed so a re-run retries it.
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+
+        std::fs::write(
+            dir.path().join(".decree/routines/develop.sh"),
+            "#!/usr/bin/env bash\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".decree/routines/fail-before.sh"),
+            "#!/usr/bin/env bash\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".decree/config.yml"),
+            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: fail-before\n",
+        )
+        .unwrap();
+
+        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\nmigration: 01-auth.md\n---\nAdd auth.\n";
+        std::fs::write(
+            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
+            content,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_project(dir.path()).unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result =
+            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        assert!(result.is_err());
+
+        let processed =
+            std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
+        assert!(
+            !processed.contains("01-auth.md"),
+            "failed migration was incorrectly marked as processed: {processed:?}"
+        );
     }
 
     #[test]
@@ -1955,7 +2122,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2181,7 +2348,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2226,7 +2393,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2242,7 +2409,7 @@ mod tests {
 
     #[test]
     fn test_token_exhaustion_detected_on_first_attempt() {
-        // Even when max_retries > 1, token exhaustion should be caught on the
+        // Even when max_attempts > 1, token exhaustion should be caught on the
         // first failed attempt (no wasted retries).
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
@@ -2261,7 +2428,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 3,
+            max_attempts: 3,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2299,7 +2466,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2331,7 +2498,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2387,7 +2554,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2568,6 +2735,16 @@ mod tests {
         let result = invoke_ai_router("printf rust-develop", "ignored prompt");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "rust-develop");
+    }
+
+    #[test]
+    fn test_format_ai_call_log_contains_literal_prompt() {
+        let block = format_ai_call_log("router", "claude -p {prompt}", "Pick a routine for: do X");
+        assert!(block.contains("AI call (router)"));
+        assert!(block.contains("command: claude -p {prompt}"));
+        // The literal prompt must appear verbatim.
+        assert!(block.contains("Pick a routine for: do X"));
+        assert!(block.contains("prompt"));
     }
 
     #[test]
@@ -2857,7 +3034,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2892,7 +3069,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -2991,7 +3168,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 2,
+            max_attempts: 2,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = Arc::new(AtomicBool::new(false));

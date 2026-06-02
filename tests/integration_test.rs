@@ -58,7 +58,7 @@ fn test_init_config_has_required_fields() {
 
     assert!(config.contains("ai_router:"));
     assert!(config.contains("ai_interactive:"));
-    assert!(config.contains("max_retries: 3"));
+    assert!(config.contains("max_attempts: 3"));
     assert!(config.contains("max_depth: 10"));
     assert!(config.contains("max_log_size: 2097152"));
     assert!(config.contains("default_routine: develop"));
@@ -429,7 +429,7 @@ fn test_version_flag() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("decree 0.4.1"));
+        .stdout(predicate::str::contains("decree 0.4.2"));
 }
 
 // --- decree --no-color ---
@@ -1102,7 +1102,7 @@ fn test_init_config_is_valid_yaml() {
     let config: decree::config::AppConfig =
         decree::config::AppConfig::load(&config_path).unwrap();
 
-    assert_eq!(config.max_retries, 3);
+    assert_eq!(config.max_attempts, 3);
     assert_eq!(config.max_depth, 10);
     assert_eq!(config.max_log_size, 2_097_152);
     assert_eq!(config.default_routine, "develop");

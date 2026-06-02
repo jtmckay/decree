@@ -48,8 +48,8 @@ pub struct HookContext {
     pub seq: String,
     /// Current attempt number, 1-indexed (beforeEach/afterEach only).
     pub attempt: Option<u32>,
-    /// Configured max retries (beforeEach/afterEach only).
-    pub max_retries: Option<u32>,
+    /// Configured max attempts (beforeEach/afterEach only).
+    pub max_attempts: Option<u32>,
     /// Exit code of the routine (afterEach/onDeadLetter only).
     pub routine_exit_code: Option<i32>,
     /// Whether this is the final attempt (afterEach only); sets DECREE_FINAL_ATTEMPT=true.
@@ -184,8 +184,8 @@ pub fn run_hook_with_config(
     if let Some(attempt) = ctx.attempt {
         cmd.env("DECREE_ATTEMPT", attempt.to_string());
     }
-    if let Some(max_retries) = ctx.max_retries {
-        cmd.env("DECREE_MAX_RETRIES", max_retries.to_string());
+    if let Some(max_attempts) = ctx.max_attempts {
+        cmd.env("DECREE_MAX_ATTEMPTS", max_attempts.to_string());
     }
     if let Some(exit_code) = ctx.routine_exit_code {
         cmd.env("DECREE_ROUTINE_EXIT_CODE", exit_code.to_string());
@@ -418,7 +418,7 @@ mod tests {
             r#"#!/usr/bin/env bash
 [ "$DECREE_HOOK" = "beforeEach" ] || { echo "DECREE_HOOK wrong: $DECREE_HOOK" >&2; exit 1; }
 [ "$DECREE_ATTEMPT" = "2" ] || { echo "DECREE_ATTEMPT wrong: $DECREE_ATTEMPT" >&2; exit 1; }
-[ "$DECREE_MAX_RETRIES" = "3" ] || { echo "DECREE_MAX_RETRIES wrong: $DECREE_MAX_RETRIES" >&2; exit 1; }
+[ "$DECREE_MAX_ATTEMPTS" = "3" ] || { echo "DECREE_MAX_ATTEMPTS wrong: $DECREE_MAX_ATTEMPTS" >&2; exit 1; }
 [ "$message_id" = "test-msg-0" ] || { echo "message_id wrong: $message_id" >&2; exit 1; }
 [ "$chain" = "test-msg" ] || { echo "chain wrong: $chain" >&2; exit 1; }
 [ "$seq" = "0" ] || { echo "seq wrong: $seq" >&2; exit 1; }
@@ -436,7 +436,7 @@ exit 0
             chain: "test-msg".to_string(),
             seq: "0".to_string(),
             attempt: Some(2),
-            max_retries: Some(3),
+            max_attempts: Some(3),
             ..HookContext::default()
         };
         let result = run_hook(dir.path(), &hooks, HookType::BeforeEach, &ctx);
@@ -470,7 +470,7 @@ exit 0
         };
         let ctx = HookContext {
             attempt: Some(1),
-            max_retries: Some(3),
+            max_attempts: Some(3),
             routine_exit_code: Some(1),
             ..HookContext::default()
         };
@@ -501,7 +501,7 @@ exit 0
         };
         let ctx = HookContext {
             attempt: Some(3),
-            max_retries: Some(3),
+            max_attempts: Some(3),
             final_attempt: true,
             ..HookContext::default()
         };
@@ -537,7 +537,7 @@ exit 0
         };
         let ctx = HookContext {
             attempt: Some(1),
-            max_retries: Some(3),
+            max_attempts: Some(3),
             final_attempt: false,
             ..HookContext::default()
         };
@@ -582,7 +582,7 @@ exit 0
         assert_eq!(ctx.chain, "");
         assert_eq!(ctx.seq, "");
         assert_eq!(ctx.attempt, None);
-        assert_eq!(ctx.max_retries, None);
+        assert_eq!(ctx.max_attempts, None);
         assert_eq!(ctx.routine_exit_code, None);
         assert!(!ctx.final_attempt);
         assert_eq!(ctx.trigger, "");

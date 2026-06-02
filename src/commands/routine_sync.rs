@@ -311,7 +311,7 @@ mod tests {
             RoutineEntry {
                 enabled: true,
                 deprecated: true,
-                max_retries: None,
+                max_attempts: None,
                 timeout_s: None,
             },
         );
@@ -362,7 +362,7 @@ mod tests {
             entry_status(&RoutineEntry {
                 enabled: true,
                 deprecated: false,
-                max_retries: None,
+                max_attempts: None,
                 timeout_s: None,
             }),
             "enabled"
@@ -371,7 +371,7 @@ mod tests {
             entry_status(&RoutineEntry {
                 enabled: false,
                 deprecated: false,
-                max_retries: None,
+                max_attempts: None,
                 timeout_s: None,
             }),
             "disabled"
@@ -380,7 +380,7 @@ mod tests {
             entry_status(&RoutineEntry {
                 enabled: true,
                 deprecated: true,
-                max_retries: None,
+                max_attempts: None,
                 timeout_s: None,
             }),
             "deprecated"

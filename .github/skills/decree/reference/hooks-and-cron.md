@@ -27,12 +27,12 @@ All hooks receive the standard variables plus:
 | -------------------------- | ----------------------------------------------------------- |
 | `DECREE_HOOK`              | Hook type name                                              |
 | `DECREE_ATTEMPT`           | Current attempt number (`beforeEach`/`afterEach`)           |
-| `DECREE_MAX_RETRIES`       | Configured max retries (`beforeEach`/`afterEach`)           |
+| `DECREE_MAX_ATTEMPTS`       | Configured max attempts (`beforeEach`/`afterEach`)           |
 | `DECREE_ROUTINE_EXIT_CODE` | Routine exit code (`afterEach` only)                        |
 | `DECREE_FINAL_ATTEMPT`     | `"true"` on the last attempt (`afterEach` only)             |
 | `DECREE_TRIGGER`           | How the run was initiated (`inbox`, `cron:<stem>`, `chain`) |
 
-`onDeadLetter` also receives `DECREE_ATTEMPT` (= `max_retries`), `DECREE_MAX_RETRIES`,
+`onDeadLetter` also receives `DECREE_ATTEMPT` (= `max_attempts`), `DECREE_MAX_ATTEMPTS`,
 `DECREE_ROUTINE_EXIT_CODE`, and `DECREE_TRIGGER`.
 
 ## Cron Scheduling

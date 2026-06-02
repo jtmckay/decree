@@ -1,7 +1,7 @@
 commands:
   ai_router: claude -p {prompt}
   ai_interactive: claude
-max_retries: 3
+max_attempts: 3
 max_depth: 10
 max_log_size: 2097152
 default_routine: develop

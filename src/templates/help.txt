@@ -40,9 +40,13 @@ Message Format:
 Processing Pipeline:
   1. Migration files in .decree/migrations/ are read in alphabetical order
   2. Each migration becomes an inbox message in .decree/inbox/
-  3. Messages are normalized (missing fields filled, routine selected)
+  3. Messages are normalized (missing fields filled, routine selected). When
+     the AI router is consulted to pick a routine, the literal prompt and the
+     AI's response are printed to stderr so you can see what was sent.
   4. Lifecycle hooks run (beforeEach — e.g. git stash baseline)
-  5. The selected routine executes with parameters as env vars
+  5. The selected routine executes with parameters as env vars. The bundled
+     routines echo each AI prompt before invoking the assistant, so the literal
+     prompt/context is captured in the run's routine.log (decree log <ID>).
   6. On success: afterEach hook runs, message deleted from inbox; run.json is
      written to the run directory with metadata about the completed run
   7. On failure: retry strategy applies (hooks handle state management).
@@ -66,10 +70,10 @@ Environment Variables:
   Hook-only env vars:
   DECREE_HOOK            Hook type name (beforeAll, afterAll, etc.)
   DECREE_ATTEMPT         Current attempt number (beforeEach/afterEach)
-  DECREE_MAX_RETRIES     Configured max retries (beforeEach/afterEach)
+  DECREE_MAX_ATTEMPTS    Configured max attempts (beforeEach/afterEach)
   DECREE_ROUTINE_EXIT_CODE  Routine exit code (afterEach only)
   DECREE_PRE_CHECK       Set to "true" during pre-check runs
-  DECREE_FINAL_ATTEMPT   "true" on final retry attempt (afterEach only)
+  DECREE_FINAL_ATTEMPT   "true" on final attempt (afterEach only)
   DECREE_TRIGGER         How the run was initiated: inbox | cron:<stem> | chain
 
   Retry env vars (set on token-exhaustion retry):
@@ -134,13 +138,13 @@ Routine Registry & Shared Routines:
 
   Config layout:
     routine_source: "~/.decree/routines"    # shared routines directory
-    max_retries: 3                          # global default
+    max_attempts: 3                         # global default
     routines:
       develop:
         enabled: true
       gmail-sync:
         enabled: true
-        max_retries: 5        # overrides global max_retries for this routine
+        max_attempts: 5       # overrides global max_attempts for this routine
       actual-budget:
         enabled: true
         timeout_s: 60         # kill with SIGTERM after 60 s; treated as exit 1
@@ -149,7 +153,7 @@ Routine Registry & Shared Routines:
         enabled: true
 
   Per-routine overrides:
-    max_retries  Overrides the global retry cap for that routine only.
+    max_attempts Overrides the global attempt cap for that routine only.
     timeout_s    If set, the routine process is killed with SIGTERM after the
                  given seconds and the attempt is treated as exit code 1.
 
@@ -181,14 +185,14 @@ Lifecycle Hooks (config.yml):
   Hooks receive additional env vars:
     DECREE_HOOK            — hook type name
     DECREE_ATTEMPT         — current attempt number (beforeEach/afterEach)
-    DECREE_MAX_RETRIES     — configured max retries (beforeEach/afterEach)
+    DECREE_MAX_ATTEMPTS    — configured max attempts (beforeEach/afterEach)
     DECREE_ROUTINE_EXIT_CODE — routine exit code (afterEach only)
     DECREE_FINAL_ATTEMPT   — "true" in afterEach on the last attempt only
     DECREE_TRIGGER         — how the run was initiated (inbox/cron:<stem>/chain)
 
   onDeadLetter additional env vars:
-    DECREE_ATTEMPT              Equals max_retries (all retries were exhausted)
-    DECREE_MAX_RETRIES          Configured max retries
+    DECREE_ATTEMPT              Equals max_attempts (all attempts were exhausted)
+    DECREE_MAX_ATTEMPTS         Configured max attempts
     DECREE_ROUTINE_EXIT_CODE    Exit code of the last attempt
     DECREE_TRIGGER              How the run was initiated
 

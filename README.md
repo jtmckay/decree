@@ -209,7 +209,7 @@ Hooks receive these additional env vars:
 | `DECREE_HOOK` | All hooks |
 | `DECREE_TRIGGER` | All hooks — `inbox`, `cron:<stem>`, or `chain` |
 | `DECREE_ATTEMPT` | `beforeEach`, `afterEach`, `onDeadLetter` |
-| `DECREE_MAX_RETRIES` | `beforeEach`, `afterEach`, `onDeadLetter` |
+| `DECREE_MAX_ATTEMPTS` | `beforeEach`, `afterEach`, `onDeadLetter` |
 | `DECREE_ROUTINE_EXIT_CODE` | `afterEach`, `onDeadLetter` |
 | `DECREE_FINAL_ATTEMPT` | `afterEach` only — `"true"` on the last attempt |
 
@@ -252,13 +252,13 @@ hourly-sync.md      0 * * * *       gmail-sync     never       13m
 
 ### Per-routine overrides
 
-Individual routines can override the global `max_retries` and add a `timeout_s` cap:
+Individual routines can override the global `max_attempts` and add a `timeout_s` cap:
 
 ```yaml
 routines:
   gmail-sync:
     enabled: true
-    max_retries: 5
+    max_attempts: 5
   actual-budget:
     enabled: true
     timeout_s: 60

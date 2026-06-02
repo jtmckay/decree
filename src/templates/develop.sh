@@ -30,12 +30,18 @@ if [ -n "${DECREE_PREVIOUS_SESSION_ID:-}" ]; then
 fi
 
 # Implementation
-{ai_invoke} ${resume_flag} "Read ${message_file} and implement all requirements.
+implement_prompt="Read ${message_file} and implement all requirements.
 Previous attempt logs (if any) are in ${message_dir} for context.
 Follow best practices: clean code, proper error handling, and tests
 where appropriate."
+echo "=== AI prompt (implementation) ==="
+echo "${implement_prompt}"
+{ai_invoke} ${resume_flag} "${implement_prompt}"
 
 # Verification
-{ai_invoke} "Read ${message_file}. Verify that all requirements and
+verify_prompt="Read ${message_file}. Verify that all requirements and
 acceptance criteria are met. Run any tests. Report what passes and what
 fails. Exit 0 if everything passes, exit 1 if anything fails."
+echo "=== AI prompt (verification) ==="
+echo "${verify_prompt}"
+{ai_invoke} "${verify_prompt}"

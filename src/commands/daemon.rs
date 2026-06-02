@@ -198,13 +198,13 @@ fn process_single_message(
         .clone();
     let trigger = msg.trigger.clone().unwrap_or_else(|| "inbox".to_string());
 
-    // Resolve per-routine max_retries and timeout_s
-    let effective_max_retries = config
+    // Resolve per-routine max_attempts and timeout_s
+    let effective_max_attempts = config
         .routines
         .as_ref()
         .and_then(|r| r.get(&routine_name))
-        .and_then(|e| e.max_retries)
-        .unwrap_or(config.max_retries);
+        .and_then(|e| e.max_attempts)
+        .unwrap_or(config.max_attempts);
     let timeout_s = config
         .routines
         .as_ref()
@@ -251,14 +251,14 @@ fn process_single_message(
     let mut total_attempts: u32 = 0;
 
     // Retry loop
-    for attempt in 1..=effective_max_retries {
+    for attempt in 1..=effective_max_attempts {
         total_attempts = attempt;
 
         if shutdown.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        let is_final = attempt == effective_max_retries;
+        let is_final = attempt == effective_max_attempts;
 
         // Build hook context
         let hook_ctx = HookContext {
@@ -268,7 +268,7 @@ fn process_single_message(
             chain: chain.clone(),
             seq: seq.to_string(),
             attempt: Some(attempt),
-            max_retries: Some(effective_max_retries),
+            max_attempts: Some(effective_max_attempts),
             routine_exit_code: None,
             final_attempt: false,
             trigger: trigger.clone(),
@@ -293,7 +293,7 @@ fn process_single_message(
         };
         let log_path = run_dir.join(&log_file);
 
-        println!("decree daemon: processing {msg_id} (attempt {attempt}/{effective_max_retries}) via {routine_name}");
+        println!("decree daemon: processing {msg_id} (attempt {attempt}/{effective_max_attempts}) via {routine_name}");
 
         let start = chrono::Local::now();
         let start_line = format!("[decree] start {}\n", start.format("%Y-%m-%dT%H:%M:%S"));
@@ -397,7 +397,7 @@ fn process_single_message(
             eprintln!("decree daemon: afterEach hook failed for {msg_id}: {e}");
         }
 
-        if attempt == effective_max_retries {
+        if attempt == effective_max_attempts {
             // EXHAUSTION — all retries failed
             eprintln!(
                 "decree daemon: max retries exhausted for {msg_id} (exit code: {exit_code})"
@@ -435,8 +435,8 @@ fn process_single_message(
                 message_dir: run_dir.to_string_lossy().to_string(),
                 chain: chain.clone(),
                 seq: seq.to_string(),
-                attempt: Some(effective_max_retries),
-                max_retries: Some(effective_max_retries),
+                attempt: Some(effective_max_attempts),
+                max_attempts: Some(effective_max_attempts),
                 routine_exit_code: Some(exit_code),
                 final_attempt: false,
                 trigger: trigger.clone(),
@@ -1143,7 +1143,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 1,
+            max_attempts: 1,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = AtomicBool::new(false);
@@ -1179,7 +1179,7 @@ mod tests {
         .unwrap();
 
         let config = AppConfig {
-            max_retries: 3,
+            max_attempts: 3,
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };
         let shutdown = AtomicBool::new(false);
@@ -1223,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn test_per_routine_max_retries() {
+    fn test_per_routine_max_attempts() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
 
@@ -1246,13 +1246,13 @@ mod tests {
             crate::config::RoutineEntry {
                 enabled: true,
                 deprecated: false,
-                max_retries: Some(1),
+                max_attempts: Some(1),
                 timeout_s: None,
             },
         );
 
         let config = AppConfig {
-            max_retries: 5,
+            max_attempts: 5,
             routines: Some(routines),
             ..AppConfig::load_from_project(dir.path()).unwrap()
         };

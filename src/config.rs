@@ -55,8 +55,12 @@ pub struct RoutineEntry {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub deprecated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_retries: Option<u32>,
+    #[serde(
+        default,
+        alias = "max_retries",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_attempts: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u32>,
 }
@@ -75,7 +79,7 @@ impl RoutineEntry {
         Self {
             enabled,
             deprecated: false,
-            max_retries: None,
+            max_attempts: None,
             timeout_s: None,
         }
     }
@@ -90,8 +94,8 @@ impl RoutineEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub commands: CommandsConfig,
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
+    #[serde(default = "default_max_attempts", alias = "max_retries")]
+    pub max_attempts: u32,
     #[serde(default = "default_max_depth")]
     pub max_depth: u32,
     #[serde(default = "default_max_log_size")]
@@ -108,7 +112,7 @@ pub struct AppConfig {
     pub shared_routines: Option<BTreeMap<String, RoutineEntry>>,
 }
 
-fn default_max_retries() -> u32 {
+fn default_max_attempts() -> u32 {
     3
 }
 fn default_max_depth() -> u32 {
@@ -125,7 +129,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             commands: CommandsConfig::default(),
-            max_retries: default_max_retries(),
+            max_attempts: default_max_attempts(),
             max_depth: default_max_depth(),
             max_log_size: default_max_log_size(),
             default_routine: default_routine(),
@@ -193,7 +197,7 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.commands.ai_router, "opencode run {prompt}");
         assert_eq!(config.commands.ai_interactive, "opencode");
-        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_log_size, 2_097_152);
         assert_eq!(config.default_routine, "develop");
@@ -208,7 +212,7 @@ mod tests {
 commands:
   ai_router: "claude -p {prompt}"
   ai_interactive: "claude"
-max_retries: 5
+max_attempts: 5
 max_depth: 20
 max_log_size: 0
 default_routine: rust-develop
@@ -221,7 +225,7 @@ hooks:
         let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.commands.ai_router, "claude -p {prompt}");
         assert_eq!(config.commands.ai_interactive, "claude");
-        assert_eq!(config.max_retries, 5);
+        assert_eq!(config.max_attempts, 5);
         assert_eq!(config.max_depth, 20);
         assert_eq!(config.max_log_size, 0);
         assert_eq!(config.default_routine, "rust-develop");
@@ -237,10 +241,30 @@ commands:
   ai_interactive: "opencode"
 "#;
         let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.default_routine, "develop");
         assert!(config.routines.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_legacy_max_retries_alias() {
+        // Existing on-disk configs use the old `max_retries` key. The serde
+        // alias keeps them working after the rename to `max_attempts`.
+        let yaml = r#"
+commands:
+  ai_router: "claude -p {prompt}"
+  ai_interactive: "claude"
+max_retries: 7
+routines:
+  develop:
+    enabled: true
+    max_retries: 4
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_attempts, 7);
+        let routines = config.routines.as_ref().unwrap();
+        assert_eq!(routines["develop"].max_attempts, Some(4));
     }
 
     #[test]
@@ -297,7 +321,7 @@ shared_routines:
         let entry = RoutineEntry {
             enabled: true,
             deprecated: true,
-            max_retries: None,
+            max_attempts: None,
             timeout_s: None,
         };
         assert!(!entry.is_active());

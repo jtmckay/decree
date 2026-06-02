@@ -24,7 +24,7 @@ if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
 fi
 
 ATTEMPT="${DECREE_ATTEMPT:-1}"
-MAX_RETRIES="${DECREE_MAX_RETRIES:-3}"
+MAX_ATTEMPTS="${DECREE_MAX_ATTEMPTS:-3}"
 EXIT_CODE="${DECREE_ROUTINE_EXIT_CODE:-0}"
 
 # Always save current state as a named checkpoint (non-destructive)
@@ -36,7 +36,7 @@ if [ -n "$STASH_REF" ]; then
 fi
 
 # On exhaustion: save failed state, restore baseline
-if [ "$EXIT_CODE" -ne 0 ] && [ "$ATTEMPT" -eq "$MAX_RETRIES" ]; then
+if [ "$EXIT_CODE" -ne 0 ] && [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
     # Save the exhausted state (so nothing is lost)
     git stash push --include-untracked -m "decree-exhausted: ${message_id}" 2>/dev/null || true
 

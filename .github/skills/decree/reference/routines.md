@@ -81,13 +81,13 @@ Routines are registered in `config.yml`:
 
 ```yaml
 routine_source: "~/.decree/routines" # shared routines directory
-max_retries: 3
+max_attempts: 3
 routines:
   develop:
     enabled: true
   gmail-sync:
     enabled: true
-    max_retries: 5 # overrides global default
+    max_attempts: 5 # overrides global default
   actual-budget:
     enabled: true
     timeout_s: 60 # SIGTERM after 60s; treated as exit 1

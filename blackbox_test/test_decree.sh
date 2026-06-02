@@ -506,10 +506,10 @@ test_init_config_has_ai_interactive() {
   assert_file_contains .decree/config.yml "ai_interactive:"
 }
 
-test_init_config_max_retries_3() {
+test_init_config_max_attempts_3() {
   git init -q .
   ./decree init </dev/null >/dev/null 2>&1
-  assert_file_contains .decree/config.yml "max_retries: 3"
+  assert_file_contains .decree/config.yml "max_attempts: 3"
 }
 
 test_init_config_max_depth_10() {
@@ -1451,14 +1451,14 @@ test_process_retry_creates_multiple_logs() {
 test_process_retry_count_matches_config() {
   init_project_no_hooks
   create_failing_routine
-  # Set max_retries to 2
-  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  # Set max_attempts to 2
+  sed -i 's/max_attempts:.*/max_attempts: 2/' .decree/config.yml
   mkdir -p .decree/migrations
   echo "Test retry" > .decree/migrations/01-test.md
   ./decree process --no-color >/dev/null 2>&1 || true
   local log_count
   log_count=$(find .decree/runs -name 'routine*.log' 2>/dev/null | wc -l)
-  assert_eq "2" "$log_count" "should have exactly max_retries log files"
+  assert_eq "2" "$log_count" "should have exactly max_attempts log files"
 }
 
 test_process_dead_letters_on_exhaustion() {
@@ -2419,7 +2419,7 @@ SCRIPT
   chmod +x .decree/routines/after-hook.sh
   ./decree routine-sync --no-color >/dev/null 2>&1
   sed -i '/after-hook:/,/enabled:/{s/enabled: false/enabled: true/}' .decree/config.yml
-  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  sed -i 's/max_attempts:.*/max_attempts: 2/' .decree/config.yml
   sed -i 's/afterEach:.*/afterEach: "after-hook"/' .decree/config.yml
   create_simple_migration
   ./decree process --no-color >/dev/null 2>&1 || true
@@ -2452,7 +2452,7 @@ SCRIPT
   chmod +x .decree/routines/after-hook.sh
   ./decree routine-sync --no-color >/dev/null 2>&1
   sed -i '/after-hook:/,/enabled:/{s/enabled: false/enabled: true/}' .decree/config.yml
-  sed -i 's/max_retries:.*/max_retries: 3/' .decree/config.yml
+  sed -i 's/max_attempts:.*/max_attempts: 3/' .decree/config.yml
   sed -i 's/afterEach:.*/afterEach: "after-hook"/' .decree/config.yml
   create_simple_migration
   ./decree process --no-color >/dev/null 2>&1 || true
@@ -2537,7 +2537,7 @@ if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 echo "DEAD_HOOK exit=\${DECREE_ROUTINE_EXIT_CODE:-}" >> $hook_marker
 SCRIPT
   chmod +x .decree/routines/dead-hook.sh
-  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  sed -i 's/max_attempts:.*/max_attempts: 2/' .decree/config.yml
   sed -i '/^  afterEach:/a\  onDeadLetter: "dead-hook"' .decree/config.yml
   create_simple_migration
   ./decree process --no-color >/dev/null 2>&1 || true
@@ -2568,7 +2568,7 @@ if [ "\${DECREE_PRE_CHECK:-}" = "true" ]; then exit 0; fi
 echo "EXIT=\${DECREE_ROUTINE_EXIT_CODE:-}" >> $hook_marker
 SCRIPT
   chmod +x .decree/routines/dead-hook.sh
-  sed -i 's/max_retries:.*/max_retries: 2/' .decree/config.yml
+  sed -i 's/max_attempts:.*/max_attempts: 2/' .decree/config.yml
   sed -i '/^  afterEach:/a\  onDeadLetter: "dead-hook"' .decree/config.yml
   create_simple_migration
   ./decree process --no-color >/dev/null 2>&1 || true
@@ -2823,7 +2823,7 @@ TESTS=(
   "config no ai_command (deprecated)" test_init_config_no_ai_command
   "config has ai_router"             test_init_config_has_ai_router
   "config has ai_interactive"        test_init_config_has_ai_interactive
-  "config max_retries 3"             test_init_config_max_retries_3
+  "config max_attempts 3"             test_init_config_max_attempts_3
   "config max_depth 10"              test_init_config_max_depth_10
   "config max_log_size 2MB"          test_init_config_max_log_size
   "config default_routine develop"   test_init_config_default_routine_develop

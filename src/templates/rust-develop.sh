@@ -30,9 +30,12 @@ if [ -n "${DECREE_PREVIOUS_SESSION_ID:-}" ]; then
 fi
 
 # Step 1: Implementation
-{ai_invoke} ${resume_flag} "You are a senior Rust engineer. Read ${message_file} and
+implement_prompt="You are a senior Rust engineer. Read ${message_file} and
 implement all requirements with proper error handling and tests.
 Previous attempt logs (if any) are in ${message_dir} for context."
+echo "=== AI prompt (implementation) ==="
+echo "${implement_prompt}"
+{ai_invoke} ${resume_flag} "${implement_prompt}"
 
 # Step 2: Build and test
 echo "=== Building (release) ==="
@@ -41,6 +44,9 @@ echo "=== Running tests ==="
 cargo test 2>&1 | tee "${message_dir}/test-output.log" || true
 
 # Step 3: QA
-{ai_invoke} "Read ${message_file}, build output at ${message_dir}/build.log,
+qa_prompt="Read ${message_file}, build output at ${message_dir}/build.log,
 test output at ${message_dir}/test-output.log. Fix any failures. Run cargo
 build --release and cargo test again. Exit 0 only if everything passes."
+echo "=== AI prompt (QA) ==="
+echo "${qa_prompt}"
+{ai_invoke} "${qa_prompt}"
