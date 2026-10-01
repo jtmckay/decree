@@ -1,0 +1,6 @@
+running 18 tests
+...
+test plans::reads_plans_toml ... FAILED
+  No such file: config/plans.toml
+
+test result: FAILED. 17 passed; 1 failed

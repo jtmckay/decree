@@ -1,0 +1,60 @@
+// Grafana Alloy: ship decree's events and script output to Loki.
+// Replace /srv/project with the directory that contains .decree/.
+
+local.file_match "decree_events" {
+  path_targets = [{"__path__" = "/srv/project/.decree/runs/*/events.jsonl", "job" = "decree"}]
+}
+
+loki.source.file "decree_events" {
+  targets    = local.file_match.decree_events.targets
+  forward_to = [loki.process.decree_events.receiver]
+}
+
+loki.process "decree_events" {
+  stage.json {
+    expressions = { ts = "", type = "", machine = "", run_id = "" }
+  }
+  // Use decree's own timestamp, not the time Alloy read the line.
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339"
+  }
+  // Labels: low cardinality only. run_id is metadata, never a label.
+  stage.labels {
+    values = { type = "", machine = "" }
+  }
+  stage.structured_metadata {
+    values = { run_id = "" }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+local.file_match "decree_script_output" {
+  path_targets = [{"__path__" = "/srv/project/.decree/runs/*/*.log", "job" = "decree_script"}]
+}
+
+loki.source.file "decree_script_output" {
+  targets    = local.file_match.decree_script_output.targets
+  forward_to = [loki.process.decree_script_output.receiver]
+}
+
+loki.process "decree_script_output" {
+  // runs/<run_id>/<NNNN>-<state>-<script>.log; names cannot contain "-".
+  stage.regex {
+    source     = "filename"
+    expression = "/runs/(?P<run_id>[^/]+)/(?P<n>\\d{4})-(?P<state>[^-]+)-(?P<script>[^/]+)\\.log$"
+  }
+  stage.labels {
+    values = { script = "" }
+  }
+  stage.structured_metadata {
+    values = { run_id = "", state = "" }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

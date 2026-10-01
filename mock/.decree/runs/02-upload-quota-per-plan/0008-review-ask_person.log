@@ -1,0 +1,5 @@
+Waiting for a person: feature/review - Per-plan upload limits
+Reply with one of:
+  decree event 02-upload-quota-per-plan.w11 approve -m "<note>"
+  decree event 02-upload-quota-per-plan.w11 reject -m "<note>"
+  decree event 02-upload-quota-per-plan.w11 retry -m "<note>"

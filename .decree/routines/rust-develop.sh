@@ -24,10 +24,23 @@ if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
     exit 0
 fi
 
+stop_file="${message_dir}/STOP"
+stop_if_requested() {
+    if [ -f "${stop_file}" ]; then
+        echo "=== Agent requested a stop (${stop_file}) ===" >&2
+        cat "${stop_file}" >&2
+        exit 1
+    fi
+}
+# A STOP from an earlier attempt stays in force until a human removes it.
+stop_if_requested
+
 # Step 1: Implementation
-claude -p "You are a senior Rust engineer. Read ${message_file} and
+claude --permission-mode auto -p "You are a senior Rust engineer. Read ${message_file} and
 implement all requirements with proper error handling and tests.
-Previous attempt logs (if any) are in ${message_dir} for context."
+Previous attempt logs (if any) are in ${message_dir} for context.
+The run directory is ${message_dir}."
+stop_if_requested
 
 # Step 2: Build and test
 echo "=== Building (release) ==="
@@ -36,6 +49,14 @@ echo "=== Running tests ==="
 cargo test 2>&1 | tee "${message_dir}/test-output.log" || true
 
 # Step 3: QA
-claude -p "Read ${message_file}, build output at ${message_dir}/build.log,
+claude --permission-mode auto -p "Read ${message_file}, build output at ${message_dir}/build.log,
 test output at ${message_dir}/test-output.log. Fix any failures. Run cargo
-build --release and cargo test again. Exit 0 only if everything passes."
+build --release and cargo test again. The run directory is ${message_dir}."
+stop_if_requested
+
+# Step 4: Gate. claude -p exits 0 whatever the agent concludes, so the
+# routine decides success itself; a failure here retries or stops the queue.
+echo "=== Gate: fmt, clippy, test ==="
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test

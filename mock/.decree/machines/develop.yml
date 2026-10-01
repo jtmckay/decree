@@ -1,0 +1,13 @@
+name: develop
+description: Make a small code change with an AI agent, then run the tests.
+initial: implement
+states:
+  implement:
+    invoke: implement
+    timeout_s: 3600
+    transitions: { done: test }
+  test:
+    invoke: test
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true, onentry: [notify] }   # 0.4's onDeadLetter hook

@@ -1,0 +1,12 @@
+running 14 tests
+test upload_limit::over_limit_returns_429 ... ok
+test upload_limit::window_slides ... FAILED
+
+failures:
+---- upload_limit::window_slides stdout ----
+thread 'upload_limit::window_slides' panicked at tests/upload_limit.rs:41:5:
+assertion `left == right` failed
+  left: 429
+ right: 200
+
+test result: FAILED. 13 passed; 1 failed

@@ -1,0 +1,4 @@
+cargo audit found 2 advisories:
+  RUSTSEC-2026-0031 hyper 1.4.0 -> 1.4.2
+  RUSTSEC-2026-0047 time 0.3.36 -> 0.3.37
+Updating hyper...

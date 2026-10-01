@@ -1,0 +1,2 @@
+{"v":1,"seq":1,"ts":"2026-10-01T03:00:01.000Z","type":"transition","run_id":"20261001T030000Z-c4e81b","machine":"develop","trigger":"cron","from":null,"event":"claimed","to":"implement","source":"claim","exit_code":null,"file":"20261001T030000Z-c4e81b.md"}
+{"v":1,"seq":2,"ts":"2026-10-01T03:12:40.500Z","type":"interrupted","run_id":"20261001T030000Z-c4e81b","machine":"develop","trigger":"cron","state":"implement","cause":"signal","script":"implement"}
