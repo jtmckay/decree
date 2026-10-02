@@ -1,0 +1,2 @@
+machines/m.yml: work: machine `m` invokes itself: m -> n -> m; a machine never invokes itself, directly or through others (V20)
+machines/n.yml: work: machine `n` invokes itself: n -> m -> n; a machine never invokes itself, directly or through others (V20)

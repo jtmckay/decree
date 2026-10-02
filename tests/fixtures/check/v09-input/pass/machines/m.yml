@@ -1,0 +1,12 @@
+name: m
+description: A check on the output of a script state.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: ok }
+  ok:
+    invoke: { check: { matches: "^ok" }, input: work }
+    transitions: { yes: done, no: work }
+  done: { final: true }
+  failed: { final: true }

@@ -1,0 +1,17 @@
+name: b
+description: A router state inside a compound state.
+initial: work
+states:
+  work:
+    initial: step
+    transitions: { done.state.work: done }
+    states:
+      step:
+        invoke: work
+        router: llm
+        transitions:
+          pass: { target: fin, description: The work is finished. }
+          retry: { target: step, description: Run the work again. }
+      fin: { final: true }
+  done: { final: true }
+  failed: { final: true }

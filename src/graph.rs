@@ -5,32 +5,49 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::machine::{LoadedMachine, MACHINES_DIR};
+use crate::machine::{ChooseKind, Invoke, LoadedMachine, FAILED, MACHINES_DIR};
 
-/// Root-level final state an unhandled `error` goes to (section 5, Rules).
-const FAILED: &str = "failed";
+/// The file `decree graph` writes for the whole system, beside one per machine.
+pub const SYSTEM_FILE: &str = "system.md";
 
-/// The Markdown document for one machine: heading, description and a `stateDiagram-v2`.
-pub fn machine_document(m: &LoadedMachine) -> Result<String, String> {
-    Ok(document(&m.id, m.description(), &state_diagram(m)?))
+/// The Markdown document for one machine, `graph/<machine>.md`: heading, description, a
+/// link back to its YAML, and a `stateDiagram-v2`. `default_router` names the router of
+/// `choose: model` states that name none.
+pub fn machine_document(m: &LoadedMachine, default_router: Option<&str>) -> Result<String, String> {
+    let link = format!(
+        "Machine: [{MACHINES_DIR}/{id}.yml](../{MACHINES_DIR}/{id}.yml)\n\n",
+        id = m.id
+    );
+    Ok(document(
+        &m.id,
+        m.description(),
+        &link,
+        &state_diagram(m, default_router)?,
+    ))
 }
 
-/// The Markdown document for the whole system: a `flowchart LR` of every machine, the
-/// `emits` edges between them, and one node per cron file. `crons` is `(file stem, machine)`
-/// in filename order.
+/// The Markdown document for the whole system, `graph/system.md`: a link to each machine's
+/// document, then a `flowchart LR` of every machine, the `emits` and `invokes` edges between
+/// them, and one node per cron file. `crons` is `(file stem, machine)` in filename order.
 pub fn system_document(
     machines: &BTreeMap<String, LoadedMachine>,
     crons: &[(String, String)],
+    default_router: Option<&str>,
 ) -> String {
+    let list: String = machines
+        .iter()
+        .map(|(id, m)| format!("- [{id}]({id}.md): {}\n", m.description()))
+        .collect();
     document(
         "All machines",
-        "Every machine, the `emits` edges between them, and cron entry points.",
-        &flowchart(machines, crons),
+        "Every machine, the `emits` and `invokes` edges between them, and cron entry points.",
+        &format!("{list}\n"),
+        &flowchart(machines, crons, default_router),
     )
 }
 
-fn document(heading: &str, description: &str, diagram: &str) -> String {
-    format!("# {heading}\n\n{description}\n\n```mermaid\n{diagram}```\n")
+fn document(heading: &str, description: &str, before: &str, diagram: &str) -> String {
+    format!("# {heading}\n\n{description}\n\n{before}```mermaid\n{diagram}```\n")
 }
 
 /// One edge to draw, already placed in its container.
@@ -42,7 +59,7 @@ struct Line {
 }
 
 /// The `stateDiagram-v2` for one machine, every line ending in `\n`.
-pub fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
+pub fn state_diagram(m: &LoadedMachine, default_router: Option<&str>) -> Result<String, String> {
     let mut edges: BTreeMap<usize, Vec<Line>> = BTreeMap::new();
     for (i, node) in m.nodes.iter().enumerate().skip(1) {
         for edge in &node.transitions {
@@ -56,20 +73,8 @@ pub fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
                 )
             })?;
             let mut label = edge.event.clone();
-            if let Some(cond) = &edge.cond {
-                let _ = write!(label, " [{cond}]");
-            }
-            if edge.event != "error" {
-                if node.router.is_some() {
-                    if node.default.as_deref() == Some(edge.event.as_str()) {
-                        label.push_str(" (llm, default)");
-                    } else {
-                        label.push_str(" (llm)");
-                    }
-                }
-                if is_waiting(m, i) {
-                    label.push_str(" (external)");
-                }
+            if let Some(invoke) = &node.invoke {
+                label.push_str(&invoke_suffix(invoke, edge.event == "error"));
             }
             if edge.internal {
                 label.push_str(" (internal)");
@@ -100,25 +105,71 @@ pub fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
 
     let mut out = String::from("stateDiagram-v2\n");
     container(m, 0, 1, &edges, &mut out);
+    notes(m, default_router, &mut out);
+    Ok(out)
+}
 
+/// The label suffix for a transition of a state with this invoke (section 9).
+fn invoke_suffix(invoke: &Invoke, is_error: bool) -> String {
+    match invoke {
+        Invoke::Script(_) => String::new(),
+        Invoke::Check(_) => " (check)".into(),
+        _ if is_error => String::new(),
+        Invoke::Choose(c) => match (c.choose, &c.router) {
+            (ChooseKind::Model, Some(router)) => format!(" (model: {router})"),
+            (ChooseKind::Model, None) => " (model)".into(),
+            (ChooseKind::Person, _) => " (person)".into(),
+        },
+        Invoke::Machine(mi) => format!(" (machine: {})", mi.machine),
+    }
+}
+
+/// The notes after the root's last line: the root's scripts, then each state's decision,
+/// child machine and scripts, in arena order.
+fn notes(m: &LoadedMachine, default_router: Option<&str>, out: &mut String) {
     let root = m.root();
     if !root.onentry.is_empty() || !root.onexit.is_empty() {
         let initial = root.initial.as_deref().unwrap_or_default();
-        push(&mut out, 1, &format!("note left of {initial}"));
-        script_lines(&mut out, "machine onentry", &root.onentry);
-        script_lines(&mut out, "machine onexit", &root.onexit);
-        push(&mut out, 1, "end note");
+        push(out, 1, &format!("note left of {initial}"));
+        script_lines(out, "machine onentry", &root.onentry);
+        script_lines(out, "machine onexit", &root.onexit);
+        push(out, 1, "end note");
     }
     // Arena order: depth-first, children in `BTreeMap` order.
     for node in m.nodes.iter().skip(1) {
-        if !node.onentry.is_empty() || !node.onexit.is_empty() {
-            push(&mut out, 1, &format!("note right of {}", node.id));
-            script_lines(&mut out, "onentry", &node.onentry);
-            script_lines(&mut out, "onexit", &node.onexit);
-            push(&mut out, 1, "end note");
+        let mut lines = Vec::new();
+        match &node.invoke {
+            Some(Invoke::Check(c)) => lines.push(format!("check: {}", c.check)),
+            Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
+                let mut line = String::from("model");
+                if let Some(router) = c.router.as_deref().or(default_router) {
+                    let _ = write!(line, ": {router}");
+                }
+                if let Some(n) = c.min_confidence {
+                    let _ = write!(line, ", min_confidence {n}");
+                }
+                lines.push(line);
+            }
+            Some(Invoke::Machine(mi)) => lines.push(format!("machine: {}", mi.machine)),
+            Some(Invoke::Choose(c)) => {
+                lines.push(format!("person: {}", c.ask.as_deref().unwrap_or_default()))
+            }
+            Some(Invoke::Script(_)) | None => {}
+        }
+        if !node.onentry.is_empty() {
+            lines.push(format!("onentry: {}", node.onentry.join(", ")));
+        }
+        if !node.onexit.is_empty() {
+            lines.push(format!("onexit: {}", node.onexit.join(", ")));
+        }
+        if !lines.is_empty() {
+            push(out, 1, &format!("note right of {}", node.id));
+            for line in &lines {
+                push(out, 2, line);
+            }
+            push(out, 1, "end note");
         }
     }
-    Ok(out)
 }
 
 /// Section 9 steps 1–4 for container `c` (the root or a compound state) at `level`.
@@ -170,25 +221,16 @@ fn domain(m: &LoadedMachine, source: usize, target: usize, internal: bool) -> us
         .unwrap_or(0)
 }
 
-/// A waiting state (section 5, Kinds of state): atomic, no `invoke`, not a router, and no
-/// `done` on itself or an ancestor.
-fn is_waiting(m: &LoadedMachine, i: usize) -> bool {
-    let node = &m.nodes[i];
-    !m.is_compound(i)
-        && !node.is_final
-        && node.invoke.is_none()
-        && node.router.is_none()
-        && !m.handles(i, "done")
-}
-
-/// Whether to draw ` (implicit)` `error` to `failed`: a non-final atomic state with an
-/// `invoke`, an `onentry` or a `timeout_s`, where nothing in its chain handles `error`.
+/// Whether to draw ` (implicit)` `error` to `failed`: a non-final atomic state that
+/// invokes a script, a machine, `choose: model` or `choose: person`, or has an `onentry`,
+/// where nothing in its chain handles `error`. A `check` cannot fail.
 fn implicit_error(m: &LoadedMachine, i: usize) -> bool {
     let node = &m.nodes[i];
-    !m.is_compound(i)
-        && !node.is_final
-        && (node.invoke.is_some() || !node.onentry.is_empty() || node.timeout_s.is_some())
-        && !m.handles(i, "error")
+    let can_fail = match &node.invoke {
+        Some(Invoke::Check(_)) | None => !node.onentry.is_empty(),
+        Some(_) => true,
+    };
+    !m.is_compound(i) && !node.is_final && can_fail && !m.handles(i, "error")
 }
 
 fn script_lines(out: &mut String, key: &str, scripts: &[String]) {
@@ -211,7 +253,11 @@ fn push(out: &mut String, level: usize, line: &str) {
 }
 
 /// The system `flowchart LR`, every line ending in `\n`.
-pub fn flowchart(machines: &BTreeMap<String, LoadedMachine>, crons: &[(String, String)]) -> String {
+pub fn flowchart(
+    machines: &BTreeMap<String, LoadedMachine>,
+    crons: &[(String, String)],
+    default_router: Option<&str>,
+) -> String {
     let mut out = String::from("flowchart LR\n");
     for id in machines.keys() {
         push(&mut out, 1, &format!("{id}[\"{id}\"]"));
@@ -240,6 +286,17 @@ pub fn flowchart(machines: &BTreeMap<String, LoadedMachine>, crons: &[(String, S
         .collect();
     for (from, to) in emits {
         push(&mut out, 1, &format!("{from} -->|emits| {to}"));
+    }
+    let invokes: BTreeSet<(&str, &str)> = machines
+        .iter()
+        .flat_map(|(id, m)| {
+            m.invoked_machines(default_router)
+                .into_iter()
+                .map(move |(_, child)| (id.as_str(), child))
+        })
+        .collect();
+    for (from, to) in invokes {
+        push(&mut out, 1, &format!("{from} -->|invokes| {to}"));
     }
     out
 }
@@ -274,8 +331,20 @@ mod tests {
     fn feature_matches_fixture() {
         let m = load("feature", &fixture("tests/fixtures/machines/feature.yml"));
         assert_eq!(
-            machine_document(&m).unwrap(),
+            machine_document(&m, Some("claude_router")).unwrap(),
             fixture("tests/fixtures/graph/feature.md")
+        );
+    }
+
+    #[test]
+    fn decision_labels_and_notes() {
+        let m = load(
+            "m",
+            "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    invoke: { check: { matches: '<ok>' }, input: s }\n    transitions: { yes: b, no: s }\n  s:\n    invoke: s\n    transitions: { done: a }\n  b:\n    invoke: { choose: model, question: \"Q?\", router: picker }\n    transitions:\n      go: { target: c, description: Go. }\n      stop: { target: done, description: Stop. }\n      error: failed\n  c:\n    invoke: { machine: child }\n    onentry: [prep]\n    transitions: { done: done, error: failed }\n  done: { final: true }\n  failed: { final: true }\n",
+        );
+        assert_eq!(
+            state_diagram(&m, Some("claude_router")).unwrap(),
+            "stateDiagram-v2\n    [*] --> a\n    a --> s: no (check)\n    a --> b: yes (check)\n    b --> failed: error\n    b --> c: go (model: picker)\n    b --> done: stop (model: picker)\n    c --> done: done (machine: child)\n    c --> failed: error\n    s --> a: done\n    s --> failed: error (implicit)\n    done --> [*]\n    failed --> [*]\n    note right of a\n        check: matches '<ok>'\n    end note\n    note right of b\n        model: picker\n    end note\n    note right of c\n        machine: child\n        onentry: prep\n    end note\n"
         );
     }
 
@@ -296,7 +365,7 @@ mod tests {
             "name: m\ndescription: d\ninitial: p\nstates:\n  p:\n    initial: a\n    transitions:\n      again: { target: b, type: internal }\n      done.state.p: done\n    states:\n      a:\n        invoke: a\n        transitions: { done: b }\n      b:\n        invoke: b\n        transitions: { done: end }\n      end: { final: true }\n  done: { final: true }\n  failed: { final: true }\n",
         );
         assert_eq!(
-            state_diagram(&m).unwrap(),
+            state_diagram(&m, None).unwrap(),
             "stateDiagram-v2\n    [*] --> p\n    state p {\n        [*] --> a\n        a --> b: done\n        b --> end: done\n        p --> b: again (internal)\n        end --> [*]\n    }\n    a --> failed: error (implicit)\n    b --> failed: error (implicit)\n    p --> done: done.state.p\n    done --> [*]\n    failed --> [*]\n"
         );
     }
@@ -308,7 +377,7 @@ mod tests {
             "name: m\ndescription: d\nonentry: [a, b]\ninitial: s\nstates:\n  s:\n    invoke: s\n    onexit: [x, y]\n    transitions: { done: done, error: failed }\n  done: { final: true }\n  failed: { final: true }\n",
         );
         assert_eq!(
-            state_diagram(&m).unwrap(),
+            state_diagram(&m, None).unwrap(),
             "stateDiagram-v2\n    [*] --> s\n    s --> done: done\n    s --> failed: error\n    done --> [*]\n    failed --> [*]\n    note left of s\n        machine onentry: a, b\n    end note\n    note right of s\n        onexit: x, y\n    end note\n"
         );
     }
@@ -319,7 +388,7 @@ mod tests {
             "m",
             "name: m\ndescription: d\ninitial: s\nstates:\n  s:\n    invoke: s\n    transitions: { done: nowhere }\n  failed: { final: true }\n",
         );
-        let err = state_diagram(&m).unwrap_err();
+        let err = state_diagram(&m, None).unwrap_err();
         assert!(
             err.contains("machines/m.yml: s: transition `done` targets unknown state `nowhere`"),
             "{err}"
@@ -330,7 +399,7 @@ mod tests {
     fn system_flowchart_orders_nodes_cron_and_distinct_emits() {
         let a = load(
             "a",
-            "name: a\ndescription: d\ninitial: s\nstates:\n  s:\n    invoke: s\n    emits: [b, b]\n    transitions: { done: done }\n  done: { final: true, emits: [a] }\n  failed: { final: true }\n",
+            "name: a\ndescription: d\ninitial: s\nstates:\n  s:\n    invoke: s\n    emits: [b, b]\n    transitions: { done: t }\n  t:\n    invoke: { machine: b }\n    transitions: { done: done }\n  done: { final: true, emits: [a] }\n  failed: { final: true }\n",
         );
         let b = load(
             "b",
@@ -339,8 +408,8 @@ mod tests {
         let machines = BTreeMap::from([("b".to_string(), b), ("a".to_string(), a)]);
         let crons = vec![("every-hour".to_string(), "b".to_string())];
         assert_eq!(
-            flowchart(&machines, &crons),
-            "flowchart LR\n    a[\"a\"]\n    b[\"b\"]\n    cron__every_hour[/\"cron: every-hour\"/]\n    cron__every_hour -->|cron| b\n    a -->|emits| a\n    a -->|emits| b\n"
+            flowchart(&machines, &crons, None),
+            "flowchart LR\n    a[\"a\"]\n    b[\"b\"]\n    cron__every_hour[/\"cron: every-hour\"/]\n    cron__every_hour -->|cron| b\n    a -->|emits| a\n    a -->|emits| b\n    a -->|invokes| b\n"
         );
     }
 }

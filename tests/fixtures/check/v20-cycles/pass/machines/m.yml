@@ -1,0 +1,9 @@
+name: m
+description: Runs n as a child.
+initial: work
+states:
+  work:
+    invoke: { machine: n }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }

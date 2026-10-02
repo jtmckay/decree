@@ -1,3 +1,4 @@
+# Graph: ../graph/hello.md
 name: hello
 description: Run one script.
 initial: greet

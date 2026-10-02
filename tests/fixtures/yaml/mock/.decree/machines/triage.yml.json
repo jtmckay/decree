@@ -4,9 +4,11 @@
   "name": "triage",
   "states": {
     "classify": {
-      "default": "reject",
       "description": "The request is in the message body. Decide which kind of work it is.",
-      "router": "llm",
+      "invoke": {
+        "choose": "model",
+        "question": "What kind of work is this request?"
+      },
       "transitions": {
         "feature": {
           "description": "A feature with acceptance criteria that should be verified and committed.",

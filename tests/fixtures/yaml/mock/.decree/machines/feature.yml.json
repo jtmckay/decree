@@ -56,43 +56,70 @@
           }
         },
         "review": {
-          "description": "A person sends approve, retry or reject.",
-          "onentry": [
-            "ask_person"
-          ],
-          "timeout_s": 172800,
+          "invoke": {
+            "ask": "ask_person",
+            "choose": "person",
+            "question": "Tests still fail. What next?",
+            "timeout_s": 172800
+          },
           "transitions": {
-            "approve": "verified",
-            "reject": "failed",
-            "retry": "implement"
+            "approve": {
+              "description": "Good enough; commit it.",
+              "target": "verified"
+            },
+            "reject": {
+              "description": "Stop.",
+              "target": "failed"
+            },
+            "retry": {
+              "description": "Try again; see my note.",
+              "target": "implement"
+            }
+          }
+        },
+        "rounds_left": {
+          "invoke": {
+            "check": {
+              "less_than": {
+                "data": "max_rounds"
+              },
+              "visits": "implement"
+            }
+          },
+          "transitions": {
+            "no": "review",
+            "yes": "triage"
+          }
+        },
+        "triage": {
+          "invoke": {
+            "choose": "model",
+            "input": "verify",
+            "min_confidence": 0.8,
+            "question": "Should we implement again or split the work?"
+          },
+          "transitions": {
+            "retry": {
+              "description": "The failures look fixable; implement again.",
+              "target": "implement"
+            },
+            "split": {
+              "description": "The scope is too large; emit smaller follow-up messages.",
+              "target": "spawn_followups"
+            },
+            "unsure": {
+              "target": "review"
+            }
           }
         },
         "verified": {
           "final": true
         },
         "verify": {
-          "default": "ask",
-          "description": "Tests and acceptance criteria have run; decide what happens next.",
           "invoke": "verify",
-          "router": "llm",
           "transitions": {
-            "ask": {
-              "description": "Not sure; ask a person.",
-              "target": "review"
-            },
-            "pass": {
-              "description": "All acceptance criteria are met.",
-              "target": "verified"
-            },
-            "retry": {
-              "cond": "visits.implement < data.max_rounds",
-              "description": "Failures look fixable; implement again.",
-              "target": "implement"
-            },
-            "split": {
-              "description": "Scope is too large; emit smaller follow-up messages.",
-              "target": "spawn_followups"
-            }
+            "fail": "rounds_left",
+            "pass": "verified"
           }
         }
       },

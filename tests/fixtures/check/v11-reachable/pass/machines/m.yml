@@ -1,12 +1,12 @@
 name: m
-description: A waiting state.
+description: Every state is reachable and can finish.
 initial: work
 states:
   work:
     invoke: work
-    transitions: { done: wait }
-  wait:
-    description: A person sends approve or reject.
-    transitions: { approve: done, reject: failed }
+    transitions: { done: again }
+  again:
+    invoke: { check: { visits: work, less_than: 2 } }
+    transitions: { yes: work, no: done }
   done: { final: true }
   failed: { final: true }

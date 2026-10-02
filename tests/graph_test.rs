@@ -1,5 +1,5 @@
 //! `decree graph` (spec section 9) against the fixtures in `tests/fixtures/graph/` and the
-//! documents in `mock/graph/`. Each test copies its `.decree/` into a temp directory.
+//! documents in `mock/.decree/graph/`. Each test copies its `.decree/` into a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -58,13 +58,12 @@ fn machines_project(files: &[&str]) -> TempDir {
     tmp
 }
 
-/// Run `decree graph [args]` in `tmp`: (exit code, stdout, stderr).
-fn graph(tmp: &TempDir, args: &[&str]) -> (i32, String, String) {
+/// Run `decree graph` in `tmp`: (exit code, stdout, stderr).
+fn graph(tmp: &TempDir) -> (i32, String, String) {
     let out = cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
         .env("NO_COLOR", "1")
         .arg("graph")
-        .args(args)
         .output()
         .unwrap();
     (
@@ -74,50 +73,84 @@ fn graph(tmp: &TempDir, args: &[&str]) -> (i32, String, String) {
     )
 }
 
+/// The file `decree graph` wrote, `.decree/graph/<name>`.
+fn written(tmp: &TempDir, name: &str) -> String {
+    fs::read_to_string(tmp.path().join(".decree/graph").join(name)).unwrap()
+}
+
+/// The `.md` filenames in `dir`, sorted.
+fn md_names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".md"))
+        .collect();
+    names.sort();
+    names
+}
+
 #[test]
-fn graph_feature_matches_fixture() {
-    let tmp = machines_project(&["feature.yml", "hello.yml"]);
-    let (code, stdout, stderr) = graph(&tmp, &["feature"]);
+fn graph_writes_one_file_per_machine_and_system_md() {
+    let tmp = machines_project(&["feature.yml", "hello.yml", "claude_router.yml"]);
+    fs::write(
+        tmp.path().join(".decree/config.yml"),
+        format!("{CONFIG}default_router: claude_router\n"),
+    )
+    .unwrap();
+    let (code, stdout, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(stdout, read("tests/fixtures/graph/feature.md"));
+    assert_eq!(
+        stdout,
+        ".decree/graph/claude_router.md\n.decree/graph/feature.md\n.decree/graph/hello.md\n.decree/graph/system.md\n"
+    );
+    assert_eq!(
+        written(&tmp, "feature.md"),
+        read("tests/fixtures/graph/feature.md")
+    );
+    assert!(written(&tmp, "hello.md")
+        .contains("Machine: [machines/hello.yml](../machines/hello.yml)\n"));
 }
 
 #[test]
 fn graph_system_matches_fixture() {
     let tmp = project(&repo().join("tests/fixtures/graph/system"));
-    let (code, stdout, stderr) = graph(&tmp, &[]);
+    let (code, _, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(stdout, read("tests/fixtures/graph/system.md"));
+    assert_eq!(
+        written(&tmp, "system.md"),
+        read("tests/fixtures/graph/system.md")
+    );
 }
 
 #[test]
-fn graph_mock_matches_mock_graph() {
+fn graph_mock_rewrites_mock_graph_unchanged() {
     let tmp = project(&repo().join("mock/.decree"));
-    let machines: Vec<String> = fs::read_dir(repo().join("mock/.decree/machines"))
-        .unwrap()
-        .map(|e| {
-            let path = e.unwrap().path();
-            path.file_stem().unwrap().to_str().unwrap().to_string()
-        })
-        .collect();
-    assert_eq!(machines.len(), 5);
-    for m in &machines {
-        let (code, stdout, stderr) = graph(&tmp, &[m]);
-        assert_eq!(code, 0, "{m}: {stderr}");
-        assert_eq!(stdout, read(&format!("mock/graph/{m}.md")), "{m}");
-    }
-    let (code, stdout, stderr) = graph(&tmp, &[]);
+    let (code, _, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(stdout, read("mock/graph/system.md"));
+    let mock = repo().join("mock/.decree/graph");
+    let names = md_names(&mock);
+    assert_eq!(names.len(), 8, "{names:?}");
+    assert_eq!(md_names(&tmp.path().join(".decree/graph")), names);
+    for name in &names {
+        assert_eq!(
+            written(&tmp, name),
+            fs::read_to_string(mock.join(name)).unwrap(),
+            "{name}"
+        );
+    }
 }
 
 #[test]
-fn graph_unknown_machine_exits_1() {
+fn graph_removes_stale_md_files_only() {
     let tmp = machines_project(&["hello.yml"]);
-    let (code, stdout, stderr) = graph(&tmp, &["nope"]);
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty(), "{stdout}");
-    assert!(stderr.contains("unknown machine `nope`"), "{stderr}");
+    let dir = tmp.path().join(".decree/graph");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("gone.md"), "# gone\n").unwrap();
+    fs::write(dir.join("notes.txt"), "kept\n").unwrap();
+    let (code, _, stderr) = graph(&tmp);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(md_names(&dir), ["hello.md", "system.md"]);
+    assert!(dir.join("notes.txt").exists());
 }
 
 #[test]
@@ -135,12 +168,25 @@ fn graph_cron_without_machine_points_at_default_machine() {
         "---\ncron: \"0 * * * *\"\n---\nTick.\n",
     )
     .unwrap();
-    let (code, stdout, stderr) = graph(&tmp, &[]);
+    let (code, _, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
+    let system = written(&tmp, "system.md");
     assert!(
-        stdout.contains("    cron___ourly[/\"cron: Hourly\"/]\n    cron___ourly -->|cron| hello\n"),
-        "{stdout}"
+        system.contains("    cron___ourly[/\"cron: Hourly\"/]\n    cron___ourly -->|cron| hello\n"),
+        "{system}"
     );
+}
+
+#[test]
+fn graph_takes_no_machine_argument() {
+    let tmp = machines_project(&["hello.yml"]);
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .args(["graph", "hello"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!tmp.path().join(".decree/graph").exists());
 }
 
 #[test]
@@ -152,8 +198,7 @@ fn graph_help_has_viewing_instructions() {
     assert_eq!(out.status.code(), Some(0));
     let help = String::from_utf8(out.stdout).unwrap();
     for needle in [
-        "decree graph feature > feature.md",
-        "decree graph > machines.md",
+        "Run `decree graph`, then open `.decree/graph/<machine>.md` (or `system.md`)",
         "Ctrl+Shift+V",
         "Cmd+Shift+V",
         "VS Code 1.121",

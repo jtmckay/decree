@@ -18,7 +18,9 @@
   "input": "running 14 tests\ntest upload_limit::over_limit_returns_429 ... ok\ntest upload_limit::window_slides ... FAILED\n\nfailures:\n---- upload_limit::window_slides stdout ----\nthread 'upload_limit::window_slides' panicked at tests/upload_limit.rs:41:5:\nassertion `left == right` failed\n  left: 429\n right: 200\n\ntest result: FAILED. 13 passed; 1 failed\n",
   "message_body": "# Rate-limit /api/upload\n\n## Requirements\n\nLimit each API key to 10 uploads per minute on `POST /api/upload`. Over the\nlimit, respond 429 with a `Retry-After` header in seconds.\n\n## Acceptance Criteria\n\n- **Given** a key that has uploaded 10 times in the last minute\n  **When** it uploads again\n  **Then** the response is 429 with `Retry-After`\n\n- **Given** a key that has uploaded 10 times, the oldest 61 seconds ago\n  **When** it uploads again\n  **Then** the upload succeeds\n",
   "history": [
-    "implement: 1 visit",
+    "precheck: done",
+    "implement: done",
+    "verify: fail",
     "rounds_left: yes"
   ],
   "min_confidence": 0.8

@@ -6,8 +6,8 @@ states:
     invoke: work
     transitions: { done: done, hold: wait }
   wait:
-    description: Waits for a person, who can only send again.
-    transitions: { again: wait }
+    invoke: { check: { visits: wait, less_than: 2 } }
+    transitions: { yes: wait, no: wait }
   orphan:
     invoke: work
     transitions: { done: done }

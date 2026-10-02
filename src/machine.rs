@@ -7,14 +7,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer};
 
-use crate::cond::{self, is_ident};
+use crate::cond::{Condition, Operand, Subject};
 use crate::error::DecreeError;
-use crate::runtime::resolve_script;
+use crate::runtime::{is_reserved_event, resolve_script};
 
 /// Directory holding machine files, relative to `.decree/` or `shared_source`.
 pub const MACHINES_DIR: &str = "machines";
+
+/// Root-level final state an unhandled `error` goes to (V5).
+pub const FAILED: &str = "failed";
+
+/// Events a `choose` state handles beside its options (section 5, Choices).
+const NOT_OPTIONS: [&str; 2] = ["unsure", "error"];
 
 /// A machine file: one SCXML document (`<scxml>`), written as YAML.
 #[derive(Debug, Deserialize)]
@@ -56,7 +63,7 @@ pub struct State {
     #[serde(default, rename = "final")]
     pub is_final: bool,
     pub description: Option<String>,
-    pub invoke: Option<String>,
+    pub invoke: Option<Invoke>,
     pub max_attempts: Option<u32>,
     pub timeout_s: Option<u64>,
     #[serde(default)]
@@ -68,32 +75,142 @@ pub struct State {
     pub states: BTreeMap<String, State>,
     #[serde(default)]
     pub transitions: BTreeMap<String, Transition>,
-    pub router: Option<RouterKind>,
-    pub default: Option<String>,
     #[serde(default)]
     pub emits: Vec<String>,
 }
 
-/// Extension: `router: llm` makes a router state (section 7).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RouterKind {
-    Llm,
+/// A state's function, SCXML `<invoke type>` (section 5, Invoke): a script name, or an
+/// object whose key `machine`, `check` or `choose` names the type.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Invoke {
+    /// `decree:script`
+    Script(String),
+    /// SCXML's own type: a child state machine.
+    Machine(MachineInvoke),
+    /// `decree:check`
+    Check(CheckInvoke),
+    /// `decree:model` or `decree:person`
+    Choose(ChooseInvoke),
 }
 
-/// An SCXML `<transition event target cond type>`: `event: target` or the long form.
-#[derive(Debug, Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
+/// `{ machine, params? }`
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineInvoke {
+    pub machine: String,
+    #[serde(default)]
+    pub params: serde_norway::Mapping,
+}
+
+/// `{ check, input? }`
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckInvoke {
+    pub check: Condition,
+    pub input: Option<String>,
+}
+
+/// `{ choose: model | person, question, router?, min_confidence?, input?, ask?, timeout_s? }`.
+/// `question` is optional here so that V8, not the parser, reports it missing.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChooseInvoke {
+    pub choose: ChooseKind,
+    pub question: Option<String>,
+    pub router: Option<String>,
+    pub min_confidence: Option<f64>,
+    pub input: Option<String>,
+    pub ask: Option<String>,
+    pub timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChooseKind {
+    Model,
+    Person,
+}
+
+impl<'de> Deserialize<'de> for Invoke {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_norway::Value::deserialize(deserializer)?;
+        let has = |key: &str| value.get(key).is_some();
+        let result =
+            match &value {
+                serde_norway::Value::String(name) => return Ok(Invoke::Script(name.clone())),
+                serde_norway::Value::Mapping(_) if has("machine") => {
+                    serde_norway::from_value(value).map(Invoke::Machine)
+                }
+                serde_norway::Value::Mapping(_) if has("check") => {
+                    serde_norway::from_value(value).map(Invoke::Check)
+                }
+                serde_norway::Value::Mapping(_) if has("choose") => {
+                    serde_norway::from_value(value).map(Invoke::Choose)
+                }
+                _ => return Err(D::Error::custom(
+                    "`invoke` is a script name or an object with `machine`, `check` or `choose`",
+                )),
+            };
+        result.map_err(D::Error::custom)
+    }
+}
+
+impl Invoke {
+    /// The script an invoke runs, if it is a script invoke.
+    pub fn script(&self) -> Option<&str> {
+        match self {
+            Invoke::Script(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The state whose output a `check` or `choose: model` reads (section 5, Input).
+    pub fn input(&self) -> Option<&str> {
+        match self {
+            Invoke::Check(c) => c.input.as_deref(),
+            Invoke::Choose(c) => c.input.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The `choose` invoke, if this is one of `kind`.
+    pub fn choose(&self, kind: ChooseKind) -> Option<&ChooseInvoke> {
+        match self {
+            Invoke::Choose(c) if c.choose == kind => Some(c),
+            _ => None,
+        }
+    }
+}
+
+/// An SCXML `<transition event target type>`: `event: target` or the long form.
+#[derive(Debug)]
 pub enum Transition {
     Short(String),
-    Long {
-        target: String,
-        description: Option<String>,
-        cond: Option<String>,
-        /// Only `internal`; omitted means external.
-        #[serde(rename = "type")]
-        kind: Option<TransitionType>,
-    },
+    Long(LongTransition),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LongTransition {
+    pub target: String,
+    pub description: Option<String>,
+    /// Only `internal`; omitted means external.
+    #[serde(rename = "type")]
+    pub kind: Option<TransitionType>,
+}
+
+impl<'de> Deserialize<'de> for Transition {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match serde_norway::Value::deserialize(deserializer)? {
+            serde_norway::Value::String(target) => Ok(Transition::Short(target)),
+            value @ serde_norway::Value::Mapping(_) => serde_norway::from_value(value)
+                .map(Transition::Long)
+                .map_err(D::Error::custom),
+            _ => Err(D::Error::custom(
+                "a transition is a target state or `{ target, description?, type? }`",
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -108,7 +225,6 @@ pub struct Edge {
     pub event: String,
     pub target: String,
     pub description: Option<String>,
-    pub cond: Option<String>,
     pub internal: bool,
 }
 
@@ -119,20 +235,13 @@ impl Edge {
                 event,
                 target,
                 description: None,
-                cond: None,
                 internal: false,
             },
-            Transition::Long {
-                target,
-                description,
-                cond,
-                kind,
-            } => Edge {
+            Transition::Long(long) => Edge {
                 event,
-                target,
-                description,
-                cond,
-                internal: kind == Some(TransitionType::Internal),
+                target: long.target,
+                description: long.description,
+                internal: long.kind == Some(TransitionType::Internal),
             },
         }
     }
@@ -149,7 +258,7 @@ pub struct Node {
     pub children: Vec<usize>,
     pub is_final: bool,
     pub description: Option<String>,
-    pub invoke: Option<String>,
+    pub invoke: Option<Invoke>,
     pub max_attempts: Option<u32>,
     pub timeout_s: Option<u64>,
     pub onentry: Vec<String>,
@@ -157,8 +266,6 @@ pub struct Node {
     pub initial: Option<String>,
     /// In event-name order.
     pub transitions: Vec<Edge>,
-    pub router: Option<RouterKind>,
-    pub default: Option<String>,
     pub emits: Vec<String>,
 }
 
@@ -220,8 +327,6 @@ pub fn flatten(id: &str, path: PathBuf, machine: Machine) -> LoadedMachine {
         onexit: machine.onexit,
         initial: Some(machine.initial),
         transitions: Vec::new(),
-        router: None,
-        default: None,
         emits: Vec::new(),
     };
     let mut nodes = vec![root];
@@ -257,8 +362,6 @@ fn push_children(nodes: &mut Vec<Node>, parent: usize, states: BTreeMap<String, 
                 .into_iter()
                 .map(|(event, t)| Edge::new(event, t))
                 .collect(),
-            router: state.router,
-            default: state.default,
             emits: state.emits,
         });
         push_children(nodes, index, state.states);
@@ -327,9 +430,33 @@ pub fn load_machine_text(id: &str, path: &Path, text: &str) -> Result<LoadedMach
     Ok(flatten(id, path.to_path_buf(), machine))
 }
 
+/// Keys outside the SCXML subset that a state may be written with, and what to use instead
+/// (V19). SCXML elements are named as such; the rest are decree 0.5 drafts that the
+/// decision invokes replaced.
+const UNSUPPORTED_STATE_KEYS: [(&str, &str); 13] = [
+    ("router", "router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... }"),
+    ("default", "default on a state is not supported: a choose: model state takes unsure, or error, instead"),
+    ("cond", "cond is not supported: make the decision a state with invoke: { check: ... }"),
+    ("parallel", "SCXML <parallel> is not supported: a run is always in exactly one atomic state"),
+    ("history", "SCXML <history> is not supported: a run is always in exactly one atomic state"),
+    ("send", "SCXML <send> is not supported: a script runs decree emit"),
+    ("raise", "SCXML <raise> is not supported: a script prints its event as a JSON line"),
+    ("assign", "SCXML <assign> is not supported: data is read-only"),
+    ("script", "SCXML <script> is not supported: name a script in invoke, onentry or onexit"),
+    ("if", "SCXML <if> is not supported: make the decision a state with invoke: { check: ... }"),
+    ("foreach", "SCXML <foreach> is not supported: loop inside a script"),
+    ("log", "SCXML <log> is not supported: every script's output is logged"),
+    ("donedata", "SCXML <donedata> is not supported: data is read-only"),
+];
+
+/// The section 5 message for `cond` on a transition (V19).
+const COND_ON_TRANSITION: &str =
+    "cond on a transition is not supported: make the decision a state with invoke: { check: ... }";
+
 /// Parse machine YAML. On failure the error starts with the dotted path of the state that
 /// fails to deserialize (`work.implement: unknown field ...`), or with `line <n>` when the
-/// problem is in the YAML syntax or at the root.
+/// problem is in the YAML syntax or at the root. A key outside the SCXML subset is reported
+/// with its decree alternative, and every unknown key is tagged `(V19)`.
 pub fn parse_machine(text: &str) -> Result<Machine, String> {
     let err = match serde_norway::from_str::<Machine>(text) {
         Ok(machine) => return Ok(machine),
@@ -344,8 +471,11 @@ pub fn parse_machine(text: &str) -> Result<Machine, String> {
         Err(syntax) => return Err(at_line(&syntax, syntax.to_string())),
     };
     if let Some(states) = value.get("states") {
+        if let Some(found) = unsupported_key(states, "") {
+            return Err(found);
+        }
         if let Some((path, msg)) = locate_state_error(states, "") {
-            return Err(format!("{path}: {msg}"));
+            return Err(format!("{path}: {}", tag_unknown(msg)));
         }
     }
     // Not inside a state: check the root alone, without its states, for a clean message.
@@ -359,7 +489,59 @@ pub fn parse_machine(text: &str) -> Result<Machine, String> {
         Err(e) => e.to_string(),
         Ok(_) => err.to_string(),
     };
-    Err(at_line(&err, msg))
+    Err(at_line(&err, tag_unknown(msg)))
+}
+
+/// An unknown key is outside the SCXML subset (V19).
+fn tag_unknown(msg: String) -> String {
+    if msg.contains("unknown field") {
+        format!("{msg} (V19)")
+    } else {
+        msg
+    }
+}
+
+/// The first state key, or transition `cond`, outside the SCXML subset: `<path>: <message>`.
+fn unsupported_key(states: &serde_norway::Value, prefix: &str) -> Option<String> {
+    for (key, state) in states.as_mapping()? {
+        let path = join_path(prefix, key);
+        for (name, message) in UNSUPPORTED_STATE_KEYS {
+            if state.get(name).is_some() {
+                return Some(format!("{path}: {message} (V19)"));
+            }
+        }
+        let transitions = state.get("transitions").and_then(|t| t.as_mapping());
+        for (event, transition) in transitions.into_iter().flatten() {
+            if transition.get("cond").is_some() {
+                let event = event.as_str().unwrap_or_default();
+                return Some(format!(
+                    "{path}: transition `{event}`: {COND_ON_TRANSITION} (V19)"
+                ));
+            }
+        }
+        if let Some(found) = state
+            .get("states")
+            .and_then(|children| unsupported_key(children, &path))
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn join_path(prefix: &str, key: &serde_norway::Value) -> String {
+    let id = match key.as_str() {
+        Some(id) => id.to_string(),
+        None => serde_norway::to_string(key)
+            .unwrap_or_default()
+            .trim_end()
+            .to_string(),
+    };
+    if prefix.is_empty() {
+        id
+    } else {
+        format!("{prefix}.{id}")
+    }
 }
 
 /// Find the outermost state whose own keys fail to deserialize, checking each state with its
@@ -367,18 +549,7 @@ pub fn parse_machine(text: &str) -> Result<Machine, String> {
 fn locate_state_error(states: &serde_norway::Value, prefix: &str) -> Option<(String, String)> {
     let map = states.as_mapping()?;
     for (key, value) in map {
-        let id = match key.as_str() {
-            Some(id) => id.to_string(),
-            None => serde_norway::to_string(key)
-                .unwrap_or_default()
-                .trim_end()
-                .to_string(),
-        };
-        let path = if prefix.is_empty() {
-            id
-        } else {
-            format!("{prefix}.{id}")
-        };
+        let path = join_path(prefix, key);
         let mut own = value.clone();
         let children = own
             .as_mapping_mut()
@@ -396,15 +567,20 @@ fn locate_state_error(states: &serde_norway::Value, prefix: &str) -> Option<(Str
 }
 
 // =================================================================
-// Validation (section 5, Validation): rules V1–V14 on the arena
+// Validation (section 5, Validation): rules V1–V20 on the arena
 // =================================================================
 
 /// Everything outside the machine file that validation reads.
 pub struct CheckEnv<'a> {
     pub decree_dir: &'a Path,
     pub shared_source: Option<&'a Path>,
-    /// Ids of every machine file, including ones that fail to load (V13).
+    /// Ids of every machine file, including ones that fail to load (V13, V16).
     pub machine_ids: &'a BTreeSet<String>,
+    /// Every machine that loaded, for the checks that look into another machine (V8, V16,
+    /// V20).
+    pub machines: &'a BTreeMap<String, LoadedMachine>,
+    /// Config `default_router` (V16, V20).
+    pub default_router: Option<&'a str>,
 }
 
 /// One validation error: where it is (a state path or `line <n>`) and what is wrong.
@@ -434,6 +610,24 @@ impl DataType {
     }
 }
 
+/// `^[a-z][a-z0-9_]*$`, the pattern for machine names, state ids and script names.
+pub(crate) fn is_ident(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_lowercase())
+        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`, the pattern for event names (section 5, Rules).
+pub(crate) fn is_event_name(s: &str) -> bool {
+    let mut parts = s.split('.');
+    parts.next().is_some_and(is_ident)
+        && parts.all(|p| {
+            !p.is_empty()
+                && p.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        })
+}
+
 /// SCXML event matching: descriptor `d` matches `event` if they are equal, or `event`
 /// extends `d` after a `.` (`done.state` matches `done.state.work`).
 pub fn event_matches(descriptor: &str, event: &str) -> bool {
@@ -441,9 +635,6 @@ pub fn event_matches(descriptor: &str, event: &str) -> bool {
         .strip_prefix(descriptor)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
-
-/// Root-level state that an unhandled `error` goes to (V5).
-const FAILED: &str = "failed";
 
 impl LoadedMachine {
     pub fn is_compound(&self, i: usize) -> bool {
@@ -489,75 +680,135 @@ impl LoadedMachine {
         Some(cur)
     }
 
-    /// Whether `error` can be raised while `i` is entered or active: its invoke fails,
-    /// a waiting state times out, or an `onentry` script on the way in fails.
-    fn can_error(&self, i: usize) -> bool {
-        let node = &self.nodes[i];
-        node.invoke.is_some()
-            || node.timeout_s.is_some()
-            || self.chain(i).any(|n| !self.nodes[n].onentry.is_empty())
+    /// The options of `choose` state `i` (section 5, Choices): its own transitions except
+    /// `unsure` and `error`, in name order.
+    pub fn options(&self, i: usize) -> impl Iterator<Item = &Edge> {
+        self.nodes[i]
+            .transitions
+            .iter()
+            .filter(|e| !NOT_OPTIONS.contains(&e.event.as_str()))
     }
 
-    /// Atomic and final states the run can move to from atomic or final state `i`
-    /// (section 5, Rules): any transition of `i` or an ancestor, `done.state.<parent>` from
-    /// a nested final state, and the implicit `failed` for an unhandled `error`.
+    /// `DECREE_EVENTS` for scripts of state `i` (section 6): the events of its own and its
+    /// ancestors' transitions that a script may print, in name order. Empty for the root.
+    pub fn accepted_events(&self, i: usize) -> Vec<String> {
+        if i == 0 {
+            return Vec::new();
+        }
+        let events: BTreeSet<&str> = self
+            .chain(i)
+            .flat_map(|n| self.nodes[n].transitions.iter())
+            .map(|e| e.event.as_str())
+            .filter(|e| !is_reserved_event(e))
+            .collect();
+        events.into_iter().map(String::from).collect()
+    }
+
+    /// The root-level final states of this machine except `failed`: the events a `machine`
+    /// invoke of it produces besides `error`.
+    pub fn final_events(&self) -> Vec<&str> {
+        self.nodes[0]
+            .children
+            .iter()
+            .map(|&c| &self.nodes[c])
+            .filter(|n| n.is_final && n.id != FAILED)
+            .map(|n| n.id.as_str())
+            .collect()
+    }
+
+    /// `(state, machine)` for every machine this one runs as a child: `machine` invokes, and
+    /// the router of each `choose: model` (its `router`, else `default_router`).
+    pub fn invoked_machines<'m>(
+        &'m self,
+        default_router: Option<&'m str>,
+    ) -> Vec<(usize, &'m str)> {
+        let mut out = Vec::new();
+        for (i, node) in self.nodes.iter().enumerate() {
+            let child = match &node.invoke {
+                Some(Invoke::Machine(m)) => Some(m.machine.as_str()),
+                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
+                    c.router.as_deref().or(default_router)
+                }
+                _ => None,
+            };
+            out.extend(child.map(|c| (i, c)));
+        }
+        out
+    }
+
+    /// The states an event raised in atomic or final state `i` leads to (section 5, Rules):
+    /// the first matching transition of `i` or an ancestor; else the event becomes `error`;
+    /// an unhandled `error` goes to `failed`.
+    fn resolve(&self, i: usize, event: &str) -> Vec<usize> {
+        for n in self.chain(i) {
+            if let Some(e) = self.nodes[n]
+                .transitions
+                .iter()
+                .find(|e| event_matches(&e.event, event))
+            {
+                return self.find(&e.target).into_iter().collect();
+            }
+        }
+        if event != "error" {
+            return self.resolve(i, "error");
+        }
+        self.failed_state().into_iter().collect()
+    }
+
+    /// Atomic and final states the run can move to from atomic or final state `i`: the
+    /// events its invoke can produce (section 5, Invoke), `error` from an invoke or an
+    /// `onentry` script, and `done.state.<parent>` from a nested final state.
     fn successors(&self, i: usize) -> Vec<usize> {
         let node = &self.nodes[i];
-        let mut targets: Vec<&str> = Vec::new();
-        let raise_from = if node.is_final {
+        let mut events: Vec<String> = Vec::new();
+        let mut any_event = false;
+        let mut can_error;
+        if node.is_final {
             match node.parent {
-                Some(p) if p != 0 => {
-                    let event = format!("done.state.{}", self.nodes[p].id);
-                    for n in self.chain(p) {
-                        targets.extend(
-                            self.nodes[n]
-                                .transitions
-                                .iter()
-                                .filter(|e| event_matches(&e.event, &event))
-                                .map(|e| e.target.as_str()),
-                        );
-                    }
-                    !node.onentry.is_empty()
-                }
+                Some(p) if p != 0 => events.push(format!("done.state.{}", self.nodes[p].id)),
                 _ => return Vec::new(),
             }
+            can_error = !node.onentry.is_empty();
         } else {
-            // Which events the state can see (section 5, Kinds of state): a router picks
-            // among its own events; a pass-through takes `done`; an invoke may print, and a
-            // waiting state may receive, any event. `error` is resolved like any event.
-            let pass_through =
-                node.invoke.is_none() && node.router.is_none() && self.handles(i, "done");
+            can_error = self.chain(i).any(|n| !self.nodes[n].onentry.is_empty());
+            match &node.invoke {
+                None => events.push("done".into()),
+                // A script may print, and a child machine may end in, any event.
+                Some(Invoke::Script(_) | Invoke::Machine(_)) => {
+                    any_event = true;
+                    can_error = true;
+                }
+                Some(Invoke::Check(_)) => events.extend(["yes".into(), "no".into()]),
+                Some(Invoke::Choose(c)) => {
+                    events.extend(self.options(i).map(|e| e.event.clone()));
+                    if c.choose == ChooseKind::Model && c.min_confidence.is_some() {
+                        events.push("unsure".into());
+                    }
+                    can_error = true;
+                }
+            }
+        }
+        if can_error {
+            events.push("error".into());
+        }
+        let mut targets: Vec<usize> = Vec::new();
+        if any_event {
             for n in self.chain(i) {
                 targets.extend(
                     self.nodes[n]
                         .transitions
                         .iter()
-                        .filter(|e| {
-                            if node.router.is_some() {
-                                n == i || event_matches(&e.event, "error")
-                            } else if pass_through {
-                                event_matches(&e.event, "done") || event_matches(&e.event, "error")
-                            } else {
-                                true
-                            }
-                        })
-                        .map(|e| e.target.as_str()),
+                        .filter_map(|e| self.find(&e.target)),
                 );
             }
-            self.can_error(i)
-        };
-        let mut out: Vec<usize> = targets
-            .into_iter()
-            .filter_map(|t| self.find(t))
-            .filter_map(|t| self.enter(t))
-            .collect();
-        if raise_from && !self.handles(i, "error") {
-            out.extend(self.failed_state());
         }
-        out
+        for event in &events {
+            targets.extend(self.resolve(i, event));
+        }
+        targets.into_iter().filter_map(|t| self.enter(t)).collect()
     }
 
-    /// Run V1–V14 on this machine. `text` is the machine file, for root-level line numbers.
+    /// Run V1–V20 on this machine. `text` is the machine file, for root-level line numbers.
     pub fn validate(&self, text: &str, env: &CheckEnv) -> Vec<Problem> {
         let mut v = Validator {
             m: self,
@@ -572,13 +823,19 @@ impl LoadedMachine {
         v.v5_failed();
         v.v6_compound();
         v.v7_final();
-        v.v8_done();
-        v.v9_router();
-        v.v10_cond();
+        v.v8_decisions();
+        v.v9_input();
+        v.v10_conditions();
         v.v11_reachable();
         v.v12_scripts();
         v.v13_emits();
         v.v14_data();
+        v.v15_done_state();
+        v.v16_invokes();
+        v.v17_internal();
+        v.v18_events();
+        v.v19_choose_keys();
+        v.v20_cycles();
         v.problems
     }
 }
@@ -588,6 +845,14 @@ struct Validator<'a> {
     text: &'a str,
     env: &'a CheckEnv<'a>,
     problems: Vec<Problem>,
+}
+
+/// `` `a`, `b` `` for a list of keys.
+fn backticked(keys: &[&str]) -> String {
+    keys.iter()
+        .map(|k| format!("`{k}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl Validator<'_> {
@@ -638,6 +903,13 @@ impl Validator<'_> {
 
     fn states(&self) -> std::ops::Range<usize> {
         1..self.m.nodes.len()
+    }
+
+    /// Non-final atomic states: the ones that invoke.
+    fn atomic(&self) -> Vec<usize> {
+        self.states()
+            .filter(|&i| !self.m.nodes[i].is_final && !self.m.is_compound(i))
+            .collect()
     }
 
     fn v1_name(&mut self) {
@@ -708,8 +980,7 @@ impl Validator<'_> {
 
     fn v4_targets(&mut self) {
         for i in self.states() {
-            let node = &self.m.nodes[i];
-            for e in &node.transitions {
+            for e in &self.m.nodes[i].transitions {
                 if self.m.find(&e.target).is_none() {
                     self.push(
                         self.m.state_path(i),
@@ -717,14 +988,6 @@ impl Validator<'_> {
                             "transition `{}` targets unknown state `{}` (V4)",
                             e.event, e.target
                         ),
-                    );
-                }
-            }
-            if let Some(default) = &node.default {
-                if !node.transitions.iter().any(|e| e.event == *default) {
-                    self.push(
-                        self.m.state_path(i),
-                        format!("default `{default}` is not one of this state's transitions (V4)"),
                     );
                 }
             }
@@ -750,31 +1013,11 @@ impl Validator<'_> {
             }
             let at = self.m.state_path(i);
             if self.m.is_compound(i) {
-                let mut found = Vec::new();
                 if node.initial.is_none() {
                     self.push(at.clone(), "compound state has no `initial` (V6)".into());
                 }
                 if node.invoke.is_some() {
-                    found.push("invoke");
-                }
-                if node.router.is_some() {
-                    found.push("router");
-                }
-                if node.default.is_some() {
-                    found.push("default");
-                }
-                if !found.is_empty() {
-                    self.push(
-                        at,
-                        format!(
-                            "compound state may not have {} (V6)",
-                            found
-                                .iter()
-                                .map(|k| format!("`{k}`"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                    );
+                    self.push(at, "compound state may not have `invoke` (V6)".into());
                 }
             } else if node.initial.is_some() {
                 self.push(
@@ -800,8 +1043,6 @@ impl Validator<'_> {
                 ("initial", node.initial.is_some()),
                 ("states", !node.children.is_empty()),
                 ("transitions", !node.transitions.is_empty()),
-                ("router", node.router.is_some()),
-                ("default", node.default.is_some()),
             ]
             .into_iter()
             .filter_map(|(key, present)| present.then_some(key))
@@ -811,147 +1052,216 @@ impl Validator<'_> {
                     self.m.state_path(i),
                     format!(
                         "final state may only have `final`, `description`, `onentry` and `emits`, not {} (V7)",
-                        found
-                            .iter()
-                            .map(|k| format!("`{k}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        backticked(&found)
                     ),
                 );
             }
         }
     }
 
-    fn v8_done(&mut self) {
-        for i in self.states() {
-            let node = &self.m.nodes[i];
-            if node.is_final
-                || self.m.is_compound(i)
-                || node.invoke.is_none()
-                || node.router.is_some()
-            {
-                continue;
-            }
-            if !self.m.handles(i, "done") {
-                self.push(
-                    self.m.state_path(i),
-                    "invoke state does not handle `done`, itself or through an ancestor (V8)"
-                        .into(),
-                );
-            }
-        }
-    }
-
-    fn v9_router(&mut self) {
-        for i in self.states() {
-            let node = &self.m.nodes[i];
+    fn v8_decisions(&mut self) {
+        for i in self.atomic() {
             let at = self.m.state_path(i);
-            if node.router.is_none() {
-                if node.default.is_some() && !node.is_final && !self.m.is_compound(i) {
-                    self.push(at, "`default` is only allowed on router states (V9)".into());
+            match &self.m.nodes[i].invoke {
+                Some(Invoke::Check(_)) => {
+                    for event in ["yes", "no"] {
+                        if !self.m.handles(i, event) {
+                            self.push(
+                                at.clone(),
+                                format!("a `check` state must handle `{event}`, itself or through an ancestor (V8)"),
+                            );
+                        }
+                    }
                 }
-                continue;
-            }
-            if node.transitions.iter().any(|e| e.event == "done") {
-                self.push(
-                    at.clone(),
-                    "router state may not declare `done` (V9)".into(),
-                );
-            }
-            let options: Vec<&Edge> = node
-                .transitions
-                .iter()
-                .filter(|e| e.event != "error")
-                .collect();
-            if options.len() < 2 {
-                self.push(
-                    at.clone(),
-                    format!(
-                        "router state needs at least 2 events other than `error`, has {} (V9)",
-                        options.len()
-                    ),
-                );
-            }
-            for e in options {
-                if e.description.is_none() {
-                    self.push(
-                        at.clone(),
-                        format!(
-                            "router event `{}` needs the long form with a `description` (V9)",
-                            e.event
-                        ),
-                    );
+                Some(Invoke::Choose(c)) => {
+                    let kind = match c.choose {
+                        ChooseKind::Model => "choose: model",
+                        ChooseKind::Person => "choose: person",
+                    };
+                    if c.question.as_deref().is_none_or(|q| q.trim().is_empty()) {
+                        self.push(
+                            at.clone(),
+                            format!(
+                                "a `{kind}` state needs a `question`: what is being decided (V8)"
+                            ),
+                        );
+                    }
+                    let options: Vec<&Edge> = self.m.options(i).collect();
+                    if options.len() < 2 {
+                        self.push(
+                            at.clone(),
+                            format!(
+                                "a `{kind}` state needs at least 2 options (transitions other than `unsure` and `error`), has {} (V8)",
+                                options.len()
+                            ),
+                        );
+                    }
+                    for e in options {
+                        if e.description.as_deref().is_none_or(|d| d.trim().is_empty()) {
+                            self.push(
+                                at.clone(),
+                                format!(
+                                    "option `{}` needs a `description`: write it as `{}: {{ target: {}, description: ... }}` (V8)",
+                                    e.event, e.event, e.target
+                                ),
+                            );
+                        }
+                    }
+                    if c.choose == ChooseKind::Model
+                        && c.min_confidence.is_some()
+                        && !self.m.handles(i, "unsure")
+                    {
+                        self.push(
+                            at.clone(),
+                            "a `choose: model` state with `min_confidence` must handle `unsure`, itself or through an ancestor (V8)".into(),
+                        );
+                    }
                 }
-            }
-            if node.default.is_none() {
-                self.push(
-                    at.clone(),
-                    "router state needs a `default` event (V9)".into(),
-                );
-            }
-            if node.description.is_none() {
-                self.push(at, "router state needs a `description` (V9)".into());
+                Some(Invoke::Machine(mi)) => {
+                    let Some(child) = self.env.machines.get(&mi.machine) else {
+                        continue; // V16
+                    };
+                    for event in child.final_events() {
+                        if !self.m.handles(i, event) {
+                            self.push(
+                                at.clone(),
+                                format!(
+                                    "machine `{}` can end in `{event}`, which this state does not handle, itself or through an ancestor (V8)",
+                                    mi.machine
+                                ),
+                            );
+                        }
+                    }
+                }
+                Some(Invoke::Script(_)) | None => {}
             }
         }
     }
 
-    fn v10_cond(&mut self) {
-        for i in self.states() {
-            let node = &self.m.nodes[i];
-            for e in &node.transitions {
-                let Some(text) = &e.cond else {
-                    continue;
-                };
-                let at = self.m.state_path(i);
-                if node.router.is_none() {
+    fn v9_input(&mut self) {
+        for i in self.atomic() {
+            let Some(invoke) = &self.m.nodes[i].invoke else {
+                continue;
+            };
+            let at = self.m.state_path(i);
+            if let Some(input) = invoke.input() {
+                let is_script = self
+                    .m
+                    .find(input)
+                    .and_then(|s| self.m.nodes[s].invoke.as_ref())
+                    .is_some_and(|inv| inv.script().is_some());
+                if !is_script {
                     self.push(
                         at,
-                        format!(
-                            "transition `{}`: `cond` is only allowed on router states (V10)",
-                            e.event
-                        ),
+                        format!("input `{input}` is not a state with a script invoke (V9)"),
                     );
-                    continue;
                 }
-                if node.default.as_deref() == Some(e.event.as_str()) {
+            } else if let Invoke::Check(c) = invoke {
+                if c.check.matches.is_some() && !self.script_before(i) {
                     self.push(
-                        at.clone(),
-                        format!("default event `{}` may not have a `cond` (V10)", e.event),
+                        at,
+                        "`matches` without `input` reads the most recent script's output, but no script state comes before this state (V9)".into(),
                     );
                 }
-                let cond = match cond::parse(text) {
-                    Ok(cond) => cond,
-                    Err(err) => {
-                        self.push(
-                            at,
-                            format!("transition `{}`: cond `{text}`: {err} (V10)", e.event),
-                        );
-                        continue;
-                    }
-                };
-                for name in cond.data_refs() {
-                    if !self.m.data.contains_key(name) {
-                        self.push(
-                            at.clone(),
-                            format!(
-                                "transition `{}`: cond `{text}` reads unknown data `{name}` (V10)",
-                                e.event
-                            ),
-                        );
-                    }
+            }
+        }
+    }
+
+    /// Whether some state that invokes a script can lead to atomic state `i`.
+    fn script_before(&self, i: usize) -> bool {
+        let m = self.m;
+        let scripts = self.atomic().into_iter().filter(|&s| {
+            m.nodes[s]
+                .invoke
+                .as_ref()
+                .is_some_and(|inv| inv.script().is_some())
+        });
+        for start in scripts {
+            let mut seen = vec![false; m.nodes.len()];
+            let mut queue = m.successors(start);
+            while let Some(s) = queue.pop() {
+                if s == i {
+                    return true;
                 }
-                for state in cond.visits_refs() {
-                    let atomic = self.m.find(state).is_some_and(|s| !self.m.is_compound(s));
-                    if !atomic {
-                        self.push(
-                            at.clone(),
-                            format!(
-                                "transition `{}`: cond `{text}` reads `visits.{state}`, but `{state}` is not an atomic state (V10)",
-                                e.event
-                            ),
-                        );
-                    }
+                if !std::mem::replace(&mut seen[s], true) {
+                    queue.extend(m.successors(s));
                 }
+            }
+        }
+        false
+    }
+
+    fn v10_conditions(&mut self) {
+        for i in self.atomic() {
+            let Some(Invoke::Check(c)) = &self.m.nodes[i].invoke else {
+                continue;
+            };
+            let at = self.m.state_path(i);
+            for message in self.condition_problems(&c.check) {
+                self.push(at.clone(), format!("check: {message} (V10)"));
+            }
+        }
+    }
+
+    /// What is wrong with one condition, without the rule tag.
+    fn condition_problems(&self, cond: &Condition) -> Vec<String> {
+        let (subject, op) = match cond.shape() {
+            Ok(shape) => shape,
+            Err(e) => return vec![e.to_string()],
+        };
+        let mut out = Vec::new();
+        let left = match subject {
+            Subject::Matches(pattern) => {
+                if let Err(e) = crate::cond::compile(pattern) {
+                    out.push(e.to_string());
+                }
+                return out;
+            }
+            Subject::Visits(state) => {
+                let atomic = self
+                    .m
+                    .find(state)
+                    .is_some_and(|s| !self.m.is_compound(s) && !self.m.nodes[s].is_final);
+                if !atomic {
+                    out.push(format!(
+                        "`visits` names `{state}`, which is not an atomic state"
+                    ));
+                }
+                Some(DataType::Int)
+            }
+            Subject::Data(name) => self.data_type(name, &mut out),
+        };
+        let Some((op, operand)) = op else {
+            return out;
+        };
+        let right = match operand {
+            Operand::Int(_) => Some(DataType::Int),
+            Operand::Str(_) => Some(DataType::String),
+            Operand::Bool(_) => Some(DataType::Bool),
+            Operand::Data(name) => self.data_type(name, &mut out),
+        };
+        if let (Some(left), Some(right)) = (left, right) {
+            if left != right {
+                out.push(format!(
+                    "`{}` compares {} with {}",
+                    subject.key(),
+                    left.as_str(),
+                    right.as_str()
+                ));
+            } else if op.is_ordering() && left != DataType::Int {
+                out.push(format!("`{op}` compares ints only, not {}", left.as_str()));
+            }
+        }
+        out
+    }
+
+    /// The type of `data` entry `name`, or a problem if there is none.
+    fn data_type(&self, name: &str, out: &mut Vec<String>) -> Option<DataType> {
+        match self.m.data.get(name) {
+            Some(spec) => Some(spec.kind),
+            None => {
+                out.push(format!("unknown data `{name}`"));
+                None
             }
         }
     }
@@ -1038,9 +1348,26 @@ impl Validator<'_> {
         }
         for i in self.states() {
             let node = &self.m.nodes[i];
-            let names = node.invoke.iter().chain(&node.onentry).chain(&node.onexit);
-            for name in names {
-                uses.push((self.m.state_path(i), name));
+            let at = self.m.state_path(i);
+            let invoked = match &node.invoke {
+                Some(Invoke::Script(name)) => Some(name.as_str()),
+                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Person => {
+                    if c.ask.is_none() {
+                        self.push(
+                            at.clone(),
+                            "a `choose: person` state needs an `ask` script, which tells someone how to reply (V12)".into(),
+                        );
+                    }
+                    c.ask.as_deref()
+                }
+                _ => None,
+            };
+            let scripts = invoked
+                .into_iter()
+                .chain(node.onentry.iter().map(String::as_str))
+                .chain(node.onexit.iter().map(String::as_str));
+            for name in scripts {
+                uses.push((at.clone(), name));
             }
         }
         let prefix = format!("{}/", self.env.decree_dir.display());
@@ -1084,6 +1411,241 @@ impl Validator<'_> {
             }
         }
     }
+
+    fn v15_done_state(&mut self) {
+        for i in self.states() {
+            let node = &self.m.nodes[i];
+            let has_final = node.children.iter().any(|&c| self.m.nodes[c].is_final);
+            let event = format!("done.state.{}", node.id);
+            if has_final && !self.m.handles(i, &event) {
+                self.push(
+                    self.m.state_path(i),
+                    format!("compound state has a final state, but nothing handles `{event}`, itself or through an ancestor (V15)"),
+                );
+            }
+        }
+    }
+
+    fn v16_invokes(&mut self) {
+        for i in self.states() {
+            let node = &self.m.nodes[i];
+            let at = self.m.state_path(i);
+            match &node.invoke {
+                Some(Invoke::Machine(mi)) => self.child_machine(&at, mi),
+                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
+                    match (c.router.as_deref(), self.env.default_router) {
+                        (Some(router), _) => {
+                            if !self.env.machine_ids.contains(router) {
+                                self.push(
+                                    at.clone(),
+                                    format!("router `{router}` is not a machine (V16)"),
+                                );
+                            }
+                        }
+                        (None, None) => self.push(
+                            at.clone(),
+                            "`choose: model` names no `router`, and config.yml sets no `default_router` (V16)".into(),
+                        ),
+                        (None, Some(router)) => {
+                            if !self.env.machine_ids.contains(router) {
+                                self.push(
+                                    at.clone(),
+                                    format!("`choose: model` names no `router`, and `default_router` `{router}` is not a machine (V16)"),
+                                );
+                            }
+                        }
+                    }
+                    if let Some(n) = c.min_confidence.filter(|n| !(0.0..=1.0).contains(n)) {
+                        self.push(
+                            at.clone(),
+                            format!("min_confidence {n} is not between 0 and 1 (V16)"),
+                        );
+                    }
+                }
+                _ => {}
+            }
+            let is_script = node
+                .invoke
+                .as_ref()
+                .is_some_and(|inv| inv.script().is_some());
+            if node.max_attempts.is_some() && !is_script && !node.is_final {
+                self.push(
+                    at,
+                    "`max_attempts` is only allowed on states that invoke a script (V16)".into(),
+                );
+            }
+        }
+    }
+
+    /// V16 for `invoke: { machine, params }`.
+    fn child_machine(&mut self, at: &str, mi: &MachineInvoke) {
+        if !self.env.machine_ids.contains(&mi.machine) {
+            self.push(
+                at.to_string(),
+                format!("machine `{}` does not exist (V16)", mi.machine),
+            );
+            return;
+        }
+        let Some(child) = self.env.machines.get(&mi.machine) else {
+            return; // it fails to load, and is reported on its own
+        };
+        for (key, value) in &mi.params {
+            let key = key.as_str().unwrap_or_default();
+            match child.data.get(key) {
+                None => self.push(
+                    at.to_string(),
+                    format!(
+                        "unknown param `{key}`: machine `{}` has no data `{key}` (V16)",
+                        mi.machine
+                    ),
+                ),
+                Some(spec) if !spec.kind.matches(value) => self.push(
+                    at.to_string(),
+                    format!(
+                        "param `{key}` must be of type `{}` (V16)",
+                        spec.kind.as_str()
+                    ),
+                ),
+                Some(_) => {}
+            }
+        }
+    }
+
+    fn v17_internal(&mut self) {
+        for i in self.states() {
+            for e in &self.m.nodes[i].transitions {
+                if !e.internal {
+                    continue;
+                }
+                let descendant = self
+                    .m
+                    .find(&e.target)
+                    .is_some_and(|t| t != i && self.m.chain(t).any(|a| a == i));
+                if !self.m.is_compound(i) || !descendant {
+                    self.push(
+                        self.m.state_path(i),
+                        format!(
+                            "transition `{}`: `type: internal` is only allowed from a compound state to one of its descendants (V17)",
+                            e.event
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    fn v18_events(&mut self) {
+        for i in self.states() {
+            let node = &self.m.nodes[i];
+            let at = self.m.state_path(i);
+            for e in &node.transitions {
+                if !is_event_name(&e.event) {
+                    self.push(
+                        at.clone(),
+                        format!(
+                            "event `{}` does not match ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$ (V18)",
+                            e.event
+                        ),
+                    );
+                }
+            }
+            if matches!(node.invoke, Some(Invoke::Choose(_))) {
+                let reserved: Vec<String> = self
+                    .m
+                    .options(i)
+                    .filter(|e| is_reserved_event(&e.event))
+                    .map(|e| e.event.clone())
+                    .collect();
+                for event in reserved {
+                    self.push(
+                        at.clone(),
+                        format!("option `{event}` is reserved: `done`, `error`, `unsure` and names starting with `done.` or `error.` cannot be options (V18)"),
+                    );
+                }
+            }
+        }
+    }
+
+    /// V19 inside an invoke: the `choose` keys that belong to the other kind.
+    fn v19_choose_keys(&mut self) {
+        for i in self.states() {
+            let Some(Invoke::Choose(c)) = &self.m.nodes[i].invoke else {
+                continue;
+            };
+            let (kind, keys) = match c.choose {
+                ChooseKind::Model => (
+                    "choose: model",
+                    vec![
+                        ("ask", c.ask.is_some()),
+                        ("timeout_s", c.timeout_s.is_some()),
+                    ],
+                ),
+                ChooseKind::Person => (
+                    "choose: person",
+                    vec![
+                        ("router", c.router.is_some()),
+                        ("min_confidence", c.min_confidence.is_some()),
+                        ("input", c.input.is_some()),
+                    ],
+                ),
+            };
+            let found: Vec<&str> = keys
+                .into_iter()
+                .filter_map(|(key, set)| set.then_some(key))
+                .collect();
+            if !found.is_empty() {
+                self.push(
+                    self.m.state_path(i),
+                    format!("`{kind}` does not take {} (V19)", backticked(&found)),
+                );
+            }
+        }
+    }
+
+    fn v20_cycles(&mut self) {
+        let me = self.m.id.as_str();
+        for (i, child) in self.m.invoked_machines(self.env.default_router) {
+            if let Some(path) = self.invoke_path(child, me) {
+                self.push(
+                    self.m.state_path(i),
+                    format!(
+                        "machine `{me}` invokes itself: {me} -> {}; a machine never invokes itself, directly or through others (V20)",
+                        path.join(" -> ")
+                    ),
+                );
+            }
+        }
+    }
+
+    /// The machines from `from` to `to` through `machine` and router invokes, both ends
+    /// included, if `to` can be reached.
+    fn invoke_path<'m>(&'m self, from: &'m str, to: &str) -> Option<Vec<&'m str>> {
+        let mut parent: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut queue = std::collections::VecDeque::from([from]);
+        let mut seen = BTreeSet::from([from]);
+        while let Some(id) = queue.pop_front() {
+            if id == to {
+                let mut path = vec![id];
+                let mut cur = id;
+                while let Some(&p) = parent.get(cur) {
+                    path.push(p);
+                    cur = p;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            let Some(m) = self.env.machines.get(id) else {
+                continue;
+            };
+            for (_, child) in m.invoked_machines(self.env.default_router) {
+                if seen.insert(child) {
+                    parent.insert(child, id);
+                    queue.push_back(child);
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1092,7 +1654,8 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    const EXAMPLES: [&str; 3] = ["hello", "deploy", "feature"];
+    /// The section 5 examples, plus the router `feature` and `triage` name by default.
+    const EXAMPLES: [&str; 5] = ["hello", "deploy", "ship", "feature", "claude_router"];
 
     fn fixture(name: &str) -> String {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1123,6 +1686,14 @@ mod tests {
             .to_string()
     }
 
+    fn load(id: &str, text: &str) -> LoadedMachine {
+        flatten(
+            id,
+            PathBuf::from(format!("{id}.yml")),
+            parse_machine(text).unwrap(),
+        )
+    }
+
     #[test]
     fn section5_examples_load() {
         let files: Vec<(&str, String)> = EXAMPLES.iter().map(|n| (*n, fixture(n))).collect();
@@ -1131,7 +1702,7 @@ mod tests {
         let machines = load_machines(&tmp.path().join(".decree"), None).unwrap();
         assert_eq!(
             machines.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["deploy", "feature", "hello"]
+            ["claude_router", "deploy", "feature", "hello", "ship"]
         );
         for (id, m) in &machines {
             assert_eq!(&m.root().id, id);
@@ -1139,14 +1710,33 @@ mod tests {
         }
         assert_eq!(machines["hello"].nodes.len(), 1 + 3);
         assert_eq!(machines["deploy"].nodes.len(), 1 + 6);
+        assert_eq!(machines["ship"].nodes.len(), 1 + 4);
+
+        let deploy = &machines["deploy"];
+        let approval = &deploy.nodes[deploy.find("approval").unwrap()];
+        let Some(Invoke::Choose(c)) = &approval.invoke else {
+            panic!("{:?}", approval.invoke);
+        };
+        assert_eq!(c.choose, ChooseKind::Person);
+        assert_eq!(c.question.as_deref(), Some("Ship this build?"));
+        assert_eq!(c.ask.as_deref(), Some("ask_person"));
+        assert_eq!(c.timeout_s, Some(86400));
+
+        let ship = &machines["ship"];
+        let build = &ship.nodes[ship.find("build").unwrap()];
+        assert_eq!(
+            build.invoke,
+            Some(Invoke::Machine(MachineInvoke {
+                machine: "feature".into(),
+                params: serde_norway::Mapping::new(),
+            }))
+        );
     }
 
     #[test]
-    fn feature_arena_has_nine_states_plus_root() {
-        let tmp = project(&[("feature", &fixture("feature"))]);
-        let machines = load_machines(&tmp.path().join(".decree"), None).unwrap();
-        let m = &machines["feature"];
-        assert_eq!(m.nodes.len(), 9 + 1);
+    fn feature_arena_has_eleven_states_plus_root() {
+        let m = load("feature", &fixture("feature"));
+        assert_eq!(m.nodes.len(), 11 + 1);
 
         let root = m.root();
         assert_eq!(root.id, "feature");
@@ -1168,6 +1758,8 @@ mod tests {
                 "work",
                 "implement",
                 "review",
+                "rounds_left",
+                "triage",
                 "verified",
                 "verify",
             ]
@@ -1177,25 +1769,49 @@ mod tests {
         assert_eq!(m.nodes[work].parent, Some(0));
         assert_eq!(m.nodes[work].depth, 1);
         assert_eq!(m.nodes[work].initial.as_deref(), Some("implement"));
-        assert_eq!(m.nodes[work].children.len(), 4);
+        assert_eq!(m.nodes[work].children.len(), 6);
         assert_eq!(m.nodes[work].transitions[0].event, "done.state.work");
 
         let verify = m.find("verify").unwrap();
-        let node = &m.nodes[verify];
-        assert_eq!(node.parent, Some(work));
-        assert_eq!(node.depth, 2);
         assert_eq!(m.state_path(verify), "work.verify");
-        assert_eq!(node.router, Some(RouterKind::Llm));
-        assert_eq!(node.default.as_deref(), Some("ask"));
-        let retry = node
+        assert_eq!(m.nodes[verify].depth, 2);
+        assert_eq!(
+            m.nodes[verify].invoke,
+            Some(Invoke::Script("verify".into()))
+        );
+
+        let rounds = &m.nodes[m.find("rounds_left").unwrap()];
+        let Some(Invoke::Check(check)) = &rounds.invoke else {
+            panic!("{:?}", rounds.invoke);
+        };
+        assert_eq!(check.check.visits.as_deref(), Some("implement"));
+        assert_eq!(
+            check.check.less_than,
+            Some(Operand::Data("max_rounds".into()))
+        );
+        // `yes` and `no` are strings, not YAML 1.1 booleans.
+        let events: Vec<&str> = rounds
             .transitions
             .iter()
-            .find(|e| e.event == "retry")
-            .unwrap();
+            .map(|e| e.event.as_str())
+            .collect();
+        assert_eq!(events, ["no", "yes"]);
+
+        let triage = m.find("triage").unwrap();
+        let Some(Invoke::Choose(c)) = &m.nodes[triage].invoke else {
+            panic!();
+        };
+        assert_eq!(c.choose, ChooseKind::Model);
+        assert_eq!(c.min_confidence, Some(0.8));
+        assert_eq!(c.input.as_deref(), Some("verify"));
+        assert_eq!(c.router, None);
+        let options: Vec<&str> = m.options(triage).map(|e| e.event.as_str()).collect();
+        assert_eq!(options, ["retry", "split"]);
+        let retry = m.options(triage).next().unwrap();
         assert_eq!(retry.target, "implement");
         assert_eq!(
-            retry.cond.as_deref(),
-            Some("visits.implement < data.max_rounds")
+            retry.description.as_deref(),
+            Some("The failures look fixable; implement again.")
         );
         assert!(!retry.internal);
 
@@ -1211,7 +1827,24 @@ mod tests {
             m.nodes[m.find("spawn_followups").unwrap()].emits,
             ["feature"]
         );
-        assert_eq!(m.nodes[m.find("review").unwrap()].timeout_s, Some(172800));
+    }
+
+    #[test]
+    fn accepted_events_skip_reserved_names_and_include_ancestors() {
+        let m = load("feature", &fixture("feature"));
+        assert_eq!(
+            m.accepted_events(m.find("verify").unwrap()),
+            ["fail", "pass"]
+        );
+        assert_eq!(
+            m.accepted_events(m.find("precheck").unwrap()),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            m.accepted_events(m.find("triage").unwrap()),
+            ["retry", "split"]
+        );
+        assert!(m.accepted_events(0).is_empty());
     }
 
     #[test]
@@ -1222,11 +1855,12 @@ mod tests {
             err.starts_with("machines/feature.yml: work.implement: unknown field `max_attempt`"),
             "{err}"
         );
+        assert!(err.ends_with("(V19)"), "{err}");
     }
 
     #[test]
     fn misspelled_top_level_state_key() {
-        let text = fixture("hello").replace("invoke: greet", "invokes: greet");
+        let text = fixture("hello").replace("invoke: greet ", "invokes: greet ");
         let err = load_err("hello", &text);
         assert!(
             err.starts_with("machines/hello.yml: greet: unknown field `invokes`"),
@@ -1235,11 +1869,33 @@ mod tests {
     }
 
     #[test]
-    fn misspelled_transition_key_names_its_state() {
-        let text = fixture("feature").replace("cond: \"visits", "condition: \"visits");
+    fn misspelled_invoke_key_names_its_state() {
+        let text = fixture("feature").replace("min_confidence: 0.8", "min_confidense: 0.8");
         let err = load_err("feature", &text);
         assert!(
-            err.starts_with("machines/feature.yml: work.verify: "),
+            err.starts_with("machines/feature.yml: work.triage: unknown field `min_confidense`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn misspelled_condition_key_names_its_state() {
+        let text = fixture("feature").replace("less_than:", "lesser_than:");
+        let err = load_err("feature", &text);
+        assert!(
+            err.starts_with("machines/feature.yml: work.rounds_left: unknown field `lesser_than`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn invoke_object_without_a_type_key() {
+        let text = fixture("hello").replace("invoke: greet ", "invoke: { run: greet }");
+        let err = load_err("hello", &text);
+        assert!(
+            err.contains(
+                "greet: `invoke` is a script name or an object with `machine`, `check` or `choose`"
+            ),
             "{err}"
         );
     }
@@ -1249,7 +1905,7 @@ mod tests {
         let text = fixture("hello").replace("description:", "descripton:");
         let err = load_err("hello", &text);
         assert!(
-            err.starts_with("machines/hello.yml: line 2: unknown field `descripton`"),
+            err.starts_with("machines/hello.yml: line 3: unknown field `descripton`"),
             "{err}"
         );
     }
@@ -1258,6 +1914,44 @@ mod tests {
     fn yaml_syntax_error_names_line() {
         let err = load_err("bad", "name: bad\nstates: [\n");
         assert!(err.starts_with("machines/bad.yml: line "), "{err}");
+    }
+
+    // Keys outside the SCXML subset (V19), with the section 5 messages.
+
+    #[test]
+    fn cond_on_a_transition_names_the_alternative() {
+        let text = format!(
+            "{HEAD}  a:\n    invoke: x\n    transitions:\n      \
+             done: {{ target: done, cond: \"visits.a < 2\" }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            parse_machine(&text).unwrap_err(),
+            "a: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)"
+        );
+    }
+
+    #[test]
+    fn router_llm_on_a_state_names_the_alternative() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/check/v19-scxml/fail/machines/b.yml");
+        let text = fs::read_to_string(path).unwrap();
+        assert_eq!(
+            parse_machine(&text).unwrap_err(),
+            "work.step: router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... } (V19)"
+        );
+    }
+
+    #[test]
+    fn scxml_elements_name_the_feature() {
+        let text = format!(
+            "{HEAD}  a: {{ parallel: true, transitions: {{ done: done }} }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            parse_machine(&text).unwrap_err(),
+            "a: SCXML <parallel> is not supported: a run is always in exactly one atomic state (V19)"
+        );
     }
 
     #[test]
@@ -1291,7 +1985,7 @@ mod tests {
     fn shared_machine_error_uses_relative_path() {
         let tmp = project(&[]);
         let shared = tmp.path().join("shared");
-        let text = fixture("hello").replace("final: true }    ", "fnal: true }    ");
+        let text = fixture("hello").replace("failed: { final: true }", "failed: { fnal: true }");
         write_machines(&shared, &[("hello", &text)]);
         let err = load_machines(&tmp.path().join(".decree"), Some(&shared))
             .unwrap_err()
@@ -1322,13 +2016,12 @@ mod tests {
 
     #[test]
     fn internal_transition_type() {
-        let m = parse_machine(
+        let m = load(
+            "m",
             "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    initial: b\n    \
              transitions: { go: { target: b, type: internal } }\n    states:\n      \
              b: { final: true }\n  failed: { final: true }\n",
-        )
-        .unwrap();
-        let m = flatten("m", PathBuf::from("m.yml"), m);
+        );
         let a = &m.nodes[m.find("a").unwrap()];
         assert!(a.transitions[0].internal);
         assert_eq!(m.state_path(m.find("b").unwrap()), "a.b");
@@ -1337,12 +2030,11 @@ mod tests {
     #[test]
     fn yaml_1_1_booleans_are_strings() {
         // The Norway problem: YAML 1.1 reads `on` and `no` as booleans; machines are YAML 1.2.
-        let m = parse_machine(
+        let m = load(
+            "m",
             "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    \
              transitions: { on: no }\n  no: { final: true }\n  failed: { final: true }\n",
-        )
-        .unwrap();
-        let m = flatten("m", PathBuf::from("m.yml"), m);
+        );
         let a = &m.nodes[m.find("a").unwrap()];
         assert_eq!(a.transitions[0].event, "on");
         assert_eq!(a.transitions[0].target, "no");
@@ -1350,38 +2042,58 @@ mod tests {
     }
 
     /// Problems for machine `m` given as `text`, other than V12 (no scripts exist here).
-    fn problems(text: &str) -> Vec<String> {
-        let m = flatten("m", PathBuf::from("m.yml"), parse_machine(text).unwrap());
+    /// `others` are more machines in the project.
+    fn problems_with(text: &str, others: &[(&str, &str)]) -> Vec<String> {
+        let mut machines = BTreeMap::from([("m".to_string(), load("m", text))]);
+        for (id, other) in others {
+            machines.insert(id.to_string(), load(id, other));
+        }
+        let ids: BTreeSet<String> = machines.keys().cloned().collect();
         let tmp = TempDir::new().unwrap();
-        let ids = BTreeSet::from(["m".to_string()]);
         let env = CheckEnv {
             decree_dir: tmp.path(),
             shared_source: None,
             machine_ids: &ids,
+            machines: &machines,
+            default_router: Some("router"),
         };
-        m.validate(text, &env)
+        machines["m"]
+            .validate(text, &env)
             .into_iter()
             .map(|p| format!("{}: {}", p.at, p.message))
             .filter(|p| !p.ends_with("(V12)"))
             .collect()
     }
 
+    fn problems(text: &str) -> Vec<String> {
+        problems_with(text, &[("router", ROUTER)])
+    }
+
     const HEAD: &str = "name: m\ndescription: d\ninitial: a\nstates:\n";
+
+    const ROUTER: &str = "name: router\ndescription: d\ninitial: a\nstates:\n  \
+                          a: { invoke: x, transitions: { done: done } }\n  \
+                          done: { final: true }\n  failed: { final: true }\n";
 
     #[test]
     fn section5_examples_validate() {
-        for name in EXAMPLES {
-            let text = fixture(name);
-            let m = flatten(name, PathBuf::from("x"), parse_machine(&text).unwrap());
-            let tmp = TempDir::new().unwrap();
-            let ids = BTreeSet::from(EXAMPLES.map(String::from));
-            let env = CheckEnv {
-                decree_dir: tmp.path(),
-                shared_source: None,
-                machine_ids: &ids,
-            };
-            let found: Vec<Problem> = m
-                .validate(&text, &env)
+        let texts: Vec<(&str, String)> = EXAMPLES.iter().map(|n| (*n, fixture(n))).collect();
+        let machines: BTreeMap<String, LoadedMachine> = texts
+            .iter()
+            .map(|(n, t)| (n.to_string(), load(n, t)))
+            .collect();
+        let ids: BTreeSet<String> = machines.keys().cloned().collect();
+        let tmp = TempDir::new().unwrap();
+        let env = CheckEnv {
+            decree_dir: tmp.path(),
+            shared_source: None,
+            machine_ids: &ids,
+            machines: &machines,
+            default_router: Some("claude_router"),
+        };
+        for (name, text) in &texts {
+            let found: Vec<Problem> = machines[*name]
+                .validate(text, &env)
                 .into_iter()
                 .filter(|p| !p.message.ends_with("(V12)"))
                 .collect();
@@ -1396,6 +2108,16 @@ mod tests {
         assert!(event_matches("done.state", "done.state.work"));
         assert!(!event_matches("done", "doner"));
         assert!(!event_matches("done.state.work", "done.state"));
+    }
+
+    #[test]
+    fn event_names() {
+        for ok in ["done", "done.state.work", "a1_b", "yes", "x.0"] {
+            assert!(is_event_name(ok), "{ok}");
+        }
+        for bad in ["", "Done", "1a", "a..b", "a.", ".a", "a-b", "a.B"] {
+            assert!(!is_event_name(bad), "{bad}");
+        }
     }
 
     #[test]
@@ -1416,8 +2138,8 @@ mod tests {
     fn compound_initial_must_be_a_direct_child() {
         let text = format!(
             "{HEAD}  a:\n    initial: c\n    transitions: {{ done.state.a: done }}\n    states:\n      \
-             b:\n        initial: c\n        states:\n          c: {{ final: true }}\n  \
-             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+             b:\n        initial: c\n        transitions: {{ done.state.b: done }}\n        states:\n          \
+             c: {{ final: true }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
         );
         let found = problems(&text);
         assert!(
@@ -1438,64 +2160,129 @@ mod tests {
         );
     }
 
+    // V8: decision and sub-machine states cover their events.
+
     #[test]
-    fn default_only_on_router_states() {
+    fn check_must_handle_yes_and_no() {
         let text = format!(
-            "{HEAD}  a: {{ invoke: x, default: done, transitions: {{ done: done }} }}\n  \
+            "{HEAD}  a: {{ invoke: {{ check: {{ visits: a, less_than: 2 }} }}, transitions: {{ yes: done }} }}\n  \
              done: {{ final: true }}\n  failed: {{ final: true }}\n"
         );
         assert_eq!(
             problems(&text),
-            ["a: `default` is only allowed on router states (V9)"]
+            ["a: a `check` state must handle `no`, itself or through an ancestor (V8)"]
         );
     }
 
     #[test]
-    fn router_rules() {
+    fn choose_needs_a_question_and_described_options() {
         let text = format!(
-            "{HEAD}  a:\n    router: llm\n    invoke: x\n    transitions:\n      \
-             done: {{ target: done, description: d }}\n      error: failed\n  \
+            "{HEAD}  a:\n    invoke: {{ choose: person, ask: tell }}\n    transitions:\n      \
+             ship: {{ target: done, description: Ship it. }}\n      stop: done\n  \
              done: {{ final: true }}\n  failed: {{ final: true }}\n"
         );
         assert_eq!(
             problems(&text),
             [
-                "a: router state may not declare `done` (V9)",
-                "a: router state needs at least 2 events other than `error`, has 1 (V9)",
-                "a: router state needs a `default` event (V9)",
-                "a: router state needs a `description` (V9)",
+                "a: a `choose: person` state needs a `question`: what is being decided (V8)",
+                "a: option `stop` needs a `description`: write it as `stop: { target: done, description: ... }` (V8)",
             ]
         );
     }
 
     #[test]
-    fn cond_rules() {
-        let router = "    description: d\n    router: llm\n    invoke: x\n    default: pass\n";
+    fn choose_needs_two_options_and_min_confidence_needs_unsure() {
         let text = format!(
-            "{HEAD}  a:\n{router}    transitions:\n      \
-             pass: {{ target: done, description: d, cond: \"visits.a > 1\" }}\n      \
-             again: {{ target: a, description: d, cond: \"visits.w < 2\" }}\n      \
-             other: {{ target: b, description: d, cond: \"a && b\" }}\n  \
-             b:\n    invoke: x\n    transitions: {{ done: {{ target: done, cond: \"1 == 1\" }} }}\n  \
-             w:\n    initial: z\n    states:\n      z: {{ final: true }}\n  \
+            "{HEAD}  a:\n    invoke: {{ choose: model, question: \"Go?\", min_confidence: 0.5 }}\n    \
+             transitions:\n      go: {{ target: done, description: Go. }}\n      error: failed\n  \
              done: {{ final: true }}\n  failed: {{ final: true }}\n"
         );
-        let found: Vec<String> = problems(&text)
+        assert_eq!(
+            problems(&text),
+            [
+                "a: a `choose: model` state needs at least 2 options (transitions other than `unsure` and `error`), has 1 (V8)",
+                "a: a `choose: model` state with `min_confidence` must handle `unsure`, itself or through an ancestor (V8)",
+            ]
+        );
+    }
+
+    #[test]
+    fn machine_state_handles_every_final_state_of_the_child() {
+        let child = "name: child\ndescription: d\ninitial: a\nstates:\n  \
+                     a: { invoke: x, transitions: { ok: done, no: rejected } }\n  \
+                     done: { final: true }\n  rejected: { final: true }\n  failed: { final: true }\n";
+        let text = format!(
+            "{HEAD}  a: {{ invoke: {{ machine: child }}, transitions: {{ done: done }} }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            problems_with(&text, &[("child", child)]),
+            ["a: machine `child` can end in `rejected`, which this state does not handle, itself or through an ancestor (V8)"]
+        );
+    }
+
+    // V9: input.
+
+    #[test]
+    fn input_names_a_script_state_and_matches_needs_a_script_before_it() {
+        let text = format!(
+            "{HEAD}  a: {{ invoke: {{ check: {{ matches: ok }} }}, transitions: {{ yes: b, no: b }} }}\n  \
+             b: {{ invoke: {{ check: {{ matches: ok }}, input: a }}, transitions: {{ yes: done, no: done }} }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            problems(&text),
+            [
+                "a: `matches` without `input` reads the most recent script's output, but no script state comes before this state (V9)",
+                "b: input `a` is not a state with a script invoke (V9)",
+            ]
+        );
+    }
+
+    #[test]
+    fn matches_after_a_script_state_needs_no_input() {
+        let text = format!(
+            "{HEAD}  a: {{ invoke: x, transitions: {{ done: b }} }}\n  \
+             b: {{ invoke: {{ check: {{ matches: ok }} }}, transitions: {{ yes: done, no: a }} }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert!(problems(&text).is_empty(), "{:?}", problems(&text));
+    }
+
+    // V10: conditions.
+
+    #[test]
+    fn condition_rules() {
+        let text = "name: m\ndescription: d\ndata:\n  max_rounds: { type: int, default: 2 }\n  \
+                    mode: { type: string, default: fast }\ninitial: a\nstates:\n  \
+                    a: { invoke: x, transitions: { done: b } }\n  \
+                    b: { invoke: { check: { visits: w, less_than: { data: rounds } } }, transitions: { yes: c, no: c } }\n  \
+                    c: { invoke: { check: { data: mode, less_than: b } }, transitions: { yes: d, no: d } }\n  \
+                    d: { invoke: { check: { data: max_rounds, equals: fast } }, transitions: { yes: e, no: e } }\n  \
+                    e: { invoke: { check: { matches: '(' } }, transitions: { yes: f, no: f } }\n  \
+                    f: { invoke: { check: { visits: a, data: mode, equals: 1 } }, transitions: { yes: g, no: g } }\n  \
+                    g: { invoke: { check: { visits: a } }, transitions: { yes: done, no: done } }\n  \
+                    w:\n    initial: z\n    transitions: { done.state.w: done }\n    states:\n      z: { final: true }\n  \
+                    done: { final: true }\n  failed: { final: true }\n";
+        let found: Vec<String> = problems(text)
             .into_iter()
             .filter(|p| p.ends_with("(V10)"))
             .collect();
-        assert_eq!(found.len(), 4, "{found:?}");
-        assert!(found[0].starts_with("a: transition `again`: cond `visits.w < 2` reads `visits.w`, but `w` is not an atomic state"));
-        assert!(found[1].starts_with("a: transition `other`: cond `a && b`: "));
         assert_eq!(
-            found[2],
-            "a: default event `pass` may not have a `cond` (V10)"
-        );
-        assert_eq!(
-            found[3],
-            "b: transition `done`: `cond` is only allowed on router states (V10)"
+            found,
+            [
+                "b: check: `visits` names `w`, which is not an atomic state (V10)",
+                "b: check: unknown data `rounds` (V10)",
+                "c: check: `less_than` compares ints only, not string (V10)",
+                "d: check: `data` compares int with string (V10)",
+                "e: check: `matches` '(' is not a regular expression: unclosed group (V10)",
+                "f: check: a condition has exactly one subject, not `visits` and `data`; use two `check` states in a row (V10)",
+                "g: check: `visits` needs one operator: `equals`, `not_equals`, `less_than`, `at_most`, `more_than` or `at_least` (V10)",
+            ]
         );
     }
+
+    // V11: reachability.
 
     #[test]
     fn unhandled_error_reaches_failed() {
@@ -1521,26 +2308,14 @@ mod tests {
     }
 
     #[test]
-    fn nested_final_continues_through_done_state() {
+    fn a_check_loop_without_a_way_out_stalls() {
         let text = format!(
-            "{HEAD}  a:\n    initial: b\n    transitions: {{ done.state.a: done }}\n    states:\n      \
-             b: {{ transitions: {{ done: c }} }}\n      c: {{ final: true }}\n  \
-             done: {{ final: true }}\n  failed: {{ final: true }}\n"
-        );
-        assert!(problems(&text).is_empty(), "{:?}", problems(&text));
-
-        // Without a handler for done.state.a, the pass-through b can never finish: it only
-        // takes `done`, never a's `go`, so `done` is unreachable too.
-        let stalled = text.replace(
-            "transitions: { done.state.a: done }",
-            "transitions: { go: done }",
+            "{HEAD}  a: {{ invoke: {{ check: {{ visits: a, less_than: 3 }} }}, transitions: {{ yes: a, no: a }} }}\n  \
+             failed: {{ final: true }}\n"
         );
         assert_eq!(
-            problems(&stalled),
-            [
-                "done: state is unreachable from the root `initial` (V11)",
-                "a.b: state cannot reach a root-level final state (V11)",
-            ]
+            problems(&text),
+            ["a: state cannot reach a root-level final state (V11)"]
         );
     }
 
@@ -1554,6 +2329,162 @@ mod tests {
         assert_eq!(
             problems(&text),
             ["w: state is unreachable from the root `initial` (V11)"]
+        );
+    }
+
+    // V15: done.state.<id>.
+
+    #[test]
+    fn nested_final_needs_a_done_state_handler() {
+        let text = format!(
+            "{HEAD}  a:\n    initial: b\n    transitions: {{ done.state.a: done }}\n    states:\n      \
+             b: {{ transitions: {{ done: c }} }}\n      c: {{ final: true }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert!(problems(&text).is_empty(), "{:?}", problems(&text));
+
+        // Without a handler, `done.state.a` becomes `error`, so the run fails instead.
+        let stalled = text.replace(
+            "transitions: { done.state.a: done }",
+            "transitions: { go: done }",
+        );
+        assert_eq!(
+            problems(&stalled),
+            [
+                "done: state is unreachable from the root `initial` (V11)",
+                "a: compound state has a final state, but nothing handles `done.state.a`, itself or through an ancestor (V15)",
+            ]
+        );
+    }
+
+    // V16: invokes.
+
+    #[test]
+    fn invoke_names_and_values() {
+        let child =
+            "name: child\ndescription: d\ndata:\n  n: { type: int, default: 1 }\ninitial: a\n\
+                     states:\n  a: { invoke: x, transitions: { done: done } }\n  \
+                     done: { final: true }\n  failed: { final: true }\n";
+        let text = format!(
+            "{HEAD}  a: {{ invoke: {{ machine: child, params: {{ n: two, k: 1 }} }}, transitions: {{ done: b }} }}\n  \
+             b: {{ invoke: {{ machine: nobody }}, transitions: {{ done: c }} }}\n  \
+             c:\n    invoke: {{ choose: model, question: \"Go?\", router: nobody, min_confidence: 1.5 }}\n    \
+             max_attempts: 2\n    transitions:\n      \
+             go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n      \
+             unsure: done\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        let found: Vec<String> = problems_with(&text, &[("child", child)])
+            .into_iter()
+            .filter(|p| p.ends_with("(V16)"))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                "a: param `n` must be of type `int` (V16)",
+                "a: unknown param `k`: machine `child` has no data `k` (V16)",
+                "b: machine `nobody` does not exist (V16)",
+                "c: router `nobody` is not a machine (V16)",
+                "c: min_confidence 1.5 is not between 0 and 1 (V16)",
+                "c: `max_attempts` is only allowed on states that invoke a script (V16)",
+            ]
+        );
+    }
+
+    #[test]
+    fn choose_model_without_router_needs_default_router() {
+        let text = format!(
+            "{HEAD}  a:\n    invoke: {{ choose: model, question: \"Go?\" }}\n    transitions:\n      \
+             go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert!(problems(&text).is_empty(), "{:?}", problems(&text));
+        assert_eq!(
+            problems_with(&text, &[]),
+            ["a: `choose: model` names no `router`, and `default_router` `router` is not a machine (V16)"]
+        );
+    }
+
+    // V17: type: internal.
+
+    #[test]
+    fn internal_only_from_a_compound_state_to_a_descendant() {
+        let text = format!(
+            "{HEAD}  a: {{ invoke: x, transitions: {{ done: {{ target: done, type: internal }} }} }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            problems(&text),
+            ["a: transition `done`: `type: internal` is only allowed from a compound state to one of its descendants (V17)"]
+        );
+    }
+
+    // V18: event names.
+
+    #[test]
+    fn event_names_and_reserved_options() {
+        let text = format!(
+            "{HEAD}  a: {{ invoke: x, transitions: {{ Done: b, done: b }} }}\n  \
+             b:\n    invoke: {{ choose: person, question: \"Go?\", ask: tell }}\n    transitions:\n      \
+             go: {{ target: done, description: Go. }}\n      done.later: {{ target: done, description: Later. }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            problems(&text),
+            [
+                "a: event `Done` does not match ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$ (V18)",
+                "b: option `done.later` is reserved: `done`, `error`, `unsure` and names starting with `done.` or `error.` cannot be options (V18)",
+            ]
+        );
+    }
+
+    // V19 inside an invoke.
+
+    #[test]
+    fn choose_keys_of_the_other_kind() {
+        let text = format!(
+            "{HEAD}  a:\n    invoke: {{ choose: person, question: \"Go?\", ask: tell, router: router, input: a }}\n    \
+             transitions:\n      go: {{ target: done, description: Go. }}\n      \
+             stop: {{ target: done, description: Stop. }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        let found: Vec<String> = problems(&text)
+            .into_iter()
+            .filter(|p| p.ends_with("(V19)"))
+            .collect();
+        assert_eq!(
+            found,
+            ["a: `choose: person` does not take `router`, `input` (V19)"]
+        );
+    }
+
+    // V20: invoke cycles.
+
+    #[test]
+    fn a_machine_that_invokes_itself() {
+        let text = format!(
+            "{HEAD}  a: {{ invoke: {{ machine: m }}, transitions: {{ done: done }} }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            problems(&text),
+            ["a: machine `m` invokes itself: m -> m; a machine never invokes itself, directly or through others (V20)"]
+        );
+    }
+
+    #[test]
+    fn a_machine_that_invokes_itself_through_its_router() {
+        let router = "name: router\ndescription: d\ninitial: a\nstates:\n  \
+                      a: { invoke: { machine: m }, transitions: { done: done } }\n  \
+                      done: { final: true }\n  failed: { final: true }\n";
+        let text = format!(
+            "{HEAD}  a:\n    invoke: {{ choose: model, question: \"Go?\" }}\n    transitions:\n      \
+             go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            problems_with(&text, &[("router", router)]),
+            ["a: machine `m` invokes itself: m -> router -> m; a machine never invokes itself, directly or through others (V20)"]
         );
     }
 
@@ -1572,24 +2503,34 @@ mod tests {
     #[test]
     fn script_problems_name_the_state_and_relative_path() {
         let text = format!(
-            "{HEAD}  a: {{ invoke: x, transitions: {{ done: done }} }}\n  \
+            "{HEAD}  a: {{ invoke: x, transitions: {{ done: b }} }}\n  \
+             b:\n    invoke: {{ choose: person, question: \"Go?\" }}\n    transitions:\n      \
+             go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
              done: {{ final: true }}\n  failed: {{ final: true }}\n"
         );
-        let m = flatten("m", PathBuf::from("m.yml"), parse_machine(&text).unwrap());
+        let machines = BTreeMap::from([("m".to_string(), load("m", &text))]);
         let tmp = TempDir::new().unwrap();
         let ids = BTreeSet::new();
         let env = CheckEnv {
             decree_dir: tmp.path(),
             shared_source: None,
             machine_ids: &ids,
+            machines: &machines,
+            default_router: None,
         };
-        let found = m.validate(&text, &env);
+        let found = machines["m"].validate(&text, &env);
         assert_eq!(
             found,
-            [Problem {
-                at: "a".into(),
-                message: "script `x` not found; searched scripts/m, scripts (V12)".into(),
-            }]
+            [
+                Problem {
+                    at: "b".into(),
+                    message: "a `choose: person` state needs an `ask` script, which tells someone how to reply (V12)".into(),
+                },
+                Problem {
+                    at: "a".into(),
+                    message: "script `x` not found; searched scripts/m, scripts (V12)".into(),
+                },
+            ]
         );
     }
 }

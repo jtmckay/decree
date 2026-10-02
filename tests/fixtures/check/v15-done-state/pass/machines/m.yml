@@ -1,0 +1,14 @@
+name: m
+description: A compound state whose final state raises done.state.work.
+initial: work
+states:
+  work:
+    initial: step
+    transitions: { done.state.work: done }
+    states:
+      step:
+        invoke: work
+        transitions: { done: fin }
+      fin: { final: true }
+  done: { final: true }
+  failed: { final: true }

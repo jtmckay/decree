@@ -95,7 +95,12 @@ impl RoutineEntry {
 /// Top-level application config (deserialized from config.yml).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    // Optional so a 0.5 `config.yml`, which has no `commands`, loads until M4.1.
+    #[serde(default)]
     pub commands: CommandsConfig,
+    /// Router machine for `choose: model` invokes that name none (section 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_router: Option<String>,
     #[serde(default = "default_max_attempts", alias = "max_retries")]
     pub max_attempts: u32,
     #[serde(default = "default_max_depth")]
@@ -136,6 +141,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             commands: CommandsConfig::default(),
+            default_router: None,
             max_attempts: default_max_attempts(),
             max_depth: default_max_depth(),
             max_log_size: default_max_log_size(),

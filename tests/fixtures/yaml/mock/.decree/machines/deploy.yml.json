@@ -1,17 +1,24 @@
 {
-  "description": "Build, wait for a person to approve, then ship.",
+  "description": "Build, ask a person to approve, then ship.",
   "initial": "build",
   "name": "deploy",
   "states": {
     "approval": {
-      "description": "A person sends approve or reject.",
-      "onentry": [
-        "ask_person"
-      ],
-      "timeout_s": 86400,
+      "invoke": {
+        "ask": "ask_person",
+        "choose": "person",
+        "question": "Ship this build?",
+        "timeout_s": 86400
+      },
       "transitions": {
-        "approve": "ship",
-        "reject": "rejected"
+        "approve": {
+          "description": "Ship this build.",
+          "target": "ship"
+        },
+        "reject": {
+          "description": "Do not ship.",
+          "target": "rejected"
+        }
       }
     },
     "build": {

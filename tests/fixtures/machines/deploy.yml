@@ -1,15 +1,16 @@
+# Graph: ../graph/deploy.md
 name: deploy
-description: Build, wait for a person to approve, then ship.
+description: Build, ask a person to approve, then ship.
 initial: build
 states:
   build:
     invoke: build
     transitions: { done: approval }
-  approval:                        # waits: no invoke, no done
-    description: A person sends approve or reject.
-    onentry: [ask_person]          # posts the question; decree only knows it is waiting
-    timeout_s: 86400               # no reply in a day: error, which goes to failed
-    transitions: { approve: ship, reject: rejected }
+  approval:                        # a person picks one option; the run pauses for the reply
+    invoke: { choose: person, question: "Ship this build?", ask: ask_person, timeout_s: 86400 }
+    transitions:
+      approve: { target: ship, description: Ship this build. }
+      reject:  { target: rejected, description: Do not ship. }
   ship:
     invoke: ship
     transitions: { done: done }

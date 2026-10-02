@@ -1,0 +1,2 @@
+machines/m.yml: triage: `choose: model` names no `router`, and config.yml sets no `default_router` (V16)
+machines/m.yml: triage: min_confidence 80 is not between 0 and 1 (V16)

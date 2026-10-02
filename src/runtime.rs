@@ -20,8 +20,7 @@ use std::time::{Duration, Instant};
 use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Map, Value};
 
-use crate::cond::is_ident;
-use crate::machine::{DataSpec, LoadedMachine};
+use crate::machine::{is_ident, DataSpec, LoadedMachine};
 
 /// Directory holding scripts, relative to `.decree/` or `shared_source`.
 const SCRIPTS_DIR: &str = "scripts";
@@ -180,7 +179,7 @@ pub const RECEIVED_DIR: &str = "received";
 /// `events.jsonl` schema version (section 7).
 const EVENTS_VERSION: u64 = 1;
 
-/// stdout lines of an invoke kept in memory for the router prompt.
+/// stdout lines of an invoke kept in memory.
 pub const STDOUT_TAIL_LINES: usize = 50;
 
 /// How long a stopped script's process group gets between SIGTERM and SIGKILL.
@@ -192,9 +191,11 @@ const POLL: Duration = Duration::from_millis(10);
 /// Prefix of stderr lines in a script log, with one trailing space.
 const STDERR_PREFIX: &[u8] = b"[stderr] ";
 
-/// Events an invoke may not print (section 5, Rules).
+/// Events an invoke may not print and a `choose` option may not be (section 5, Rules).
 pub fn is_reserved_event(event: &str) -> bool {
-    matches!(event, "done" | "error") || event.starts_with("done.") || event.starts_with("error.")
+    matches!(event, "done" | "error" | "unsure")
+        || event.starts_with("done.")
+        || event.starts_with("error.")
 }
 
 /// When a script runs: SCXML `<onentry>`, `<invoke>` or `<onexit>`.
@@ -365,9 +366,13 @@ pub struct ScriptRun<'a> {
     pub visits: u32,
     pub attempt: u32,
     pub max_attempts: u32,
-    /// Set for `onentry` scripts of a waiting state, empty otherwise.
+    /// `DECREE_EVENTS`: what the state accepts, from `LoadedMachine::accepted_events`.
+    pub events: &'a [String],
+    /// `DECREE_WAIT_ID`, `DECREE_QUESTION` and `DECREE_CHOICES`: set for the `ask` script of
+    /// a `choose: person` state, empty otherwise.
     pub wait_id: &'a str,
-    pub accepts: &'a [String],
+    pub question: &'a str,
+    pub choices: &'a Path,
     pub timeout: Option<Duration>,
 }
 
@@ -381,8 +386,10 @@ impl<'a> ScriptRun<'a> {
             visits: 0,
             attempt: 1,
             max_attempts: 1,
+            events: &[],
             wait_id: "",
-            accepts: &[],
+            question: "",
+            choices: Path::new(""),
             timeout: None,
         }
     }
@@ -431,18 +438,15 @@ pub enum InvokeEvent {
     /// Printed, but reserved or matching no transition of the state or its ancestors:
     /// the event is `error`, and the `transition` event records `invalid_event`.
     Invalid(String),
-    /// A router state's invoke exited 0 without printing an event: the router decides.
-    Router,
 }
 
 impl InvokeEvent {
-    /// The event name, or `None` when the router decides.
-    pub fn event(&self) -> Option<&str> {
+    /// The event name.
+    pub fn event(&self) -> &str {
         match self {
-            InvokeEvent::ExitCode(e) => Some(e),
-            InvokeEvent::Stdout(e) => Some(e),
-            InvokeEvent::Invalid(_) => Some("error"),
-            InvokeEvent::Router => None,
+            InvokeEvent::ExitCode(e) => e,
+            InvokeEvent::Stdout(e) => e,
+            InvokeEvent::Invalid(_) => "error",
         }
     }
 }
@@ -501,9 +505,9 @@ impl Executor {
             .max(1)
     }
 
-    /// Run `state`'s invoke, re-running it in place while it fails and attempts remain,
-    /// and pick its event. Each failed attempt but the last appends a `transition` event
-    /// with `source: "attempt"`. `None` if the state has no invoke.
+    /// Run `state`'s script invoke, re-running it in place while it fails and attempts
+    /// remain, and pick its event. Each failed attempt but the last appends a `transition`
+    /// event with `source: "attempt"`. `None` if the state does not invoke a script.
     pub fn run_invoke(
         &mut self,
         machine: &LoadedMachine,
@@ -511,16 +515,18 @@ impl Executor {
         visits: u32,
     ) -> Result<Option<InvokeOutcome>, RuntimeError> {
         let node = &machine.nodes[state];
-        let Some(script) = node.invoke.as_deref() else {
+        let Some(script) = node.invoke.as_ref().and_then(|i| i.script()) else {
             return Ok(None);
         };
         let max_attempts = self.max_attempts(machine, state);
+        let events = machine.accepted_events(state);
         let mut attempt = 1;
         let execution = loop {
             let execution = self.run_script(&ScriptRun {
                 visits,
                 attempt,
                 max_attempts,
+                events: &events,
                 timeout: node.timeout_s.map(Duration::from_secs),
                 ..ScriptRun::new(script, &node.id, Phase::Invoke)
             })?;
@@ -538,7 +544,6 @@ impl Executor {
                     InvokeEvent::Invalid(e)
                 }
                 Some(e) => InvokeEvent::Stdout(e),
-                None if node.router.is_some() => InvokeEvent::Router,
                 None => InvokeEvent::ExitCode("done"),
             }
         };
@@ -572,8 +577,7 @@ impl Executor {
             .map_err(io_err(&path))
     }
 
-    /// The next `NNNN-<state>-<name>.log` filename in the run folder. Script logs and the
-    /// logs decree writes itself (`_router`) share the counter, so the folder reads in order.
+    /// The next `NNNN-<state>-<name>.log` filename in the run folder.
     pub fn reserve_log(&mut self, state: &str, name: &str) -> String {
         let log = format!("{:04}-{state}-{name}.log", self.next_log);
         self.next_log += 1;
@@ -677,8 +681,8 @@ impl Executor {
     /// The section 6 environment for `run`, added to the inherited one.
     fn env(&self, run: &ScriptRun) -> Vec<(String, std::ffi::OsString)> {
         let info = &self.info;
-        let mut accepts = run.accepts.to_vec();
-        accepts.sort();
+        let mut events = run.events.to_vec();
+        events.sort();
         let received = self.received.as_deref().unwrap_or(Path::new(""));
         let mut vars: Vec<(String, std::ffi::OsString)> = [
             ("PROJECT_ROOT", info.project_root.as_os_str().into()),
@@ -696,8 +700,10 @@ impl Executor {
                 (run.attempt == run.max_attempts).to_string().into(),
             ),
             ("TRIGGER", info.trigger.clone().into()),
+            ("EVENTS", events.join(" ").into()),
             ("WAIT_ID", run.wait_id.into()),
-            ("ACCEPTS", accepts.join(" ").into()),
+            ("QUESTION", run.question.into()),
+            ("CHOICES", run.choices.as_os_str().into()),
             ("RECEIVED", received.as_os_str().into()),
         ]
         .into_iter()
@@ -1229,6 +1235,10 @@ mod executor_tests {
         load_machine_text("m", Path::new("m.yml"), &text).unwrap()
     }
 
+    fn run_dir_choices(project: &Project) -> PathBuf {
+        project.run_dir().join("choices.json")
+    }
+
     fn invoke(project: &Project, state: &str) -> InvokeOutcome {
         let m = machine(state);
         let s = m.find("s").unwrap();
@@ -1262,7 +1272,7 @@ mod executor_tests {
         let p = Project::new(&["exit_zero"]);
         let out = invoke(&p, "{ invoke: exit_zero, transitions: { done: done } }");
         assert_eq!(out.event, InvokeEvent::ExitCode("done"));
-        assert_eq!(out.event.event(), Some("done"));
+        assert_eq!(out.event.event(), "done");
         assert_eq!(out.execution.exit_code, Some(0));
         assert_eq!(p.events_of("script").len(), 1);
     }
@@ -1315,7 +1325,7 @@ mod executor_tests {
             "{ invoke: print_pass, transitions: { done: done, pass: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Stdout("pass".to_string()));
-        assert_eq!(out.event.event(), Some("pass"));
+        assert_eq!(out.event.event(), "pass");
     }
 
     #[test]
@@ -1337,7 +1347,7 @@ mod executor_tests {
             "{ invoke: print_undeclared, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Invalid("nope".to_string()));
-        assert_eq!(out.event.event(), Some("error"));
+        assert_eq!(out.event.event(), "error");
     }
 
     #[test]
@@ -1373,18 +1383,32 @@ mod executor_tests {
     }
 
     #[test]
-    fn router_state_without_printed_event_leaves_the_choice_to_the_router() {
-        let p = Project::new(&["exit_zero", "print_pass"]);
-        let router = "{ router: llm, default: pass, description: D., transitions: { pass: done, ask: done } }";
-        let out = invoke(&p, &router.replace("router:", "invoke: exit_zero, router:"));
-        assert_eq!(out.event, InvokeEvent::Router);
-        assert_eq!(out.event.event(), None);
-        // A printed event skips the router.
+    fn printed_unsure_is_reserved() {
+        let p = Project::new(&["print_unsure"]);
         let out = invoke(
             &p,
-            &router.replace("router:", "invoke: print_pass, router:"),
+            "{ invoke: print_unsure, transitions: { done: done, unsure: done } }",
         );
-        assert_eq!(out.event, InvokeEvent::Stdout("pass".to_string()));
+        assert_eq!(out.event, InvokeEvent::Invalid("unsure".to_string()));
+        assert_eq!(out.event.event(), "error");
+    }
+
+    #[test]
+    fn decision_states_run_no_script() {
+        let p = Project::new(&[]);
+        for state in [
+            "{ invoke: { check: { visits: s, less_than: 2 } }, transitions: { yes: done, no: done } }",
+            "{ invoke: { choose: person, question: \"Q?\", ask: x }, transitions: { a: done, b: done } }",
+            "{ invoke: { machine: other }, transitions: { done: done } }",
+        ] {
+            let m = machine(state);
+            let out = p
+                .executor()
+                .run_invoke(&m, m.find("s").unwrap(), 1)
+                .unwrap();
+            assert!(out.is_none(), "{state}");
+        }
+        assert!(p.events().is_empty());
     }
 
     #[test]
@@ -1464,15 +1488,18 @@ mod executor_tests {
         let mut exec = Executor::open(info, Arc::clone(&p.shutdown)).unwrap();
         let received = p.run_dir().join("received/reply.md");
         exec.received = Some(received.clone());
-        let accepts = ["retry".to_string(), "approve".to_string()];
+        let events = ["retry".to_string(), "approve".to_string()];
+        let choices = run_dir_choices(&p);
         let out = exec
             .run_script(&ScriptRun {
                 visits: 2,
                 attempt: 1,
                 max_attempts: 1,
+                events: &events,
                 wait_id: "w-id",
-                accepts: &accepts,
-                ..ScriptRun::new("print_env", "review", Phase::OnEntry)
+                question: "Tests still fail. What next?",
+                choices: &choices,
+                ..ScriptRun::new("print_env", "review", Phase::Invoke)
             })
             .unwrap();
         let log = p.log(&out.log);
@@ -1491,15 +1518,20 @@ mod executor_tests {
             ("DECREE_MESSAGE_ID", RUN_ID.to_string()),
             ("DECREE_MACHINE", "m".to_string()),
             ("DECREE_STATE", "review".to_string()),
-            ("DECREE_PHASE", "onentry".to_string()),
+            ("DECREE_PHASE", "invoke".to_string()),
             ("DECREE_VISITS", "2".to_string()),
             ("DECREE_RUN_DIR", run_dir.to_str().unwrap().to_string()),
             ("DECREE_ATTEMPT", "1".to_string()),
             ("DECREE_MAX_ATTEMPTS", "1".to_string()),
             ("DECREE_FINAL_ATTEMPT", "true".to_string()),
             ("DECREE_TRIGGER", "inbox".to_string()),
+            ("DECREE_EVENTS", "approve retry".to_string()),
             ("DECREE_WAIT_ID", "w-id".to_string()),
-            ("DECREE_ACCEPTS", "approve retry".to_string()),
+            (
+                "DECREE_QUESTION",
+                "Tests still fail. What next?".to_string(),
+            ),
+            ("DECREE_CHOICES", choices.to_str().unwrap().to_string()),
             ("DECREE_RECEIVED", received.to_str().unwrap().to_string()),
             ("DECREE_DATA_MAX_ROUNDS", "5".to_string()),
             ("DECREE_DATA_STRICT", "false".to_string()),
@@ -1508,6 +1540,19 @@ mod executor_tests {
         for (name, value) in &expected {
             assert_eq!(vars.get(name), Some(&value.as_str()), "{name}\n{log}");
         }
+    }
+
+    #[test]
+    fn invoke_sees_the_events_its_state_accepts() {
+        let p = Project::new(&["print_env"]);
+        let m = machine("{ invoke: print_env, transitions: { pass: done, fail: s, done: done } }");
+        let out = p
+            .executor()
+            .run_invoke(&m, m.find("s").unwrap(), 1)
+            .unwrap()
+            .unwrap();
+        let log = p.log(&out.execution.log);
+        assert!(log.lines().any(|l| l == "DECREE_EVENTS=fail pass"), "{log}");
     }
 
     #[test]
@@ -1526,8 +1571,10 @@ mod executor_tests {
             "DECREE_ATTEMPT=1",
             "DECREE_MAX_ATTEMPTS=2",
             "DECREE_FINAL_ATTEMPT=false",
+            "DECREE_EVENTS=",
             "DECREE_WAIT_ID=",
-            "DECREE_ACCEPTS=",
+            "DECREE_QUESTION=",
+            "DECREE_CHOICES=",
             "DECREE_RECEIVED=",
         ] {
             assert!(log.lines().any(|l| l == line), "{line}\n{log}");

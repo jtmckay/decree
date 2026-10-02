@@ -7,12 +7,10 @@ states:
     max_attempts: 2
     transitions: { done: verify }
   verify:
-    description: The work was checked; decide whether to implement again.
     invoke: verify
-    router: llm
-    default: pass
-    transitions:
-      pass:  { target: done, description: Good enough. }
-      retry: { target: implement, description: Implement again., cond: "visits.implement < 2" }
+    transitions: { done: rounds_left }
+  rounds_left:
+    invoke: { check: { visits: implement, less_than: 2 } }
+    transitions: { yes: implement, no: done }
   done:   { final: true }
   failed: { final: true }

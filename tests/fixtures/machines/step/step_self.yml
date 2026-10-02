@@ -1,18 +1,13 @@
 name: step_self
-description: A router state that can transition to itself.
+description: A check state that transitions to itself until it has been entered twice.
 onentry: [root_entry]
 onexit: [root_exit]
 initial: a
 states:
   a:
-    description: Decide whether to run a again.
     onentry: [a_entry]
-    invoke: a_invoke
+    invoke: { check: { visits: a, less_than: 2 } }
     onexit: [a_exit]
-    router: llm
-    default: finish
-    transitions:
-      again:  { target: a, description: Run a again. }
-      finish: { target: done, description: Finish the run. }
+    transitions: { yes: a, no: done }
   done:   { final: true, onentry: [done_entry] }
   failed: { final: true, onentry: [failed_entry] }

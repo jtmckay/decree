@@ -1,0 +1,30 @@
+{
+  "description": "Implement a feature, then deploy it.",
+  "initial": "build",
+  "name": "ship",
+  "states": {
+    "build": {
+      "invoke": {
+        "machine": "feature"
+      },
+      "transitions": {
+        "done": "release"
+      }
+    },
+    "done": {
+      "final": true
+    },
+    "failed": {
+      "final": true
+    },
+    "release": {
+      "invoke": {
+        "machine": "deploy"
+      },
+      "transitions": {
+        "done": "done",
+        "rejected": "done"
+      }
+    }
+  }
+}

@@ -44,3 +44,4 @@
 44-v05-script-executor.md
 45-v05-step-loop.md
 46-v05-composition-waiting.md
+47-v05-decision-invokes.md

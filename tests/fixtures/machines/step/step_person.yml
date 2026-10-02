@@ -1,0 +1,28 @@
+name: step_person
+description: Build, ask a person inside a compound state, then ship.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: build
+states:
+  build:
+    invoke: build_invoke
+    transitions: { done: gate }
+  gate:
+    onentry: [gate_entry]
+    onexit: [gate_exit]
+    initial: approval
+    states:
+      approval:
+        onentry: [approval_entry]
+        onexit: [approval_exit]
+        invoke: { choose: person, question: "Ship this build?", ask: ask_person, timeout_s: 60 }
+        transitions:
+          approve: { target: ship, description: Ship this build. }
+          reject:  { target: rejected, description: Do not ship. }
+  ship:
+    onentry: [ship_entry]
+    invoke: ship_invoke
+    transitions: { done: done }
+  rejected:  { final: true, onentry: [rejected_entry] }
+  done:      { final: true, onentry: [done_entry] }
+  failed:    { final: true, onentry: [failed_entry] }

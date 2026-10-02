@@ -270,6 +270,7 @@ dependencies = [
  "inquire",
  "libc",
  "predicates",
+ "regex",
  "serde",
  "serde_json",
  "serde_norway",

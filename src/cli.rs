@@ -44,12 +44,9 @@ pub enum Command {
     /// Validate machines and pending messages; prints one line per error
     Check,
 
-    /// Print a machine, or the whole system, as a Mermaid diagram in Markdown
+    /// Write .decree/graph/: a Mermaid diagram in Markdown per machine, and system.md
     #[command(after_help = GRAPH_VIEWING)]
-    Graph {
-        /// Machine to draw [default: every machine, its emits edges and cron entry points]
-        machine: Option<String>,
-    },
+    Graph,
 
     /// List routines or show routine detail
     Routine {
@@ -120,10 +117,10 @@ pub enum Command {
 /// How to view `decree graph` output (spec section 9, Viewing).
 const GRAPH_VIEWING: &str = "\
 Viewing:
-  1. Save the output: `decree graph feature > feature.md` (or `decree graph > machines.md`).
-  2. Open it in VS Code and press Ctrl+Shift+V (Cmd+Shift+V on macOS) for the preview;
+  1. Run `decree graph`, then open `.decree/graph/<machine>.md` (or `system.md`).
+  2. In VS Code, press Ctrl+Shift+V (Cmd+Shift+V on macOS) for the preview;
      VS Code 1.121 and later render Mermaid in Markdown without an extension.
-     GitHub, GitLab and Obsidian render the file as it is.
+     GitHub, GitLab and Obsidian render the committed files as they are.
   3. Without any of those, copy the lines inside the `mermaid` fence into https://mermaid.live.";
 
 /// AI backends `init` can configure, in 0.4.2's detection order.

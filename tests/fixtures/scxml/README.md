@@ -7,11 +7,11 @@ The manifest (`https://www.w3.org/Voice/2013/scxml-irp/manifest.xml`) and every 
 A test could be ported if it uses nothing outside the subset, read this way:
 
 - `<state>`, `<final>`, `initial`, `type="internal"`, `done.state.<id>` and transitions with one event descriptor and one target are in the subset.
-- An eventless transition with a target and no `cond` is decree's pass-through `done` (section 5, Kinds of state).
+- An eventless transition with a target and no `cond` is decree's pass-through `done` (section 5, Invoke).
 - A missing `initial` attribute is written as an explicit `initial:` naming the first child in document order, because decree requires `initial`. The exception is test 355, which tests that default itself.
 - Executable content (`<raise>`, `<send>`, `<assign>`, `<log>`, `<if>`, `<foreach>`, `<script>`, `<cancel>`) is outside the subset even inside `<onentry>` or `<onexit>`: decree's `onentry` and `onexit` hold script names, never executable content.
 
-**Result: no test falls inside the subset, so none is ported.** The IRP checks behaviour by raising or sending events, by data model values, or with `*` catch-all transitions, which decree does not have. Without them, the only events are `done.state.<id>` and eventless transitions, and the one test limited to those (355) needs the default initial state. decree's composition semantics are tested instead by the `composition_*`, `internal_*`, `nested_final_*` and `waiting_*` tests in `src/interpreter.rs`, on the fixtures in `tests/fixtures/machines/step/`.
+**Result: no test falls inside the subset, so none is ported.** The IRP checks behaviour by raising or sending events, by data model values, or with `*` catch-all transitions, which decree does not have. Without them, the only events are `done.state.<id>` and eventless transitions, and the one test limited to those (355) needs the default initial state. decree's composition semantics are tested instead by the `composition_*`, `internal_*`, `nested_final_*`, `check_*` and `person_*` tests in `src/interpreter.rs`, on the fixtures in `tests/fixtures/machines/step/`.
 
 A ported test would be `<test id>.yml` here: a decree machine whose run ends in the final state `pass`. `src/interpreter.rs` runs every `*.yml` in this directory and checks that the table below lists every other test.
 
@@ -164,18 +164,18 @@ Each row gives the test id, the SCXML section it covers, its conformance level, 
 | 422 | 3.13 | mandatory | `<invoke>` of an SCXML session, `<send>`, `<content>`, `<datamodel>`, several event descriptors on one transition, several transitions for one event, targetless transition |
 | 423 | 3.13 | mandatory | `<send>`, `<raise>`, `<datamodel>`, event wildcard `*` |
 | 436 | B.1 | mandatory | `<parallel>`, `<datamodel>`, several transitions for one event |
-| 444 | B.2 | optional | `<datamodel>`, `cond` outside a router state, several transitions for one event |
-| 445 | B.2 | optional | `<datamodel>`, `cond` outside a router state, several transitions for one event |
-| 446 | B.2 | optional | `<datamodel>`, `cond` outside a router state, several transitions for one event |
-| 448 | B.2 | optional | `<parallel>`, `<datamodel>`, `cond` outside a router state, several transitions for one event |
-| 449 | B.2 | optional | `<datamodel>`, `cond` outside a router state, several transitions for one event |
+| 444 | B.2 | optional | `<datamodel>`, `cond` on a transition, several transitions for one event |
+| 445 | B.2 | optional | `<datamodel>`, `cond` on a transition, several transitions for one event |
+| 446 | B.2 | optional | `<datamodel>`, `cond` on a transition, several transitions for one event |
+| 448 | B.2 | optional | `<parallel>`, `<datamodel>`, `cond` on a transition, several transitions for one event |
+| 449 | B.2 | optional | `<datamodel>`, `cond` on a transition, several transitions for one event |
 | 451 | B.2 | optional | `<parallel>`, `<datamodel>`, several transitions for one event |
-| 452 | B.2 | optional | `<raise>`, `<assign>`, `<script>`, `<datamodel>`, `cond` outside a router state, event wildcard `*` |
-| 453 | B.2 | optional | `<raise>`, `<datamodel>`, `cond` outside a router state, event wildcard `*` |
+| 452 | B.2 | optional | `<raise>`, `<assign>`, `<script>`, `<datamodel>`, `cond` on a transition, event wildcard `*` |
+| 453 | B.2 | optional | `<raise>`, `<datamodel>`, `cond` on a transition, event wildcard `*` |
 | 456 | B.2 | optional | `<script>`, `<datamodel>`, several transitions for one event |
-| 457 | B.2 | optional | `<raise>`, `<assign>`, `<foreach>`, `<log>`, `<datamodel>`, `cond` outside a router state, event wildcard `*`, several transitions for one event |
-| 459 | B.2 | optional | `<assign>`, `<if>`, `<foreach>`, `<log>`, `<datamodel>`, `cond` outside a router state, several transitions for one event |
-| 460 | B.2 | optional | `<assign>`, `<foreach>`, `<log>`, `<datamodel>`, `cond` outside a router state, several transitions for one event |
+| 457 | B.2 | optional | `<raise>`, `<assign>`, `<foreach>`, `<log>`, `<datamodel>`, `cond` on a transition, event wildcard `*`, several transitions for one event |
+| 459 | B.2 | optional | `<assign>`, `<if>`, `<foreach>`, `<log>`, `<datamodel>`, `cond` on a transition, several transitions for one event |
+| 460 | B.2 | optional | `<assign>`, `<foreach>`, `<log>`, `<datamodel>`, `cond` on a transition, several transitions for one event |
 | 487 | 5.4 | mandatory | `<raise>`, `<assign>`, `<datamodel>`, event wildcard `*` |
 | 488 | 5.7 | mandatory | `<donedata>`, `<param>`, `<datamodel>`, event wildcard `*`, several transitions for one event |
 | 495 | C.1 | mandatory | `<send>`, event wildcard `*` |
@@ -208,16 +208,16 @@ Each row gives the test id, the SCXML section it covers, its conformance level, 
 | 552 | 5.3 | mandatory | `<datamodel>`, several transitions for one event |
 | 553 | 6.2 | mandatory | `<send>`, `<datamodel>` |
 | 554 | 6.4 | mandatory | `<invoke>` of an SCXML session, `<send>`, `<content>`, `<datamodel>` |
-| 557 | B.2 | optional | `<datamodel>`, `cond` outside a router state, several transitions for one event |
-| 558 | B.2 | optional | `<datamodel>`, `cond` outside a router state, several transitions for one event |
-| 560 | B.2 | optional | `<send>`, `<param>`, `<datamodel>`, `cond` outside a router state, event wildcard `*` |
-| 561 | B.2 | optional | `<send>`, `<content>`, `<datamodel>`, `cond` outside a router state, event wildcard `*` |
-| 562 | B.2 | optional | `<send>`, `<content>`, `<datamodel>`, `cond` outside a router state, event wildcard `*` |
+| 557 | B.2 | optional | `<datamodel>`, `cond` on a transition, several transitions for one event |
+| 558 | B.2 | optional | `<datamodel>`, `cond` on a transition, several transitions for one event |
+| 560 | B.2 | optional | `<send>`, `<param>`, `<datamodel>`, `cond` on a transition, event wildcard `*` |
+| 561 | B.2 | optional | `<send>`, `<content>`, `<datamodel>`, `cond` on a transition, event wildcard `*` |
+| 562 | B.2 | optional | `<send>`, `<content>`, `<datamodel>`, `cond` on a transition, event wildcard `*` |
 | 567 | C.2 | optional | `<send>`, `<assign>`, `<param>`, `<datamodel>`, event wildcard `*`, several transitions for one event |
-| 569 | B.2 | optional | `<datamodel>`, `cond` outside a router state, several transitions for one event |
+| 569 | B.2 | optional | `<datamodel>`, `cond` on a transition, several transitions for one event |
 | 570 | 3.7 | mandatory | `<parallel>`, `<send>`, `<raise>`, `<assign>`, `<datamodel>`, event wildcard `*`, targetless transition |
 | 576 | 3.2 | mandatory | `<parallel>`, `<send>`, `<raise>` |
 | 577 | C.2 | optional | `<send>`, event wildcard `*` |
-| 578 | B.2 | optional | `<send>`, `<content>`, `<datamodel>`, `cond` outside a router state, event wildcard `*` |
+| 578 | B.2 | optional | `<send>`, `<content>`, `<datamodel>`, `cond` on a transition, event wildcard `*` |
 | 579 | 3.10 | mandatory | `<history>`, `<send>`, `<raise>`, `<datamodel>`, event wildcard `*`, `<initial>` element |
 | 580 | 3.10 | mandatory | `<parallel>`, `<history>`, `<send>`, `<datamodel>`, several transitions for one event, `<initial>` element |

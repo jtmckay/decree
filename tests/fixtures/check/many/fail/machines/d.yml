@@ -1,12 +1,12 @@
 name: d
-description: A router state.
+description: A check that handles neither of its events.
 initial: work
 states:
   work:
     invoke: work
-    router: llm
-    transitions:
-      pass: { target: done, description: The work is finished. }
-      retry: { target: work, description: Run the work again. }
+    transitions: { done: again, skip: done }
+  again:
+    invoke: { check: { visits: work, less_than: 2 } }
+    transitions: { pass: done }
   done: { final: true }
   failed: { final: true }

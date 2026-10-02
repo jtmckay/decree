@@ -38,7 +38,9 @@ limit, respond 429 with a `Retry-After` header in seconds.
   **Then** the upload succeeds
 
 Run so far:
-- implement: 1 visit
+- precheck: done
+- implement: done
+- verify: fail
 - rounds_left: yes
 
 Options:

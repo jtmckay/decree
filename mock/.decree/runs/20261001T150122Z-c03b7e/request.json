@@ -18,7 +18,9 @@
   "input": "running 18 tests\n...\ntest plans::reads_plans_toml ... FAILED\n  No such file: config/plans.toml\n\ntest result: FAILED. 17 passed; 1 failed\n",
   "message_body": "# Per-plan upload limits\n\n## Requirements\n\nReplace the fixed limit of 10 per minute with a per-plan limit read from\n`plans.toml`. Unknown plans use the free-plan limit.\n\n## Acceptance Criteria\n\n- **Given** a key on the `pro` plan with `uploads_per_minute = 100`\n  **When** it uploads for the 50th time in a minute\n  **Then** the upload succeeds\n",
   "history": [
-    "implement: 1 visit",
+    "precheck: done",
+    "implement: done",
+    "verify: fail",
     "rounds_left: yes"
   ],
   "min_confidence": 0.8

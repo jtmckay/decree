@@ -1,0 +1,20 @@
+{
+  "description": "Ask Claude to pick one of the options in the request.",
+  "initial": "ask",
+  "name": "claude_router",
+  "states": {
+    "ask": {
+      "invoke": "ask_claude",
+      "max_attempts": 2,
+      "transitions": {
+        "done": "done"
+      }
+    },
+    "done": {
+      "final": true
+    },
+    "failed": {
+      "final": true
+    }
+  }
+}

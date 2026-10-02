@@ -1,6 +1,6 @@
 machines/a.yml: work: transition `done` targets unknown state `nowhere` (V4)
 machines/a.yml: done: state is unreachable from the root `initial` (V11)
 machines/b.yml: line 4: no root-level final state `failed`: every machine needs one for unhandled errors (V5)
-machines/c.yml: x: unknown field `invok`, expected one of `final`, `description`, `invoke`, `max_attempts`, `timeout_s`, `onentry`, `onexit`, `initial`, `states`, `transitions`, `router`, `default`, `emits`
-machines/d.yml: work: router state needs a `default` event (V9)
-machines/d.yml: work: router state needs a `description` (V9)
+machines/c.yml: x: unknown field `invok`, expected one of `final`, `description`, `invoke`, `max_attempts`, `timeout_s`, `onentry`, `onexit`, `initial`, `states`, `transitions`, `emits` (V19)
+machines/d.yml: again: a `check` state must handle `yes`, itself or through an ancestor (V8)
+machines/d.yml: again: a `check` state must handle `no`, itself or through an ancestor (V8)

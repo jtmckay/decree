@@ -1,48 +1,82 @@
-//! Transition conditions: SCXML `cond` under decree's custom data model (spec section 5, Rules).
+//! Conditions of `check` invokes (spec section 5, Conditions): typed objects with one
+//! subject and, for `visits` and `data`, one operator, so the YAML parser and `decree check`
+//! catch mistakes.
 //!
-//! A `cond` is exactly one comparison, `<operand> <op> <operand>`. Operands are integer
-//! literals, double-quoted strings, `true`, `false`, `data.<name>` and `visits.<state>`;
-//! operators are `==` `!=` `<` `<=` `>` `>=`. There is no `&&`, `||` or parentheses.
+//! ```yaml
+//! { matches: '^ok' }
+//! { visits: implement, less_than: { data: max_rounds } }
+//! { data: mode, equals: fast }
+//! ```
 //!
 //! The spec defines no type coercion, so evaluation refuses to compare values of different
 //! types, and the ordering operators apply to integers only.
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::str::FromStr;
 
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
-/// A parsed `cond`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Cond {
-    pub left: Operand,
-    pub op: Op,
-    pub right: Operand,
+/// A `check` condition, as written. `shape` checks that it has exactly one subject and the
+/// operators that subject needs (V10).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Condition {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matches: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visits: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub equals: Option<Operand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_equals: Option<Operand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub less_than: Option<Operand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_most: Option<Operand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more_than: Option<Operand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_least: Option<Operand>,
 }
 
+/// The value an operator compares with: a literal, or `{ data: <name> }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operand {
     Int(i64),
     Str(String),
     Bool(bool),
-    /// `data.<name>`
     Data(String),
-    /// `visits.<state>`
-    Visits(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+    Equals,
+    NotEquals,
+    LessThan,
+    AtMost,
+    MoreThan,
+    AtLeast,
 }
 
-/// A value a `cond` compares: a literal, a `data` value, or a visit count.
+/// A condition's subject and, for `visits` and `data`, its operator and value.
+pub type Shape<'a> = (Subject<'a>, Option<(Op, &'a Operand)>);
+
+/// What a condition tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject<'a> {
+    /// The input matches this regular expression.
+    Matches(&'a str),
+    /// How many times this state has been entered.
+    Visits(&'a str),
+    /// This `data` value.
+    Data(&'a str),
+}
+
+/// A value a condition compares: a literal, a `data` value or a visit count.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Int(i64),
@@ -52,20 +86,18 @@ pub enum Value {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CondError {
-    #[error("empty cond: expected `<operand> <op> <operand>`")]
-    Empty,
-    #[error("unexpected `{0}`: a cond is one comparison, without `&&`, `||` or parentheses")]
-    UnexpectedChar(char),
-    #[error("unterminated string literal")]
-    UnterminatedString,
-    #[error("`\\` in a string literal: the cond grammar has no escapes")]
-    StringEscape,
-    #[error("unknown operand `{0}`: expected an integer, a double-quoted string, `true`, `false`, `data.<name>` or `visits.<state>`")]
-    UnknownOperand(String),
-    #[error("integer literal `{0}` is out of range")]
-    IntOutOfRange(String),
-    #[error("expected exactly one comparison `<operand> <op> <operand>`, got: {0}")]
-    Shape(String),
+    #[error("a condition needs one subject: `matches`, `visits` or `data`")]
+    NoSubject,
+    #[error("a condition has exactly one subject, not {0}; use two `check` states in a row")]
+    ManySubjects(String),
+    #[error("`{0}` needs one operator: `equals`, `not_equals`, `less_than`, `at_most`, `more_than` or `at_least`")]
+    NoOperator(&'static str),
+    #[error("a condition has exactly one operator, not {0}; use two `check` states in a row")]
+    ManyOperators(String),
+    #[error("`matches` takes no operator, but has `{0}`")]
+    OperatorOnMatches(&'static str),
+    #[error("`matches` '{pattern}' is not a regular expression: {message}")]
+    Regex { pattern: String, message: String },
     #[error("unknown data `{0}`")]
     UnknownData(String),
     #[error("cannot compare {left} with {right}")]
@@ -77,56 +109,32 @@ pub enum CondError {
     NotOrdered { op: Op, kind: &'static str },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Token {
-    Str(String),
-    Op(Op),
-    Word(String),
-}
-
-impl Token {
-    fn describe(&self) -> String {
+impl Op {
+    pub fn as_str(self) -> &'static str {
         match self {
-            Token::Str(s) => format!("\"{s}\""),
-            Token::Op(op) => op.to_string(),
-            Token::Word(w) => w.clone(),
+            Op::Equals => "equals",
+            Op::NotEquals => "not_equals",
+            Op::LessThan => "less_than",
+            Op::AtMost => "at_most",
+            Op::MoreThan => "more_than",
+            Op::AtLeast => "at_least",
         }
+    }
+
+    /// Whether the operator orders its operands, and so compares integers only.
+    pub fn is_ordering(self) -> bool {
+        !matches!(self, Op::Equals | Op::NotEquals)
     }
 }
 
 impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Op::Eq => "==",
-            Op::Ne => "!=",
-            Op::Lt => "<",
-            Op::Le => "<=",
-            Op::Gt => ">",
-            Op::Ge => ">=",
-        })
-    }
-}
-
-impl fmt::Display for Operand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Operand::Int(n) => write!(f, "{n}"),
-            Operand::Str(s) => write!(f, "\"{s}\""),
-            Operand::Bool(b) => write!(f, "{b}"),
-            Operand::Data(name) => write!(f, "data.{name}"),
-            Operand::Visits(state) => write!(f, "visits.{state}"),
-        }
-    }
-}
-
-impl fmt::Display for Cond {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} {}", self.left, self.op, self.right)
+        f.write_str(self.as_str())
     }
 }
 
 impl Value {
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Value::Int(_) => "an int",
             Value::Str(_) => "a string",
@@ -135,191 +143,212 @@ impl Value {
     }
 }
 
-impl FromStr for Cond {
-    type Err = CondError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        parse(s)
-    }
-}
-
-/// Parse a `cond` string.
-pub fn parse(input: &str) -> Result<Cond, CondError> {
-    let tokens = tokenize(input)?;
-    match tokens.as_slice() {
-        [] => Err(CondError::Empty),
-        [left, Token::Op(op), right] => Ok(Cond {
-            left: operand(left)?,
-            op: *op,
-            right: operand(right)?,
-        }),
-        _ => Err(CondError::Shape(
-            tokens
-                .iter()
-                .map(Token::describe)
-                .collect::<Vec<_>>()
-                .join(" "),
-        )),
-    }
-}
-
-fn tokenize(input: &str) -> Result<Vec<Token>, CondError> {
-    let mut tokens = Vec::new();
-    let mut chars = input.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        if c.is_whitespace() {
-            chars.next();
-        } else if c == '"' {
-            chars.next();
-            let mut s = String::new();
-            loop {
-                match chars.next() {
-                    None => return Err(CondError::UnterminatedString),
-                    Some('"') => break,
-                    Some('\\') => return Err(CondError::StringEscape),
-                    Some(ch) => s.push(ch),
-                }
-            }
-            tokens.push(Token::Str(s));
-        } else if matches!(c, '=' | '!' | '<' | '>') {
-            chars.next();
-            let eq = chars.next_if_eq(&'=').is_some();
-            let op = match (c, eq) {
-                ('=', true) => Op::Eq,
-                ('!', true) => Op::Ne,
-                ('<', false) => Op::Lt,
-                ('<', true) => Op::Le,
-                ('>', false) => Op::Gt,
-                ('>', true) => Op::Ge,
-                _ => return Err(CondError::UnexpectedChar(c)),
-            };
-            tokens.push(Token::Op(op));
-        } else if is_word_char(c) {
-            let mut w = String::new();
-            while let Some(ch) = chars.next_if(|&ch| is_word_char(ch)) {
-                w.push(ch);
-            }
-            tokens.push(Token::Word(w));
-        } else {
-            return Err(CondError::UnexpectedChar(c));
+impl fmt::Display for Operand {
+    /// As a graph note shows it: `3`, `fast`, `true` or `data.max_rounds`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operand::Int(n) => write!(f, "{n}"),
+            Operand::Str(s) => f.write_str(s),
+            Operand::Bool(b) => write!(f, "{b}"),
+            Operand::Data(name) => write!(f, "data.{name}"),
         }
     }
-    Ok(tokens)
 }
 
-fn is_word_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')
+impl<'de> Deserialize<'de> for Operand {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde_norway::Value as Yaml;
+        let expected = "a value is an int, a string, a bool or `{ data: <name> }`";
+        match Yaml::deserialize(deserializer)? {
+            Yaml::String(s) => Ok(Operand::Str(s)),
+            Yaml::Bool(b) => Ok(Operand::Bool(b)),
+            Yaml::Number(n) => n
+                .as_i64()
+                .map(Operand::Int)
+                .ok_or_else(|| D::Error::custom(format!("`{n}`: {expected}"))),
+            Yaml::Mapping(map) => {
+                let mut entries = map.into_iter();
+                match (entries.next(), entries.next()) {
+                    (Some((Yaml::String(key), Yaml::String(name))), None) if key == "data" => {
+                        Ok(Operand::Data(name))
+                    }
+                    _ => Err(D::Error::custom(expected)),
+                }
+            }
+            _ => Err(D::Error::custom(expected)),
+        }
+    }
 }
 
-fn operand(token: &Token) -> Result<Operand, CondError> {
-    let word = match token {
-        Token::Str(s) => return Ok(Operand::Str(s.clone())),
-        Token::Op(op) => return Err(CondError::UnknownOperand(op.to_string())),
-        Token::Word(w) => w.as_str(),
-    };
-    match word {
-        "true" => return Ok(Operand::Bool(true)),
-        "false" => return Ok(Operand::Bool(false)),
-        _ => {}
+impl Serialize for Operand {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Operand::Int(n) => serializer.serialize_i64(*n),
+            Operand::Str(s) => serializer.serialize_str(s),
+            Operand::Bool(b) => serializer.serialize_bool(*b),
+            Operand::Data(name) => BTreeMap::from([("data", name)]).serialize(serializer),
+        }
     }
-    let digits = word.strip_prefix('-').unwrap_or(word);
-    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-        return word
-            .parse()
-            .map(Operand::Int)
-            .map_err(|_| CondError::IntOutOfRange(word.to_string()));
-    }
-    if let Some(name) = word.strip_prefix("data.").filter(|n| is_ident(n)) {
-        return Ok(Operand::Data(name.to_string()));
-    }
-    if let Some(state) = word.strip_prefix("visits.").filter(|n| is_ident(n)) {
-        return Ok(Operand::Visits(state.to_string()));
-    }
-    Err(CondError::UnknownOperand(word.to_string()))
 }
 
-/// `^[a-z][a-z0-9_]*$`, the pattern for machine names, state ids and script names.
-pub(crate) fn is_ident(s: &str) -> bool {
-    let mut bytes = s.bytes();
-    bytes.next().is_some_and(|b| b.is_ascii_lowercase())
-        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-}
-
-impl Cond {
-    /// Names this cond reads from `data`, for validation (V10).
-    pub fn data_refs(&self) -> impl Iterator<Item = &str> {
-        [&self.left, &self.right]
-            .into_iter()
-            .filter_map(|o| match o {
-                Operand::Data(name) => Some(name.as_str()),
-                _ => None,
-            })
+impl Condition {
+    /// Every operator that is set, in declaration order.
+    pub fn operators(&self) -> Vec<(Op, &Operand)> {
+        [
+            (Op::Equals, &self.equals),
+            (Op::NotEquals, &self.not_equals),
+            (Op::LessThan, &self.less_than),
+            (Op::AtMost, &self.at_most),
+            (Op::MoreThan, &self.more_than),
+            (Op::AtLeast, &self.at_least),
+        ]
+        .into_iter()
+        .filter_map(|(op, value)| value.as_ref().map(|v| (op, v)))
+        .collect()
     }
 
-    /// States this cond reads from `visits`, for validation (V10).
-    pub fn visits_refs(&self) -> impl Iterator<Item = &str> {
-        [&self.left, &self.right]
-            .into_iter()
-            .filter_map(|o| match o {
-                Operand::Visits(state) => Some(state.as_str()),
-                _ => None,
-            })
+    /// The subject and, for `visits` and `data`, the operator: exactly one of each (V10).
+    pub fn shape(&self) -> Result<Shape<'_>, CondError> {
+        let subjects: Vec<Subject> = [
+            self.matches.as_deref().map(Subject::Matches),
+            self.visits.as_deref().map(Subject::Visits),
+            self.data.as_deref().map(Subject::Data),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let subject = match subjects.as_slice() {
+            [] => return Err(CondError::NoSubject),
+            [one] => *one,
+            many => {
+                let names: Vec<String> = many.iter().map(|s| format!("`{}`", s.key())).collect();
+                return Err(CondError::ManySubjects(names.join(" and ")));
+            }
+        };
+        let ops = self.operators();
+        match (subject, ops.as_slice()) {
+            (Subject::Matches(_), []) => Ok((subject, None)),
+            (Subject::Matches(_), [(op, _), ..]) => Err(CondError::OperatorOnMatches(op.as_str())),
+            (_, []) => Err(CondError::NoOperator(subject.key())),
+            (_, [one]) => Ok((subject, Some(*one))),
+            (_, many) => {
+                let names: Vec<String> = many.iter().map(|(op, _)| format!("`{op}`")).collect();
+                Err(CondError::ManyOperators(names.join(" and ")))
+            }
+        }
     }
 
-    /// Evaluate against the run's `data` and visit counts. A state missing from `visits`
-    /// has not been entered, so its count is 0.
+    /// Evaluate against the run's `data`, its visit counts and the input text. A state
+    /// missing from `visits` has not been entered, so its count is 0.
     pub fn eval(
         &self,
         data: &BTreeMap<String, Value>,
         visits: &BTreeMap<String, u32>,
+        input: &str,
     ) -> Result<bool, CondError> {
-        let left = resolve(&self.left, data, visits)?;
-        let right = resolve(&self.right, data, visits)?;
-        match (&left, &right) {
-            (Value::Int(a), Value::Int(b)) => Ok(match self.op {
-                Op::Eq => a == b,
-                Op::Ne => a != b,
-                Op::Lt => a < b,
-                Op::Le => a <= b,
-                Op::Gt => a > b,
-                Op::Ge => a >= b,
-            }),
-            (Value::Str(_), Value::Str(_)) | (Value::Bool(_), Value::Bool(_)) => match self.op {
-                Op::Eq => Ok(left == right),
-                Op::Ne => Ok(left != right),
-                op => Err(CondError::NotOrdered {
-                    op,
-                    kind: left.kind(),
-                }),
-            },
-            _ => Err(CondError::TypeMismatch {
-                left: left.kind(),
-                right: right.kind(),
-            }),
+        let (subject, op) = self.shape()?;
+        let left = match subject {
+            Subject::Matches(pattern) => return Ok(compile(pattern)?.is_match(input)),
+            Subject::Visits(state) => Value::Int(visits.get(state).copied().unwrap_or(0).into()),
+            Subject::Data(name) => lookup(data, name)?,
+        };
+        let Some((op, operand)) = op else {
+            unreachable!("shape gives `visits` and `data` an operator");
+        };
+        let right = match operand {
+            Operand::Int(n) => Value::Int(*n),
+            Operand::Str(s) => Value::Str(s.clone()),
+            Operand::Bool(b) => Value::Bool(*b),
+            Operand::Data(name) => lookup(data, name)?,
+        };
+        compare(&left, op, &right)
+    }
+}
+
+impl Subject<'_> {
+    pub fn key(self) -> &'static str {
+        match self {
+            Subject::Matches(_) => "matches",
+            Subject::Visits(_) => "visits",
+            Subject::Data(_) => "data",
         }
     }
 }
 
-fn resolve(
-    operand: &Operand,
-    data: &BTreeMap<String, Value>,
-    visits: &BTreeMap<String, u32>,
-) -> Result<Value, CondError> {
-    Ok(match operand {
-        Operand::Int(n) => Value::Int(*n),
-        Operand::Str(s) => Value::Str(s.clone()),
-        Operand::Bool(b) => Value::Bool(*b),
-        Operand::Data(name) => data
-            .get(name)
-            .cloned()
-            .ok_or_else(|| CondError::UnknownData(name.clone()))?,
-        Operand::Visits(state) => Value::Int(visits.get(state).copied().unwrap_or(0).into()),
+impl fmt::Display for Condition {
+    /// As a graph note shows it: `<subject> <name> <op> <value>`, e.g.
+    /// `visits implement less_than data.max_rounds`, or `matches '<regex>'`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut words = Vec::new();
+        if let Some(pattern) = &self.matches {
+            words.push(format!("matches '{pattern}'"));
+        }
+        if let Some(state) = &self.visits {
+            words.push(format!("visits {state}"));
+        }
+        if let Some(name) = &self.data {
+            words.push(format!("data {name}"));
+        }
+        for (op, value) in self.operators() {
+            words.push(format!("{op} {value}"));
+        }
+        f.write_str(&words.join(" "))
+    }
+}
+
+/// Compile a `matches` pattern.
+pub fn compile(pattern: &str) -> Result<regex::Regex, CondError> {
+    regex::Regex::new(pattern).map_err(|e| CondError::Regex {
+        pattern: pattern.to_string(),
+        message: e
+            .to_string()
+            .lines()
+            .last()
+            .unwrap_or_default()
+            .trim()
+            .trim_start_matches("error: ")
+            .to_string(),
     })
+}
+
+fn lookup(data: &BTreeMap<String, Value>, name: &str) -> Result<Value, CondError> {
+    data.get(name)
+        .cloned()
+        .ok_or_else(|| CondError::UnknownData(name.to_string()))
+}
+
+fn compare(left: &Value, op: Op, right: &Value) -> Result<bool, CondError> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Ok(match op {
+            Op::Equals => a == b,
+            Op::NotEquals => a != b,
+            Op::LessThan => a < b,
+            Op::AtMost => a <= b,
+            Op::MoreThan => a > b,
+            Op::AtLeast => a >= b,
+        }),
+        (Value::Str(_), Value::Str(_)) | (Value::Bool(_), Value::Bool(_)) => match op {
+            Op::Equals => Ok(left == right),
+            Op::NotEquals => Ok(left != right),
+            op => Err(CondError::NotOrdered {
+                op,
+                kind: left.kind(),
+            }),
+        },
+        _ => Err(CondError::TypeMismatch {
+            left: left.kind(),
+            right: right.kind(),
+        }),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(yaml: &str) -> Condition {
+        serde_norway::from_str(yaml).unwrap_or_else(|e| panic!("{yaml}: {e}"))
+    }
 
     fn data() -> BTreeMap<String, Value> {
         BTreeMap::from([
@@ -333,236 +362,176 @@ mod tests {
         BTreeMap::from([("implement".to_string(), 1)])
     }
 
-    fn eval(cond: &str) -> Result<bool, CondError> {
-        parse(cond)
-            .unwrap_or_else(|e| panic!("{cond}: {e}"))
-            .eval(&data(), &visits())
+    fn eval(yaml: &str) -> Result<bool, CondError> {
+        parse(yaml).eval(&data(), &visits(), "tests: 3 passed\n[stderr] warning\n")
     }
 
-    // One test per operator.
+    // One test per operator, on each subject that takes one.
 
     #[test]
-    fn op_eq() {
-        assert_eq!(eval("1 == 1"), Ok(true));
-        assert_eq!(eval("1 == 2"), Ok(false));
-    }
-
-    #[test]
-    fn op_ne() {
-        assert_eq!(eval("1 != 2"), Ok(true));
-        assert_eq!(eval("1 != 1"), Ok(false));
+    fn op_equals() {
+        assert_eq!(eval("{ visits: implement, equals: 1 }"), Ok(true));
+        assert_eq!(eval("{ data: mode, equals: fast }"), Ok(true));
+        assert_eq!(eval("{ data: strict, equals: false }"), Ok(false));
     }
 
     #[test]
-    fn op_lt() {
-        assert_eq!(eval("1 < 2"), Ok(true));
-        assert_eq!(eval("2 < 2"), Ok(false));
+    fn op_not_equals() {
+        assert_eq!(eval("{ visits: implement, not_equals: 1 }"), Ok(false));
+        assert_eq!(eval("{ data: mode, not_equals: slow }"), Ok(true));
+        assert_eq!(eval("{ data: strict, not_equals: false }"), Ok(true));
     }
 
     #[test]
-    fn op_le() {
-        assert_eq!(eval("2 <= 2"), Ok(true));
-        assert_eq!(eval("3 <= 2"), Ok(false));
+    fn op_less_than() {
+        assert_eq!(eval("{ visits: implement, less_than: 2 }"), Ok(true));
+        assert_eq!(eval("{ visits: implement, less_than: 1 }"), Ok(false));
     }
 
     #[test]
-    fn op_gt() {
-        assert_eq!(eval("3 > 2"), Ok(true));
-        assert_eq!(eval("2 > 2"), Ok(false));
+    fn op_at_most() {
+        assert_eq!(eval("{ visits: implement, at_most: 1 }"), Ok(true));
+        assert_eq!(eval("{ visits: implement, at_most: 0 }"), Ok(false));
     }
 
     #[test]
-    fn op_ge() {
-        assert_eq!(eval("2 >= 2"), Ok(true));
-        assert_eq!(eval("1 >= 2"), Ok(false));
-    }
-
-    // One test per operand kind.
-
-    #[test]
-    fn operand_int_literal() {
-        assert_eq!(parse("-3 < 0").unwrap().left, Operand::Int(-3));
-        assert_eq!(eval("-3 < 0"), Ok(true));
-        assert_eq!(eval("10 == 010"), Ok(true));
+    fn op_more_than() {
+        assert_eq!(eval("{ data: max_rounds, more_than: 1 }"), Ok(true));
+        assert_eq!(eval("{ data: max_rounds, more_than: 2 }"), Ok(false));
     }
 
     #[test]
-    fn operand_string_literal() {
-        assert_eq!(
-            parse(r#""a b" == "a b""#).unwrap().left,
-            Operand::Str("a b".to_string())
-        );
-        assert_eq!(eval(r#""fast" == "fast""#), Ok(true));
-        assert_eq!(eval(r#""fast" == "slow""#), Ok(false));
-        assert_eq!(eval(r#""" != "x""#), Ok(true));
+    fn op_at_least() {
+        assert_eq!(eval("{ data: max_rounds, at_least: 2 }"), Ok(true));
+        assert_eq!(eval("{ data: max_rounds, at_least: 3 }"), Ok(false));
+    }
+
+    // One test per subject.
+
+    #[test]
+    fn subject_matches_reads_the_input_as_logged() {
+        assert_eq!(eval(r"{ matches: '\d+ passed' }"), Ok(true));
+        assert_eq!(eval("{ matches: '^\\[stderr\\] warning$' }"), Ok(false));
+        assert_eq!(eval("{ matches: '(?m)^\\[stderr\\] warning$' }"), Ok(true));
+        assert_eq!(eval("{ matches: failed }"), Ok(false));
     }
 
     #[test]
-    fn operand_true() {
-        assert_eq!(parse("true == true").unwrap().left, Operand::Bool(true));
-        assert_eq!(eval("true == true"), Ok(true));
-        assert_eq!(eval("data.strict == true"), Ok(true));
+    fn subject_visits_counts_zero_for_a_state_never_entered() {
+        assert_eq!(eval("{ visits: review, equals: 0 }"), Ok(true));
     }
 
     #[test]
-    fn operand_false() {
-        assert_eq!(parse("false != true").unwrap().left, Operand::Bool(false));
-        assert_eq!(eval("false != true"), Ok(true));
-        assert_eq!(eval("data.strict == false"), Ok(false));
+    fn subject_data() {
+        assert_eq!(eval("{ data: strict, equals: true }"), Ok(true));
     }
 
     #[test]
-    fn operand_data() {
-        assert_eq!(
-            parse("data.max_rounds == 2").unwrap().left,
-            Operand::Data("max_rounds".to_string())
-        );
-        assert_eq!(eval("data.max_rounds == 2"), Ok(true));
-        assert_eq!(eval(r#"data.mode == "fast""#), Ok(true));
-        assert_eq!(eval("data.max_rounds > 2"), Ok(false));
-    }
-
-    #[test]
-    fn operand_visits() {
-        assert_eq!(
-            parse("visits.implement < 2").unwrap().left,
-            Operand::Visits("implement".to_string())
-        );
+    fn data_value_on_the_right() {
         // The section 5 example: one visit to implement, max_rounds 2.
-        assert_eq!(eval("visits.implement < data.max_rounds"), Ok(true));
-        // A state never entered has 0 visits.
-        assert_eq!(eval("visits.review == 0"), Ok(true));
+        let cond = parse("{ visits: implement, less_than: { data: max_rounds } }");
+        assert_eq!(
+            cond.less_than,
+            Some(Operand::Data("max_rounds".to_string()))
+        );
+        assert_eq!(cond.eval(&data(), &visits(), ""), Ok(true));
         let two = BTreeMap::from([("implement".to_string(), 2)]);
-        let cond = parse("visits.implement < data.max_rounds").unwrap();
-        assert_eq!(cond.eval(&data(), &two), Ok(false));
+        assert_eq!(cond.eval(&data(), &two, ""), Ok(false));
     }
 
-    // Parse failures named in M1.2.
+    #[test]
+    fn yes_no_and_on_are_strings() {
+        // YAML 1.2: the bare words YAML 1.1 reads as booleans stay strings.
+        let cond = parse("{ data: mode, equals: no }");
+        assert_eq!(cond.equals, Some(Operand::Str("no".to_string())));
+    }
+
+    // Shape (V10).
 
     #[test]
-    fn rejects_listed_inputs() {
-        for input in [
-            "a && b",
-            "visits.x <",
-            "data.y == 1 == 2",
-            "foo == 1",
-            "exit_code == 0",
-            "",
+    fn shape_needs_one_subject_and_one_operator() {
+        assert_eq!(parse("{ equals: 1 }").shape(), Err(CondError::NoSubject));
+        assert_eq!(
+            parse("{ visits: a, data: b, equals: 1 }").shape(),
+            Err(CondError::ManySubjects("`visits` and `data`".into()))
+        );
+        assert_eq!(
+            parse("{ visits: a }").shape(),
+            Err(CondError::NoOperator("visits"))
+        );
+        assert_eq!(
+            parse("{ data: a, equals: 1, less_than: 2 }").shape(),
+            Err(CondError::ManyOperators("`equals` and `less_than`".into()))
+        );
+        assert_eq!(
+            parse("{ matches: x, equals: 1 }").shape(),
+            Err(CondError::OperatorOnMatches("equals"))
+        );
+        assert!(parse("{ matches: x }").shape().is_ok());
+    }
+
+    #[test]
+    fn unknown_keys_and_bad_values_fail_to_parse() {
+        for yaml in [
+            "{ visits: a, lt: 1 }",
+            "{ and: [] }",
+            "{ visits: a, equals: 1.5 }",
+            "{ visits: a, equals: { state: b } }",
+            "{ visits: a, equals: { data: b, other: c } }",
+            "{ visits: a, equals: [1] }",
         ] {
-            assert!(parse(input).is_err(), "{input:?} parsed");
+            assert!(
+                serde_norway::from_str::<Condition>(yaml).is_err(),
+                "{yaml} parsed"
+            );
         }
-    }
-
-    #[test]
-    fn parse_errors_say_why() {
-        assert_eq!(parse(""), Err(CondError::Empty));
-        assert_eq!(parse("   "), Err(CondError::Empty));
-        assert_eq!(parse("a && b"), Err(CondError::UnexpectedChar('&')));
-        assert_eq!(
-            parse("visits.x <"),
-            Err(CondError::Shape("visits.x <".to_string()))
-        );
-        assert_eq!(
-            parse("data.y == 1 == 2"),
-            Err(CondError::Shape("data.y == 1 == 2".to_string()))
-        );
-        assert_eq!(
-            parse("foo == 1"),
-            Err(CondError::UnknownOperand("foo".to_string()))
-        );
-        assert_eq!(
-            parse("exit_code == 0"),
-            Err(CondError::UnknownOperand("exit_code".to_string()))
-        );
-    }
-
-    #[test]
-    fn rejects_other_shapes() {
-        for input in [
-            "1 || 2",
-            "(1 == 1)",
-            "!true == false",
-            "1 = 1",
-            "1 === 1",
-            "1 <> 2",
-            "data. == 1",
-            "data.Name == 1",
-            "data.a.b == 1",
-            "visits. == 1",
-            "1 == \"open",
-            r#""a\"b" == "a""#,
-            "1.5 == 1",
-            "99999999999999999999 > 0",
-            "True == true",
-            "1 2",
-            "== ==",
-        ] {
-            assert!(parse(input).is_err(), "{input:?} parsed");
-        }
-    }
-
-    #[test]
-    fn whitespace_is_optional() {
-        assert_eq!(
-            parse("visits.implement<data.max_rounds"),
-            parse("  visits.implement   <   data.max_rounds ")
-        );
-    }
-
-    #[test]
-    fn display_round_trips() {
-        for input in [
-            "visits.implement < data.max_rounds",
-            r#"data.mode != "slow""#,
-            "true == false",
-            "-1 >= 0",
-        ] {
-            let cond = parse(input).unwrap();
-            assert_eq!(cond.to_string(), input);
-            assert_eq!(cond.to_string().parse::<Cond>(), Ok(cond));
-        }
-    }
-
-    #[test]
-    fn refs_for_validation() {
-        let cond = parse("visits.implement < data.max_rounds").unwrap();
-        assert_eq!(cond.data_refs().collect::<Vec<_>>(), ["max_rounds"]);
-        assert_eq!(cond.visits_refs().collect::<Vec<_>>(), ["implement"]);
     }
 
     #[test]
     fn eval_errors() {
         assert_eq!(
-            eval("data.missing == 1"),
+            eval("{ data: missing, equals: 1 }"),
             Err(CondError::UnknownData("missing".to_string()))
         );
         assert_eq!(
-            eval(r#"data.mode == 1"#),
+            eval("{ data: mode, equals: 1 }"),
             Err(CondError::TypeMismatch {
                 left: "a string",
                 right: "an int"
             })
         );
         assert_eq!(
-            eval("true == 1"),
-            Err(CondError::TypeMismatch {
-                left: "a bool",
-                right: "an int"
-            })
-        );
-        assert_eq!(
-            eval(r#""a" < "b""#),
+            eval("{ data: mode, less_than: b }"),
             Err(CondError::NotOrdered {
-                op: Op::Lt,
+                op: Op::LessThan,
                 kind: "a string"
             })
         );
+        assert!(matches!(
+            eval("{ matches: '(' }"),
+            Err(CondError::Regex { .. })
+        ));
+    }
+
+    #[test]
+    fn display_is_the_graph_note_form() {
         assert_eq!(
-            eval("false >= true"),
-            Err(CondError::NotOrdered {
-                op: Op::Ge,
-                kind: "a bool"
-            })
+            parse("{ visits: implement, less_than: { data: max_rounds } }").to_string(),
+            "visits implement less_than data.max_rounds"
+        );
+        assert_eq!(parse("{ matches: '^ok$' }").to_string(), "matches '^ok$'");
+        assert_eq!(
+            parse("{ data: strict, equals: true }").to_string(),
+            "data strict equals true"
+        );
+    }
+
+    #[test]
+    fn serializes_as_written() {
+        let cond = parse("{ visits: implement, less_than: { data: max_rounds } }");
+        assert_eq!(
+            serde_json::to_value(&cond).unwrap(),
+            serde_json::json!({ "visits": "implement", "less_than": { "data": "max_rounds" } })
         );
     }
 }

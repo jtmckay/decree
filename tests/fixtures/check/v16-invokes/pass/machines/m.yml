@@ -1,0 +1,15 @@
+name: m
+description: A model picks one option, through the default router.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: triage }
+  triage:
+    invoke: { choose: model, question: "Is it done?", min_confidence: 0.8 }
+    transitions:
+      finish: { target: done, description: It is done. }
+      again:  { target: work, description: Work on it again. }
+      unsure: failed
+  done: { final: true }
+  failed: { final: true }

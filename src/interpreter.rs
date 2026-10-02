@@ -1,37 +1,37 @@
 //! The step loop (spec section 7): moves one run through one machine with SCXML's exit
-//! and entry order, asks the router in router states, and appends every step to the run's
+//! and entry order, runs each state's invoke, and appends every step to the run's
 //! `events.jsonl`. State, status and visits are derived from that log (section 4, Source
 //! of truth).
 //!
-//! Interpreted here: the whole section 5 subset. Transitions on compound states, with
-//! events bubbling from the atomic state outward; `type: internal`; final states at any
-//! level, a nested one raising `done.state.<parent>`; and waiting states, which append
-//! `waiting` and stop until a `received` event continues the run. Delivering replies is
-//! ticket M4.3; `decree retry` and the run lock are ticket M4.2.
+//! Interpreted here: the section 5 subset with script, `check` and `choose: person`
+//! invokes. Transitions on compound states, with events bubbling from the atomic state
+//! outward; `type: internal`; final states at any level, a nested one raising
+//! `done.state.<parent>`; and `choose: person`, which runs its `ask` script, appends
+//! `waiting` and stops until a `received` event continues the run. `machine` and
+//! `choose: model` invokes are parsed and validated, but running them is ticket M3.3.
+//! Delivering replies is ticket M4.3; `decree retry` and the run lock are ticket M4.2.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
 use crate::cond::{self, CondError};
 use crate::config::{DECREE_DIR, PROCESSED_FILE};
-use crate::machine::{event_matches, LoadedMachine};
-use crate::router::{Router, RouterOption, RouterReply, RouterRequest};
+use crate::machine::{
+    event_matches, CheckInvoke, ChooseInvoke, ChooseKind, Invoke, LoadedMachine, FAILED,
+};
 use crate::runtime::{
-    is_reserved_event, timestamp, EventLog, Execution, Executor, InvokeEvent, Phase, RuntimeError,
-    ScriptRun, EVENTS_FILE, MESSAGE_FILE, RECEIVED_DIR, ROOT_STATE,
+    timestamp, EventLog, Executor, InvokeEvent, Phase, RuntimeError, ScriptRun, EVENTS_FILE,
+    MESSAGE_FILE, RECEIVED_DIR, ROOT_STATE,
 };
 
-/// Root-level final state an unhandled `error` goes to (section 5, Rules).
-const FAILED: &str = "failed";
-
-/// Script name in the router log's filename, `NNNN-<state>-_router.log`.
-const ROUTER_LOG: &str = "_router";
+/// The JSON file, in the run folder, mapping each option of the `choose: person` state the
+/// run waits in to its description: what `DECREE_CHOICES` names (section 6).
+pub const CHOICES_FILE: &str = "choices.json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum InterpreterError {
@@ -53,12 +53,20 @@ pub enum InterpreterError {
     #[error("cannot continue the run: {0}")]
     NotReceived(String),
 
-    #[error("machine `{machine}`: {at}: cond `{cond}`: {source}")]
-    Cond {
+    /// A `check` could not be evaluated.
+    #[error("machine `{machine}`: {at}: check: {source}")]
+    Check {
         machine: String,
         at: String,
-        cond: String,
         source: CondError,
+    },
+
+    /// The state invokes a type this interpreter does not run yet.
+    #[error("machine `{machine}`: {at}: running `{kind}` invokes is not implemented yet")]
+    NotSupported {
+        machine: String,
+        at: String,
+        kind: &'static str,
     },
 }
 
@@ -74,7 +82,7 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> InterpreterError + '_ {
 pub struct RunInput<'a> {
     /// Frontmatter `params`, already validated against the machine's `data`.
     pub params: &'a serde_norway::Mapping,
-    /// The message body, for the router.
+    /// The message body, for a model's request.
     pub message_body: &'a str,
     /// Original inbox or migration filename, recorded on the claim event. For a migration
     /// (`trigger: migration`) it is also the `processed.md` ledger line.
@@ -90,9 +98,16 @@ pub enum Outcome {
     /// SIGINT or SIGTERM stopped a script in this state; an `interrupted` event was
     /// appended (section 4, Stopping).
     Interrupted(String),
-    /// The run entered this waiting state, its `onentry` scripts ran, and a `waiting`
-    /// event was appended. A reply must name `wait_id` (section 4, Events for waiting runs).
+    /// The run entered this `choose: person` state, its `ask` script ran, and a `waiting`
+    /// event was appended. A reply must name `wait_id` (section 4, Replies).
     Waiting { state: String, wait_id: String },
+}
+
+/// What a state's invoke led to (steps 2 and 3).
+enum Invoked {
+    Event(Decision),
+    /// The run pauses for a reply.
+    Wait(Outcome),
 }
 
 /// What happens after a state is entered (step 8).
@@ -138,7 +153,6 @@ impl Decision {
 pub struct Interpreter<'a> {
     machine: &'a LoadedMachine,
     executor: Executor,
-    router: &'a dyn Router,
     data: BTreeMap<String, cond::Value>,
     message_body: String,
     file: String,
@@ -152,14 +166,12 @@ impl<'a> Interpreter<'a> {
     pub fn new(
         machine: &'a LoadedMachine,
         executor: Executor,
-        router: &'a dyn Router,
         input: RunInput,
     ) -> Result<Self, InterpreterError> {
         Ok(Interpreter {
             machine,
             data: data_values(machine, input.params)?,
             executor,
-            router,
             message_body: input.message_body.to_string(),
             file: input.file.to_string(),
             current: 0,
@@ -174,8 +186,8 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Continue a waiting run whose last event is `received` (step 1): take that event's
-    /// transition at step 4 with `source: "external"`. Nothing is re-run, because the run
-    /// only paused.
+    /// transition at step 4, with `source: "person"` after a `decision` event for a reply,
+    /// or `source: "timeout"`. Nothing is re-run, because the run only paused.
     pub fn resume(&mut self) -> Result<Outcome, InterpreterError> {
         let result = self.continue_received();
         self.interrupt_on_signal(result)
@@ -242,10 +254,19 @@ impl<'a> Interpreter<'a> {
             .get("event")
             .and_then(Value::as_str)
             .ok_or_else(|| not_received("the `received` event has no `event`"))?;
+        let event = event.to_string();
+        let timed_out = received.get("timed_out").and_then(Value::as_bool) == Some(true);
+        let reply = received
+            .get("file")
+            .and_then(Value::as_str)
+            .map(String::from);
         let s = current_state(&events)
             .and_then(|id| m.find(id))
-            .filter(|&s| is_waiting(m, s))
-            .ok_or_else(|| not_received("its current state is not a waiting state"))?;
+            .filter(|&s| {
+                let invoke = m.nodes[s].invoke.as_ref();
+                invoke.and_then(|i| i.choose(ChooseKind::Person)).is_some()
+            })
+            .ok_or_else(|| not_received("its current state is not a `choose: person` state"))?;
         self.entered_seq = events
             .iter()
             .rev()
@@ -262,7 +283,22 @@ impl<'a> Interpreter<'a> {
             .find_map(|e| e.get("file").and_then(Value::as_str))
             .map(|file| run_dir.join(RECEIVED_DIR).join(file));
         self.current = s;
-        self.step_from(s, Some(Decision::new(event, "external", None)))
+        let decision = if timed_out {
+            Decision::new(&event, "timeout", None)
+        } else {
+            let mut fields = json!({
+                "state": m.nodes[s].id,
+                "kind": "person",
+                "event": event,
+                "options": option_names(m, s),
+            });
+            if let Some(reply) = reply {
+                fields["reply"] = json!(reply);
+            }
+            self.append("decision", fields)?;
+            Decision::new(&event, "person", None)
+        };
+        self.step_from(s, Some(decision))
     }
 
     /// Steps 2–8, from state `s`. `pending` is an event already chosen for `s` (an
@@ -277,7 +313,10 @@ impl<'a> Interpreter<'a> {
             // 2–3. Invoke, pick the event.
             let mut decision = match pending.take() {
                 Some(d) => d,
-                None => self.decide(s)?,
+                None => match self.invoke(s)? {
+                    Invoked::Event(d) => d,
+                    Invoked::Wait(outcome) => return Ok(outcome),
+                },
             };
             // 4. Find the target.
             let (source, target, internal) = self.select(s, &mut decision)?;
@@ -318,8 +357,8 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    /// Step 8, and the waiting stop of step 3, once `t` and the states above it have been
-    /// entered. `failed_at` is the state whose `onentry` script failed, if one did.
+    /// Step 8, once `t` and the states above it have been entered. `failed_at` is the state
+    /// whose `onentry` script failed, if one did.
     fn after_entry(
         &mut self,
         t: usize,
@@ -332,7 +371,7 @@ impl<'a> Interpreter<'a> {
             return self.finish(t, failed_at.is_some()).map(Next::Stop);
         }
         // An `onentry` failure is `error`, resolved on the state being entered, before
-        // `done.state.<id>` or a wait.
+        // `done.state.<id>` or the invoke.
         if let Some(n) = failed_at {
             return Ok(Next::Step(Some(Decision::entry_error(n == 0))));
         }
@@ -341,18 +380,52 @@ impl<'a> Interpreter<'a> {
             let event = format!("done.state.{}", m.nodes[p].id);
             return Ok(Next::Step(Some(Decision::new(&event, "internal", None))));
         }
-        if is_waiting(m, t) {
-            return self.wait(t).map(Next::Stop);
-        }
         Ok(Next::Step(None))
     }
 
-    /// Step 3 for waiting state `s`, after its `onentry` scripts ran: append `waiting` and
-    /// stop (section 4, Events for waiting runs).
-    fn wait(&mut self, s: usize) -> Result<Outcome, InterpreterError> {
-        let node = &self.machine.nodes[s];
+    /// Step 2 for a `choose: person` state (section 4, Replies): write its options to
+    /// `choices.json`, run its `ask` script with the wait id, then append `waiting` and stop.
+    /// An `ask` script that exits non-zero gives `error` instead, since nobody was told.
+    fn ask(&mut self, s: usize, choose: &ChooseInvoke) -> Result<Invoked, InterpreterError> {
+        let m = self.machine;
+        let node = &m.nodes[s];
+        let ask = choose
+            .ask
+            .as_deref()
+            .ok_or_else(|| self.invalid(format!("`{}` has no `ask` script", node.id)))?;
+        let options: BTreeMap<&str, &str> = m
+            .options(s)
+            .map(|e| {
+                (
+                    e.event.as_str(),
+                    e.description.as_deref().unwrap_or_default(),
+                )
+            })
+            .collect();
+        let choices = self.executor.info().run_dir.join(CHOICES_FILE);
+        let text = serde_json::to_string_pretty(&options).unwrap_or_default() + "\n";
+        write_replace(&choices, text.as_bytes())?;
+
         let wait_id = self.wait_id();
-        let timeout_at = node.timeout_s.map(|secs| {
+        let visits = self.visits_of(s)?;
+        let events = m.accepted_events(s);
+        let execution = self.executor.run_script(&ScriptRun {
+            visits,
+            events: &events,
+            wait_id: &wait_id,
+            question: choose.question.as_deref().unwrap_or_default(),
+            choices: &choices,
+            ..ScriptRun::new(ask, &node.id, Phase::Invoke)
+        })?;
+        if !execution.succeeded() {
+            return Ok(Invoked::Event(Decision::new(
+                "error",
+                "exit_code",
+                execution.exit_code,
+            )));
+        }
+
+        let timeout_at = choose.timeout_s.map(|secs| {
             let secs = i64::try_from(secs).unwrap_or(i64::MAX);
             let deadline = chrono::TimeDelta::try_seconds(secs)
                 .and_then(|d| Utc::now().checked_add_signed(d))
@@ -364,14 +437,14 @@ impl<'a> Interpreter<'a> {
             json!({
                 "state": node.id,
                 "wait_id": wait_id,
-                "accepts": accepts(self.machine, s),
+                "options": option_names(m, s),
                 "timeout_at": timeout_at,
             }),
         )?;
-        Ok(Outcome::Waiting {
+        Ok(Invoked::Wait(Outcome::Waiting {
             state: node.id.clone(),
             wait_id,
-        })
+        }))
     }
 
     /// `<run id>.w<seq>`, where `seq` is that of the `transition` event that entered the
@@ -380,157 +453,85 @@ impl<'a> Interpreter<'a> {
         format!("{}.w{}", self.executor.info().run_id, self.entered_seq)
     }
 
-    /// Steps 2 and 3 for atomic state `s`: run the invoke, then take its event, a
-    /// pass-through `done`, or the router's choice.
-    fn decide(&mut self, s: usize) -> Result<Decision, InterpreterError> {
+    /// Steps 2 and 3 for atomic state `s`: run its function (section 5, Invoke) and take
+    /// its event. A state with no invoke produces `done`.
+    fn invoke(&mut self, s: usize) -> Result<Invoked, InterpreterError> {
         let m = self.machine;
         let node = &m.nodes[s];
-        let visits = self.visits_of(s)?;
-        match self.executor.run_invoke(m, s, visits)? {
-            Some(out) => {
+        match &node.invoke {
+            None => Ok(Invoked::Event(Decision::new("done", "exit_code", None))),
+            Some(Invoke::Script(_)) => {
+                let visits = self.visits_of(s)?;
+                let Some(out) = self.executor.run_invoke(m, s, visits)? else {
+                    unreachable!("a script invoke runs a script");
+                };
                 let exit_code = out.execution.exit_code;
-                Ok(match out.event {
+                Ok(Invoked::Event(match out.event {
                     InvokeEvent::ExitCode(e) => Decision::new(e, "exit_code", exit_code),
                     InvokeEvent::Stdout(e) => Decision::new(&e, "stdout", exit_code),
                     InvokeEvent::Invalid(e) => Decision {
                         invalid_event: Some(e),
                         ..Decision::new("error", "stdout", exit_code)
                     },
-                    InvokeEvent::Router => self.route(s, Some(&out.execution))?,
-                })
+                }))
             }
-            None if node.router.is_some() => self.route(s, None),
-            None if m.handles(s, "done") => Ok(Decision::new("done", "exit_code", None)),
-            // `after_entry` stops in a waiting state before it is stepped.
-            None => Err(self.invalid(format!(
-                "`{}` waits for an external event and cannot be stepped",
-                node.id
-            ))),
+            Some(Invoke::Check(check)) => self.check(s, check).map(Invoked::Event),
+            Some(Invoke::Choose(c)) if c.choose == ChooseKind::Person => self.ask(s, c),
+            Some(Invoke::Choose(_)) => Err(self.not_supported(s, "choose: model")),
+            Some(Invoke::Machine(_)) => Err(self.not_supported(s, "machine")),
         }
     }
 
-    /// Router steps 1–6 for router state `s`. Appends the `router` event.
-    fn route(
-        &mut self,
-        s: usize,
-        execution: Option<&Execution>,
-    ) -> Result<Decision, InterpreterError> {
+    /// Section 7, Check: evaluate the condition against the input, `data` and visits,
+    /// append a `decision` event, and produce `yes` or `no`. No script runs.
+    fn check(&mut self, s: usize, check: &CheckInvoke) -> Result<Decision, InterpreterError> {
         let m = self.machine;
-        let node = &m.nodes[s];
-        let start = Instant::now();
-        let exit_code = execution.and_then(|e| e.exit_code);
-
-        // 1. Options: every event but `error`, without those whose `cond` is false.
-        let visits = visits(&self.read_events()?);
-        let mut options = Vec::new();
-        for edge in node.transitions.iter().filter(|e| e.event != "error") {
-            if let Some(text) = &edge.cond {
-                let cond_err = |source| InterpreterError::Cond {
-                    machine: m.id.clone(),
-                    at: m.state_path(s),
-                    cond: text.clone(),
-                    source,
-                };
-                let parsed = cond::parse(text).map_err(cond_err)?;
-                if !parsed.eval(&self.data, &visits).map_err(cond_err)? {
-                    continue;
-                }
-            }
-            options.push(RouterOption {
-                event: edge.event.clone(),
-                description: edge.description.clone().unwrap_or_default(),
-            });
-        }
-        let names: Vec<String> = options.iter().map(|o| o.event.clone()).collect();
-        let mut fields = json!({ "state": node.id, "options": names });
-
-        // 2. One option is taken without asking.
-        if let [only] = names.as_slice() {
-            fields["event"] = json!(only);
-            fields["source"] = json!("single_option");
-            fields["duration_ms"] = json!(start.elapsed().as_millis() as u64);
-            self.append("router", fields)?;
-            return Ok(Decision::new(only, "single_option", exit_code));
-        }
-
-        // 3–5. Ask, validate, ask again once.
-        let mut request = RouterRequest {
-            machine: m.root().id.clone(),
-            machine_description: m.description().to_string(),
-            state: node.id.clone(),
-            state_description: node.description.clone().unwrap_or_default(),
-            options,
-            step_output: execution
-                .map(|e| e.stdout_tail.join("\n"))
-                .unwrap_or_default(),
-            message_body: self.message_body.clone(),
-            previous_error: None,
+        let events = self.read_events()?;
+        let input = match &check.check.matches {
+            Some(_) => self.input_text(&events, check.input.as_deref())?,
+            None => String::new(),
         };
-        let log = self.executor.reserve_log(&node.id, ROUTER_LOG);
-        let mut log_text = String::new();
-        let mut rejections = Vec::new();
-        let mut accepted: Option<RouterReply> = None;
-        let mut asks = 0;
-        while asks < 2 && accepted.is_none() {
-            asks += 1;
-            let result = self.router.decide(&request);
-            let line = match &result {
-                Ok(reply) => json!({ "ask": asks, "request": request, "reply": reply }),
-                Err(e) => json!({ "ask": asks, "request": request, "error": e.0 }),
-            };
-            log_text.push_str(&line.to_string());
-            log_text.push('\n');
-            match result {
-                Ok(reply) if names.contains(&reply.event) => accepted = Some(reply),
-                Ok(reply) => rejections.push(format!(
-                    "`{}` is not one of the options: {}",
-                    reply.event,
-                    names.join(", ")
-                )),
-                Err(e) => rejections.push(format!("the router failed: {e}")),
-            }
-            request.previous_error = rejections.last().cloned();
-        }
-        let log_path = self.executor.info().run_dir.join(&log);
-        fs::write(&log_path, log_text).map_err(io_err(&log_path))?;
+        let result = check
+            .check
+            .eval(&self.data, &visits(&events), &input)
+            .map_err(|source| InterpreterError::Check {
+                machine: m.id.clone(),
+                at: m.state_path(s),
+                source,
+            })?;
+        let event = if result { "yes" } else { "no" };
+        self.append(
+            "decision",
+            json!({
+                "state": m.nodes[s].id,
+                "kind": "check",
+                "event": event,
+                "condition": check.check,
+            }),
+        )?;
+        Ok(Decision::new(event, "check", None))
+    }
 
-        let source = match &accepted {
-            Some(reply) => {
-                fields["event"] = json!(reply.event);
-                fields["source"] = json!("llm");
-                if let Some(reason) = &reply.reason {
-                    fields["reason"] = json!(reason);
-                }
-                if let Some(confidence) = reply.confidence {
-                    fields["confidence"] = json!(confidence);
-                }
-                if let Some(probabilities) = &reply.probabilities {
-                    fields["probabilities"] = json!(probabilities);
-                }
-                "llm"
-            }
-            // 6. Fall back to `default`.
-            None => {
-                let default = node.default.as_deref().ok_or_else(|| {
-                    self.invalid(format!("router state `{}` has no default", node.id))
-                })?;
-                fields["event"] = json!(default);
-                fields["source"] = json!("default");
-                let numbered: Vec<String> = rejections
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| format!("ask {}: {r}", i + 1))
-                    .collect();
-                fields["router_error"] = json!(numbered.join("; "));
-                "default"
-            }
+    /// Section 5, Input: the log of the latest invoke script of state `input`, or, without
+    /// `input`, of the most recent invoke script in the run. Empty if none has run.
+    fn input_text(
+        &self,
+        events: &[Map<String, Value>],
+        input: Option<&str>,
+    ) -> Result<String, InterpreterError> {
+        let log = events
+            .iter()
+            .rev()
+            .filter(|e| e.get("type").and_then(Value::as_str) == Some("script"))
+            .filter(|e| e.get("phase").and_then(Value::as_str) == Some(Phase::Invoke.as_str()))
+            .find(|e| input.is_none_or(|i| e.get("state").and_then(Value::as_str) == Some(i)))
+            .and_then(|e| e.get("log").and_then(Value::as_str));
+        let Some(log) = log else {
+            return Ok(String::new());
         };
-        fields["asks"] = json!(asks);
-        fields["duration_ms"] = json!(start.elapsed().as_millis() as u64);
-        fields["log"] = json!(log);
-        let event = fields["event"].as_str().unwrap_or_default().to_string();
-        self.append("router", fields)?;
-        Ok(Decision::new(&event, source, exit_code))
+        let path = self.executor.info().run_dir.join(log);
+        let bytes = fs::read(&path).map_err(io_err(&path))?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Step 4: the state declaring the transition for the event, its target, and whether
@@ -611,24 +612,18 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Run the `onentry` scripts of `states`, in order (index 0 is the root). Stops at the
-    /// first that exits non-zero and returns the state it belongs to. A waiting state's
-    /// scripts see its wait id and accepted events.
+    /// first that exits non-zero and returns the state it belongs to.
     fn run_entry(&mut self, states: &[usize]) -> Result<Option<usize>, InterpreterError> {
         let m = self.machine;
         for &n in states {
             let (name, visits) = self.script_state(n)?;
             let max_attempts = self.executor.max_attempts(m, n);
-            let (wait_id, accepts) = if n != 0 && is_waiting(m, n) {
-                (self.wait_id(), accepts(m, n))
-            } else {
-                (String::new(), Vec::new())
-            };
+            let events = m.accepted_events(n);
             for script in &m.nodes[n].onentry {
                 let execution = self.executor.run_script(&ScriptRun {
                     visits,
                     max_attempts,
-                    wait_id: &wait_id,
-                    accepts: &accepts,
+                    events: &events,
                     ..ScriptRun::new(script, name, Phase::OnEntry)
                 })?;
                 if !execution.succeeded() {
@@ -656,11 +651,13 @@ impl<'a> Interpreter<'a> {
         let m = self.machine;
         let (name, visits) = self.script_state(n)?;
         let max_attempts = self.executor.max_attempts(m, n);
+        let events = m.accepted_events(n);
         let mut failures = Vec::new();
         for script in &m.nodes[n].onexit {
             let execution = self.executor.run_script(&ScriptRun {
                 visits,
                 max_attempts,
+                events: &events,
                 ..ScriptRun::new(script, name, Phase::OnExit)
             })?;
             if !execution.succeeded() {
@@ -763,17 +760,14 @@ impl<'a> Interpreter<'a> {
             message,
         }
     }
-}
 
-/// A waiting state (section 5, Kinds of state): atomic, no `invoke`, not a router, and no
-/// `done`, itself or through an ancestor.
-fn is_waiting(m: &LoadedMachine, n: usize) -> bool {
-    let node = &m.nodes[n];
-    !node.is_final
-        && !m.is_compound(n)
-        && node.invoke.is_none()
-        && node.router.is_none()
-        && !m.handles(n, "done")
+    fn not_supported(&self, s: usize, kind: &'static str) -> InterpreterError {
+        InterpreterError::NotSupported {
+            machine: self.machine.id.clone(),
+            at: self.machine.state_path(s),
+            kind,
+        }
+    }
 }
 
 /// A final state whose parent is the root: entering it ends the run.
@@ -781,19 +775,9 @@ fn is_root_final(m: &LoadedMachine, n: usize) -> bool {
     m.nodes[n].is_final && m.nodes[n].parent == Some(0)
 }
 
-/// The events waiting state `n` accepts from a reply, in name order: every event of its
-/// own transitions and its ancestors' (section 5, Event matching), except the reserved
-/// ones (section 5, Rules).
-fn accepts(m: &LoadedMachine, n: usize) -> Vec<String> {
-    let mut events: Vec<String> = m
-        .chain(n)
-        .flat_map(|a| m.nodes[a].transitions.iter())
-        .map(|e| e.event.clone())
-        .filter(|e| !is_reserved_event(e))
-        .collect();
-    events.sort();
-    events.dedup();
-    events
+/// The options of `choose` state `n`, in name order (section 5, Choices).
+fn option_names(m: &LoadedMachine, n: usize) -> Vec<String> {
+    m.options(n).map(|e| e.event.clone()).collect()
 }
 
 /// The run's `data`: each `params` value, else the default (section 5, Keys).
@@ -1040,7 +1024,6 @@ fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), InterpreterError> {
 mod tests {
     use super::*;
     use crate::machine::{load_machine_text, CheckEnv};
-    use crate::router::{RouterError, ScriptedRouter};
     use crate::runtime::{data_env, RunInfo};
     use std::collections::{BTreeSet, HashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1063,22 +1046,41 @@ mod tests {
         shutdown: Arc<AtomicBool>,
     }
 
+    /// Every script machine `m` names: invokes, `ask` scripts, `onentry` and `onexit`.
+    fn script_names(m: &LoadedMachine) -> Vec<&str> {
+        let mut names = Vec::new();
+        for node in &m.nodes {
+            match &node.invoke {
+                Some(Invoke::Script(name)) => names.push(name.as_str()),
+                Some(Invoke::Choose(c)) => names.extend(c.ask.as_deref()),
+                _ => {}
+            }
+            names.extend(node.onentry.iter().chain(&node.onexit).map(String::as_str));
+        }
+        names
+    }
+
     impl Project {
         fn new(name: &str, scripts: &[(&str, &str)]) -> Self {
-            let tmp = TempDir::new().unwrap();
-            let decree = tmp.path().join(DECREE_DIR);
             let fixture = repo().join(format!("tests/fixtures/machines/step/{name}.yml"));
             let text = fs::read_to_string(&fixture).unwrap();
-            let machine = load_machine_text(name, &fixture, &text).unwrap();
+            Self::from_text(name, &text, scripts)
+        }
+
+        /// The same, for machine `name` written as `text`.
+        fn from_text(name: &str, text: &str, scripts: &[(&str, &str)]) -> Self {
+            let tmp = TempDir::new().unwrap();
+            let decree = tmp.path().join(DECREE_DIR);
+            let machine = load_machine_text(name, Path::new("m.yml"), text).unwrap();
 
             let script_dir = decree.join("scripts");
             fs::create_dir_all(&script_dir).unwrap();
             let fixtures = repo().join("tests/fixtures/scripts");
-            for node in &machine.nodes {
-                for script in node.invoke.iter().chain(&node.onentry).chain(&node.onexit) {
+            {
+                for script in script_names(&machine) {
                     let file = scripts
                         .iter()
-                        .find(|(s, _)| s == script)
+                        .find(|(s, _)| *s == script)
                         .map_or("record", |(_, f)| f);
                     // fs::copy keeps the fixture's executable bit.
                     fs::copy(
@@ -1090,12 +1092,15 @@ mod tests {
             }
             // Every fixture machine passes `decree check`.
             let ids = BTreeSet::from([name.to_string()]);
+            let machines = BTreeMap::new();
             let env = CheckEnv {
                 decree_dir: &decree,
                 shared_source: None,
                 machine_ids: &ids,
+                machines: &machines,
+                default_router: None,
             };
-            let problems = machine.validate(&text, &env);
+            let problems = machine.validate(text, &env);
             assert!(problems.is_empty(), "{name}: {problems:?}");
 
             let project = Project {
@@ -1133,26 +1138,36 @@ mod tests {
             Executor::open(info, Arc::clone(&self.shutdown)).unwrap()
         }
 
-        fn run(&self, router: &ScriptedRouter) -> Outcome {
-            self.run_with(router, "inbox", "inbox.md", &serde_norway::Mapping::new())
+        fn run(&self) -> Outcome {
+            self.run_with("inbox", "inbox.md", &serde_norway::Mapping::new())
         }
 
-        fn run_with(
+        fn run_with(&self, trigger: &str, file: &str, params: &serde_norway::Mapping) -> Outcome {
+            self.start(trigger, file, params).unwrap()
+        }
+
+        fn start(
             &self,
-            router: &ScriptedRouter,
             trigger: &str,
             file: &str,
             params: &serde_norway::Mapping,
-        ) -> Outcome {
+        ) -> Result<Outcome, InterpreterError> {
             let input = RunInput {
                 params,
                 message_body: BODY,
                 file,
             };
-            Interpreter::new(&self.machine, self.executor(trigger, params), router, input)
-                .unwrap()
-                .start()
-                .unwrap()
+            Interpreter::new(&self.machine, self.executor(trigger, params), input)?.start()
+        }
+
+        /// The log of the first `script` event of `script`.
+        fn log_of(&self, script: &str) -> String {
+            let event = self
+                .events_of("script")
+                .into_iter()
+                .find(|e| e["script"] == script)
+                .unwrap_or_else(|| panic!("no script event for {script}"));
+            fs::read_to_string(self.run_dir().join(event["log"].as_str().unwrap())).unwrap()
         }
 
         /// The script names in the order they ran.
@@ -1200,14 +1215,6 @@ mod tests {
         }
     }
 
-    fn no_router() -> ScriptedRouter {
-        ScriptedRouter::new([])
-    }
-
-    fn reply(event: &str) -> Result<RouterReply, RouterError> {
-        Ok(RouterReply::event(event))
-    }
-
     fn params(yaml: &str) -> serde_norway::Mapping {
         serde_norway::from_str(yaml).unwrap()
     }
@@ -1228,7 +1235,7 @@ mod tests {
     #[test]
     fn order_normal_path_to_a_final_state() {
         let p = Project::new("step_normal", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.order(),
             [
@@ -1273,17 +1280,14 @@ mod tests {
     #[test]
     fn order_self_transition_exits_and_reenters_the_state() {
         let p = Project::new("step_self", &[]);
-        let router = ScriptedRouter::new([reply("again"), reply("finish")]);
-        assert_eq!(p.run(&router), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.order(),
             [
                 "root_entry",
                 "a_entry",
-                "a_invoke",
                 "a_exit",
                 "a_entry",
-                "a_invoke",
                 "a_exit",
                 "done_entry",
                 "root_exit"
@@ -1291,7 +1295,7 @@ mod tests {
         );
         assert_eq!(
             p.transitions(),
-            ["- claimed a claim", "a again a llm", "a finish done llm"]
+            ["- claimed a claim", "a yes a check", "a no done check"]
         );
         assert_eq!(visits(&p.events())["a"], 2);
     }
@@ -1299,7 +1303,7 @@ mod tests {
     #[test]
     fn order_entering_and_leaving_a_compound_state() {
         let p = Project::new("step_compound", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.order(),
             [
@@ -1334,7 +1338,7 @@ mod tests {
     #[test]
     fn order_unhandled_error_goes_to_failed() {
         let p = Project::new("step_error", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         assert_eq!(
             p.order(),
             [
@@ -1358,7 +1362,7 @@ mod tests {
     #[test]
     fn order_onentry_failure_skips_the_rest_and_the_invoke() {
         let p = Project::new("step_entry_fail", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         assert_eq!(
             p.order(),
             [
@@ -1380,7 +1384,7 @@ mod tests {
     #[test]
     fn order_root_onentry_failure_targets_failed() {
         let p = Project::new("step_root_entry_fail", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         // `a` handles `error`, but a root `onentry` failure always targets `failed`.
         assert_eq!(
             p.order(),
@@ -1395,7 +1399,7 @@ mod tests {
     #[test]
     fn order_onexit_failure_is_recorded_and_changes_nothing() {
         let p = Project::new("step_exit_fail", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.order(),
             [
@@ -1421,7 +1425,7 @@ mod tests {
     #[test]
     fn order_final_state_onentry_failure_moves_to_failed() {
         let p = Project::new("step_final_fail", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         assert_eq!(
             p.order(),
             [
@@ -1447,7 +1451,7 @@ mod tests {
     #[test]
     fn failing_onentry_on_failed_itself_is_only_logged() {
         let p = Project::new("step_failed_entry_fail", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         assert_eq!(
             p.order(),
             // Section 6: the remaining `onentry` scripts are skipped; the run still ends.
@@ -1473,12 +1477,7 @@ mod tests {
     fn migration_ledger_line_is_written_before_final_onentry() {
         let p = Project::new("step_normal", &[("done_entry", "copy_ledger")]);
         fs::write(p.root().join(".decree/processed.md"), "44-prev.md").unwrap();
-        let outcome = p.run_with(
-            &no_router(),
-            "migration",
-            "45-next.md",
-            &serde_norway::Mapping::new(),
-        );
+        let outcome = p.run_with("migration", "45-next.md", &serde_norway::Mapping::new());
         assert_eq!(outcome, Outcome::Finished("done".into()));
         let seen = fs::read_to_string(p.root().join("ledger.txt")).unwrap();
         assert_eq!(seen, "44-prev.md\n45-next.md\n");
@@ -1490,12 +1489,7 @@ mod tests {
     fn migration_ledger_line_is_removed_when_final_onentry_fails() {
         let p = Project::new("step_final_fail", &[]);
         fs::write(p.root().join(".decree/processed.md"), "44-prev.md\n").unwrap();
-        let outcome = p.run_with(
-            &no_router(),
-            "migration",
-            "45-next.md",
-            &serde_norway::Mapping::new(),
-        );
+        let outcome = p.run_with("migration", "45-next.md", &serde_norway::Mapping::new());
         assert_eq!(outcome, Outcome::Finished("failed".into()));
         assert_eq!(p.processed(), "44-prev.md\n");
     }
@@ -1503,12 +1497,7 @@ mod tests {
     #[test]
     fn failed_migration_writes_no_ledger_line() {
         let p = Project::new("step_error", &[]);
-        p.run_with(
-            &no_router(),
-            "migration",
-            "45-next.md",
-            &serde_norway::Mapping::new(),
-        );
+        p.run_with("migration", "45-next.md", &serde_norway::Mapping::new());
         assert_eq!(p.processed(), "");
     }
 
@@ -1519,7 +1508,7 @@ mod tests {
     #[test]
     fn invoke_failing_twice_then_succeeding_takes_done_after_two_attempts() {
         let p = Project::new("step_attempts", &[("fail_until_final", "fail_until_final")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.transitions(),
             [
@@ -1549,7 +1538,7 @@ mod tests {
     }
 
     #[test]
-    fn visits_cond_ends_a_retry_loop_after_two_visits() {
+    fn visits_check_ends_a_retry_loop_after_two_visits() {
         let p = Project::new(
             "step_retry_loop",
             &[
@@ -1557,9 +1546,7 @@ mod tests {
                 ("verify", "exit_zero"),
             ],
         );
-        // The router would retry forever; the cond stops it.
-        let router = ScriptedRouter::new([reply("retry"), reply("retry")]);
-        assert_eq!(p.run(&router), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         let events = p.events();
         assert_eq!(visits(&events)["implement"], 2);
         let attempts = p
@@ -1574,17 +1561,17 @@ mod tests {
                 "- claimed implement claim",
                 "implement error implement attempt",
                 "implement done verify exit_code",
-                "verify retry implement llm",
+                "verify done rounds_left exit_code",
+                "rounds_left yes implement check",
                 "implement error implement attempt",
                 "implement done verify exit_code",
-                "verify pass done single_option"
+                "verify done rounds_left exit_code",
+                "rounds_left no done check"
             ]
         );
-        let routers = p.events_of("router");
-        assert_eq!(routers[0]["options"], json!(["pass", "retry"]));
-        assert_eq!(routers[1]["options"], json!(["pass"]));
-        // The second decision did not ask.
-        assert_eq!(router.replies.borrow().len(), 1);
+        let decisions = p.events_of("decision");
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(decisions[1]["event"], "no");
     }
 
     #[test]
@@ -1606,155 +1593,174 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Router steps 1–6 (section 7, Router)
+    // Check (section 7, Check)
     // ---------------------------------------------------------------
 
-    fn router_project() -> Project {
-        Project::new("step_router", &[("verify", "exit_zero")])
+    /// Machine `step_check`: `work` runs `script` (a fixture name), then `decide` checks
+    /// `condition` (YAML flow mapping), with `input: work` if `input` is set.
+    fn check_project(condition: &str, input: bool, script: &str) -> Project {
+        let input = if input { ", input: work" } else { "" };
+        let text = format!(
+            "name: step_check\ndescription: Run a script, then check a condition.\n\
+             data:\n  max_rounds: {{ type: int, default: 2 }}\n  limit: {{ type: int, default: 1 }}\n  \
+             mode: {{ type: string, default: fast }}\n  strict: {{ type: bool, default: true }}\n\
+             initial: work\nstates:\n  \
+             work: {{ invoke: work, transitions: {{ done: decide }} }}\n  \
+             decide:\n    invoke: {{ check: {condition}{input} }}\n    transitions: {{ yes: passed, no: refused }}\n  \
+             passed: {{ final: true }}\n  refused: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        Project::from_text("step_check", &text, &[("work", script)])
+    }
+
+    /// The event a check produces, from its `decision` event, after a clean run.
+    fn check_event(condition: &str, params_yaml: &str) -> String {
+        let p = check_project(condition, false, "exit_zero");
+        let outcome = p.run_with("inbox", "inbox.md", &params(params_yaml));
+        let decision = &p.events_of("decision")[0];
+        let event = decision["event"].as_str().unwrap().to_string();
+        let expected = if event == "yes" { "passed" } else { "refused" };
+        assert_eq!(outcome, Outcome::Finished(expected.into()), "{condition}");
+        event
     }
 
     #[test]
-    fn router_valid_reply_is_taken_with_source_llm() {
-        let p = router_project();
-        let router = ScriptedRouter::new([Ok(RouterReply {
-            event: "pass".into(),
-            reason: Some("All tests pass.".into()),
-            confidence: Some(0.9),
-            probabilities: Some(BTreeMap::from([
-                ("ask".to_string(), 0.05),
-                ("pass".to_string(), 0.9),
-                ("retry".to_string(), 0.05),
-            ])),
-        })]);
-        assert_eq!(p.run(&router), Outcome::Finished("done".into()));
-        assert_eq!(
-            p.transitions(),
-            ["- claimed verify claim", "verify pass done llm"]
+    fn check_each_operator_on_visits() {
+        // `work` has been entered once when `decide` runs.
+        for (op, yes, no) in [
+            ("equals", 1, 2),
+            ("not_equals", 2, 1),
+            ("less_than", 2, 1),
+            ("at_most", 1, 0),
+            ("more_than", 0, 1),
+            ("at_least", 1, 2),
+        ] {
+            let cond = |n: i32| format!("{{ visits: work, {op}: {n} }}");
+            assert_eq!(check_event(&cond(yes), "{}"), "yes", "{op} {yes}");
+            assert_eq!(check_event(&cond(no), "{}"), "no", "{op} {no}");
+        }
+    }
+
+    #[test]
+    fn check_each_operator_on_data() {
+        for (cond, yes) in [
+            ("{ data: mode, equals: fast }", true),
+            ("{ data: mode, not_equals: fast }", false),
+            ("{ data: strict, equals: true }", true),
+            ("{ data: strict, not_equals: true }", false),
+            ("{ data: max_rounds, less_than: 3 }", true),
+            ("{ data: max_rounds, at_most: 1 }", false),
+            ("{ data: max_rounds, more_than: 1 }", true),
+            ("{ data: max_rounds, at_least: 3 }", false),
+        ] {
+            let want = if yes { "yes" } else { "no" };
+            assert_eq!(check_event(cond, "{}"), want, "{cond}");
+        }
+    }
+
+    #[test]
+    fn check_compares_with_a_data_value_set_by_params() {
+        let cond = "{ visits: work, less_than: { data: max_rounds } }";
+        assert_eq!(check_event(cond, "{}"), "yes");
+        assert_eq!(check_event(cond, "max_rounds: 1"), "no");
+        let cond = "{ data: limit, equals: { data: max_rounds } }";
+        assert_eq!(check_event(cond, "{}"), "no");
+        assert_eq!(check_event(cond, "limit: 2"), "yes");
+    }
+
+    #[test]
+    fn check_matches_reads_the_input_states_output() {
+        // `exit_zero` prints `hello`; `stderr` writes `[stderr] to stderr` to its log.
+        for (script, cond, want) in [
+            ("exit_zero", "{ matches: '(?m)^hello$' }", "yes"),
+            ("exit_zero", "{ matches: hel+o }", "yes"),
+            ("exit_zero", "{ matches: '(?m)^bye$' }", "no"),
+            (
+                "stderr",
+                "{ matches: '(?m)^\\[stderr\\] to stderr$' }",
+                "yes",
+            ),
+        ] {
+            let p = check_project(cond, true, script);
+            p.run();
+            let decision = &p.events_of("decision")[0];
+            assert_eq!(decision["event"], want, "{script} {cond}");
+        }
+    }
+
+    #[test]
+    fn check_matches_without_input_reads_the_most_recent_invoke() {
+        let p = check_project("{ matches: '^hello' }", false, "exit_zero");
+        assert_eq!(p.run(), Outcome::Finished("passed".into()));
+    }
+
+    #[test]
+    fn check_appends_a_decision_before_its_transition() {
+        let p = check_project(
+            "{ visits: work, less_than: { data: max_rounds } }",
+            false,
+            "exit_zero",
         );
-        assert_eq!(p.events_of("transition")[1]["exit_code"], 0);
+        assert_eq!(p.run(), Outcome::Finished("passed".into()));
         let events = p.events();
-        // The router event comes right before the transition it causes.
-        let i = events.iter().position(|e| e["type"] == "router").unwrap();
-        assert_eq!(events[i + 1]["type"], "transition");
-        let r = &events[i];
-        assert_eq!(r["state"], "verify");
-        assert_eq!(r["options"], json!(["ask", "pass", "retry"]));
-        assert_eq!(r["event"], "pass");
-        assert_eq!(r["source"], "llm");
-        assert_eq!(r["reason"], "All tests pass.");
-        assert_eq!(r["confidence"], 0.9);
-        assert_eq!(r["probabilities"]["pass"], 0.9);
-        assert_eq!(r["asks"], 1);
-        assert!(r["duration_ms"].as_u64().is_some());
-        assert!(r.get("router_error").is_none());
-        // The router log holds the request: options with descriptions, the invoke's
-        // stdout tail and the message body.
-        let log = r["log"].as_str().unwrap();
-        assert!(log.ends_with("-verify-_router.log"), "{log}");
-        let text = fs::read_to_string(p.run_dir().join(log)).unwrap();
-        let line: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
-        let request = &line["request"];
-        assert_eq!(request["machine"], "step_router");
-        assert_eq!(request["state"], "verify");
+        let i = events.iter().position(|e| e["type"] == "decision").unwrap();
+        let d = &events[i];
+        assert_eq!(d["state"], "decide");
+        assert_eq!(d["kind"], "check");
+        assert_eq!(d["event"], "yes");
         assert_eq!(
-            request["state_description"],
-            "Tests have run; decide what happens next."
+            d["condition"],
+            json!({ "visits": "work", "less_than": { "data": "max_rounds" } })
         );
-        assert_eq!(request["options"][1]["event"], "pass");
+        let t = &events[i + 1];
+        assert_eq!(t["type"], "transition");
         assert_eq!(
-            request["options"][1]["description"],
-            "All acceptance criteria are met."
+            (
+                &t["from"],
+                &t["event"],
+                &t["to"],
+                &t["source"],
+                &t["exit_code"]
+            ),
+            (
+                &json!("decide"),
+                &json!("yes"),
+                &json!("passed"),
+                &json!("check"),
+                &Value::Null
+            )
         );
-        assert_eq!(request["step_output"], "hello");
-        assert_eq!(request["message_body"], BODY);
-        assert_eq!(request["previous_error"], Value::Null);
-        assert_eq!(line["reply"]["event"], "pass");
+        // No script ran for the check.
+        assert!(p.events_of("script").iter().all(|e| e["state"] != "decide"));
     }
 
     #[test]
-    fn router_invalid_event_then_valid_takes_the_second_reply() {
-        let p = router_project();
-        let router = ScriptedRouter::new([reply("bogus"), reply("retry")]);
-        assert_eq!(p.run(&router), Outcome::Finished("retried".into()));
-        assert_eq!(
-            p.transitions(),
-            ["- claimed verify claim", "verify retry retried llm"]
-        );
-        let r = &p.events_of("router")[0];
-        assert_eq!(r["source"], "llm");
-        assert_eq!(r["asks"], 2);
-        let log = fs::read_to_string(p.run_dir().join(r["log"].as_str().unwrap())).unwrap();
-        let lines: Vec<Value> = log
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect();
-        assert_eq!(lines.len(), 2);
-        assert_eq!(
-            lines[1]["request"]["previous_error"],
-            "`bogus` is not one of the options: ask, pass, retry"
-        );
-    }
-
-    #[test]
-    fn router_two_rejected_replies_take_default_with_router_error() {
-        let p = router_project();
-        let router = ScriptedRouter::new([Err(RouterError("backend down".into())), reply("Pass")]);
-        assert_eq!(p.run(&router), Outcome::Finished("asked".into()));
-        assert_eq!(
-            p.transitions(),
-            ["- claimed verify claim", "verify ask asked default"]
-        );
-        let r = &p.events_of("router")[0];
-        assert_eq!(r["event"], "ask");
-        assert_eq!(r["source"], "default");
-        assert_eq!(r["asks"], 2);
-        // Never fuzzy-matched: `Pass` is not `pass`.
-        assert_eq!(
-            r["router_error"],
-            "ask 1: the router failed: backend down; \
-             ask 2: `Pass` is not one of the options: ask, pass, retry"
-        );
-    }
-
-    #[test]
-    fn router_empty_queue_counts_as_a_failure() {
-        let p = router_project();
-        assert_eq!(p.run(&no_router()), Outcome::Finished("asked".into()));
-        assert_eq!(p.events_of("router")[0]["source"], "default");
-    }
-
-    #[test]
-    fn router_single_option_after_conds_does_not_ask() {
-        let p = router_project();
-        let router = ScriptedRouter::new([reply("pass")]);
-        let outcome = p.run_with(&router, "inbox", "inbox.md", &params("open: false"));
-        assert_eq!(outcome, Outcome::Finished("asked".into()));
-        assert_eq!(
-            p.transitions(),
-            ["- claimed verify claim", "verify ask asked single_option"]
-        );
-        let r = &p.events_of("router")[0];
-        assert_eq!(r["options"], json!(["ask"]));
-        assert_eq!(r["source"], "single_option");
-        assert!(r.get("asks").is_none());
-        assert!(r.get("log").is_none());
-        assert!(r["duration_ms"].as_u64().is_some());
-        // The queue is untouched.
-        assert_eq!(router.replies.borrow().len(), 1);
-        assert_eq!(router.replies.borrow()[0], reply("pass"));
-    }
-
-    #[test]
-    fn printed_event_in_a_router_state_skips_the_router() {
-        let p = Project::new("step_router", &[("verify", "print_pass")]);
-        let router = ScriptedRouter::new([reply("retry")]);
-        assert_eq!(p.run(&router), Outcome::Finished("done".into()));
-        assert_eq!(
-            p.transitions(),
-            ["- claimed verify claim", "verify pass done stdout"]
-        );
-        assert!(p.events_of("router").is_empty());
-        assert_eq!(router.replies.borrow().len(), 1);
+    fn machine_and_model_invokes_are_not_run_yet() {
+        for (invoke, kind) in [
+            ("{ machine: other }", "machine"),
+            ("{ choose: model, question: \"Go?\" }", "choose: model"),
+        ] {
+            let text = format!(
+                "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    invoke: {invoke}\n    \
+                 transitions:\n      done: {{ target: done, description: Done. }}\n      \
+                 stop: {{ target: done, description: Stop. }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
+            );
+            let m = load_machine_text("m", Path::new("m.yml"), &text).unwrap();
+            let p = Project::new("step_normal", &[]);
+            let params = serde_norway::Mapping::new();
+            let input = RunInput {
+                params: &params,
+                message_body: BODY,
+                file: "inbox.md",
+            };
+            let err = Interpreter::new(&m, p.executor("inbox", &params), input)
+                .unwrap()
+                .start()
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("machine `m`: a: running `{kind}` invokes is not implemented yet")
+            );
+        }
     }
 
     // ---------------------------------------------------------------
@@ -1764,7 +1770,7 @@ mod tests {
     #[test]
     fn undeclared_printed_event_becomes_error_with_invalid_event() {
         let p = Project::new("step_normal", &[("a_invoke", "print_undeclared")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         let t = &p.events_of("transition")[1];
         assert_eq!(t["event"], "error");
         assert_eq!(t["source"], "stdout");
@@ -1775,7 +1781,7 @@ mod tests {
     #[test]
     fn timed_out_invoke_gives_error() {
         let p = Project::new("step_timeout", &[("sleep_long", "sleep_long")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         let script = &p.events_of("script")[0];
         assert_eq!(script["timed_out"], true);
         assert_eq!(script["exit_code"], Value::Null);
@@ -1789,7 +1795,7 @@ mod tests {
     fn signal_interrupts_the_run_in_its_current_state() {
         let p = Project::new("step_normal", &[]);
         p.shutdown.store(true, Ordering::SeqCst);
-        assert_eq!(p.run(&no_router()), Outcome::Interrupted("a".into()));
+        assert_eq!(p.run(), Outcome::Interrupted("a".into()));
         let events = p.events();
         let last = events.last().unwrap();
         assert_eq!(last["type"], "interrupted");
@@ -1810,7 +1816,7 @@ mod tests {
     #[test]
     fn composition_unhandled_event_is_taken_by_the_nearest_ancestor() {
         let p = Project::new("step_bubble", &[("a_invoke", "print_pass")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         // `a` does not handle `pass`; `work` does, before `outer`. The domain is the root,
         // so `a`, `work` and `outer` are all exited, innermost first.
         assert_eq!(
@@ -1841,7 +1847,7 @@ mod tests {
     #[test]
     fn internal_transition_on_a_compound_state_runs_none_of_its_scripts() {
         let p = Project::new("step_internal", &[("a_invoke", "print_pass")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.transitions(),
             [
@@ -1871,7 +1877,7 @@ mod tests {
     #[test]
     fn external_transition_on_a_compound_state_exits_and_reenters_it() {
         let p = Project::new("step_external", &[("a_invoke", "print_pass")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.order(),
             [
@@ -1894,7 +1900,7 @@ mod tests {
     #[test]
     fn nested_final_state_raises_done_state_at_once_and_the_run_goes_on() {
         let p = Project::new("step_nested_final", &[]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("done".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
         assert_eq!(
             p.transitions(),
             [
@@ -1950,12 +1956,7 @@ mod tests {
     fn nested_final_state_writes_no_ledger_line() {
         let p = Project::new("step_nested_final", &[("after_invoke", "copy_ledger")]);
         fs::write(p.root().join(".decree/processed.md"), "45-prev.md\n").unwrap();
-        let outcome = p.run_with(
-            &no_router(),
-            "migration",
-            "46-next.md",
-            &serde_norway::Mapping::new(),
-        );
+        let outcome = p.run_with("migration", "46-next.md", &serde_norway::Mapping::new());
         assert_eq!(outcome, Outcome::Finished("done".into()));
         // `copy_ledger` ran after `finished` was entered, before the root `done`.
         let seen = fs::read_to_string(p.root().join("ledger.txt")).unwrap();
@@ -1966,7 +1967,7 @@ mod tests {
     #[test]
     fn nested_final_onentry_failure_is_error_resolved_from_that_state() {
         let p = Project::new("step_nested_final", &[("finished_entry", "exit_three")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("recovered".into()));
+        assert_eq!(p.run(), Outcome::Finished("recovered".into()));
         // No `done.state.work`: the error leaves `work` through its `error` transition.
         assert_eq!(
             p.transitions(),
@@ -1992,15 +1993,15 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Waiting states, interpreter side (M3.4)
+    // Choose: person, interpreter side (section 4, Replies; section 7)
     // ---------------------------------------------------------------
 
-    /// The `step_waiting` project, run until it waits. `ask_person` prints its environment.
-    fn waiting_project(scripts: &[(&str, &str)]) -> (Project, String) {
+    /// The `step_person` project, run until it waits. `ask_person` prints its environment.
+    fn person_project(scripts: &[(&str, &str)]) -> (Project, String) {
         let mut all = vec![("ask_person", "print_env")];
         all.extend_from_slice(scripts);
-        let p = Project::new("step_waiting", &all);
-        let outcome = p.run(&no_router());
+        let p = Project::new("step_person", &all);
+        let outcome = p.run();
         let entered = p
             .events_of("transition")
             .into_iter()
@@ -2024,48 +2025,56 @@ mod tests {
             .events()
             .append("received", fields.as_object().unwrap().clone())
             .unwrap();
-        let router = no_router();
         let params = serde_norway::Mapping::new();
         let input = RunInput {
             params: &params,
             message_body: BODY,
             file: "inbox.md",
         };
-        Interpreter::new(&p.machine, executor, &router, input)
+        Interpreter::new(&p.machine, executor, input)
             .unwrap()
             .resume()
             .unwrap()
     }
 
     #[test]
-    fn waiting_state_runs_onentry_with_wait_env_appends_waiting_and_stops() {
+    fn person_ask_script_sees_the_wait_id_and_choices_then_the_run_waits() {
         let before = Utc::now();
-        let (p, wait_id) = waiting_project(&[]);
-        assert_eq!(p.order(), ["root_entry", "build_invoke", "gate_entry"]);
-        // `ask_person` sees the wait id and the accepted events, its ancestor's included.
-        let ask = p
+        let (p, wait_id) = person_project(&[]);
+        assert_eq!(
+            p.order(),
+            ["root_entry", "build_invoke", "gate_entry", "approval_entry"]
+        );
+        let log = p.log_of("ask_person");
+        let choices = p.run_dir().join(CHOICES_FILE);
+        for line in [
+            format!("DECREE_WAIT_ID={wait_id}"),
+            format!("DECREE_CHOICES={}", choices.display()),
+            "DECREE_QUESTION=Ship this build?".to_string(),
+            "DECREE_EVENTS=approve reject".to_string(),
+            "DECREE_STATE=approval".to_string(),
+            "DECREE_PHASE=invoke".to_string(),
+        ] {
+            assert!(log.lines().any(|l| l == line), "{line}\n{log}");
+        }
+        let written: Value = serde_json::from_str(&fs::read_to_string(&choices).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            json!({ "approve": "Ship this build.", "reject": "Do not ship." })
+        );
+        let script = p
             .events_of("script")
             .into_iter()
             .find(|e| e["script"] == "ask_person")
             .unwrap();
-        let log = fs::read_to_string(p.run_dir().join(ask["log"].as_str().unwrap())).unwrap();
-        assert!(
-            log.contains(&format!("DECREE_WAIT_ID={wait_id}\n")),
-            "{log}"
-        );
-        assert!(
-            log.contains("DECREE_ACCEPTS=approve cancel reject\n"),
-            "{log}"
-        );
-        assert!(log.contains("DECREE_STATE=approval\n"), "{log}");
-        assert!(log.contains("DECREE_PHASE=onentry\n"), "{log}");
+        assert_eq!(script["phase"], "invoke");
 
         let events = p.events();
         let last = events.last().unwrap();
         assert_eq!(last["type"], "waiting");
         assert_eq!(last["state"], "approval");
         assert_eq!(last["wait_id"], json!(wait_id));
-        assert_eq!(last["accepts"], json!(["approve", "cancel", "reject"]));
+        assert_eq!(last["options"], json!(["approve", "reject"]));
         let timeout_at = DateTime::parse_from_rfc3339(last["timeout_at"].as_str().unwrap())
             .unwrap()
             .with_timezone(&Utc);
@@ -2077,30 +2086,18 @@ mod tests {
     }
 
     #[test]
-    fn waiting_state_without_timeout_has_null_timeout_at() {
-        let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_waiting.yml"))
+    fn person_without_timeout_has_null_timeout_at() {
+        let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_person.yml"))
             .unwrap()
-            .replace("        timeout_s: 60\n", "");
-        let m = load_machine_text("step_waiting", Path::new("step_waiting.yml"), &text).unwrap();
-        let p = Project::new("step_waiting", &[]);
-        let router = no_router();
-        let params = serde_norway::Mapping::new();
-        let input = RunInput {
-            params: &params,
-            message_body: BODY,
-            file: "inbox.md",
-        };
-        let outcome = Interpreter::new(&m, p.executor("inbox", &params), &router, input)
-            .unwrap()
-            .start()
-            .unwrap();
-        assert!(matches!(outcome, Outcome::Waiting { .. }), "{outcome:?}");
+            .replace(", timeout_s: 60", "");
+        let p = Project::from_text("step_person", &text, &[]);
+        assert!(matches!(p.run(), Outcome::Waiting { .. }));
         assert_eq!(p.events_of("waiting")[0]["timeout_at"], Value::Null);
     }
 
     #[test]
-    fn waiting_received_event_continues_without_rerunning_any_script() {
-        let (p, wait_id) = waiting_project(&[("ship_invoke", "print_env")]);
+    fn person_reply_continues_with_source_person_and_reruns_nothing() {
+        let (p, wait_id) = person_project(&[("ship_invoke", "print_env")]);
         let outcome = receive(
             &p,
             json!({ "wait_id": wait_id, "event": "approve", "file": "reply.md" }),
@@ -2113,6 +2110,7 @@ mod tests {
                 "root_entry",
                 "build_invoke",
                 "gate_entry",
+                "approval_entry",
                 "approval_exit",
                 "gate_exit",
                 "ship_entry",
@@ -2128,25 +2126,35 @@ mod tests {
                 .count(),
             1
         );
-        let t = p.events_of("transition");
-        let taken = t.iter().find(|e| e["from"] == "approval").unwrap();
+        // A `decision` event, then the transition it causes.
+        let events = p.events();
+        let i = events.iter().position(|e| e["type"] == "decision").unwrap();
+        assert_eq!(events[i - 1]["type"], "received");
+        let d = &events[i];
+        assert_eq!(d["state"], "approval");
+        assert_eq!(d["kind"], "person");
+        assert_eq!(d["event"], "approve");
+        assert_eq!(d["options"], json!(["approve", "reject"]));
+        assert_eq!(d["reply"], "reply.md");
+        // Then the `onexit` scripts, then the transition (section 7, steps 5 and 6).
+        let taken = events[i..]
+            .iter()
+            .find(|e| e["type"] == "transition")
+            .unwrap();
+        assert_eq!(taken["from"], "approval");
         assert_eq!(taken["event"], "approve");
         assert_eq!(taken["to"], "ship");
-        assert_eq!(taken["source"], "external");
+        assert_eq!(taken["source"], "person");
         assert_eq!(taken["exit_code"], Value::Null);
-        // Later scripts see the reply.
-        let ship = scripts
-            .iter()
-            .find(|e| e["script"] == "ship_invoke")
-            .unwrap();
-        let log = fs::read_to_string(p.run_dir().join(ship["log"].as_str().unwrap())).unwrap();
+        // Later scripts see the reply, and no wait.
+        let log = p.log_of("ship_invoke");
         let reply = p.run_dir().join("received/reply.md");
         assert!(
             log.contains(&format!("DECREE_RECEIVED={}\n", reply.display())),
             "{log}"
         );
         assert!(log.contains("DECREE_WAIT_ID=\n"), "{log}");
-        let events = p.events();
+        assert!(log.contains("DECREE_CHOICES=\n"), "{log}");
         assert_eq!(run_status(&p.machine, &events, false), RunStatus::Finished);
         // Log numbers continue after the logs written before the wait.
         let logs: Vec<&str> = scripts.iter().map(|e| e["log"].as_str().unwrap()).collect();
@@ -2155,18 +2163,8 @@ mod tests {
     }
 
     #[test]
-    fn waiting_received_event_bubbles_to_an_ancestor() {
-        let (p, wait_id) = waiting_project(&[]);
-        let outcome = receive(&p, json!({ "wait_id": wait_id, "event": "cancel" }));
-        assert_eq!(outcome, Outcome::Finished("cancelled".into()));
-        assert!(p
-            .transitions()
-            .contains(&"approval cancel cancelled external".to_string()));
-    }
-
-    #[test]
-    fn waiting_timeout_error_goes_to_failed() {
-        let (p, wait_id) = waiting_project(&[]);
+    fn person_timeout_error_goes_to_failed_with_source_timeout() {
+        let (p, wait_id) = person_project(&[]);
         let outcome = receive(
             &p,
             json!({ "wait_id": wait_id, "event": "error", "timed_out": true }),
@@ -2174,34 +2172,47 @@ mod tests {
         assert_eq!(outcome, Outcome::Finished("failed".into()));
         assert!(p
             .transitions()
-            .contains(&"approval error failed external".to_string()));
+            .contains(&"approval error failed timeout".to_string()));
+        assert!(p.events_of("decision").is_empty());
         assert_eq!(
-            &p.order()[3..],
+            &p.order()[4..],
             ["approval_exit", "gate_exit", "failed_entry", "root_exit"]
         );
     }
 
     #[test]
-    fn waiting_state_onentry_failure_is_error_and_does_not_wait() {
-        let p = Project::new("step_waiting", &[("ask_person", "exit_three")]);
-        assert_eq!(p.run(&no_router()), Outcome::Finished("failed".into()));
+    fn person_ask_script_failure_is_error_and_does_not_wait() {
+        let p = Project::new("step_person", &[("ask_person", "exit_three")]);
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
+        assert!(p.events_of("waiting").is_empty());
+        let t = p.events_of("transition");
+        let taken = t.iter().find(|e| e["from"] == "approval").unwrap();
+        assert_eq!(taken["event"], "error");
+        assert_eq!(taken["source"], "exit_code");
+        assert_eq!(taken["exit_code"], 3);
+    }
+
+    #[test]
+    fn person_onentry_failure_is_error_and_does_not_ask() {
+        let p = Project::new("step_person", &[("approval_entry", "exit_three")]);
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
         assert!(p.events_of("waiting").is_empty());
         assert!(p
-            .transitions()
-            .contains(&"approval error failed exit_code".to_string()));
+            .events_of("script")
+            .iter()
+            .all(|e| e["script"] != "ask_person"));
     }
 
     #[test]
     fn resume_refuses_a_run_that_has_not_received_an_event() {
-        let (p, _) = waiting_project(&[]);
-        let router = no_router();
+        let (p, _) = person_project(&[]);
         let params = serde_norway::Mapping::new();
         let input = RunInput {
             params: &params,
             message_body: BODY,
             file: "inbox.md",
         };
-        let err = Interpreter::new(&p.machine, p.executor("inbox", &params), &router, input)
+        let err = Interpreter::new(&p.machine, p.executor("inbox", &params), input)
             .unwrap()
             .resume()
             .unwrap_err();
@@ -2213,31 +2224,38 @@ mod tests {
     }
 
     #[test]
-    fn every_waiting_and_received_field_appears() {
-        let (p, wait_id) = waiting_project(&[]);
+    fn every_decision_waiting_and_received_field_appears() {
+        let (p, wait_id) = person_project(&[]);
         receive(
             &p,
             json!({ "wait_id": wait_id, "event": "approve", "file": "reply.md" }),
         );
-        let (q, wait_id) = waiting_project(&[]);
+        let (q, wait_id) = person_project(&[]);
         receive(
             &q,
             json!({ "wait_id": wait_id, "event": "error", "timed_out": true }),
         );
+        let c = check_project("{ visits: work, equals: 1 }", false, "exit_zero");
+        c.run();
         let common = ["v", "seq", "ts", "type", "run_id", "machine", "trigger"];
         let keys = |kind: &str| -> HashSet<String> {
             p.events_of(kind)
                 .into_iter()
                 .chain(q.events_of(kind))
+                .chain(c.events_of(kind))
                 .flat_map(|e| e.keys().cloned().collect::<Vec<_>>())
                 .collect()
         };
         for (kind, fields) in [
             (
                 "waiting",
-                &["state", "wait_id", "accepts", "timeout_at"][..],
+                &["state", "wait_id", "options", "timeout_at"][..],
             ),
             ("received", &["wait_id", "event", "file", "timed_out"][..]),
+            (
+                "decision",
+                &["state", "kind", "event", "condition", "options", "reply"][..],
+            ),
         ] {
             let want: HashSet<String> =
                 common.iter().chain(fields).map(|s| s.to_string()).collect();
@@ -2262,14 +2280,13 @@ mod tests {
             let text = fs::read_to_string(&path).unwrap();
             let m = load_machine_text(&stem, &path, &text).unwrap();
             let p = Project::new("step_normal", &[]);
-            let router = no_router();
             let params = serde_norway::Mapping::new();
             let input = RunInput {
                 params: &params,
                 message_body: "",
                 file: "irp.md",
             };
-            let outcome = Interpreter::new(&m, p.executor("inbox", &params), &router, input)
+            let outcome = Interpreter::new(&m, p.executor("inbox", &params), input)
                 .unwrap()
                 .start()
                 .unwrap();
@@ -2296,7 +2313,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
-    fn every_transition_script_router_and_run_finished_field_appears() {
+    fn every_transition_script_and_run_finished_field_appears() {
         let mut seen: BTreeMap<String, HashSet<String>> = BTreeMap::new();
         let mut collect = |p: &Project| {
             for e in p.events() {
@@ -2306,24 +2323,13 @@ mod tests {
         };
 
         let p = Project::new("step_exit_fail", &[]);
-        p.run(&no_router());
+        p.run();
         collect(&p);
         let p = Project::new("step_normal", &[("a_invoke", "print_undeclared")]);
-        p.run(&no_router());
+        p.run();
         collect(&p);
         let p = Project::new("step_timeout", &[("sleep_long", "sleep_long")]);
-        p.run(&no_router());
-        collect(&p);
-        let p = router_project();
-        p.run(&ScriptedRouter::new([Ok(RouterReply {
-            event: "pass".into(),
-            reason: Some("ok".into()),
-            confidence: Some(0.8),
-            probabilities: Some(BTreeMap::from([("pass".to_string(), 0.8)])),
-        })]));
-        collect(&p);
-        let p = router_project();
-        p.run(&no_router());
+        p.run();
         collect(&p);
         // `error` is only on `invalid_message` events.
         let p = Project::new("step_normal", &[]);
@@ -2339,7 +2345,7 @@ mod tests {
         collect(&p);
 
         let common = ["v", "seq", "ts", "type", "run_id", "machine", "trigger"];
-        let expected: [(&str, &[&str]); 4] = [
+        let expected: [(&str, &[&str]); 3] = [
             (
                 "transition",
                 &[
@@ -2366,22 +2372,6 @@ mod tests {
                     "duration_ms",
                     "exit_code",
                     "timed_out",
-                    "log",
-                ],
-            ),
-            (
-                "router",
-                &[
-                    "state",
-                    "options",
-                    "event",
-                    "source",
-                    "reason",
-                    "confidence",
-                    "probabilities",
-                    "router_error",
-                    "asks",
-                    "duration_ms",
                     "log",
                 ],
             ),

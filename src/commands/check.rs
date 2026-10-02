@@ -1,12 +1,14 @@
-//! `decree check`: validate machines (V1–V14) and pending messages (M1–M3) before anything
+//! `decree check`: validate machines (V1–V20) and pending messages (M1–M3) before anything
 //! runs (spec section 5, Validation). Prints one line per error:
-//! `<path relative to .decree/>: <state path or line>: <message>`.
+//! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
+//! without failing, when `.decree/graph/` differs from what `decree graph` would write.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_norway::{Mapping, Value};
 
+use crate::commands::graph;
 use crate::config::{self, AppConfig};
 use crate::cron;
 use crate::error::DecreeError;
@@ -16,6 +18,15 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
     let problems = check(project_root)?;
     for problem in &problems {
         println!("{problem}");
+    }
+    // A machine that fails to load cannot be drawn; its error is reported above.
+    if let Ok(stale) = graph::stale(project_root) {
+        for line in stale {
+            eprintln!(
+                "{}: {line}; run `decree graph`",
+                colored::Colorize::yellow("warning")
+            );
+        }
     }
     match problems.len() {
         0 => Ok(()),
@@ -36,26 +47,39 @@ pub fn check(project_root: &Path) -> Result<Vec<String>, DecreeError> {
 
     let paths = machine::machine_paths(&decree_dir, shared_source.as_deref())?;
     let machine_ids: BTreeSet<String> = paths.keys().cloned().collect();
-    let env = CheckEnv {
-        decree_dir: &decree_dir,
-        shared_source: shared_source.as_deref(),
-        machine_ids: &machine_ids,
-    };
 
+    // Load every machine first: some rules look into the machines a state invokes.
     let mut problems = Vec::new();
     let mut machines = BTreeMap::new();
+    let mut texts = BTreeMap::new();
     for (id, path) in paths {
         let text = std::fs::read_to_string(&path)?;
         match machine::load_machine_text(&id, &path, &text) {
             Ok(m) => {
-                for p in m.validate(&text, &env) {
-                    problems.push(format!("machines/{id}.yml: {}: {}", p.at, p.message));
-                }
-                machines.insert(id, m);
+                machines.insert(id.clone(), m);
+                texts.insert(id, text);
             }
-            Err(e) => problems.push(e.to_string()),
+            Err(e) => problems.push((id, e.to_string())),
         }
     }
+    let env = CheckEnv {
+        decree_dir: &decree_dir,
+        shared_source: shared_source.as_deref(),
+        machine_ids: &machine_ids,
+        machines: &machines,
+        default_router: config.default_router.as_deref(),
+    };
+    for (id, m) in &machines {
+        for p in m.validate(&texts[id], &env) {
+            problems.push((
+                id.clone(),
+                format!("machines/{id}.yml: {}: {}", p.at, p.message),
+            ));
+        }
+    }
+    // By machine id, each machine's errors in rule order.
+    problems.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut problems: Vec<String> = problems.into_iter().map(|(_, line)| line).collect();
 
     let messages = Messages {
         machines: &machines,

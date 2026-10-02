@@ -1,0 +1,16 @@
+name: m
+description: An internal transition from a compound state to its child.
+initial: work
+states:
+  work:
+    initial: step
+    transitions:
+      again: { target: step, type: internal }
+      done.state.work: done
+    states:
+      step:
+        invoke: work
+        transitions: { done: fin }
+      fin: { final: true }
+  done: { final: true }
+  failed: { final: true }

@@ -12,7 +12,6 @@ pub(crate) mod hooks;
 pub(crate) mod interpreter;
 pub(crate) mod machine;
 pub(crate) mod message;
-pub(crate) mod router;
 pub(crate) mod routine;
 pub(crate) mod runtime;
 
@@ -65,7 +64,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             match cmd {
                 Command::Process { dry_run } => commands::process::run(&root, dry_run),
                 Command::Check => commands::check::run(&root),
-                Command::Graph { machine } => commands::graph::run(&root, machine.as_deref()),
+                Command::Graph => commands::graph::run(&root),
                 Command::Routine { name } => commands::routine::run(&root, name.as_deref()),
                 Command::Verify => commands::routine::verify(&root),
                 Command::Daemon { interval } => commands::daemon::run(&root, interval),

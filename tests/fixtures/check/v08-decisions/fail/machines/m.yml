@@ -1,0 +1,17 @@
+name: m
+description: A check that misses no, and a person asked nothing.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: again }
+  again:
+    invoke: { check: { visits: work, less_than: 2 } }
+    transitions: { yes: approval }
+  approval:
+    invoke: { choose: person, ask: ask }
+    transitions:
+      approve: { target: done, description: Ship it. }
+      reject:  failed
+  done: { final: true }
+  failed: { final: true }

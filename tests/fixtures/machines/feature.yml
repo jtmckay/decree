@@ -1,3 +1,4 @@
+# Graph: ../graph/feature.md
 name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.
 data:
@@ -11,30 +12,32 @@ states:
     transitions: { done: work }
   work:                            # compound: the implement/verify loop as one unit
     initial: implement
-    transitions:
-      done.state.work: done        # raised when work reaches its own final state
+    transitions: { done.state.work: done }   # raised when work reaches its own final state
     states:
       implement:
         invoke: implement
-        max_attempts: 2            # extension: re-run a crashing invoke in place
+        max_attempts: 2            # extension: re-run a crashing script in place
         onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }
-      verify:
-        description: Tests and acceptance criteria have run; decide what happens next.
+      verify:                      # script: prints pass or fail
         invoke: verify
-        router: llm                # extension: a model picks one of these events
-        default: ask
+        transitions: { pass: verified, fail: rounds_left }
+      rounds_left:                 # deterministic check: yes or no
+        invoke: { check: { visits: implement, less_than: { data: max_rounds } } }
+        transitions: { yes: triage, no: review }
+      triage:                      # a model picks one option; below the floor it is unsure
+        invoke: { choose: model, question: "Should we implement again or split the work?", min_confidence: 0.8, input: verify }
         transitions:
-          pass:  { target: verified, description: All acceptance criteria are met. }
-          retry: { target: implement, description: Failures look fixable; implement again., cond: "visits.implement < data.max_rounds" }
-          split: { target: spawn_followups, description: Scope is too large; emit smaller follow-up messages. }
-          ask:   { target: review, description: Not sure; ask a person. }
-      review:                      # waits for a person
-        description: A person sends approve, retry or reject.
-        onentry: [ask_person]
-        timeout_s: 172800
-        transitions: { approve: verified, retry: implement, reject: failed }
+          retry:  { target: implement, description: The failures look fixable; implement again. }
+          split:  { target: spawn_followups, description: The scope is too large; emit smaller follow-up messages. }
+          unsure: { target: review }
+      review:                      # a person picks one option; the run pauses for the reply
+        invoke: { choose: person, question: "Tests still fail. What next?", ask: ask_person, timeout_s: 172800 }
+        transitions:
+          approve: { target: verified, description: Good enough; commit it. }
+          retry:   { target: implement, description: Try again; see my note. }
+          reject:  { target: failed, description: Stop. }
       verified: { final: true }    # raises done.state.work
   spawn_followups:
     invoke: spawn

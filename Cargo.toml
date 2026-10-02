@@ -19,6 +19,7 @@ signal-hook = "0.3"
 libc = "0.2"
 walkdir = "2"
 cron = "0.15"
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"

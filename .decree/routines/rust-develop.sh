@@ -21,6 +21,7 @@ seq="${seq:-}"
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
     command -v claude >/dev/null 2>&1 || { echo "claude not found" >&2; exit 1; }
     command -v cargo >/dev/null 2>&1 || { echo "cargo not found" >&2; exit 1; }
+    command -v uuidgen >/dev/null 2>&1 || { echo "uuidgen not found" >&2; exit 1; }
     exit 0
 fi
 
@@ -35,28 +36,55 @@ stop_if_requested() {
 # A STOP from an earlier attempt stays in force until a human removes it.
 stop_if_requested
 
+# Every claude session gets a known id, recorded in sessions.txt, so its full
+# transcript (reasoning and tool calls, written as it goes, kept even if the
+# session dies) can be found from the run directory, and later steps resume it.
+transcripts="${HOME}/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')"
+new_session() {
+    local id
+    id="$(uuidgen)"
+    echo "$1 ${id} ${transcripts}/${id}.jsonl" >> "${message_dir}/sessions.txt"
+    echo "=== $1 session ${id} ===" >&2
+    echo "${id}"
+}
+
+gate() {
+    cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+}
+
+progress="${message_dir}/progress.md"
+work_rules="Work in small steps, one requirement or acceptance criterion at a time,
+and keep the tree compiling between steps. After each step, append a line to
+${progress}: what is done (files, test names) and what is next. If ${progress}
+already exists, an earlier attempt was cut short: read it, check the current
+code against it, and continue from there instead of starting over."
+
 # Step 1: Implementation
-claude --permission-mode auto -p "You are a senior Rust engineer. Read ${message_file} and
+impl_session="$(new_session implement)"
+claude --permission-mode auto --session-id "${impl_session}" -p "You are a senior Rust engineer. Read ${message_file} and
 implement all requirements with proper error handling and tests.
+${work_rules}
 Previous attempt logs (if any) are in ${message_dir} for context.
 The run directory is ${message_dir}."
 stop_if_requested
 
-# Step 2: Build and test
-echo "=== Building (release) ==="
-cargo build --release 2>&1 | tee "${message_dir}/build.log" || true
-echo "=== Running tests ==="
-cargo test 2>&1 | tee "${message_dir}/test-output.log" || true
+# Step 2: Gate. claude -p exits 0 whatever the agent concludes, so the
+# routine decides success itself. Passing here skips the QA session.
+echo "=== Gate: fmt, clippy, test ==="
+if gate > "${message_dir}/gate.log" 2>&1; then
+    tail -5 "${message_dir}/gate.log"
+    exit 0
+fi
+tail -40 "${message_dir}/gate.log"
 
-# Step 3: QA
-claude --permission-mode auto -p "Read ${message_file}, build output at ${message_dir}/build.log,
-test output at ${message_dir}/test-output.log. Fix any failures. Run cargo
-build --release and cargo test again. The run directory is ${message_dir}."
+# Step 3: QA, in the implementing session, so it keeps what it already read.
+echo "=== QA (resuming ${impl_session}) ===" >&2
+echo "qa ${impl_session} (resumed)" >> "${message_dir}/sessions.txt"
+claude --permission-mode auto --resume "${impl_session}" -p "The gate failed; its output is in ${message_dir}/gate.log.
+Fix the failures and run cargo fmt --check, cargo clippy --all-targets -- -D warnings
+and cargo test again. ${work_rules}"
 stop_if_requested
 
-# Step 4: Gate. claude -p exits 0 whatever the agent concludes, so the
-# routine decides success itself; a failure here retries or stops the queue.
+# Step 4: Final gate; a failure here retries or stops the queue.
 echo "=== Gate: fmt, clippy, test ==="
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+gate
