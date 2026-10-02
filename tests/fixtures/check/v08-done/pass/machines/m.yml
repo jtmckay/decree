@@ -1,0 +1,11 @@
+name: m
+description: An invoke state handles done through its parent.
+initial: work
+states:
+  work:
+    initial: step
+    transitions: { done: done }
+    states:
+      step: { invoke: work }
+  done: { final: true }
+  failed: { final: true }

@@ -1,0 +1,2 @@
+machines/m.yml: line 3: script `setup` not found; searched scripts/m, scripts (V12)
+machines/m.yml: work: script `snapshot`: scripts/snapshot.sh is not executable (V12)

@@ -1,0 +1,25 @@
+name: step_internal
+description: A type internal transition from a compound state to its child neither exits nor re-enters it.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: p
+states:
+  p:
+    onentry: [p_entry]
+    onexit: [p_exit]
+    initial: a
+    transitions:
+      pass: { target: b, type: internal }
+    states:
+      a:
+        onentry: [a_entry]
+        invoke: a_invoke                 # prints pass
+        onexit: [a_exit]
+        transitions: { done: b }
+      b:
+        onentry: [b_entry]
+        invoke: b_invoke
+        onexit: [b_exit]
+        transitions: { done: done }
+  done:   { final: true, onentry: [done_entry] }
+  failed: { final: true, onentry: [failed_entry] }

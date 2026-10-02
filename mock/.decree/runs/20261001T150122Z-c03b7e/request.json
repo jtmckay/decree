@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "machine": "feature",
+  "machine_description": "Implement one feature spec with an AI agent, verify it, and commit.",
+  "state": "triage",
+  "state_description": "",
+  "question": "Should we implement again or split the work?",
+  "options": [
+    {
+      "event": "retry",
+      "description": "The failures look fixable; implement again."
+    },
+    {
+      "event": "split",
+      "description": "The scope is too large; emit smaller follow-up messages."
+    }
+  ],
+  "input": "running 18 tests\n...\ntest plans::reads_plans_toml ... FAILED\n  No such file: config/plans.toml\n\ntest result: FAILED. 17 passed; 1 failed\n",
+  "message_body": "# Per-plan upload limits\n\n## Requirements\n\nReplace the fixed limit of 10 per minute with a per-plan limit read from\n`plans.toml`. Unknown plans use the free-plan limit.\n\n## Acceptance Criteria\n\n- **Given** a key on the `pro` plan with `uploads_per_minute = 100`\n  **When** it uploads for the 50th time in a minute\n  **Then** the upload succeeds\n",
+  "history": [
+    "implement: 1 visit",
+    "rounds_left: yes"
+  ],
+  "min_confidence": 0.8
+}

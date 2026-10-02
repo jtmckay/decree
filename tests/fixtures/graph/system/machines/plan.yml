@@ -1,0 +1,10 @@
+name: plan
+description: Split a request into follow-up messages for build.
+initial: split
+states:
+  split:
+    invoke: split
+    emits: [build]
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

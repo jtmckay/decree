@@ -1,0 +1,10 @@
+{
+  "chain": "D0001-1921-02-character-portrait",
+  "height": 600,
+  "id": "D0001-1921-02-character-portrait-0",
+  "migration": "02-character-portrait.md",
+  "output_prefix": "character_lily_fullbody",
+  "routine": "comfy-image-text",
+  "seq": 0,
+  "width": 400
+}

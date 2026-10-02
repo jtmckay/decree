@@ -1,0 +1,104 @@
+{
+  "data": {
+    "max_rounds": {
+      "default": 2,
+      "type": "int"
+    }
+  },
+  "description": "Implement one feature spec with an AI agent, verify it, and commit.",
+  "initial": "precheck",
+  "name": "feature",
+  "onentry": [
+    "git_baseline"
+  ],
+  "onexit": [
+    "notify"
+  ],
+  "states": {
+    "done": {
+      "final": true,
+      "onentry": [
+        "commit"
+      ]
+    },
+    "failed": {
+      "final": true
+    },
+    "precheck": {
+      "invoke": "precheck",
+      "transitions": {
+        "done": "work"
+      }
+    },
+    "spawn_followups": {
+      "emits": [
+        "feature"
+      ],
+      "invoke": "spawn",
+      "transitions": {
+        "done": "done"
+      }
+    },
+    "work": {
+      "initial": "implement",
+      "states": {
+        "implement": {
+          "invoke": "implement",
+          "max_attempts": 2,
+          "onentry": [
+            "snapshot"
+          ],
+          "onexit": [
+            "collect_logs"
+          ],
+          "transitions": {
+            "done": "verify"
+          }
+        },
+        "review": {
+          "description": "A person sends approve, retry or reject.",
+          "onentry": [
+            "ask_person"
+          ],
+          "timeout_s": 172800,
+          "transitions": {
+            "approve": "verified",
+            "reject": "failed",
+            "retry": "implement"
+          }
+        },
+        "verified": {
+          "final": true
+        },
+        "verify": {
+          "default": "ask",
+          "description": "Tests and acceptance criteria have run; decide what happens next.",
+          "invoke": "verify",
+          "router": "llm",
+          "transitions": {
+            "ask": {
+              "description": "Not sure; ask a person.",
+              "target": "review"
+            },
+            "pass": {
+              "description": "All acceptance criteria are met.",
+              "target": "verified"
+            },
+            "retry": {
+              "cond": "visits.implement < data.max_rounds",
+              "description": "Failures look fixable; implement again.",
+              "target": "implement"
+            },
+            "split": {
+              "description": "Scope is too large; emit smaller follow-up messages.",
+              "target": "spawn_followups"
+            }
+          }
+        }
+      },
+      "transitions": {
+        "done.state.work": "done"
+      }
+    }
+  }
+}

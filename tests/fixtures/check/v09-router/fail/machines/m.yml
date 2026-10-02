@@ -1,0 +1,14 @@
+name: m
+description: A router state.
+initial: work
+states:
+  work:
+    description: Decide whether the work is finished.
+    invoke: work
+    router: llm
+    default: retry
+    transitions:
+      pass: done
+      retry: { target: work, description: Run the work again. }
+  done: { final: true }
+  failed: { final: true }

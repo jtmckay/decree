@@ -1,0 +1,27 @@
+name: step_nested_final
+description: A compound state's own final child raises done.state, which its parent handles.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: work
+states:
+  work:
+    onentry: [work_entry]
+    onexit: [work_exit]
+    initial: a
+    transitions:
+      done.state.work: after
+      error: recovered
+    states:
+      a:
+        onentry: [a_entry]
+        invoke: a_invoke
+        onexit: [a_exit]
+        transitions: { done: finished }
+      finished: { final: true, onentry: [finished_entry] }
+  after:
+    onentry: [after_entry]
+    invoke: after_invoke
+    transitions: { done: done }
+  recovered: { final: true, onentry: [recovered_entry] }
+  done:      { final: true, onentry: [done_entry] }
+  failed:    { final: true, onentry: [failed_entry] }

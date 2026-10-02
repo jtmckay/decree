@@ -49,9 +49,9 @@ Implement section 8 for `init`, `process` (with `--dry-run`), `daemon` (with `--
   **When** `decree process --dry-run` runs
   **Then** they are listed and nothing runs
 
-- **Given** a run that reaches a waiting state
+- **Given** a run that reaches a `choose: person` state
   **When** `decree process` runs
-  **Then** it prints the wait id, the question and a `decree event` command per accepted event, and exits 0; after `decree event` and another `decree process`, the run is `done`
+  **Then** it prints the wait id, the options and a `decree event` command per option, and exits 0; after `decree event` and another `decree process`, the run is `done`
 
 - **Given** SIGINT during a run under `decree process`
   **When** decree stops

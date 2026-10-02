@@ -11,7 +11,7 @@ Run scripts with the section 6 environment, logs, attempts, timeout and event pa
 
 Read spec sections 1 and 6 first.
 
-Add the executor to `src/runtime.rs`, appending one `script` event per execution (section 7). Reuse 0.4.2's `truncate_log_if_needed` and process-group signal handling (`src/commands/process.rs`).
+Add the executor to `src/runtime.rs`, appending one `script` event per execution (section 7). Reuse 0.4.2's `truncate_log_if_needed` and its `process_group(0)` spawn. Do not reuse its signal handling: it never handles SIGTERM and never escalates to SIGKILL (`docs/0.5-inventory.md`, C2 and C3).
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.

@@ -1,0 +1,12 @@
+name: m
+description: Root and state onentry/onexit scripts.
+onentry: [setup]
+onexit: [notify]
+initial: work
+states:
+  work:
+    invoke: work
+    onentry: [snapshot]
+    transitions: { done: done }
+  done: { final: true, onentry: [commit] }
+  failed: { final: true }

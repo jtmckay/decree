@@ -1,0 +1,23 @@
+You choose the next step of a workflow. Reply with only a JSON object:
+{"event": "<one option name>", "reason": "<one sentence>", "confidence": <0 to 1>}
+
+Workflow: triage: Read a free-form request and hand it to the machine that should do the work.
+Current step: classify: The request is in the message body. Decide which kind of work it is.
+Question: What kind of work is this request?
+
+Output of the previous step:
+
+Task message:
+Add a dark mode toggle to the settings page. Remember the choice per user.
+
+Run so far:
+(nothing yet)
+
+Options:
+- feature: A feature with acceptance criteria that should be verified and committed.
+- reject: Not actionable, or not a code change.
+- small_change: A small, self-contained code change with no formal spec.
+--- reply
+```json
+{"event": "small_change", "reason": "A single UI setting with no acceptance criteria.", "confidence": 0.93}
+```

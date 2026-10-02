@@ -1,7 +1,7 @@
 use crate::config;
-use crate::error::color;
 use crate::error::DecreeError;
 use crate::message;
+use colored::Colorize;
 use std::path::Path;
 
 /// Run `decree status`.
@@ -9,7 +9,7 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(config::DECREE_DIR);
 
     // --- Migrations ---
-    println!("{}", color::bold("Migrations:"));
+    println!("{}", "Migrations:".bold());
     let migrations_dir = decree_dir.join(config::MIGRATIONS_DIR);
     let processed_path = decree_dir.join(config::PROCESSED_FILE);
 
@@ -34,7 +34,7 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
     println!();
 
     // --- Inbox ---
-    println!("{}", color::bold("Inbox:"));
+    println!("{}", "Inbox:".bold());
     let inbox_dir = decree_dir.join(config::INBOX_DIR);
     let inbox_dead_dir = inbox_dir.join(config::DEAD_DIR);
 
@@ -65,7 +65,7 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
     println!();
 
     // --- Recent Activity ---
-    println!("{}", color::bold("Recent Activity (last 5):"));
+    println!("{}", "Recent Activity (last 5):".bold());
     let runs = message::list_runs(project_root)?;
 
     if runs.is_empty() {
@@ -79,21 +79,21 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
             let run_dir = decree_dir.join(config::RUNS_DIR).join(run_name);
             let routine = detect_routine(&run_dir);
             let disposition = if dead_ids.iter().any(|d| run_name.starts_with(d)) {
-                color::error("dead")
+                "dead".red()
             } else {
-                color::success("done")
+                "done".green()
             };
 
             // Parse to check if follow-up
             let description = match message::MessageId::parse(run_name) {
-                Ok(id) if id.seq > 0 => color::dim("(follow-up)"),
+                Ok(id) if id.seq > 0 => "(follow-up)".dimmed().to_string(),
                 Ok(_) => detect_migration_name(run_name),
                 Err(_) => run_name.to_string(),
             };
 
             println!(
                 "  {}  {}  {}  {}",
-                color::dim(run_name),
+                run_name.dimmed(),
                 routine,
                 disposition,
                 description,
@@ -111,11 +111,7 @@ fn list_migrations(migrations_dir: &Path) -> Result<Vec<String>, DecreeError> {
     }
     let mut files: Vec<String> = std::fs::read_dir(migrations_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "md")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     files.sort();
@@ -136,9 +132,7 @@ fn read_processed(path: &Path) -> Result<Vec<String>, DecreeError> {
 }
 
 /// Return the modification time of the oldest regular file in a directory.
-fn oldest_file_mtime(
-    dir: &Path,
-) -> Result<Option<chrono::DateTime<chrono::Local>>, DecreeError> {
+fn oldest_file_mtime(dir: &Path) -> Result<Option<chrono::DateTime<chrono::Local>>, DecreeError> {
     if !dir.exists() {
         return Ok(None);
     }

@@ -1,0 +1,5 @@
+{
+  "filename": "narration",
+  "predefined_voice_id": "Emily.wav",
+  "routine": "tts"
+}

@@ -1,0 +1,9 @@
+name: build
+description: Build one change.
+initial: compile
+states:
+  compile:
+    invoke: compile
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

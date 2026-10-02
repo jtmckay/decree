@@ -35,7 +35,7 @@ Delete section 10 items 1–3, 8–12, 16, 17 and 20 after the rg check, plus `s
 ## Acceptance Criteria
 
 - **Given** the updated crate
-  **When** rg runs for every symbol in those rows
+  **When** rg runs for the qualified form of every symbol in those rows (for example `routine::levenshtein`, `fn run_precheck`, `HookType`; see `docs/0.5-inventory.md`, C7)
   **Then** there are no hits
 
 - **Given** the updated crate

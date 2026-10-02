@@ -9,9 +9,9 @@ Replace the outbox relay with one safe writer, used for emitted messages, replie
 
 ## Requirements
 
-Read spec sections 1 and 4 (Lifecycle step 1, Events for waiting runs), 8 (emit and event rows), 10 (item 5) first.
+Read spec sections 1 and 4 (Lifecycle step 1, Replies), 8 (emit and event rows), 10 (item 5) first.
 
-Add `decree emit` and `decree event`, and reply delivery (section 4, Events for waiting runs), including wait timeouts. Make cron write through the same temp-file-and-rename writer, with `trigger: cron`. Delete section 10 item 5 after the rg check.
+Add `decree emit` and `decree event`, and reply delivery (section 4, Replies), including `timeout_s` deadlines. Make cron write through the same temp-file-and-rename writer, with `trigger: cron`. Delete section 10 item 5 after the rg check.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
@@ -46,15 +46,15 @@ Add `decree emit` and `decree event`, and reply delivery (section 4, Events for 
   **When** `decree emit` succeeds
   **Then** `inbox/<id>.md` has `parent`, `depth` and `trigger: emit`
 
-- **Given** a waiting run and a reply naming its wait id and an accepted event
+- **Given** a waiting run and a reply naming its wait id and one of its options
   **When** the reply is claimed
-  **Then** the run continues with `source: external` and the reply is in `received/`
+  **Then** the run continues with `source: person` and the reply is in `received/`
 
-- **Given** a reply with a stale wait id or an event the state does not accept
+- **Given** a reply with a stale wait id or an event that is not an option
   **When** it is claimed
   **Then** the run stays waiting and the reply ends as a failed `invalid_message` run
 
-- **Given** a waiting state with `timeout_s: 1`
+- **Given** a `choose: person` with `timeout_s: 1`
   **When** the next pass runs after the deadline
   **Then** a `received` event for `error` with `timed_out: true` continues the run
 

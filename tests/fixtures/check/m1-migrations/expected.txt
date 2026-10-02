@@ -1,0 +1,2 @@
+migrations/01-first.md: line 3: unknown param `rounds`: machine `m` has no data `rounds` (M1)
+migrations/02-second.md: line 2: unknown machine `nope` (M1)

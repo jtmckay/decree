@@ -1,13 +1,13 @@
 # deploy
 
-Build, wait for a person to approve, then ship.
+Build, ask a person to approve, then ship.
 
 ```mermaid
 stateDiagram-v2
     [*] --> build
-    approval --> ship: approve (external)
+    approval --> ship: approve (person)
     approval --> failed: error (implicit)
-    approval --> rejected: reject (external)
+    approval --> rejected: reject (person)
     build --> approval: done
     build --> failed: error (implicit)
     ship --> done: done
@@ -16,6 +16,6 @@ stateDiagram-v2
     failed --> [*]
     rejected --> [*]
     note right of approval
-        onentry: ask_person
+        person: ask_person
     end note
 ```

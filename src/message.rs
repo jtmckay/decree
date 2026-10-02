@@ -5,6 +5,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use walkdir::WalkDir;
 
+/// Callback that sends the router prompt to the AI and returns its reply.
+pub type RouterFn = dyn Fn(&str) -> Result<String, DecreeError>;
+
 // Known frontmatter field names (everything else is "custom").
 const KNOWN_FIELDS: &[&str] = &["id", "chain", "seq", "routine", "migration", "trigger"];
 
@@ -45,7 +48,9 @@ impl MessageId {
             .parse()
             .map_err(|_| DecreeError::Other(format!("invalid sequence in message ID: {s}")))?;
         if chain.is_empty() {
-            return Err(DecreeError::Other(format!("empty chain in message ID: {s}")));
+            return Err(DecreeError::Other(format!(
+                "empty chain in message ID: {s}"
+            )));
         }
         Ok(Self {
             chain: chain.to_string(),
@@ -78,9 +83,7 @@ impl std::fmt::Display for MessageId {
 /// - If current < last (clock wrapped midnight), increment
 /// - First run starts at D0001
 pub fn next_day_counter(project_root: &Path, current_hhmm: &str) -> Result<String, DecreeError> {
-    let runs_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::RUNS_DIR);
+    let runs_dir = project_root.join(config::DECREE_DIR).join(config::RUNS_DIR);
 
     if !runs_dir.exists() {
         return Ok("D0001".to_string());
@@ -139,9 +142,7 @@ pub fn build_chain_id(day_counter: &str, hhmm: &str, name: &str) -> String {
 
 /// List all run directories, sorted by name (chronological).
 pub fn list_runs(project_root: &Path) -> Result<Vec<String>, DecreeError> {
-    let runs_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::RUNS_DIR);
+    let runs_dir = project_root.join(config::DECREE_DIR).join(config::RUNS_DIR);
 
     if !runs_dir.exists() {
         return Ok(Vec::new());
@@ -178,7 +179,7 @@ pub fn find_matching_runs(project_root: &Path, query: &str) -> Result<Vec<String
 /// its original whitespace preserved.
 pub fn parse_frontmatter(
     content: &str,
-) -> Result<(BTreeMap<String, serde_yaml::Value>, String), DecreeError> {
+) -> Result<(BTreeMap<String, serde_norway::Value>, String), DecreeError> {
     if !content.starts_with("---\n") {
         return Ok((BTreeMap::new(), content.to_string()));
     }
@@ -188,11 +189,11 @@ pub fn parse_frontmatter(
     // Find closing "---" delimiter
     let (yaml_str, body) = if let Some(pos) = after_open.find("\n---\n") {
         (&after_open[..pos], &after_open[pos + 5..]) // skip "\n---\n"
-    } else if after_open.ends_with("\n---") {
-        (&after_open[..after_open.len() - 4], "")
-    } else if after_open.starts_with("---\n") {
+    } else if let Some(yaml) = after_open.strip_suffix("\n---") {
+        (yaml, "")
+    } else if let Some(body) = after_open.strip_prefix("---\n") {
         // Empty frontmatter: ---\n---\n...
-        ("", &after_open[4..])
+        ("", body)
     } else if after_open == "---" {
         ("", "")
     } else {
@@ -200,10 +201,12 @@ pub fn parse_frontmatter(
         return Ok((BTreeMap::new(), content.to_string()));
     };
 
-    let map: BTreeMap<String, serde_yaml::Value> = if yaml_str.trim().is_empty() {
+    let map: BTreeMap<String, serde_norway::Value> = if yaml_str.trim().is_empty() {
         BTreeMap::new()
     } else {
-        serde_yaml::from_str(yaml_str)?
+        // `Mapping` rejects duplicate keys; a `BTreeMap` would keep the last one.
+        let mapping: serde_norway::Mapping = serde_norway::from_str(yaml_str)?;
+        serde_norway::from_value(serde_norway::Value::Mapping(mapping))?
     };
 
     Ok((map, body.to_string()))
@@ -219,7 +222,7 @@ pub struct MigrationFile {
     pub filename: String,
     pub routine: Option<String>,
     pub body: String,
-    pub custom_fields: BTreeMap<String, serde_yaml::Value>,
+    pub custom_fields: BTreeMap<String, serde_norway::Value>,
 }
 
 /// List all `*.md` files in `.decree/migrations/`, sorted alphabetically.
@@ -319,7 +322,7 @@ pub fn parse_migration(filename: &str, content: &str) -> Result<MigrationFile, D
     let routine = fields.get("routine").and_then(value_as_string);
 
     let known: &[&str] = &["routine"];
-    let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
+    let custom_fields: BTreeMap<String, serde_norway::Value> = fields
         .into_iter()
         .filter(|(k, _)| !known.contains(&k.as_str()))
         .collect();
@@ -350,7 +353,7 @@ pub struct InboxMessage {
     /// How the run was triggered: "inbox", "chain", or "cron:<stem>".
     pub trigger: Option<String>,
     pub body: String,
-    pub custom_fields: BTreeMap<String, serde_yaml::Value>,
+    pub custom_fields: BTreeMap<String, serde_norway::Value>,
     pub filename: String,
 }
 
@@ -366,7 +369,7 @@ impl InboxMessage {
         let migration = fields.get("migration").and_then(value_as_string);
         let trigger = fields.get("trigger").and_then(value_as_string);
 
-        let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
+        let custom_fields: BTreeMap<String, serde_norway::Value> = fields
             .into_iter()
             .filter(|(k, _)| !KNOWN_FIELDS.contains(&k.as_str()))
             .collect();
@@ -397,10 +400,7 @@ impl InboxMessage {
 
     /// Whether all required fields are present (no normalization needed).
     pub fn is_complete(&self) -> bool {
-        self.id.is_some()
-            && self.chain.is_some()
-            && self.seq.is_some()
-            && self.routine.is_some()
+        self.id.is_some() && self.chain.is_some() && self.seq.is_some() && self.routine.is_some()
     }
 
     /// Normalize the message, filling in missing fields.
@@ -413,7 +413,7 @@ impl InboxMessage {
         &mut self,
         project_root: &Path,
         config: &AppConfig,
-        ai_router: Option<&dyn Fn(&str) -> Result<String, DecreeError>>,
+        ai_router: Option<&RouterFn>,
     ) -> Result<bool, DecreeError> {
         let mut modified = false;
 
@@ -480,9 +480,9 @@ impl InboxMessage {
 
     /// Serialize the message to markdown with YAML frontmatter.
     pub fn serialize(&self) -> String {
-        let mut map = serde_yaml::Mapping::new();
-        let str_key = |k: &str| serde_yaml::Value::String(k.into());
-        let str_val = |v: &str| serde_yaml::Value::String(v.into());
+        let mut map = serde_norway::Mapping::new();
+        let str_key = |k: &str| serde_norway::Value::String(k.into());
+        let str_val = |v: &str| serde_norway::Value::String(v.into());
 
         if let Some(ref v) = self.id {
             map.insert(str_key("id"), str_val(v));
@@ -491,8 +491,8 @@ impl InboxMessage {
             map.insert(str_key("chain"), str_val(v));
         }
         if let Some(seq) = self.seq {
-            let seq_val = serde_yaml::to_value(seq)
-                .unwrap_or_else(|_| serde_yaml::Value::String(seq.to_string()));
+            let seq_val = serde_norway::to_value(seq)
+                .unwrap_or_else(|_| serde_norway::Value::String(seq.to_string()));
             map.insert(str_key("seq"), seq_val);
         }
         if let Some(ref v) = self.routine {
@@ -509,8 +509,7 @@ impl InboxMessage {
             map.insert(str_key(k), v.clone());
         }
 
-        let yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(map))
-            .unwrap_or_default();
+        let yaml = serde_norway::to_string(&serde_norway::Value::Mapping(map)).unwrap_or_default();
 
         if self.body.is_empty() {
             format!("---\n{}---\n", yaml)
@@ -584,7 +583,10 @@ pub struct RoutineInfo {
 /// - With a `routines` section: only enabled project-local routines are listed.
 /// - Without a `routines` section (legacy): all filesystem routines are listed.
 /// - With `routine_source`: enabled shared routines are also included.
-pub fn list_routines(project_root: &Path, config: &AppConfig) -> Result<Vec<RoutineInfo>, DecreeError> {
+pub fn list_routines(
+    project_root: &Path,
+    config: &AppConfig,
+) -> Result<Vec<RoutineInfo>, DecreeError> {
     let routines_dir = project_root
         .join(config::DECREE_DIR)
         .join(config::ROUTINES_DIR);
@@ -749,7 +751,7 @@ fn select_routine(
     project_root: &Path,
     config: &AppConfig,
     message_body: &str,
-    ai_router: Option<&dyn Fn(&str) -> Result<String, DecreeError>>,
+    ai_router: Option<&RouterFn>,
 ) -> Result<String, DecreeError> {
     // Try AI router if provided
     if let Some(router_fn) = ai_router {
@@ -779,18 +781,18 @@ fn select_routine(
 // Helpers
 // =================================================================
 
-fn value_as_string(v: &serde_yaml::Value) -> Option<String> {
+fn value_as_string(v: &serde_norway::Value) -> Option<String> {
     match v {
-        serde_yaml::Value::String(s) => Some(s.clone()),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_norway::Value::String(s) => Some(s.clone()),
+        serde_norway::Value::Number(n) => Some(n.to_string()),
         _ => None,
     }
 }
 
-fn value_as_u32(v: &serde_yaml::Value) -> Option<u32> {
+fn value_as_u32(v: &serde_norway::Value) -> Option<u32> {
     match v {
-        serde_yaml::Value::Number(n) => n.as_u64().map(|n| n as u32),
-        serde_yaml::Value::String(s) => s.parse().ok(),
+        serde_norway::Value::Number(n) => n.as_u64().map(|n| n as u32),
+        serde_norway::Value::String(s) => s.parse().ok(),
         _ => None,
     }
 }
@@ -874,7 +876,7 @@ mod tests {
         let (map, body) = parse_frontmatter(content).unwrap();
         assert_eq!(
             map.get("routine"),
-            Some(&serde_yaml::Value::String("develop".into()))
+            Some(&serde_norway::Value::String("develop".into()))
         );
         assert_eq!(body, "Hello world.\n");
     }
@@ -896,7 +898,7 @@ mod tests {
         assert_eq!(map.len(), 5);
         assert_eq!(
             map.get("id"),
-            Some(&serde_yaml::Value::String(
+            Some(&serde_norway::Value::String(
                 "D0001-1432-01-add-auth-0".into()
             ))
         );
@@ -909,7 +911,7 @@ mod tests {
         let (map, body) = parse_frontmatter(content).unwrap();
         assert_eq!(
             map.get("routine"),
-            Some(&serde_yaml::Value::String("develop".into()))
+            Some(&serde_norway::Value::String("develop".into()))
         );
         assert_eq!(body, "Hello");
     }
@@ -920,7 +922,7 @@ mod tests {
         let (map, body) = parse_frontmatter(content).unwrap();
         assert_eq!(
             map.get("routine"),
-            Some(&serde_yaml::Value::String("develop".into()))
+            Some(&serde_norway::Value::String("develop".into()))
         );
         assert_eq!(body, "");
     }
@@ -948,8 +950,108 @@ mod tests {
         assert_eq!(map.len(), 2);
         assert_eq!(
             map.get("priority"),
-            Some(&serde_yaml::Value::String("high".into()))
+            Some(&serde_norway::Value::String("high".into()))
         );
+    }
+
+    #[test]
+    fn test_parse_frontmatter_rejects_duplicate_keys() {
+        let content = "---\nroutine: develop\nroutine: rust-develop\n---\nBody.\n";
+        let err = parse_frontmatter(content).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("duplicate entry with key \"routine\""),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_frontmatter_norway_words_are_strings() {
+        // YAML 1.1 reads bare `on` and `no` as booleans; YAML 1.2 does not.
+        let content = "---\non: no\n---\nBody.\n";
+        let (map, _) = parse_frontmatter(content).unwrap();
+        assert_eq!(
+            map.get("on"),
+            Some(&serde_norway::Value::String("no".into()))
+        );
+    }
+
+    /// Every YAML fixture (`*.yml`, and the frontmatter of `*.md` files that
+    /// have one) under `mock/.decree`, `examples/*/.decree` and `src/templates`
+    /// must parse to the value committed in `tests/fixtures/yaml/<path>.json`.
+    /// The committed values were produced by serde_yaml 0.9.
+    #[test]
+    fn test_yaml_fixtures_match_expected() {
+        use std::fs;
+        use std::path::PathBuf;
+
+        fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect(&path, out);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        collect(&root.join("mock/.decree"), &mut files);
+        collect(&root.join("src/templates"), &mut files);
+        for example in fs::read_dir(root.join("examples")).unwrap() {
+            let decree = example.unwrap().path().join(".decree");
+            if decree.is_dir() {
+                collect(&decree, &mut files);
+            }
+        }
+        files.sort();
+
+        let expected_dir = root.join("tests/fixtures/yaml");
+        let mut checked = 0;
+        for file in &files {
+            let rel = file.strip_prefix(root).unwrap();
+            let text = fs::read_to_string(file).unwrap();
+            let actual = match file.extension().and_then(|e| e.to_str()) {
+                Some("yml") => {
+                    let value: serde_norway::Value = serde_norway::from_str(&text)
+                        .unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
+                    serde_json::to_value(value).unwrap()
+                }
+                Some("md") if text.starts_with("---\n") => {
+                    let (fields, _) = parse_frontmatter(&text)
+                        .unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
+                    serde_json::to_value(fields).unwrap()
+                }
+                _ => continue,
+            };
+            let expected_path = expected_dir.join(format!("{}.json", rel.display()));
+            let expected: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&expected_path).unwrap_or_else(|_| {
+                    panic!(
+                        "{}: no expected value at {}; actual:\n{}",
+                        rel.display(),
+                        expected_path.display(),
+                        serde_json::to_string_pretty(&actual).unwrap()
+                    )
+                }))
+                .unwrap();
+            assert_eq!(actual, expected, "{}", rel.display());
+            checked += 1;
+        }
+        // Fails if a fixture is deleted but its expected value is left behind.
+        let mut expected_files = Vec::new();
+        collect(&expected_dir, &mut expected_files);
+        let expected_count = expected_files
+            .iter()
+            .filter(|p| !p.starts_with(expected_dir.join("init")))
+            .count();
+        assert_eq!(
+            expected_count, checked,
+            "tests/fixtures/yaml has expected values without a fixture"
+        );
+        assert!(checked > 0);
     }
 
     // --- Migration tests ---
@@ -1044,11 +1146,7 @@ mod tests {
         std::fs::write(mig_dir.join("01-auth.md"), "").unwrap();
         std::fs::write(mig_dir.join("02-db.md"), "").unwrap();
         std::fs::write(mig_dir.join("03-api.md"), "").unwrap();
-        std::fs::write(
-            dir.path().join(".decree/processed.md"),
-            "01-auth.md\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join(".decree/processed.md"), "01-auth.md\n").unwrap();
 
         let unprocessed = unprocessed_migrations(dir.path()).unwrap();
         assert_eq!(unprocessed, vec!["02-db.md", "03-api.md"]);
@@ -1060,11 +1158,7 @@ mod tests {
         setup_decree_dir(&dir);
         let mig_dir = dir.path().join(".decree/migrations");
         std::fs::write(mig_dir.join("01-auth.md"), "").unwrap();
-        std::fs::write(
-            dir.path().join(".decree/processed.md"),
-            "01-auth.md\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join(".decree/processed.md"), "01-auth.md\n").unwrap();
 
         let unprocessed = unprocessed_migrations(dir.path()).unwrap();
         assert!(unprocessed.is_empty());
@@ -1162,11 +1256,11 @@ mod tests {
         assert_eq!(msg.custom_fields.len(), 2);
         assert_eq!(
             msg.custom_fields.get("priority"),
-            Some(&serde_yaml::Value::String("high".into()))
+            Some(&serde_norway::Value::String("high".into()))
         );
         assert_eq!(
             msg.custom_fields.get("tags"),
-            Some(&serde_yaml::Value::String("urgent".into()))
+            Some(&serde_norway::Value::String("urgent".into()))
         );
     }
 
@@ -1246,11 +1340,7 @@ mod tests {
         setup_decree_dir(&dir);
         let config = AppConfig::default();
 
-        let mut msg = InboxMessage::parse(
-            "D0001-1432-01-add-auth-0.md",
-            "Add auth.\n",
-        )
-        .unwrap();
+        let mut msg = InboxMessage::parse("D0001-1432-01-add-auth-0.md", "Add auth.\n").unwrap();
 
         let modified = msg.normalize(dir.path(), &config, None).unwrap();
         assert!(modified);
@@ -1303,8 +1393,7 @@ mod tests {
             ..AppConfig::default()
         };
 
-        let mut msg =
-            InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
+        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
         msg.normalize(dir.path(), &config, None).unwrap();
         assert_eq!(msg.routine.as_deref(), Some("rust-develop"));
     }
@@ -1318,8 +1407,7 @@ mod tests {
             ..AppConfig::default()
         };
 
-        let mut msg =
-            InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
+        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
         msg.normalize(dir.path(), &config, None).unwrap();
         assert_eq!(msg.routine.as_deref(), Some("develop"));
     }
@@ -1348,12 +1436,10 @@ mod tests {
         .unwrap();
 
         // AI selects "rust-develop"
-        let ai_fn = |_prompt: &str| -> Result<String, DecreeError> {
-            Ok("rust-develop".to_string())
-        };
+        let ai_fn =
+            |_prompt: &str| -> Result<String, DecreeError> { Ok("rust-develop".to_string()) };
 
-        let mut msg =
-            InboxMessage::parse("D0001-1432-test-0.md", "Add Rust auth.\n").unwrap();
+        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Add Rust auth.\n").unwrap();
         msg.normalize(dir.path(), &config, Some(&ai_fn)).unwrap();
         assert_eq!(msg.routine.as_deref(), Some("rust-develop"));
     }
@@ -1380,8 +1466,7 @@ mod tests {
             Ok("nonexistent-routine".to_string())
         };
 
-        let mut msg =
-            InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
+        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
         msg.normalize(dir.path(), &config, Some(&ai_fn)).unwrap();
         // Should fall back to config default
         assert_eq!(msg.routine.as_deref(), Some("develop"));
@@ -1400,7 +1485,7 @@ mod tests {
         assert_eq!(msg.custom_fields.len(), 2);
         assert_eq!(
             msg.custom_fields.get("priority"),
-            Some(&serde_yaml::Value::String("high".into()))
+            Some(&serde_norway::Value::String("high".into()))
         );
     }
 
@@ -1467,7 +1552,10 @@ mod tests {
         msg.normalize(dir.path(), &config, None).unwrap();
 
         let chain = msg.chain.as_deref().unwrap();
-        assert!(chain.contains("fix-errors"), "chain should use filename stem: {chain}");
+        assert!(
+            chain.contains("fix-errors"),
+            "chain should use filename stem: {chain}"
+        );
         assert_eq!(msg.id.as_deref().unwrap(), format!("{chain}-0"));
     }
 
@@ -1483,8 +1571,14 @@ mod tests {
         msg.normalize(dir.path(), &config, None).unwrap();
 
         let chain = msg.chain.as_deref().unwrap();
-        assert!(chain.contains("01-auth"), "migration stem should take priority: {chain}");
-        assert!(!chain.contains("random"), "filename stem should not appear: {chain}");
+        assert!(
+            chain.contains("01-auth"),
+            "migration stem should take priority: {chain}"
+        );
+        assert!(
+            !chain.contains("random"),
+            "filename stem should not appear: {chain}"
+        );
     }
 
     // --- Serialization tests ---
@@ -1518,7 +1612,7 @@ mod tests {
         let mut custom = BTreeMap::new();
         custom.insert(
             "priority".to_string(),
-            serde_yaml::Value::String("high".into()),
+            serde_norway::Value::String("high".into()),
         );
 
         let msg = InboxMessage {
@@ -1632,10 +1726,7 @@ mod tests {
         std::fs::write(inbox.join("notes.txt"), "").unwrap();
 
         let msgs = list_inbox_messages(dir.path()).unwrap();
-        assert_eq!(
-            msgs,
-            vec!["D0001-1432-alpha-0.md", "D0001-1432-beta-0.md"]
-        );
+        assert_eq!(msgs, vec!["D0001-1432-alpha-0.md", "D0001-1432-beta-0.md"]);
     }
 
     // --- Routine listing tests ---
@@ -1752,8 +1843,7 @@ mod tests {
             },
         ];
 
-        let prompt =
-            build_router_prompt(dir.path(), &routines, "Add auth.").unwrap();
+        let prompt = build_router_prompt(dir.path(), &routines, "Add auth.").unwrap();
 
         assert!(prompt.contains("- **develop**: General purpose."));
         assert!(prompt.contains("- **rust-develop**: Rust specific."));
@@ -1775,8 +1865,7 @@ mod tests {
             description: String::new(),
         }];
 
-        let prompt =
-            build_router_prompt(dir.path(), &routines, "Body.").unwrap();
+        let prompt = build_router_prompt(dir.path(), &routines, "Body.").unwrap();
         assert!(prompt.contains("- **develop**"));
         assert!(!prompt.contains("- **develop**:"));
     }
@@ -1786,21 +1875,21 @@ mod tests {
     #[test]
     fn test_value_as_string() {
         assert_eq!(
-            value_as_string(&serde_yaml::Value::String("hello".into())),
+            value_as_string(&serde_norway::Value::String("hello".into())),
             Some("hello".to_string())
         );
-        assert_eq!(value_as_string(&serde_yaml::Value::Null), None);
+        assert_eq!(value_as_string(&serde_norway::Value::Null), None);
     }
 
     #[test]
     fn test_value_as_u32() {
-        let num = serde_yaml::to_value(42u32).unwrap();
+        let num = serde_norway::to_value(42u32).unwrap();
         assert_eq!(value_as_u32(&num), Some(42));
 
         assert_eq!(
-            value_as_u32(&serde_yaml::Value::String("7".into())),
+            value_as_u32(&serde_norway::Value::String("7".into())),
             Some(7)
         );
-        assert_eq!(value_as_u32(&serde_yaml::Value::Null), None);
+        assert_eq!(value_as_u32(&serde_norway::Value::Null), None);
     }
 }

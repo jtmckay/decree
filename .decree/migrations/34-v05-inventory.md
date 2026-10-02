@@ -11,7 +11,7 @@ Record the 0.4.2 baseline that later v0.5 migrations compare against, and make t
 
 Read spec sections 1 and 10, 11 (M0.1) first.
 
-Write `docs/0.5-inventory.md` with: the output of `git rev-parse HEAD` before any change; for every symbol in spec section 10, `rg -n -w '<symbol>' src tests` with hit count and files; where signal handling kills child process groups; every use of `inquire` and `walkdir`; a **Conflicts** list of anything in the code that contradicts the spec. Then run `cargo fmt` and fix every `cargo clippy --all-targets -- -D warnings` finding without changing behaviour: only `cargo fmt` may touch test files.
+Write `docs/0.5-inventory.md` with: the output of `git rev-parse HEAD` before any change; for every symbol in spec section 10, `rg -n -w '<symbol>' src tests` with hit count and files; where signal handling kills child process groups; every use of `inquire` and `walkdir`; a **Conflicts** list of anything in the code that contradicts the spec. Then run `cargo fmt` and fix every `cargo clippy --all-targets -- -D warnings` finding, in `src/` and `tests/`, without changing behaviour. Do not change what any test asserts.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.

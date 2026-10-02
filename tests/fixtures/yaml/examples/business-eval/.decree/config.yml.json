@@ -1,0 +1,29 @@
+{
+  "commands": {
+    "ai_interactive": "claude",
+    "ai_router": "claude -p {prompt}"
+  },
+  "default_routine": "market-analysis",
+  "hooks": {
+    "afterAll": "",
+    "afterEach": "",
+    "beforeAll": "",
+    "beforeEach": ""
+  },
+  "max_attempts": 3,
+  "max_depth": 10,
+  "routines": {
+    "competitive-landscape": {
+      "enabled": true
+    },
+    "executive-summary": {
+      "enabled": true
+    },
+    "financial-model": {
+      "enabled": true
+    },
+    "market-analysis": {
+      "enabled": true
+    }
+  }
+}

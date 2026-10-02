@@ -10,3 +10,4 @@ assertion `left == right` failed
  right: 200
 
 test result: FAILED. 13 passed; 1 failed
+{"event":"fail"}

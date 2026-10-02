@@ -1,0 +1,7 @@
+{
+  "height": 640,
+  "input_image": "character_lily_fullbody_00001_.png",
+  "output_prefix": "lily_waving",
+  "routine": "comfy-video-i2v",
+  "width": 640
+}

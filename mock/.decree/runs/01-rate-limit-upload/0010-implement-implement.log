@@ -1,1 +1,0 @@
-The window check used `<=` against 60s; changed to `<` and added a boundary test.

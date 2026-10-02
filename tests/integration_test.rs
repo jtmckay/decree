@@ -6,7 +6,7 @@ use tempfile::TempDir;
 
 /// Helper: run decree in a temp directory.
 fn decree_cmd(dir: &TempDir) -> Command {
-    let mut cmd = Command::from(cargo_bin_cmd!("decree"));
+    let mut cmd = cargo_bin_cmd!("decree");
     cmd.current_dir(dir.path());
     // Force non-TTY behavior + no color for predictable output
     cmd.env("NO_COLOR", "1");
@@ -78,12 +78,12 @@ fn test_init_config_has_commented_alternatives() {
     let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
 
     // At least two of the three backends should appear (one uncommented, others commented)
-    let ai_lines: Vec<&str> = config
-        .lines()
-        .filter(|l| l.contains("ai_router"))
-        .collect();
+    let ai_lines: Vec<&str> = config.lines().filter(|l| l.contains("ai_router")).collect();
     // Should have one active + at least one commented alternative
-    assert!(ai_lines.len() >= 2, "Expected multiple ai_router entries, got: {ai_lines:?}");
+    assert!(
+        ai_lines.len() >= 2,
+        "Expected multiple ai_router entries, got: {ai_lines:?}"
+    );
 }
 
 #[test]
@@ -96,19 +96,168 @@ fn test_init_processed_md_is_empty() {
     assert!(content.is_empty());
 }
 
+/// Snapshot of every file under `root` with its contents, for "changes nothing" checks.
+fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<(std::path::PathBuf, Vec<u8>)>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                out.push((path.clone(), Vec::new()));
+                walk(&path, out);
+            } else {
+                out.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out.sort();
+    out
+}
+
 #[test]
-fn test_init_rerun_non_tty_overwrites() {
+fn test_init_stdin_closed_asks_nothing() {
     let dir = TempDir::new().unwrap();
 
-    // First init
-    decree_cmd(&dir).arg("init").assert().success();
-
-    // Second init (non-TTY, should proceed with overwrite)
-    decree_cmd(&dir)
+    // Empty PATH: nothing is detected, so the 0.4.2 multi-backend selector would
+    // have been the only remaining prompt path besides permissions/overwrite.
+    let output = decree_cmd(&dir)
         .arg("init")
+        .write_stdin("")
+        .env("PATH", dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!all.contains('?'), "init asked something: {all}");
+    assert!(!all.contains("[y/N]") && !all.contains("[Y/n]"));
+
+    // Without --ai and with nothing on PATH, the backend is opencode.
+    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
+    assert!(config.contains("  ai_router: \"opencode run {prompt}\"\n"));
+    // Without --permissions, no permissions file is written.
+    assert!(!dir.path().join("opencode.json").exists());
+}
+
+#[test]
+fn test_init_existing_decree_exits_2_and_changes_nothing() {
+    let dir = TempDir::new().unwrap();
+    decree_cmd(&dir).arg("init").assert().success();
+    fs::write(dir.path().join(".decree/config.yml"), "edited: true\n").unwrap();
+    let before = snapshot(dir.path());
+
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude", "--permissions"])
+        .write_stdin("")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(".decree/ already exists"));
+
+    assert_eq!(snapshot(dir.path()), before);
+}
+
+#[test]
+fn test_init_existing_empty_decree_dir_exits_2() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join(".decree")).unwrap();
+
+    decree_cmd(&dir).arg("init").assert().code(2);
+
+    assert_eq!(fs::read_dir(dir.path().join(".decree")).unwrap().count(), 0);
+}
+
+#[test]
+fn test_init_ai_claude_sets_ai_router() {
+    let dir = TempDir::new().unwrap();
+
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude"])
+        .write_stdin("")
+        .assert()
+        .success();
+
+    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
+    assert!(config.contains("  ai_router: \"claude -p {prompt}\"\n"));
+    assert!(config.contains("  # ai_router: \"opencode run {prompt}\"\n"));
+    // The decree skill is installed for the chosen backend.
+    assert!(dir.path().join(".claude/skills").is_dir());
+    assert!(!dir.path().join(".claude/settings.json").exists());
+}
+
+#[test]
+fn test_init_ai_opencode_and_copilot_set_ai_router() {
+    for (ai, router) in [
+        ("opencode", "opencode run {prompt}"),
+        ("copilot", "copilot -p {prompt}"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        decree_cmd(&dir)
+            .args(["init", "--ai", ai])
+            .assert()
+            .success();
+        let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
+        assert!(config.contains(&format!("  ai_router: \"{router}\"\n")));
+    }
+}
+
+#[test]
+fn test_init_ai_rejects_unknown_backend() {
+    let dir = TempDir::new().unwrap();
+
+    decree_cmd(&dir)
+        .args(["init", "--ai", "gpt"])
+        .assert()
+        .code(2);
+
+    assert!(!dir.path().join(".decree").exists());
+}
+
+#[test]
+fn test_init_permissions_writes_claude_settings() {
+    let dir = TempDir::new().unwrap();
+
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude", "--permissions"])
+        .write_stdin("")
+        .assert()
+        .success();
+
+    let settings = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
+    assert!(settings.contains("\"Write\"") && settings.contains("\"Edit\""));
+}
+
+#[test]
+fn test_init_permissions_writes_opencode_json() {
+    let dir = TempDir::new().unwrap();
+
+    decree_cmd(&dir)
+        .args(["init", "--ai", "opencode", "--permissions"])
+        .assert()
+        .success();
+
+    assert!(dir.path().join("opencode.json").is_file());
+}
+
+#[test]
+fn test_init_permissions_keeps_existing_settings() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join(".claude")).unwrap();
+    fs::write(dir.path().join(".claude/settings.json"), "{}\n").unwrap();
+
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude", "--permissions"])
         .assert()
         .success()
-        .stderr(predicate::str::contains("already configured"));
+        .stdout(predicate::str::contains("already exists"));
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap(),
+        "{}\n"
+    );
 }
 
 #[test]
@@ -291,11 +440,7 @@ fn test_status_with_migrations() {
     fs::write(migrations.join("03-add-api.md"), "# Add API").unwrap();
 
     // Mark one as processed
-    fs::write(
-        dir.path().join(".decree/processed.md"),
-        "01-add-auth.md\n",
-    )
-    .unwrap();
+    fs::write(dir.path().join(".decree/processed.md"), "01-add-auth.md\n").unwrap();
 
     decree_cmd(&dir)
         .arg("status")
@@ -328,7 +473,11 @@ fn test_status_dead_letter_shows_oldest_timestamp() {
     let dead_dir = dir.path().join(".decree/inbox/dead");
     fs::write(dead_dir.join("D0001-1200-migration-one-0.md"), "dead msg 1").unwrap();
     fs::write(dead_dir.join("D0001-1201-migration-two-0.md"), "dead msg 2").unwrap();
-    fs::write(dead_dir.join("D0001-1202-migration-three-0.md"), "dead msg 3").unwrap();
+    fs::write(
+        dead_dir.join("D0001-1202-migration-three-0.md"),
+        "dead msg 3",
+    )
+    .unwrap();
 
     decree_cmd(&dir)
         .arg("status")
@@ -425,7 +574,7 @@ fn test_log_multiple_attempts() {
 
 #[test]
 fn test_version_flag() {
-    Command::from(cargo_bin_cmd!("decree"))
+    cargo_bin_cmd!("decree")
         .arg("--version")
         .assert()
         .success()
@@ -443,6 +592,50 @@ fn test_no_color_flag_accepted() {
         .args(["--no-color", "status"])
         .assert()
         .success();
+}
+
+fn has_ansi(bytes: &[u8]) -> bool {
+    bytes.contains(&0x1b)
+}
+
+/// Run `decree status` in an initialized project and return stdout + stderr.
+fn status_output(configure: impl FnOnce(&mut Command)) -> Vec<u8> {
+    let dir = TempDir::new().unwrap();
+    decree_cmd(&dir).arg("init").assert().success();
+
+    let mut cmd = cargo_bin_cmd!("decree");
+    cmd.current_dir(dir.path()).arg("status");
+    configure(&mut cmd);
+    let out = cmd.assert().success().get_output().clone();
+    [out.stdout, out.stderr].concat()
+}
+
+#[test]
+fn test_status_no_color_env_has_no_ansi() {
+    let out = status_output(|cmd| {
+        cmd.env("NO_COLOR", "1").env_remove("CLICOLOR_FORCE");
+    });
+    assert!(!has_ansi(&out), "{}", String::from_utf8_lossy(&out));
+}
+
+#[test]
+fn test_status_forced_color_has_ansi() {
+    // Control for the test above: `colored` does emit escapes when forced,
+    // so the absence of escapes under NO_COLOR is meaningful.
+    let out = status_output(|cmd| {
+        cmd.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+    });
+    assert!(has_ansi(&out), "{}", String::from_utf8_lossy(&out));
+}
+
+#[test]
+fn test_no_color_flag_overrides_forced_color() {
+    let out = status_output(|cmd| {
+        cmd.arg("--no-color")
+            .env_remove("NO_COLOR")
+            .env("CLICOLOR_FORCE", "1");
+    });
+    assert!(!has_ansi(&out), "{}", String::from_utf8_lossy(&out));
 }
 
 // --- decree routine (non-TTY) ---
@@ -527,7 +720,9 @@ fn test_routine_detail_shows_description() {
         .args(["routine", "develop"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Default routine that delegates work to an AI assistant"));
+        .stdout(predicate::str::contains(
+            "Default routine that delegates work to an AI assistant",
+        ));
 }
 
 #[test]
@@ -771,7 +966,7 @@ fn test_verify_no_hooks_configured_no_hook_section() {
 
 #[test]
 fn test_unknown_subcommand_exit_code_2() {
-    Command::from(cargo_bin_cmd!("decree"))
+    cargo_bin_cmd!("decree")
         .arg("nonexistent")
         .env("NO_COLOR", "1")
         .assert()
@@ -785,16 +980,15 @@ fn test_skill_claude_project_creates_file() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Installed"))
         .stdout(predicate::str::contains(".claude/skills/decree/SKILL.md"));
 
-    assert!(dir
-        .path()
-        .join(".claude/skills/decree/SKILL.md")
-        .is_file());
+    assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
 }
 
 #[test]
@@ -802,7 +996,9 @@ fn test_skill_copilot_project_creates_file() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "copilot", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Installed"))
@@ -816,7 +1012,9 @@ fn test_skill_user_copilot_unsupported() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "user", "--target", "copilot", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "user", "--target", "copilot", "--skill", "decree",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("not supported"));
@@ -827,16 +1025,15 @@ fn test_skill_claude_user_scope() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "user", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "user", "--target", "claude", "--skill", "decree",
+        ])
         .env("HOME", dir.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("Installed"));
 
-    assert!(dir
-        .path()
-        .join(".claude/skills/decree/SKILL.md")
-        .is_file());
+    assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
 }
 
 #[test]
@@ -845,22 +1042,23 @@ fn test_skill_already_up_to_date_claude() {
 
     // First install
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .success();
 
     // Second install — same content
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Already up to date"));
 
     // File should still exist and be unchanged
-    assert!(dir
-        .path()
-        .join(".claude/skills/decree/SKILL.md")
-        .is_file());
+    assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
 }
 
 #[test]
@@ -868,12 +1066,16 @@ fn test_skill_already_up_to_date_copilot() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "copilot", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
+        ])
         .assert()
         .success();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "copilot", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Already up to date"));
@@ -892,7 +1094,9 @@ fn test_skill_conflict_no_force_exits_nonzero() {
     .unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("conflict"))
@@ -900,7 +1104,10 @@ fn test_skill_conflict_no_force_exits_nonzero() {
 
     // File must NOT have been overwritten
     let content = fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
-    assert_eq!(content, "custom content that differs from bundled template\n");
+    assert_eq!(
+        content,
+        "custom content that differs from bundled template\n"
+    );
 }
 
 #[test]
@@ -915,7 +1122,9 @@ fn test_skill_conflict_with_force_overwrites() {
     .unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree", "--force"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree", "--force",
+        ])
         .assert()
         .success();
 
@@ -929,7 +1138,9 @@ fn test_skill_claude_content_has_required_sections() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .success();
 
@@ -942,7 +1153,8 @@ fn test_skill_claude_content_has_required_sections() {
     assert!(content.contains("When"), "must cover Given/When/Then");
     assert!(content.contains("Then"), "must cover Given/When/Then");
     assert!(
-        content.to_lowercase().contains("day-sized") || ref_migrations.to_lowercase().contains("day-sized"),
+        content.to_lowercase().contains("day-sized")
+            || ref_migrations.to_lowercase().contains("day-sized"),
         "must mention day-sized"
     );
     assert!(
@@ -960,7 +1172,9 @@ fn test_skill_copilot_content_has_required_sections() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "copilot", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
+        ])
         .assert()
         .success();
 
@@ -970,7 +1184,8 @@ fn test_skill_copilot_content_has_required_sections() {
 
     assert!(content.contains("mmutab"), "must cover immutability");
     assert!(
-        content.to_lowercase().contains("migration") || ref_migrations.to_lowercase().contains("migration"),
+        content.to_lowercase().contains("migration")
+            || ref_migrations.to_lowercase().contains("migration"),
         "must describe the migration contract"
     );
     assert!(
@@ -978,7 +1193,8 @@ fn test_skill_copilot_content_has_required_sections() {
         "must mention smallest feasible chunks"
     );
     assert!(
-        content.to_lowercase().contains("bypass") || ref_migrations.to_lowercase().contains("bypass"),
+        content.to_lowercase().contains("bypass")
+            || ref_migrations.to_lowercase().contains("bypass"),
         "must warn against bypassing the workflow"
     );
 }
@@ -988,12 +1204,13 @@ fn test_skill_installed_content_matches_bundled_template_claude() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .success();
 
-    let installed =
-        fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
+    let installed = fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
 
     // The installed file should contain the same content as what the command embeds.
     // We verify this by checking a stable unique phrase from the bundled template.
@@ -1005,12 +1222,13 @@ fn test_skill_installed_content_matches_bundled_template_copilot() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "copilot", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
+        ])
         .assert()
         .success();
 
-    let installed =
-        fs::read_to_string(dir.path().join(".github/skills/decree/SKILL.md")).unwrap();
+    let installed = fs::read_to_string(dir.path().join(".github/skills/decree/SKILL.md")).unwrap();
 
     assert!(installed.contains("Decree is an AI orchestrator"));
 }
@@ -1022,7 +1240,9 @@ fn test_skill_no_prompts_when_flags_provided() {
     // In non-TTY mode (tests always are), providing flags must not require any input.
     // The test succeeds if the process completes without hanging.
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .success();
 }
@@ -1036,7 +1256,9 @@ fn test_skill_preserves_unrelated_files_in_claude_dir() {
     fs::write(dir.path().join(".claude/settings.json"), "{}").unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "decree"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
+        ])
         .assert()
         .success();
 
@@ -1069,7 +1291,9 @@ fn test_skill_skill_flag_installs_specific_skill() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--skill", "sow"])
+        .args([
+            "skill", "--scope", "project", "--target", "claude", "--skill", "sow",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Installed"))
@@ -1098,12 +1322,12 @@ fn test_init_config_is_valid_yaml() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
-    let config_path = dir.path().join(".decree/config.yml");
-    let config: decree::config::AppConfig =
-        decree::config::AppConfig::load(&config_path).unwrap();
+    // The typed load is a unit test in `commands::init`; the crate exposes no internals.
+    let contents = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
+    let config: serde_norway::Value = serde_norway::from_str(&contents).unwrap();
 
-    assert_eq!(config.max_attempts, 3);
-    assert_eq!(config.max_depth, 10);
-    assert_eq!(config.max_log_size, 2_097_152);
-    assert_eq!(config.default_routine, "develop");
+    assert_eq!(config["max_attempts"].as_u64(), Some(3));
+    assert_eq!(config["max_depth"].as_u64(), Some(10));
+    assert_eq!(config["max_log_size"].as_u64(), Some(2_097_152));
+    assert_eq!(config["default_routine"].as_str(), Some("develop"));
 }

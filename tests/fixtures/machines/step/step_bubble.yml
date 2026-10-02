@@ -1,0 +1,31 @@
+name: step_bubble
+description: An event the atomic state does not handle is taken by its nearest ancestor.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: outer
+states:
+  outer:
+    onentry: [outer_entry]
+    onexit: [outer_exit]
+    initial: work
+    transitions: { pass: failed }        # hidden by work's own `pass`
+    states:
+      work:
+        onentry: [work_entry]
+        onexit: [work_exit]
+        initial: a
+        transitions: { pass: after }
+        states:
+          a:
+            onentry: [a_entry]
+            invoke: a_invoke             # prints pass, which `a` does not handle
+            onexit: [a_exit]
+            transitions: { done: b }
+          b:
+            invoke: b_invoke
+            transitions: { done: done }
+  after:
+    onentry: [after_entry]
+    transitions: { done: done }
+  done:   { final: true, onentry: [done_entry] }
+  failed: { final: true, onentry: [failed_entry] }

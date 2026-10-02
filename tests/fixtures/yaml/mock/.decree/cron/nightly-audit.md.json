@@ -1,0 +1,4 @@
+{
+  "cron": "0 3 * * *",
+  "machine": "develop"
+}

@@ -1,0 +1,48 @@
+You choose the next step of a workflow. Reply with only a JSON object:
+{"event": "<one option name>", "reason": "<one sentence>", "confidence": <0 to 1>}
+
+Workflow: feature: Implement one feature spec with an AI agent, verify it, and commit.
+Current step: triage: 
+Question: Should we implement again or split the work?
+
+Output of the previous step:
+running 14 tests
+test upload_limit::over_limit_returns_429 ... ok
+test upload_limit::window_slides ... FAILED
+
+failures:
+---- upload_limit::window_slides stdout ----
+thread 'upload_limit::window_slides' panicked at tests/upload_limit.rs:41:5:
+assertion `left == right` failed
+  left: 429
+ right: 200
+
+test result: FAILED. 13 passed; 1 failed
+
+Task message:
+# Rate-limit /api/upload
+
+## Requirements
+
+Limit each API key to 10 uploads per minute on `POST /api/upload`. Over the
+limit, respond 429 with a `Retry-After` header in seconds.
+
+## Acceptance Criteria
+
+- **Given** a key that has uploaded 10 times in the last minute
+  **When** it uploads again
+  **Then** the response is 429 with `Retry-After`
+
+- **Given** a key that has uploaded 10 times, the oldest 61 seconds ago
+  **When** it uploads again
+  **Then** the upload succeeds
+
+Run so far:
+- implement: 1 visit
+- rounds_left: yes
+
+Options:
+- retry: The failures look fixable; implement again.
+- split: The scope is too large; emit smaller follow-up messages.
+--- reply
+{"event": "retry", "reason": "One test fails on an off-by-one in the window check; the fix is local.", "confidence": 0.86}

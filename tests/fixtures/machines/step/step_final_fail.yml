@@ -1,0 +1,11 @@
+name: step_final_fail
+description: The first onentry script of the done final state fails.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: a
+states:
+  a:
+    invoke: a_invoke
+    transitions: { done: done }
+  done:   { final: true, onentry: [done_entry_fail, done_entry] }
+  failed: { final: true, onentry: [failed_entry] }

@@ -95,7 +95,7 @@ impl fmt::Display for HookError {
 
 /// Resolve the routine name for a given hook type from config.
 /// Returns `None` if the hook value is empty or absent.
-pub fn hook_routine_name<'a>(hooks: &'a HooksConfig, hook_type: HookType) -> Option<&'a str> {
+pub fn hook_routine_name(hooks: &HooksConfig, hook_type: HookType) -> Option<&str> {
     let name = match hook_type {
         HookType::BeforeAll => &hooks.before_all,
         HookType::AfterAll => &hooks.after_all,
@@ -332,7 +332,13 @@ mod tests {
     fn test_run_hook_on_dead_letter_not_configured() {
         let hooks = HooksConfig::default();
         let ctx = HookContext::default();
-        assert!(run_hook(Path::new("/nonexistent"), &hooks, HookType::OnDeadLetter, &ctx).is_ok());
+        assert!(run_hook(
+            Path::new("/nonexistent"),
+            &hooks,
+            HookType::OnDeadLetter,
+            &ctx
+        )
+        .is_ok());
     }
 
     #[test]

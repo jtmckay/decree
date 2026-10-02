@@ -1,0 +1,15 @@
+name: m
+description: A machine with an unreachable state and a stall.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: done, hold: wait }
+  wait:
+    description: Waits for a person, who can only send again.
+    transitions: { again: wait }
+  orphan:
+    invoke: work
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }

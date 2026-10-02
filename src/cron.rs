@@ -20,16 +20,14 @@ pub struct CronFile {
     /// Optional routine override.
     pub routine: Option<String>,
     /// Custom frontmatter fields (cron field stripped).
-    pub custom_fields: BTreeMap<String, serde_yaml::Value>,
+    pub custom_fields: BTreeMap<String, serde_norway::Value>,
     /// Markdown body.
     pub body: String,
 }
 
 /// Scan `.decree/cron/` for valid cron files.
 pub fn scan_cron_files(project_root: &Path) -> Result<Vec<CronFile>, DecreeError> {
-    let cron_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::CRON_DIR);
+    let cron_dir = project_root.join(config::DECREE_DIR).join(config::CRON_DIR);
 
     if !cron_dir.exists() {
         return Ok(Vec::new());
@@ -66,39 +64,27 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
     let cron_expr = fields
         .get("cron")
         .and_then(|v| match v {
-            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_norway::Value::String(s) => Some(s.clone()),
             _ => None,
         })
         .ok_or_else(|| DecreeError::Other(format!("no cron field in {filename}")))?;
 
-    // The cron crate expects 6 or 7 fields (seconds included).
-    // Standard 5-field cron needs a "0" seconds prefix.
-    let fields_count = cron_expr.split_whitespace().count();
-    let schedule_expr = if fields_count == 5 {
-        format!("0 {cron_expr}")
-    } else {
-        cron_expr.clone()
-    };
-
-    let schedule = cron::Schedule::from_str(&schedule_expr)
+    let schedule = parse_schedule(&cron_expr)
         .map_err(|e| DecreeError::Other(format!("invalid cron expression in {filename}: {e}")))?;
 
     let routine = fields.get("routine").and_then(|v| match v {
-        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_norway::Value::String(s) => Some(s.clone()),
         _ => None,
     });
 
     // Collect custom fields, stripping "cron" and known message fields
     let strip_fields: &[&str] = &["cron", "routine"];
-    let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
+    let custom_fields: BTreeMap<String, serde_norway::Value> = fields
         .into_iter()
         .filter(|(k, _)| !strip_fields.contains(&k.as_str()))
         .collect();
 
-    let name_stem = filename
-        .strip_suffix(".md")
-        .unwrap_or(filename)
-        .to_string();
+    let name_stem = filename.strip_suffix(".md").unwrap_or(filename).to_string();
 
     Ok(CronFile {
         filename: filename.to_string(),
@@ -109,6 +95,18 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
         custom_fields,
         body,
     })
+}
+
+/// Parse a cron expression. Standard 5-field cron is accepted: the cron crate expects 6 or 7
+/// fields (seconds included), so a 5-field expression gets a "0" seconds prefix.
+pub fn parse_schedule(cron_expr: &str) -> Result<cron::Schedule, cron::error::Error> {
+    let fields_count = cron_expr.split_whitespace().count();
+    let schedule_expr = if fields_count == 5 {
+        format!("0 {cron_expr}")
+    } else {
+        cron_expr.to_string()
+    };
+    cron::Schedule::from_str(&schedule_expr)
 }
 
 /// Tracker for preventing duplicate firings within the same minute.
@@ -212,13 +210,12 @@ mod tests {
 
     #[test]
     fn test_parse_cron_file_custom_fields() {
-        let content =
-            "---\ncron: \"0 9 * * *\"\npriority: high\ntags: daily\n---\nDaily task.\n";
+        let content = "---\ncron: \"0 9 * * *\"\npriority: high\ntags: daily\n---\nDaily task.\n";
         let cf = parse_cron_file("daily.md", content).unwrap();
         assert_eq!(cf.custom_fields.len(), 2);
         assert_eq!(
             cf.custom_fields.get("priority"),
-            Some(&serde_yaml::Value::String("high".into()))
+            Some(&serde_norway::Value::String("high".into()))
         );
     }
 
@@ -361,7 +358,7 @@ mod tests {
         assert!(!msg.custom_fields.contains_key("cron"));
         assert_eq!(
             msg.custom_fields.get("priority"),
-            Some(&serde_yaml::Value::String("high".into()))
+            Some(&serde_norway::Value::String("high".into()))
         );
 
         // Check body preserved

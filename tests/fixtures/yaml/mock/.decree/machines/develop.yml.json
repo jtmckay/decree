@@ -1,0 +1,29 @@
+{
+  "description": "Make a small code change with an AI agent, then run the tests.",
+  "initial": "implement",
+  "name": "develop",
+  "states": {
+    "done": {
+      "final": true
+    },
+    "failed": {
+      "final": true,
+      "onentry": [
+        "notify"
+      ]
+    },
+    "implement": {
+      "invoke": "implement",
+      "timeout_s": 3600,
+      "transitions": {
+        "done": "test"
+      }
+    },
+    "test": {
+      "invoke": "test",
+      "transitions": {
+        "done": "done"
+      }
+    }
+  }
+}

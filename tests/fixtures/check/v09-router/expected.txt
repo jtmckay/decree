@@ -1,0 +1,1 @@
+machines/m.yml: work: router event `pass` needs the long form with a `description` (V9)

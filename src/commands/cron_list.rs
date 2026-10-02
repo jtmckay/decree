@@ -20,19 +20,21 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
         return Ok(());
     }
 
-    let runs_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::RUNS_DIR);
+    let runs_dir = project_root.join(config::DECREE_DIR).join(config::RUNS_DIR);
 
     println!(
-        "{:<W_FILE$}{:<W_SCHED$}{:<W_ROUTINE$}{:<W_LAST$}{}",
-        "CRON FILE", "SCHEDULE", "ROUTINE", "LAST RUN", "NEXT RUN"
+        "{:<W_FILE$}{:<W_SCHED$}{:<W_ROUTINE$}{:<W_LAST$}NEXT RUN",
+        "CRON FILE", "SCHEDULE", "ROUTINE", "LAST RUN"
     );
 
     for cf in &cron_files {
         let routine = cf.routine.as_deref().unwrap_or(&config.default_routine);
         let last_run = find_last_run(&runs_dir, &cf.name_stem);
-        let next_run = cf.schedule.upcoming(Utc).next().map(DateTime::<Local>::from);
+        let next_run = cf
+            .schedule
+            .upcoming(Utc)
+            .next()
+            .map(DateTime::<Local>::from);
 
         let last_str = match last_run {
             Some(t) => relative_ago(t),
@@ -146,8 +148,14 @@ mod tests {
         let now = Local::now();
         assert_eq!(relative_ago(now - chrono::Duration::seconds(30)), "30s ago");
         assert_eq!(relative_ago(now - chrono::Duration::seconds(90)), "1m ago");
-        assert_eq!(relative_ago(now - chrono::Duration::seconds(3700)), "1h ago");
-        assert_eq!(relative_ago(now - chrono::Duration::seconds(86500)), "1d ago");
+        assert_eq!(
+            relative_ago(now - chrono::Duration::seconds(3700)),
+            "1h ago"
+        );
+        assert_eq!(
+            relative_ago(now - chrono::Duration::seconds(86500)),
+            "1d ago"
+        );
     }
 
     #[test]

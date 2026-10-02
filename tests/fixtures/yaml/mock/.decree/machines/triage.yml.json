@@ -1,0 +1,53 @@
+{
+  "description": "Read a free-form request and hand it to the machine that should do the work.",
+  "initial": "classify",
+  "name": "triage",
+  "states": {
+    "classify": {
+      "default": "reject",
+      "description": "The request is in the message body. Decide which kind of work it is.",
+      "router": "llm",
+      "transitions": {
+        "feature": {
+          "description": "A feature with acceptance criteria that should be verified and committed.",
+          "target": "to_feature"
+        },
+        "reject": {
+          "description": "Not actionable, or not a code change.",
+          "target": "rejected"
+        },
+        "small_change": {
+          "description": "A small, self-contained code change with no formal spec.",
+          "target": "to_develop"
+        }
+      }
+    },
+    "done": {
+      "final": true
+    },
+    "failed": {
+      "final": true
+    },
+    "rejected": {
+      "final": true
+    },
+    "to_develop": {
+      "emits": [
+        "develop"
+      ],
+      "invoke": "forward",
+      "transitions": {
+        "done": "done"
+      }
+    },
+    "to_feature": {
+      "emits": [
+        "feature"
+      ],
+      "invoke": "forward",
+      "transitions": {
+        "done": "done"
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "commands": {
+    "ai_interactive": "opencode",
+    "ai_router": "opencode run {prompt}"
+  },
+  "default_routine": "develop",
+  "hooks": {
+    "afterAll": "",
+    "afterEach": "",
+    "beforeAll": "",
+    "beforeEach": ""
+  },
+  "max_attempts": 3,
+  "max_depth": 10,
+  "routines": {
+    "develop": {
+      "enabled": true
+    }
+  }
+}

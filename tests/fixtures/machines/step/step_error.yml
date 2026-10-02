@@ -1,0 +1,14 @@
+name: step_error
+description: An invoke fails and nothing handles error.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: a
+states:
+  a:
+    onentry: [a_entry]
+    invoke: a_invoke_fail
+    onexit: [a_exit]
+    max_attempts: 1
+    transitions: { done: done }
+  done:   { final: true, onentry: [done_entry] }
+  failed: { final: true, onentry: [failed_entry] }

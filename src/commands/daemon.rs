@@ -5,6 +5,7 @@ use crate::error::DecreeError;
 use crate::hooks::{self, HookContext, HookType};
 use crate::message::{self, InboxMessage};
 use crate::routine;
+use crate::runtime::truncate_log_if_needed;
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -30,7 +31,13 @@ pub fn run(project_root: &Path, interval: u64) -> Result<(), DecreeError> {
 
     // Run beforeAll hook
     let all_ctx = HookContext::default();
-    if let Err(e) = hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeAll, &all_ctx, Some(&config)) {
+    if let Err(e) = hooks::run_hook_with_config(
+        project_root,
+        &config.hooks,
+        HookType::BeforeAll,
+        &all_ctx,
+        Some(&config),
+    ) {
         eprintln!("beforeAll hook failed: {e}");
         return Err(DecreeError::Other(format!("beforeAll hook failed: {e}")));
     }
@@ -123,7 +130,10 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker) {
                     );
                     continue;
                 }
-                println!("decree daemon: cron fired: {} -> {}", cf.filename, msg.filename);
+                println!(
+                    "decree daemon: cron fired: {} -> {}",
+                    cf.filename, msg.filename
+                );
                 tracker.mark_fired(cf);
             }
             Err(e) => {
@@ -275,7 +285,13 @@ fn process_single_message(
         };
 
         // Run beforeEach hook
-        match hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config)) {
+        match hooks::run_hook_with_config(
+            project_root,
+            &config.hooks,
+            HookType::BeforeEach,
+            &hook_ctx,
+            Some(config),
+        ) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("decree daemon: beforeEach hook failed for {msg_id}: {e}");
@@ -345,9 +361,13 @@ fn process_single_message(
                 final_attempt: is_final,
                 ..hook_ctx.clone()
             };
-            if let Err(e) =
-                hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
-            {
+            if let Err(e) = hooks::run_hook_with_config(
+                project_root,
+                &config.hooks,
+                HookType::AfterEach,
+                &after_ctx,
+                Some(config),
+            ) {
                 eprintln!("decree daemon: afterEach hook failed for {msg_id}: {e}");
             }
 
@@ -391,17 +411,19 @@ fn process_single_message(
             final_attempt: is_final,
             ..hook_ctx
         };
-        if let Err(e) =
-            hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config))
-        {
+        if let Err(e) = hooks::run_hook_with_config(
+            project_root,
+            &config.hooks,
+            HookType::AfterEach,
+            &after_ctx,
+            Some(config),
+        ) {
             eprintln!("decree daemon: afterEach hook failed for {msg_id}: {e}");
         }
 
         if attempt == effective_max_attempts {
             // EXHAUSTION — all retries failed
-            eprintln!(
-                "decree daemon: max retries exhausted for {msg_id} (exit code: {exit_code})"
-            );
+            eprintln!("decree daemon: max retries exhausted for {msg_id} (exit code: {exit_code})");
 
             // Clear outbox (discard follow-ups from failed routine)
             clear_outbox(project_root)?;
@@ -473,6 +495,7 @@ fn process_single_message(
 }
 
 /// Execute a routine script and return its exit code.
+#[allow(clippy::too_many_arguments)]
 fn execute_routine(
     project_root: &Path,
     script_path: &Path,
@@ -589,10 +612,7 @@ fn collect_outbox(
         }
     }
 
-    let md_files: Vec<String> = entries
-        .into_iter()
-        .filter(|e| e.ends_with(".md"))
-        .collect();
+    let md_files: Vec<String> = entries.into_iter().filter(|e| e.ends_with(".md")).collect();
 
     let mut next_seq = current_seq + 1;
 
@@ -625,13 +645,13 @@ fn collect_outbox(
         let inbox_filename = format!("{id}.md");
 
         let routine = fields.get("routine").and_then(|v| match v {
-            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_norway::Value::String(s) => Some(s.clone()),
             _ => None,
         });
 
         // Collect custom fields (strip known message fields)
         let known: &[&str] = &["id", "chain", "seq", "routine", "migration", "trigger"];
-        let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
+        let custom_fields: BTreeMap<String, serde_norway::Value> = fields
             .into_iter()
             .filter(|(k, _)| !known.contains(&k.as_str()))
             .collect();
@@ -709,30 +729,6 @@ fn append_to_file(path: &Path, text: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Truncate a log file to max_log_size bytes, keeping the tail.
-fn truncate_log_if_needed(path: &Path, max_size: u64) -> Result<(), DecreeError> {
-    if max_size == 0 {
-        return Ok(());
-    }
-
-    let metadata = std::fs::metadata(path)?;
-    if metadata.len() <= max_size {
-        return Ok(());
-    }
-
-    let content = std::fs::read(path)?;
-    let skip = content.len() - max_size as usize;
-    let truncated = &content[skip..];
-
-    let marker = format!("[log truncated — showing last {} of output]\n", format_bytes(max_size));
-    let mut new_content = marker.into_bytes();
-    new_content.extend_from_slice(truncated);
-
-    std::fs::write(path, &new_content)?;
-
-    Ok(())
-}
-
 /// Write run.json metadata to the run directory.
 #[allow(clippy::too_many_arguments)]
 fn write_run_json(
@@ -749,34 +745,41 @@ fn write_run_json(
     let duration_s = end.signed_duration_since(*start).num_seconds();
 
     let mut obj = serde_json::Map::new();
-    obj.insert("message_id".into(), serde_json::Value::String(message_id.into()));
+    obj.insert(
+        "message_id".into(),
+        serde_json::Value::String(message_id.into()),
+    );
     obj.insert("routine".into(), serde_json::Value::String(routine.into()));
     obj.insert("trigger".into(), serde_json::Value::String(trigger.into()));
     if let Some(m) = migration {
         obj.insert("migration".into(), serde_json::Value::String(m.into()));
     }
-    obj.insert("attempts".into(), serde_json::Value::Number(attempts.into()));
-    obj.insert("exit_code".into(), serde_json::Value::Number(exit_code.into()));
-    obj.insert("start".into(), serde_json::Value::String(start.format("%Y-%m-%dT%H:%M:%S").to_string()));
-    obj.insert("end".into(), serde_json::Value::String(end.format("%Y-%m-%dT%H:%M:%S").to_string()));
-    obj.insert("duration_s".into(), serde_json::Value::Number(duration_s.into()));
+    obj.insert(
+        "attempts".into(),
+        serde_json::Value::Number(attempts.into()),
+    );
+    obj.insert(
+        "exit_code".into(),
+        serde_json::Value::Number(exit_code.into()),
+    );
+    obj.insert(
+        "start".into(),
+        serde_json::Value::String(start.format("%Y-%m-%dT%H:%M:%S").to_string()),
+    );
+    obj.insert(
+        "end".into(),
+        serde_json::Value::String(end.format("%Y-%m-%dT%H:%M:%S").to_string()),
+    );
+    obj.insert(
+        "duration_s".into(),
+        serde_json::Value::Number(duration_s.into()),
+    );
 
     let json = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
         .map_err(|e| DecreeError::Other(format!("failed to serialize run.json: {e}")))?;
 
     std::fs::write(run_dir.join("run.json"), json)?;
     Ok(())
-}
-
-/// Format a byte count for the truncation marker.
-fn format_bytes(bytes: u64) -> String {
-    if bytes >= 1_048_576 {
-        format!("{}MB", bytes / 1_048_576)
-    } else if bytes >= 1024 {
-        format!("{}KB", bytes / 1024)
-    } else {
-        format!("{bytes}B")
-    }
 }
 
 /// Format a chrono Duration as human-readable.
@@ -796,14 +799,14 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Convert a serde_yaml::Value to a string suitable for env vars.
-fn value_as_env_string(v: &serde_yaml::Value) -> Option<String> {
+/// Convert a serde_norway::Value to a string suitable for env vars.
+fn value_as_env_string(v: &serde_norway::Value) -> Option<String> {
     match v {
-        serde_yaml::Value::String(s) => Some(s.clone()),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        serde_yaml::Value::Null => None,
-        serde_yaml::Value::Sequence(_) | serde_yaml::Value::Mapping(_) => {
+        serde_norway::Value::String(s) => Some(s.clone()),
+        serde_norway::Value::Number(n) => Some(n.to_string()),
+        serde_norway::Value::Bool(b) => Some(b.to_string()),
+        serde_norway::Value::Null => None,
+        serde_norway::Value::Sequence(_) | serde_norway::Value::Mapping(_) => {
             let json_val: serde_json::Value = serde_json::to_value(v).ok()?;
             Some(json_val.to_string())
         }
@@ -841,13 +844,6 @@ mod tests {
     fn test_format_duration_minutes() {
         let d = chrono::TimeDelta::seconds(125);
         assert_eq!(format_duration(d), "2m05s");
-    }
-
-    #[test]
-    fn test_format_bytes() {
-        assert_eq!(format_bytes(500), "500B");
-        assert_eq!(format_bytes(2048), "2KB");
-        assert_eq!(format_bytes(2_097_152), "2MB");
     }
 
     #[test]
@@ -964,8 +960,7 @@ mod tests {
         collect_outbox(dir.path(), "D0001-1432-test", 0, &config).unwrap();
 
         let content =
-            std::fs::read_to_string(dir.path().join(".decree/inbox/D0001-1432-test-1.md"))
-                .unwrap();
+            std::fs::read_to_string(dir.path().join(".decree/inbox/D0001-1432-test-1.md")).unwrap();
         assert!(content.contains("priority: high"));
     }
 
@@ -1009,43 +1004,6 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_log_disabled() {
-        let dir = TempDir::new().unwrap();
-        let log = dir.path().join("test.log");
-        std::fs::write(&log, "a".repeat(5000)).unwrap();
-
-        // max_size = 0 disables truncation
-        truncate_log_if_needed(&log, 0).unwrap();
-        assert_eq!(std::fs::metadata(&log).unwrap().len(), 5000);
-    }
-
-    #[test]
-    fn test_truncate_log_under_limit() {
-        let dir = TempDir::new().unwrap();
-        let log = dir.path().join("test.log");
-        std::fs::write(&log, "small log").unwrap();
-
-        truncate_log_if_needed(&log, 1000).unwrap();
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), "small log");
-    }
-
-    #[test]
-    fn test_truncate_log_over_limit() {
-        let dir = TempDir::new().unwrap();
-        let log = dir.path().join("test.log");
-        let content = "x".repeat(200);
-        std::fs::write(&log, &content).unwrap();
-
-        truncate_log_if_needed(&log, 100).unwrap();
-
-        let result = std::fs::read_to_string(&log).unwrap();
-        assert!(result.starts_with("[log truncated"));
-        assert!(result.contains("100B"));
-        // Should end with 100 'x' chars
-        assert!(result.ends_with(&"x".repeat(100)));
-    }
-
-    #[test]
     fn test_process_single_message_success() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
@@ -1068,8 +1026,7 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = AtomicBool::new(false);
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 
         // Message should be removed from inbox
@@ -1148,8 +1105,7 @@ mod tests {
         };
         let shutdown = AtomicBool::new(false);
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_err());
 
         // Message should be dead-lettered
@@ -1184,8 +1140,7 @@ mod tests {
         };
         let shutdown = AtomicBool::new(false);
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_err());
 
         // Should have 3 log files (one per attempt)
@@ -1258,8 +1213,7 @@ mod tests {
         };
         let shutdown = AtomicBool::new(false);
 
-        process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown)
-            .unwrap_err();
+        process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown).unwrap_err();
 
         // Only 1 log file (1 attempt, not 5)
         let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
@@ -1287,10 +1241,9 @@ mod tests {
         assert_eq!(inbox_files.len(), 1);
 
         // Verify the inbox message content
-        let content = std::fs::read_to_string(
-            dir.path().join(".decree/inbox").join(&inbox_files[0]),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join(".decree/inbox").join(&inbox_files[0]))
+                .unwrap();
         assert!(content.contains("routine: develop"));
         assert!(content.contains("Minutely task."));
         assert!(content.contains("trigger: cron:every-minute"));
@@ -1306,19 +1259,19 @@ mod tests {
     #[test]
     fn test_value_as_env_string() {
         assert_eq!(
-            value_as_env_string(&serde_yaml::Value::String("hello".into())),
+            value_as_env_string(&serde_norway::Value::String("hello".into())),
             Some("hello".to_string())
         );
         assert_eq!(
-            value_as_env_string(&serde_yaml::Value::Bool(true)),
+            value_as_env_string(&serde_norway::Value::Bool(true)),
             Some("true".to_string())
         );
-        assert_eq!(value_as_env_string(&serde_yaml::Value::Null), None);
+        assert_eq!(value_as_env_string(&serde_norway::Value::Null), None);
     }
 
     #[test]
     fn test_value_as_env_string_array() {
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_norway::Value = serde_norway::from_str(
             "- input_image: some_path.png [output]\n  output_prefix: some_prefix",
         )
         .unwrap();
@@ -1333,7 +1286,7 @@ mod tests {
 
     #[test]
     fn test_value_as_env_string_mapping() {
-        let yaml: serde_yaml::Value = serde_yaml::from_str("key: val").unwrap();
+        let yaml: serde_norway::Value = serde_norway::from_str("key: val").unwrap();
         assert_eq!(
             value_as_env_string(&yaml),
             Some(r#"{"key":"val"}"#.to_string())

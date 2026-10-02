@@ -1,0 +1,9 @@
+{
+  "commands": {
+    "ai_router": "claude -p {prompt}"
+  },
+  "default_machine": "develop",
+  "max_attempts": 3,
+  "max_depth": 10,
+  "max_log_size": 2097152
+}

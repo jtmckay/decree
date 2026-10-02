@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 pub fn run(project_root: &Path, source: Option<&str>) -> Result<(), DecreeError> {
     let mut config = AppConfig::load_from_project(project_root)?;
 
-    let source_override = source.map(|s| config::expand_tilde(s));
+    let source_override = source.map(config::expand_tilde);
     let changed = discover(project_root, &mut config, source_override.as_deref())?;
 
     if changed {

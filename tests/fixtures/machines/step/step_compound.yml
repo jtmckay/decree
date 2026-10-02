@@ -1,0 +1,23 @@
+name: step_compound
+description: Enter a compound state through its initial, then leave it from its child.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: outer
+states:
+  outer:
+    onentry: [outer_entry]
+    onexit: [outer_exit]
+    initial: inner
+    states:
+      inner:
+        onentry: [inner_entry]
+        invoke: inner_invoke
+        onexit: [inner_exit]
+        transitions: { done: after }
+  after:
+    onentry: [after_entry]
+    invoke: after_invoke
+    onexit: [after_exit]
+    transitions: { done: done }
+  done:   { final: true, onentry: [done_entry] }
+  failed: { final: true, onentry: [failed_entry] }

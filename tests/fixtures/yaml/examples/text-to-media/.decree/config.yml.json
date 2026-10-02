@@ -1,0 +1,26 @@
+{
+  "commands": {
+    "ai_interactive": "claude",
+    "ai_router": "claude -p {prompt}"
+  },
+  "default_routine": "comfy-image-text",
+  "hooks": {
+    "afterAll": "",
+    "afterEach": "",
+    "beforeAll": "",
+    "beforeEach": ""
+  },
+  "max_attempts": 3,
+  "max_depth": 10,
+  "routines": {
+    "comfy-image-text": {
+      "enabled": true
+    },
+    "comfy-image-text-image": {
+      "enabled": true
+    },
+    "comfy-video-i2v": {
+      "enabled": true
+    }
+  }
+}

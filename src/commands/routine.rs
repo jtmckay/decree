@@ -1,10 +1,12 @@
 use crate::config::{self, AppConfig};
-use crate::error::{color, DecreeError, EXIT_PRECHECK};
+use crate::error::{DecreeError, EXIT_PRECHECK};
 use crate::hooks;
 use crate::message::{self, InboxMessage, RoutineInfo};
 use crate::routine::{self, CustomParam, RoutineDetail};
 use chrono::Local;
+use colored::Colorize;
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::io::{self, BufRead};
 use std::path::Path;
 
@@ -43,14 +45,14 @@ fn run_named(
         None => return routine_not_found(name, routines),
     };
 
-    let detail = routine::routine_detail(project_root, &config, info)?;
+    let detail = routine::routine_detail(project_root, config, info)?;
 
-    if !color::is_tty() {
+    if !std::io::stdout().is_terminal() {
         print_detail_view(&detail);
         return Ok(());
     }
 
-    guided_flow(project_root, &config, &detail)
+    guided_flow(project_root, config, &detail)
 }
 
 /// Run with interactive selection (no name given).
@@ -59,7 +61,7 @@ fn run_select(
     config: &AppConfig,
     routines: &[RoutineInfo],
 ) -> Result<(), DecreeError> {
-    if !color::is_tty() {
+    if !std::io::stdout().is_terminal() {
         print_list_view(routines);
         return Ok(());
     }
@@ -146,14 +148,10 @@ fn guided_flow(
     let precheck_result = routine::run_precheck(project_root, config, &detail.info.name)?;
     match &precheck_result {
         None => {
-            println!("  Pre-check: {}", color::success("PASS"));
+            println!("  Pre-check: {}", "PASS".green());
         }
         Some(reason) => {
-            println!(
-                "  Pre-check: {}: {}",
-                color::error("FAIL"),
-                reason
-            );
+            println!("  Pre-check: {}: {}", "FAIL".red(), reason);
             println!();
             let cont = inquire::Confirm::new("Continue anyway?")
                 .with_default(false)
@@ -178,7 +176,7 @@ fn guided_flow(
 
     // Step 5: Summary and execute
     println!();
-    println!("Running {}:", color::bold(&detail.info.name));
+    println!("Running {}:", detail.info.name.bold());
     for (name, value) in &param_values {
         println!("  {name}: {value}");
     }
@@ -195,9 +193,7 @@ fn guided_flow(
 
     // Wait for Enter
     let mut buf = String::new();
-    io::stdin()
-        .read_line(&mut buf)
-        .map_err(DecreeError::Io)?;
+    io::stdin().read_line(&mut buf).map_err(DecreeError::Io)?;
 
     // Create and process the message
     execute_routine(project_root, config, detail, &param_values, &body)
@@ -257,10 +253,7 @@ fn execute_routine(
 
     let mut custom_fields = BTreeMap::new();
     for (name, value) in param_values {
-        custom_fields.insert(
-            name.clone(),
-            serde_yaml::Value::String(value.clone()),
-        );
+        custom_fields.insert(name.clone(), serde_norway::Value::String(value.clone()));
     }
 
     let msg = InboxMessage {
@@ -334,16 +327,11 @@ pub fn verify(project_root: &Path) -> Result<(), DecreeError> {
         let result = routine::run_precheck(project_root, &config, &r.name)?;
         match result {
             None => {
-                println!("  {:<16} {}", r.name, color::success("PASS"));
+                println!("  {:<16} {}", r.name, "PASS".green());
                 pass_count += 1;
             }
             Some(reason) => {
-                println!(
-                    "  {:<16} {}: {}",
-                    r.name,
-                    color::error("FAIL"),
-                    reason
-                );
+                println!("  {:<16} {}: {}", r.name, "FAIL".red(), reason);
             }
         }
     }
@@ -369,24 +357,15 @@ pub fn verify(project_root: &Path) -> Result<(), DecreeError> {
                 let result = routine::run_precheck(project_root, &config, name)?;
                 match result {
                     None => {
-                        println!("  {:<32} {}", label, color::success("PASS"));
+                        println!("  {:<32} {}", label, "PASS".green());
                     }
                     Some(reason) => {
-                        println!(
-                            "  {:<32} {}: {}",
-                            label,
-                            color::error("FAIL"),
-                            reason
-                        );
+                        println!("  {:<32} {}: {}", label, "FAIL".red(), reason);
                         hook_fail = true;
                     }
                 }
             } else {
-                println!(
-                    "  {:<32} {}: routine not found",
-                    label,
-                    color::error("FAIL"),
-                );
+                println!("  {:<32} {}: routine not found", label, "FAIL".red());
                 hook_fail = true;
             }
         }

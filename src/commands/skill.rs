@@ -1,10 +1,11 @@
 use crate::cli::{SkillScope, SkillTarget};
 use crate::config::expand_tilde;
-use crate::error::{color, DecreeError};
-use std::path::PathBuf;
+use crate::error::DecreeError;
+use colored::Colorize;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 
-const DECREE_SKILL_MD: &str =
-    include_str!("../templates/skills/decree/SKILL.md");
+const DECREE_SKILL_MD: &str = include_str!("../templates/skills/decree/SKILL.md");
 const DECREE_REF_HOOKS_MD: &str =
     include_str!("../templates/skills/decree/reference/hooks-and-cron.md");
 const DECREE_REF_MIGRATIONS_MD: &str =
@@ -13,8 +14,7 @@ const DECREE_REF_PIPELINE_MD: &str =
     include_str!("../templates/skills/decree/reference/pipeline-and-vars.md");
 const DECREE_REF_ROUTINES_MD: &str =
     include_str!("../templates/skills/decree/reference/routines.md");
-const SOW_SKILL_MD: &str =
-    include_str!("../templates/skills/sow/SKILL.md");
+const SOW_SKILL_MD: &str = include_str!("../templates/skills/sow/SKILL.md");
 
 struct SkillFile {
     path: &'static str,
@@ -31,16 +31,32 @@ struct SkillEntry {
 }
 
 const DECREE_FILES: &[SkillFile] = &[
-    SkillFile { path: "SKILL.md", content: DECREE_SKILL_MD },
-    SkillFile { path: "reference/hooks-and-cron.md", content: DECREE_REF_HOOKS_MD },
-    SkillFile { path: "reference/migrations.md", content: DECREE_REF_MIGRATIONS_MD },
-    SkillFile { path: "reference/pipeline-and-vars.md", content: DECREE_REF_PIPELINE_MD },
-    SkillFile { path: "reference/routines.md", content: DECREE_REF_ROUTINES_MD },
+    SkillFile {
+        path: "SKILL.md",
+        content: DECREE_SKILL_MD,
+    },
+    SkillFile {
+        path: "reference/hooks-and-cron.md",
+        content: DECREE_REF_HOOKS_MD,
+    },
+    SkillFile {
+        path: "reference/migrations.md",
+        content: DECREE_REF_MIGRATIONS_MD,
+    },
+    SkillFile {
+        path: "reference/pipeline-and-vars.md",
+        content: DECREE_REF_PIPELINE_MD,
+    },
+    SkillFile {
+        path: "reference/routines.md",
+        content: DECREE_REF_ROUTINES_MD,
+    },
 ];
 
-const SOW_FILES: &[SkillFile] = &[
-    SkillFile { path: "SKILL.md", content: SOW_SKILL_MD },
-];
+const SOW_FILES: &[SkillFile] = &[SkillFile {
+    path: "SKILL.md",
+    content: SOW_SKILL_MD,
+}];
 
 const SKILLS: &[SkillEntry] = &[
     SkillEntry {
@@ -65,7 +81,7 @@ fn resolve_scope(scope: Option<SkillScope>) -> Result<SkillScope, DecreeError> {
     match scope {
         Some(s) => Ok(s),
         None => {
-            if !color::is_tty() {
+            if !std::io::stdout().is_terminal() {
                 return Err(DecreeError::Other(
                     "scope not specified; use --scope project|user".to_string(),
                 ));
@@ -86,7 +102,7 @@ fn resolve_target(target: Option<SkillTarget>) -> Result<SkillTarget, DecreeErro
     match target {
         Some(t) => Ok(t),
         None => {
-            if !color::is_tty() {
+            if !std::io::stdout().is_terminal() {
                 return Err(DecreeError::Other(
                     "target not specified; use --target claude|copilot".to_string(),
                 ));
@@ -103,11 +119,19 @@ fn resolve_target(target: Option<SkillTarget>) -> Result<SkillTarget, DecreeErro
     }
 }
 
-fn skill_dest_dir(entry: &SkillEntry, scope: &SkillScope, target: &SkillTarget) -> Result<PathBuf, DecreeError> {
+fn skill_dest_dir(
+    entry: &SkillEntry,
+    scope: &SkillScope,
+    target: &SkillTarget,
+) -> Result<PathBuf, DecreeError> {
     match (target, scope) {
-        (SkillTarget::Claude, SkillScope::Project) => Ok(std::env::current_dir()?.join(entry.claude_project_dir)),
+        (SkillTarget::Claude, SkillScope::Project) => {
+            Ok(std::env::current_dir()?.join(entry.claude_project_dir))
+        }
         (SkillTarget::Claude, SkillScope::User) => Ok(expand_tilde(entry.claude_user_dir)),
-        (SkillTarget::Copilot, SkillScope::Project) => Ok(std::env::current_dir()?.join(entry.copilot_project_dir)),
+        (SkillTarget::Copilot, SkillScope::Project) => {
+            Ok(std::env::current_dir()?.join(entry.copilot_project_dir))
+        }
         (SkillTarget::Copilot, SkillScope::User) => Err(DecreeError::Other(
             "user-scope Copilot installation is not supported; use --scope project".to_string(),
         )),
@@ -165,7 +189,7 @@ enum InstallResult {
 
 fn install_entry(
     entry: &SkillEntry,
-    dest_dir: &PathBuf,
+    dest_dir: &Path,
     force: bool,
     installed: &mut usize,
     up_to_date: &mut usize,
@@ -179,10 +203,14 @@ fn install_entry(
         match result {
             InstallResult::UpToDate => {
                 if is_root {
-                    let suffix = if total > 1 { format!(" ({total} files)") } else { String::new() };
+                    let suffix = if total > 1 {
+                        format!(" ({total} files)")
+                    } else {
+                        String::new()
+                    };
                     println!(
                         "Already up to date: {}{}",
-                        color::dim(&dest.display().to_string()),
+                        dest.display().to_string().dimmed(),
                         suffix
                     );
                 }
@@ -190,22 +218,30 @@ fn install_entry(
             }
             InstallResult::Installed => {
                 if is_root {
-                    let suffix = if total > 1 { format!(" ({total} files)") } else { String::new() };
-                    println!("{}: {}{}", color::success("Installed"), dest.display(), suffix);
+                    let suffix = if total > 1 {
+                        format!(" ({total} files)")
+                    } else {
+                        String::new()
+                    };
+                    println!("{}: {}{}", "Installed".green(), dest.display(), suffix);
                 }
                 *installed += 1;
             }
             InstallResult::Overwrote => {
                 if is_root {
-                    let suffix = if total > 1 { format!(" ({total} files)") } else { String::new() };
-                    println!("{}: {}{}", color::success("Overwrote"), dest.display(), suffix);
+                    let suffix = if total > 1 {
+                        format!(" ({total} files)")
+                    } else {
+                        String::new()
+                    };
+                    println!("{}: {}{}", "Overwrote".green(), dest.display(), suffix);
                 }
                 *installed += 1;
             }
             InstallResult::Conflict => {
                 eprintln!(
                     "{}: {} already exists with different content. Use --force to overwrite.",
-                    color::error("conflict"),
+                    "conflict".red(),
                     dest.display()
                 );
                 *conflicts += 1;
@@ -234,11 +270,7 @@ fn select_skills(
                     return Err(DecreeError::Other(format!(
                         "unknown skill '{}'; available: {}",
                         name,
-                        SKILLS
-                            .iter()
-                            .map(|e| e.name)
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        SKILLS.iter().map(|e| e.name).collect::<Vec<_>>().join(", ")
                     )))
                 }
             }
@@ -247,7 +279,7 @@ fn select_skills(
     }
 
     // Non-TTY without --skill or --all: error
-    if !color::is_tty() {
+    if !std::io::stdout().is_terminal() {
         return Err(DecreeError::Other(
             "non-TTY: specify skills with --skill <name> (repeatable) or --all".to_string(),
         ));
@@ -259,7 +291,10 @@ fn select_skills(
         .map(|e| format!("{:<18} {}", e.name, e.description))
         .collect();
 
-    let prompt = format!("Which skills would you like to install? (scope: {})", scope_label(scope));
+    let prompt = format!(
+        "Which skills would you like to install? (scope: {})",
+        scope_label(scope)
+    );
     let result = inquire::MultiSelect::new(&prompt, options)
         .with_default(&[0])
         .prompt();
@@ -273,11 +308,7 @@ fn select_skills(
                 // Map selected display strings back to indices
                 let indices = selected
                     .iter()
-                    .filter_map(|s| {
-                        SKILLS
-                            .iter()
-                            .position(|e| s.starts_with(e.name))
-                    })
+                    .filter_map(|s| SKILLS.iter().position(|e| s.starts_with(e.name)))
                     .collect();
                 Ok(indices)
             }
@@ -303,7 +334,14 @@ pub fn install_for_init(ai_name: &str) -> Result<(), DecreeError> {
     let mut installed = 0usize;
     let mut up_to_date = 0usize;
     let mut conflicts = 0usize;
-    install_entry(entry, &dest_dir, false, &mut installed, &mut up_to_date, &mut conflicts)?;
+    install_entry(
+        entry,
+        &dest_dir,
+        false,
+        &mut installed,
+        &mut up_to_date,
+        &mut conflicts,
+    )?;
     if installed > 0 {
         println!("Installed decree skill ({} file(s)).", installed);
     } else if up_to_date > 0 && conflicts == 0 {
@@ -331,7 +369,14 @@ pub fn run(
     for idx in &indices {
         let entry = &SKILLS[*idx];
         let dest_dir = skill_dest_dir(entry, &scope, &target)?;
-        install_entry(entry, &dest_dir, force, &mut installed, &mut up_to_date, &mut conflicts)?;
+        install_entry(
+            entry,
+            &dest_dir,
+            force,
+            &mut installed,
+            &mut up_to_date,
+            &mut conflicts,
+        )?;
     }
 
     println!(
@@ -413,7 +458,11 @@ mod tests {
     }
 
     fn decree_all_content() -> String {
-        DECREE_FILES.iter().map(|f| f.content).collect::<Vec<_>>().join("\n")
+        DECREE_FILES
+            .iter()
+            .map(|f| f.content)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]

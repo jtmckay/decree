@@ -157,20 +157,15 @@ fn parse_param_assignment(line: &str) -> Option<CustomParam> {
     let name = name.trim();
 
     // Validate name is a valid shell identifier
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
 
     let rest = rest.trim();
 
     // Must be quoted: "..." or '...'
-    let inner = if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
-        &rest[1..rest.len() - 1]
-    } else if rest.starts_with('\'') && rest.ends_with('\'') && rest.len() >= 2 {
+    let quoted_by = |q: char| rest.starts_with(q) && rest.ends_with(q) && rest.len() >= 2;
+    let inner = if quoted_by('"') || quoted_by('\'') {
         &rest[1..rest.len() - 1]
     } else {
         return None;
@@ -329,7 +324,7 @@ pub fn run_precheck(
         .env("DECREE_PRE_CHECK", "true")
         .current_dir(project_root)
         .output()
-        .map_err(|e| DecreeError::Io(e))?;
+        .map_err(DecreeError::Io)?;
 
     if output.status.success() {
         Ok(None)
@@ -350,11 +345,11 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     let b_len = b.len();
     let mut matrix = vec![vec![0usize; b_len + 1]; a_len + 1];
 
-    for i in 0..=a_len {
-        matrix[i][0] = i;
+    for (i, row) in matrix.iter_mut().enumerate() {
+        row[0] = i;
     }
-    for j in 0..=b_len {
-        matrix[0][j] = j;
+    for (j, cell) in matrix[0].iter_mut().enumerate() {
+        *cell = j;
     }
 
     for (i, ac) in a.chars().enumerate() {
@@ -370,15 +365,17 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
 }
 
 /// Find the closest matching routine name within a Levenshtein distance threshold.
-pub fn find_closest_routine(name: &str, routines: &[RoutineInfo], max_distance: usize) -> Option<String> {
+pub fn find_closest_routine(
+    name: &str,
+    routines: &[RoutineInfo],
+    max_distance: usize,
+) -> Option<String> {
     let mut best: Option<(usize, String)> = None;
 
     for r in routines {
         let dist = levenshtein(name, &r.name);
-        if dist <= max_distance {
-            if best.as_ref().is_none_or(|(d, _)| dist < *d) {
-                best = Some((dist, r.name.clone()));
-            }
+        if dist <= max_distance && best.as_ref().is_none_or(|(d, _)| dist < *d) {
+            best = Some((dist, r.name.clone()));
         }
     }
 

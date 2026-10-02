@@ -1,1 +1,1 @@
-[stderr] API Error: 529 Overloaded
+The window check used `<=` against 60s; changed to `<` and added a boundary test.

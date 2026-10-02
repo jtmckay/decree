@@ -1,0 +1,20 @@
+{
+  "commands": {
+    "ai_interactive": "claude",
+    "ai_router": "claude -p {prompt}"
+  },
+  "default_routine": "tts",
+  "hooks": {
+    "afterAll": "",
+    "afterEach": "",
+    "beforeAll": "",
+    "beforeEach": ""
+  },
+  "max_attempts": 3,
+  "max_depth": 10,
+  "routines": {
+    "tts": {
+      "enabled": true
+    }
+  }
+}

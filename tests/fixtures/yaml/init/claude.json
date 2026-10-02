@@ -1,0 +1,25 @@
+{
+  "commands": {
+    "ai_interactive": "claude",
+    "ai_router": "claude -p {prompt}"
+  },
+  "default_routine": "develop",
+  "hooks": {
+    "afterAll": "",
+    "afterEach": "",
+    "beforeAll": "",
+    "beforeEach": ""
+  },
+  "max_attempts": 3,
+  "max_depth": 10,
+  "max_log_size": 2097152,
+  "routine_source": "~/.decree/routines",
+  "routines": {
+    "develop": {
+      "enabled": true
+    },
+    "rust-develop": {
+      "enabled": true
+    }
+  }
+}

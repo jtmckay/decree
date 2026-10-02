@@ -1,5 +1,0 @@
-[decree] backend: commands.ai_router (chat prompt; provisional, see docs/spikes/router.md)
-[decree] ... prompt as in section 7, options: ask, pass, retry, split ...
-[decree] reply (exit 0):
-{"event": "ask", "reason": "Tests pass except one that reads plans.toml; the spec does not say where the file lives."}
-[decree] accepted: ask

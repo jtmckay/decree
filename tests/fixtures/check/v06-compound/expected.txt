@@ -1,0 +1,1 @@
+machines/m.yml: work: compound state may not have `invoke` (V6)

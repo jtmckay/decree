@@ -23,14 +23,32 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Initialize project
-    Init,
+    /// Initialize project (refuses to touch an existing .decree/)
+    Init {
+        /// AI backend for commands.ai_router [default: first found on PATH, else opencode]
+        #[arg(long, value_enum)]
+        ai: Option<AiBackend>,
+
+        /// Write the backend's default permissions file
+        #[arg(long)]
+        permissions: bool,
+    },
 
     /// Process all migrations + drain inbox
     Process {
         /// Show what would be processed without executing
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Validate machines and pending messages; prints one line per error
+    Check,
+
+    /// Print a machine, or the whole system, as a Mermaid diagram in Markdown
+    #[command(after_help = GRAPH_VIEWING)]
+    Graph {
+        /// Machine to draw [default: every machine, its emits edges and cron entry points]
+        machine: Option<String>,
     },
 
     /// List routines or show routine detail
@@ -97,6 +115,23 @@ pub enum Command {
 
     /// Verbose help
     Help,
+}
+
+/// How to view `decree graph` output (spec section 9, Viewing).
+const GRAPH_VIEWING: &str = "\
+Viewing:
+  1. Save the output: `decree graph feature > feature.md` (or `decree graph > machines.md`).
+  2. Open it in VS Code and press Ctrl+Shift+V (Cmd+Shift+V on macOS) for the preview;
+     VS Code 1.121 and later render Mermaid in Markdown without an extension.
+     GitHub, GitLab and Obsidian render the file as it is.
+  3. Without any of those, copy the lines inside the `mermaid` fence into https://mermaid.live.";
+
+/// AI backends `init` can configure, in 0.4.2's detection order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AiBackend {
+    Opencode,
+    Claude,
+    Copilot,
 }
 
 #[derive(Debug, Clone, ValueEnum)]

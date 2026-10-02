@@ -1,0 +1,18 @@
+name: step_retry_loop
+description: Implement, then verify, and implement again while fewer than 2 rounds ran.
+initial: implement
+states:
+  implement:
+    invoke: fail_until_final
+    max_attempts: 2
+    transitions: { done: verify }
+  verify:
+    description: The work was checked; decide whether to implement again.
+    invoke: verify
+    router: llm
+    default: pass
+    transitions:
+      pass:  { target: done, description: Good enough. }
+      retry: { target: implement, description: Implement again., cond: "visits.implement < 2" }
+  done:   { final: true }
+  failed: { final: true }

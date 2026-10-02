@@ -11,6 +11,8 @@ Core workflow:
 
 Commands:
   decree process              Process all pending migrations + drain inbox
+  decree check                Validate machines and pending messages
+  decree graph [MACHINE]      Print machines as a Mermaid diagram in Markdown
   decree routine              List routines (interactive select + run)
   decree routine <name>       Show routine detail + run pre-checks
   decree verify               Run all routine pre-checks

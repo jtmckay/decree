@@ -1,10 +1,13 @@
 use crate::commands::routine_sync;
 use crate::config::{self, AppConfig};
-use crate::error::{color, DecreeError, EXIT_PRECHECK};
+use crate::error::{DecreeError, EXIT_PRECHECK};
 use crate::hooks::{self, HookContext, HookType};
 use crate::message::{self, InboxMessage};
 use crate::routine;
+use crate::runtime::truncate_log_if_needed;
+use colored::Colorize;
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -34,7 +37,13 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
 
     // Step 1: Run beforeAll hook
     let all_ctx = HookContext::default();
-    match hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeAll, &all_ctx, Some(&config)) {
+    match hooks::run_hook_with_config(
+        project_root,
+        &config.hooks,
+        HookType::BeforeAll,
+        &all_ctx,
+        Some(&config),
+    ) {
         Ok(hook_output) => {
             if !hook_output.is_empty() {
                 eprintln!("{}", hook_output.output);
@@ -128,7 +137,13 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
     }
 
     // Step 7: Run afterAll hook
-    match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterAll, &all_ctx, Some(&config)) {
+    match hooks::run_hook_with_config(
+        project_root,
+        &config.hooks,
+        HookType::AfterAll,
+        &all_ctx,
+        Some(&config),
+    ) {
         Ok(hook_output) => {
             if !hook_output.is_empty() {
                 eprintln!("{}", hook_output.output);
@@ -138,7 +153,7 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
             if !e.output.is_empty() {
                 eprintln!("{}", e.output);
             }
-            eprintln!("{}: afterAll hook failed: {e}", color::warning("warning"));
+            eprintln!("{}: afterAll hook failed: {e}", "warning".yellow());
             return Err(DecreeError::Other(format!("afterAll hook failed: {e}")));
         }
     }
@@ -170,7 +185,9 @@ fn drain_inbox(
     shutdown: &Arc<AtomicBool>,
     prefer_chain: Option<&str>,
 ) -> Result<DrainResult, DecreeError> {
-    let mut result = DrainResult { dead_lettered: false };
+    let mut result = DrainResult {
+        dead_lettered: false,
+    };
     loop {
         if shutdown.load(Ordering::Relaxed) {
             exit_sigint();
@@ -188,7 +205,7 @@ fn drain_inbox(
         match process_single_message(project_root, config, &filename, shutdown) {
             Ok(()) => {}
             Err(e) => {
-                eprintln!("{}: {e}", color::warning("warning"));
+                eprintln!("{}: {e}", "warning".yellow());
                 // Safety: ensure message is removed from inbox to prevent infinite loop.
                 // process_single_message should dead-letter on all failure paths, but
                 // if it didn't (e.g. early parse/IO error), dead-letter here as fallback.
@@ -251,14 +268,13 @@ pub fn process_single_message(
 
     // Build the AI router callback if configured
     let ai_router_cmd = config.commands.ai_router.clone();
-    let ai_router_fn: Option<Box<dyn Fn(&str) -> Result<String, DecreeError>>> =
-        if ai_router_cmd.is_empty() {
-            None
-        } else {
-            Some(Box::new(move |prompt: &str| {
-                invoke_ai_router(&ai_router_cmd, prompt)
-            }))
-        };
+    let ai_router_fn: Option<Box<message::RouterFn>> = if ai_router_cmd.is_empty() {
+        None
+    } else {
+        Some(Box::new(move |prompt: &str| {
+            invoke_ai_router(&ai_router_cmd, prompt)
+        }))
+    };
     let ai_router_ref = ai_router_fn
         .as_ref()
         .map(|f| f.as_ref() as &dyn Fn(&str) -> Result<String, DecreeError>);
@@ -268,7 +284,9 @@ pub fn process_single_message(
     let active_filename: String = if was_modified {
         let new_filename = format!(
             "{}.md",
-            msg.id.as_deref().unwrap_or(filename.strip_suffix(".md").unwrap_or(filename))
+            msg.id
+                .as_deref()
+                .unwrap_or(filename.strip_suffix(".md").unwrap_or(filename))
         );
         if new_filename != filename {
             let old_path = project_root
@@ -335,7 +353,11 @@ pub fn process_single_message(
     let previous_session_id: Option<String> = if token_session_path.exists() {
         let id = std::fs::read_to_string(&token_session_path).unwrap_or_default();
         let _ = std::fs::remove_file(&token_session_path);
-        if id.trim().is_empty() { None } else { Some(id.trim().to_string()) }
+        if id.trim().is_empty() {
+            None
+        } else {
+            Some(id.trim().to_string())
+        }
     } else {
         None
     };
@@ -423,13 +445,22 @@ pub fn process_single_message(
         std::fs::write(&log_path, &start_line)?;
 
         // Run beforeEach hook
-        match hooks::run_hook_with_config(project_root, &config.hooks, HookType::BeforeEach, &hook_ctx, Some(config)) {
+        match hooks::run_hook_with_config(
+            project_root,
+            &config.hooks,
+            HookType::BeforeEach,
+            &hook_ctx,
+            Some(config),
+        ) {
             Ok(hook_output) => {
                 write_hook_log(&log_path, HookType::BeforeEach, &hook_output.output)?;
             }
             Err(e) => {
                 write_hook_log(&log_path, HookType::BeforeEach, &e.output)?;
-                eprintln!("{}: beforeEach hook failed for {msg_id}: {e}", color::warning("warning"));
+                eprintln!(
+                    "{}: beforeEach hook failed for {msg_id}: {e}",
+                    "warning".yellow()
+                );
                 // beforeEach failure: skip and dead-letter (onDeadLetter does NOT fire here).
                 // Do NOT mark the migration processed — it failed and must be retried.
                 dead_letter(project_root, &active_filename)?;
@@ -438,10 +469,15 @@ pub fn process_single_message(
         }
 
         // Execute routine
-        let progress = format!("{msg_id} (attempt {attempt}/{effective_max_attempts}) via {routine_name}");
+        let progress =
+            format!("{msg_id} (attempt {attempt}/{effective_max_attempts}) via {routine_name}");
         print_progress(&progress);
 
-        let session_id_for_attempt = if attempt == 1 { previous_session_id.as_deref() } else { None };
+        let session_id_for_attempt = if attempt == 1 {
+            previous_session_id.as_deref()
+        } else {
+            None
+        };
         let exit_code = execute_routine(
             project_root,
             &script_path,
@@ -495,13 +531,22 @@ pub fn process_single_message(
                 final_attempt: is_final,
                 ..hook_ctx.clone()
             };
-            match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config)) {
+            match hooks::run_hook_with_config(
+                project_root,
+                &config.hooks,
+                HookType::AfterEach,
+                &after_ctx,
+                Some(config),
+            ) {
                 Ok(hook_output) => {
                     let _ = write_hook_log(&log_path, HookType::AfterEach, &hook_output.output);
                 }
                 Err(e) => {
                     let _ = write_hook_log(&log_path, HookType::AfterEach, &e.output);
-                    eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
+                    eprintln!(
+                        "{}: afterEach hook failed for {msg_id}: {e}",
+                        "warning".yellow()
+                    );
                 }
             }
 
@@ -545,13 +590,22 @@ pub fn process_single_message(
             final_attempt: is_final,
             ..hook_ctx
         };
-        match hooks::run_hook_with_config(project_root, &config.hooks, HookType::AfterEach, &after_ctx, Some(config)) {
+        match hooks::run_hook_with_config(
+            project_root,
+            &config.hooks,
+            HookType::AfterEach,
+            &after_ctx,
+            Some(config),
+        ) {
             Ok(hook_output) => {
                 let _ = write_hook_log(&log_path, HookType::AfterEach, &hook_output.output);
             }
             Err(e) => {
                 let _ = write_hook_log(&log_path, HookType::AfterEach, &e.output);
-                eprintln!("{}: afterEach hook failed for {msg_id}: {e}", color::warning("warning"));
+                eprintln!(
+                    "{}: afterEach hook failed for {msg_id}: {e}",
+                    "warning".yellow()
+                );
             }
         }
 
@@ -598,9 +652,7 @@ pub fn process_single_message(
 
         if attempt == effective_max_attempts {
             // EXHAUSTION
-            eprintln!(
-                "max retries exhausted for {msg_id} (exit code: {exit_code})"
-            );
+            eprintln!("max retries exhausted for {msg_id} (exit code: {exit_code})");
 
             // Clear outbox
             clear_outbox(project_root)?;
@@ -651,7 +703,10 @@ pub fn process_single_message(
                 &dead_ctx,
                 Some(config),
             ) {
-                eprintln!("{}: onDeadLetter hook failed for {msg_id}: {e}", color::warning("warning"));
+                eprintln!(
+                    "{}: onDeadLetter hook failed for {msg_id}: {e}",
+                    "warning".yellow()
+                );
             }
 
             return Err(DecreeError::MaxRetriesExhausted(msg_id));
@@ -676,6 +731,7 @@ pub fn process_single_message(
 }
 
 /// Execute a routine script and return its exit code.
+#[allow(clippy::too_many_arguments)]
 fn execute_routine(
     project_root: &Path,
     script_path: &Path,
@@ -812,15 +868,12 @@ fn collect_outbox(
         if !entry.ends_with(".md") {
             eprintln!(
                 "{}: non-.md file in outbox ignored: {entry}",
-                color::warning("Warning")
+                "Warning".yellow()
             );
         }
     }
 
-    let md_files: Vec<String> = entries
-        .into_iter()
-        .filter(|e| e.ends_with(".md"))
-        .collect();
+    let md_files: Vec<String> = entries.into_iter().filter(|e| e.ends_with(".md")).collect();
 
     let mut next_seq = current_seq + 1;
 
@@ -839,7 +892,7 @@ fn collect_outbox(
         if next_seq >= config.max_depth {
             eprintln!(
                 "{}: MaxDepthExceeded for outbox file {file} (seq={next_seq}, limit={})",
-                color::warning("Warning"),
+                "Warning".yellow(),
                 config.max_depth
             );
             std::fs::create_dir_all(&outbox_dead_dir)?;
@@ -854,13 +907,13 @@ fn collect_outbox(
         let inbox_filename = format!("{id}.md");
 
         let routine = fields.get("routine").and_then(|v| match v {
-            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_norway::Value::String(s) => Some(s.clone()),
             _ => None,
         });
 
         // Collect custom fields (strip known message fields)
         let known: &[&str] = &["id", "chain", "seq", "routine", "migration", "trigger"];
-        let custom_fields: BTreeMap<String, serde_yaml::Value> = fields
+        let custom_fields: BTreeMap<String, serde_norway::Value> = fields
             .into_iter()
             .filter(|(k, _)| !known.contains(&k.as_str()))
             .collect();
@@ -943,17 +996,35 @@ fn write_run_json(
     let duration_s = end.signed_duration_since(*start).num_seconds();
 
     let mut obj = serde_json::Map::new();
-    obj.insert("message_id".into(), serde_json::Value::String(message_id.into()));
+    obj.insert(
+        "message_id".into(),
+        serde_json::Value::String(message_id.into()),
+    );
     obj.insert("routine".into(), serde_json::Value::String(routine.into()));
     obj.insert("trigger".into(), serde_json::Value::String(trigger.into()));
     if let Some(m) = migration {
         obj.insert("migration".into(), serde_json::Value::String(m.into()));
     }
-    obj.insert("attempts".into(), serde_json::Value::Number(attempts.into()));
-    obj.insert("exit_code".into(), serde_json::Value::Number(exit_code.into()));
-    obj.insert("start".into(), serde_json::Value::String(start.format("%Y-%m-%dT%H:%M:%S").to_string()));
-    obj.insert("end".into(), serde_json::Value::String(end.format("%Y-%m-%dT%H:%M:%S").to_string()));
-    obj.insert("duration_s".into(), serde_json::Value::Number(duration_s.into()));
+    obj.insert(
+        "attempts".into(),
+        serde_json::Value::Number(attempts.into()),
+    );
+    obj.insert(
+        "exit_code".into(),
+        serde_json::Value::Number(exit_code.into()),
+    );
+    obj.insert(
+        "start".into(),
+        serde_json::Value::String(start.format("%Y-%m-%dT%H:%M:%S").to_string()),
+    );
+    obj.insert(
+        "end".into(),
+        serde_json::Value::String(end.format("%Y-%m-%dT%H:%M:%S").to_string()),
+    );
+    obj.insert(
+        "duration_s".into(),
+        serde_json::Value::Number(duration_s.into()),
+    );
 
     let json = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
         .map_err(|e| DecreeError::Other(format!("failed to serialize run.json: {e}")))?;
@@ -987,9 +1058,9 @@ fn exit_sigint() -> ! {
 
 /// Print a progress line.
 fn print_progress(msg: &str) {
-    if color::is_tty() {
+    if std::io::stdout().is_terminal() {
         // TTY: print status line
-        eprintln!("{}", color::dim(msg));
+        eprintln!("{}", msg.dimmed());
     } else {
         println!("{msg}");
     }
@@ -1042,11 +1113,7 @@ fn invoke_ai_router(cmd_template: &str, prompt: &str) -> Result<String, DecreeEr
 }
 
 /// Write hook output to a log file.
-fn write_hook_log(
-    log_path: &Path,
-    hook_type: HookType,
-    output: &str,
-) -> Result<(), DecreeError> {
+fn write_hook_log(log_path: &Path, hook_type: HookType, output: &str) -> Result<(), DecreeError> {
     if output.is_empty() {
         return Ok(());
     }
@@ -1073,44 +1140,6 @@ fn append_to_file(path: &Path, text: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Truncate a log file to max_log_size bytes, keeping the tail.
-fn truncate_log_if_needed(path: &Path, max_size: u64) -> Result<(), DecreeError> {
-    if max_size == 0 {
-        return Ok(());
-    }
-
-    let metadata = std::fs::metadata(path)?;
-    if metadata.len() <= max_size {
-        return Ok(());
-    }
-
-    let content = std::fs::read(path)?;
-    let skip = content.len() - max_size as usize;
-    let truncated = &content[skip..];
-
-    let marker = format!(
-        "[log truncated — showing last {} of output]\n",
-        format_bytes(max_size)
-    );
-    let mut new_content = marker.into_bytes();
-    new_content.extend_from_slice(truncated);
-
-    std::fs::write(path, &new_content)?;
-
-    Ok(())
-}
-
-/// Format a byte count for the truncation marker.
-fn format_bytes(bytes: u64) -> String {
-    if bytes >= 1_048_576 {
-        format!("{}MB", bytes / 1_048_576)
-    } else if bytes >= 1024 {
-        format!("{}KB", bytes / 1024)
-    } else {
-        format!("{bytes}B")
-    }
-}
-
 /// Format a chrono Duration as human-readable.
 fn format_duration(d: chrono::TimeDelta) -> String {
     let total_secs = d.num_seconds();
@@ -1128,14 +1157,14 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Convert a serde_yaml::Value to a string suitable for env vars.
-fn value_as_env_string(v: &serde_yaml::Value) -> Option<String> {
+/// Convert a serde_norway::Value to a string suitable for env vars.
+fn value_as_env_string(v: &serde_norway::Value) -> Option<String> {
     match v {
-        serde_yaml::Value::String(s) => Some(s.clone()),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        serde_yaml::Value::Null => None,
-        serde_yaml::Value::Sequence(_) | serde_yaml::Value::Mapping(_) => {
+        serde_norway::Value::String(s) => Some(s.clone()),
+        serde_norway::Value::Number(n) => Some(n.to_string()),
+        serde_norway::Value::Bool(b) => Some(b.to_string()),
+        serde_norway::Value::Null => None,
+        serde_norway::Value::Sequence(_) | serde_norway::Value::Mapping(_) => {
             let json_val: serde_json::Value = serde_json::to_value(v).ok()?;
             Some(json_val.to_string())
         }
@@ -1288,8 +1317,9 @@ fn wait_for_token_reset(
     #[cfg(test)]
     {
         let _ = (reset_at, shutdown);
-        eprintln!("[Claude token limit] Usage limit reached (test mode). Retrying migration: {migration}");
-        return;
+        eprintln!(
+            "[Claude token limit] Usage limit reached (test mode). Retrying migration: {migration}"
+        );
     }
 
     #[cfg(not(test))]
@@ -1367,7 +1397,7 @@ fn run_dry(project_root: &Path) -> Result<(), DecreeError> {
                     "  {:<24} → {:<16} {}",
                     filename,
                     routine_name,
-                    color::success("PASS")
+                    "PASS".green()
                 );
             }
             Ok(Some(reason)) => {
@@ -1375,7 +1405,7 @@ fn run_dry(project_root: &Path) -> Result<(), DecreeError> {
                     "  {:<24} → {:<16} {}: {}",
                     filename,
                     routine_name,
-                    color::error("FAIL"),
+                    "FAIL".red(),
                     reason
                 );
                 failures += 1;
@@ -1385,7 +1415,7 @@ fn run_dry(project_root: &Path) -> Result<(), DecreeError> {
                     "  {:<24} → {:<16} {}: routine not found",
                     filename,
                     routine_name,
-                    color::error("FAIL"),
+                    "FAIL".red(),
                 );
                 failures += 1;
             }
@@ -1434,13 +1464,6 @@ mod tests {
     fn test_format_duration_minutes() {
         let d = chrono::TimeDelta::seconds(125);
         assert_eq!(format_duration(d), "2m05s");
-    }
-
-    #[test]
-    fn test_format_bytes() {
-        assert_eq!(format_bytes(500), "500B");
-        assert_eq!(format_bytes(2048), "2KB");
-        assert_eq!(format_bytes(2_097_152), "2MB");
     }
 
     #[test]
@@ -1555,41 +1578,6 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_log_disabled() {
-        let dir = TempDir::new().unwrap();
-        let log = dir.path().join("test.log");
-        std::fs::write(&log, "a".repeat(5000)).unwrap();
-
-        truncate_log_if_needed(&log, 0).unwrap();
-        assert_eq!(std::fs::metadata(&log).unwrap().len(), 5000);
-    }
-
-    #[test]
-    fn test_truncate_log_under_limit() {
-        let dir = TempDir::new().unwrap();
-        let log = dir.path().join("test.log");
-        std::fs::write(&log, "small log").unwrap();
-
-        truncate_log_if_needed(&log, 1000).unwrap();
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), "small log");
-    }
-
-    #[test]
-    fn test_truncate_log_over_limit() {
-        let dir = TempDir::new().unwrap();
-        let log = dir.path().join("test.log");
-        let content = "x".repeat(200);
-        std::fs::write(&log, &content).unwrap();
-
-        truncate_log_if_needed(&log, 100).unwrap();
-
-        let result = std::fs::read_to_string(&log).unwrap();
-        assert!(result.starts_with("[log truncated"));
-        assert!(result.contains("100B"));
-        assert!(result.ends_with(&"x".repeat(100)));
-    }
-
-    #[test]
     fn test_array_frontmatter_field_passed_to_routine_as_json() {
         // Full YAML frontmatter support: a custom field whose value is a
         // sequence of mappings must round-trip through normalization and be
@@ -1632,8 +1620,7 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
 
         // The routine should have received the array as a JSON string.
@@ -1645,14 +1632,13 @@ mod tests {
 
         // The normalized message on disk must preserve the array structure
         // (round-trips through serialize → parse).
-        let run_msg = std::fs::read_to_string(
-            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
-        )
-        .unwrap();
+        let run_msg =
+            std::fs::read_to_string(dir.path().join(".decree/runs/D0001-1432-test-0/message.md"))
+                .unwrap();
         let parsed = InboxMessage::parse("D0001-1432-test-0.md", &run_msg).unwrap();
         let field = parsed.custom_fields.get("input_image").unwrap();
         assert!(
-            matches!(field, serde_yaml::Value::Sequence(s) if s.len() == 2),
+            matches!(field, serde_norway::Value::Sequence(s) if s.len() == 2),
             "input_image should be a 2-element sequence after round-trip: {field:?}"
         );
     }
@@ -1678,8 +1664,7 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 
         assert!(!dir
@@ -1795,8 +1780,7 @@ mod tests {
         };
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_err());
 
         assert!(dir
@@ -1829,8 +1813,7 @@ mod tests {
         };
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_err());
 
         let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
@@ -1929,7 +1912,11 @@ mod tests {
         // Should have timed out and dead-lettered
         assert!(result.is_err());
         // Should have completed in well under 10 seconds
-        assert!(elapsed.as_secs() < 5, "timeout didn't work: took {}s", elapsed.as_secs());
+        assert!(
+            elapsed.as_secs() < 5,
+            "timeout didn't work: took {}s",
+            elapsed.as_secs()
+        );
     }
 
     #[test]
@@ -1986,8 +1973,7 @@ mod tests {
         };
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         // Exhaustion is an error and the message is dead-lettered.
         assert!(result.is_err());
         assert!(dir
@@ -1996,8 +1982,7 @@ mod tests {
             .exists());
 
         // The migration must NOT be marked processed — it failed.
-        let processed =
-            std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
+        let processed = std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
         assert!(
             !processed.contains("01-auth.md"),
             "failed migration was incorrectly marked as processed: {processed:?}"
@@ -2037,12 +2022,10 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_err());
 
-        let processed =
-            std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
+        let processed = std::fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
         assert!(
             !processed.contains("01-auth.md"),
             "failed migration was incorrectly marked as processed: {processed:?}"
@@ -2084,7 +2067,10 @@ mod tests {
         assert!(!runs.is_empty());
         // Run dir name should contain "fix-errors"
         let run_name = runs[0].file_name().to_string_lossy().to_string();
-        assert!(run_name.contains("fix-errors"), "unexpected run name: {run_name}");
+        assert!(
+            run_name.contains("fix-errors"),
+            "unexpected run name: {run_name}"
+        );
     }
 
     #[test]
@@ -2101,10 +2087,7 @@ mod tests {
         let marker = dir.path().join("dead_letter_fired");
         std::fs::write(
             dir.path().join(".decree/routines/on-dead-letter.sh"),
-            format!(
-                "#!/usr/bin/env bash\ntouch {}\n",
-                marker.to_string_lossy()
-            ),
+            format!("#!/usr/bin/env bash\ntouch {}\n", marker.to_string_lossy()),
         )
         .unwrap();
 
@@ -2150,10 +2133,7 @@ mod tests {
         let marker = dir.path().join("dead_letter_fired");
         std::fs::write(
             dir.path().join(".decree/routines/on-dead-letter.sh"),
-            format!(
-                "#!/usr/bin/env bash\ntouch {}\n",
-                marker.to_string_lossy()
-            ),
+            format!("#!/usr/bin/env bash\ntouch {}\n", marker.to_string_lossy()),
         )
         .unwrap();
 
@@ -2175,7 +2155,10 @@ mod tests {
 
         let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
 
-        assert!(!marker.exists(), "onDeadLetter should NOT fire on beforeEach failure");
+        assert!(
+            !marker.exists(),
+            "onDeadLetter should NOT fire on beforeEach failure"
+        );
     }
 
     #[test]
@@ -2222,19 +2205,19 @@ mod tests {
     #[test]
     fn test_value_as_env_string() {
         assert_eq!(
-            value_as_env_string(&serde_yaml::Value::String("hello".into())),
+            value_as_env_string(&serde_norway::Value::String("hello".into())),
             Some("hello".to_string())
         );
         assert_eq!(
-            value_as_env_string(&serde_yaml::Value::Bool(true)),
+            value_as_env_string(&serde_norway::Value::Bool(true)),
             Some("true".to_string())
         );
-        assert_eq!(value_as_env_string(&serde_yaml::Value::Null), None);
+        assert_eq!(value_as_env_string(&serde_norway::Value::Null), None);
     }
 
     #[test]
     fn test_value_as_env_string_array() {
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_norway::Value = serde_norway::from_str(
             "- input_image: some_path.png [output]\n  output_prefix: some_prefix",
         )
         .unwrap();
@@ -2249,7 +2232,7 @@ mod tests {
 
     #[test]
     fn test_value_as_env_string_mapping() {
-        let yaml: serde_yaml::Value = serde_yaml::from_str("key: val").unwrap();
+        let yaml: serde_norway::Value = serde_norway::from_str("key: val").unwrap();
         assert_eq!(
             value_as_env_string(&yaml),
             Some(r#"{"key":"val"}"#.to_string())
@@ -2263,8 +2246,12 @@ mod tests {
         assert!(detect_token_exhaustion(
             "Claude AI usage limit reached. Limits reset at 10:00 PM"
         ));
-        assert!(detect_token_exhaustion("usage limit reached\nresets at 5:00 AM"));
-        assert!(detect_token_exhaustion("USAGE LIMIT exceeded. Will RESET tomorrow."));
+        assert!(detect_token_exhaustion(
+            "usage limit reached\nresets at 5:00 AM"
+        ));
+        assert!(detect_token_exhaustion(
+            "USAGE LIMIT exceeded. Will RESET tomorrow."
+        ));
     }
 
     #[test]
@@ -2360,7 +2347,9 @@ mod tests {
 
         // Message must NOT be in dead-letter dir.
         assert!(
-            !dir.path().join(".decree/inbox/dead/D0001-1432-test-0.md").exists(),
+            !dir.path()
+                .join(".decree/inbox/dead/D0001-1432-test-0.md")
+                .exists(),
             "message was incorrectly dead-lettered"
         );
 
@@ -2402,7 +2391,9 @@ mod tests {
 
         // Inbox message must be gone (so drain_inbox exits cleanly).
         assert!(
-            !dir.path().join(".decree/inbox/D0001-1432-test-0.md").exists(),
+            !dir.path()
+                .join(".decree/inbox/D0001-1432-test-0.md")
+                .exists(),
             "inbox message was not removed"
         );
     }
@@ -2505,7 +2496,10 @@ mod tests {
 
         let result = drain_inbox(dir.path(), &config, &shutdown, Some("D0001-1432-test")).unwrap();
         assert!(result.dead_lettered);
-        assert!(dir.path().join(".decree/inbox/dead/D0001-1432-test-0.md").exists());
+        assert!(dir
+            .path()
+            .join(".decree/inbox/dead/D0001-1432-test-0.md")
+            .exists());
     }
 
     #[test]
@@ -2608,12 +2602,12 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 
         let log = std::fs::read_to_string(
-            dir.path().join(".decree/runs/D0001-1432-test-0/routine.log"),
+            dir.path()
+                .join(".decree/runs/D0001-1432-test-0/routine.log"),
         )
         .unwrap();
         assert!(log.contains("[decree] hook beforeEach start"));
@@ -2656,7 +2650,8 @@ mod tests {
         process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown).unwrap();
 
         let log = std::fs::read_to_string(
-            dir.path().join(".decree/runs/D0001-1432-test-0/routine.log"),
+            dir.path()
+                .join(".decree/runs/D0001-1432-test-0/routine.log"),
         )
         .unwrap();
         // Silent hook should produce no hook log block
@@ -2695,8 +2690,7 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_err());
 
         let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
@@ -2793,7 +2787,8 @@ mod tests {
         .unwrap();
 
         // Message with NO routine field — should trigger router
-        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\n---\nTest body.\n";
+        let content =
+            "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\n---\nTest body.\n";
         std::fs::write(
             dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
             content,
@@ -2803,15 +2798,13 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 
         // Verify the message was normalized with "rust-develop" routine
-        let run_msg = std::fs::read_to_string(
-            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
-        )
-        .unwrap();
+        let run_msg =
+            std::fs::read_to_string(dir.path().join(".decree/runs/D0001-1432-test-0/message.md"))
+                .unwrap();
         assert!(run_msg.contains("routine: rust-develop"));
     }
 
@@ -2843,14 +2836,12 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 
-        let run_msg = std::fs::read_to_string(
-            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
-        )
-        .unwrap();
+        let run_msg =
+            std::fs::read_to_string(dir.path().join(".decree/runs/D0001-1432-test-0/message.md"))
+                .unwrap();
         assert!(run_msg.contains("routine: develop"));
     }
 
@@ -2889,14 +2880,12 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
 
         // Should succeed with fallback to default_routine
-        let result =
-            process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
+        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 
-        let run_msg = std::fs::read_to_string(
-            dir.path().join(".decree/runs/D0001-1432-test-0/message.md"),
-        )
-        .unwrap();
+        let run_msg =
+            std::fs::read_to_string(dir.path().join(".decree/runs/D0001-1432-test-0/message.md"))
+                .unwrap();
         assert!(run_msg.contains("routine: develop"));
     }
 
@@ -2929,10 +2918,7 @@ mod tests {
     #[test]
     fn test_extract_session_id_multiline() {
         let log = "some output\nSession ID: sess-abc-123\nmore output";
-        assert_eq!(
-            extract_session_id(log),
-            Some("sess-abc-123".to_string())
-        );
+        assert_eq!(extract_session_id(log), Some("sess-abc-123".to_string()));
     }
 
     #[test]
@@ -2977,7 +2963,8 @@ mod tests {
         assert!(result.is_ok());
 
         let sid = std::fs::read_to_string(
-            dir.path().join(".decree/runs/D0001-1432-test-0/session_id.txt"),
+            dir.path()
+                .join(".decree/runs/D0001-1432-test-0/session_id.txt"),
         )
         .unwrap();
         assert_eq!(sid, "sess-ok-1");
@@ -3007,7 +2994,9 @@ mod tests {
         let _ = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
 
         assert!(
-            !dir.path().join(".decree/runs/D0001-1432-test-0/session_id.txt").exists(),
+            !dir.path()
+                .join(".decree/runs/D0001-1432-test-0/session_id.txt")
+                .exists(),
             "session_id.txt should not be written when log has no session ID"
         );
     }
@@ -3042,10 +3031,8 @@ mod tests {
         let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 
-        let token_session = std::fs::read_to_string(
-            dir.path().join(".decree/token_session.txt"),
-        )
-        .unwrap();
+        let token_session =
+            std::fs::read_to_string(dir.path().join(".decree/token_session.txt")).unwrap();
         assert_eq!(token_session, "ses-exhaust-1");
     }
 
@@ -3180,6 +3167,10 @@ mod tests {
         let s1 = std::fs::read_to_string(&marker1).unwrap_or_default();
         let s2 = std::fs::read_to_string(&marker2).unwrap_or_default();
         assert_eq!(s1.trim(), "none", "attempt 1 should not have session ID");
-        assert_eq!(s2.trim(), "none", "attempt 2 (normal retry) should not have session ID");
+        assert_eq!(
+            s2.trim(),
+            "none",
+            "attempt 2 (normal retry) should not have session ID"
+        );
     }
 }

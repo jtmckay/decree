@@ -1,0 +1,19 @@
+{
+  "description": "Run one script.",
+  "initial": "greet",
+  "name": "hello",
+  "states": {
+    "done": {
+      "final": true
+    },
+    "failed": {
+      "final": true
+    },
+    "greet": {
+      "invoke": "greet",
+      "transitions": {
+        "done": "done"
+      }
+    }
+  }
+}

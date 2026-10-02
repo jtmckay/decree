@@ -1,0 +1,5 @@
+name: c
+description: d
+initial: x
+states:
+  x: { invok: work }

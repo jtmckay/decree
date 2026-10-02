@@ -1,0 +1,9 @@
+name: m
+description: Base machine.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { pass: done }
+  done: { final: true }
+  failed: { final: true }

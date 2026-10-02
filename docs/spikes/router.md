@@ -1,6 +1,6 @@
 # Spike: the router contract
 
-**Status:** open. R1–R3, R5, R6 and R8 decided; R4, R7 and R9 designed and awaiting confirmation; R10 dropped (decision record below). **Blocks:** spec section 7 "Router (provisional)", tickets M3.2 and M3.3 (migrations 47 and 48, held in `batch-2/`), and the router logs in `mock/`. **Timebox:** 3 days.
+**Status:** closed 2026-10-02. The contract is in spec sections 3, 5 and 7: routers are machines. Tickets M3.2 and M3.3 (migrations 47 and 48) implement it. The benchmark in Method is an optional follow-up: it informs which router to recommend, not the contract.
 
 ## Why
 
@@ -24,14 +24,14 @@ These hold whatever the spike finds:
 
 | # | Question | Options | Leaning, to confirm |
 | --- | --- | --- | --- |
-| R1 | Wire protocol between decree and a backend | (a) 0.4.2's `{prompt}` command template; (b) JSON `RouterRequest` on the command's stdin, JSON `RouterReply` on its stdout; (c) built-in HTTP clients per vendor | (b). Any language, no HTTP dependency in decree, one adapter per backend of about 30 lines. Same shape as git credential helpers. |
-| R2 | Config and selection | One `commands.ai_router`; or named backends (`routers: { chat: …, jev: … }`) with `router: <name>` on the state replacing `router: llm` | Named backends, if the benchmark shows different backends suit different states. Otherwise keep one. |
-| R3 | Who renders a chat prompt | decree (puts `prompt` in the request) or the chat adapter | decree, so every chat backend sees the same tested prompt; typed backends ignore it. |
+| R1 | A router is a machine. decree writes `request.json`, runs the router as a child run, and reads `reply.json` (spec section 7). | Replaceable and visible like any machine; any backend, any language; no model code in decree. |
+| R2 | `default_router: <machine>` in `config.yml`; `choose: model, router: <machine>` picks another. | Different decisions can use different routers. |
+| R3 | The prompt lives in the default router's script (`claude_router`'s `ask_claude`), and the spec documents it. | Prompt changes are a script edit, not a decree release. |
 | R4 | Confidence in the machine language | Record only; or `min_confidence: <0..1>` on router states. Below it: take `default`, or take a declared event (for example `unsure`) | Gate, below-floor goes to a declared event, because "unsure" usually means "ask a human", not "fail". TypeSafe suggests 0.6 as a floor. |
 | R5 | What "ask a human" means | A final state (`needs_review`) plus `decree retry --state <s>` by the human; or a new waiting status | The final state. No new concept: `retry` already continues a finished run at a chosen state. |
-| R6 | What the backend sees | Machine and state descriptions, options, the invoke's last 50 stdout lines, the message body. Limits and truncation | Keep the fields. Set a byte budget and truncate the step output from the top. Jev's state budget is 32k tokens. |
-| R7 | Data leaving the machine | Message bodies and step output go to a hosted API (Jev is hosted only) | Opt-in per backend in config; document it in `decree init` output. |
-| R8 | Reproducibility | Log the request only as prompt text, or as the JSON `RouterRequest` too | JSON request in the router log, so any decision can be replayed against another backend (the deferred `decree replay`, Q7). |
+| R6 | The request holds descriptions, options, the input state's output, the message body and the run's history; trimming to a model's budget is the router's job. A script can write `context.md` to choose what the model sees. | Bounded, explainable input; secrets stay out by design, not by redaction. |
+| R7 | Self-hosting is a router machine. `docs/routers.md` (M3.3) covers Jev through an adapter, SGLang, Ollama as a CPU fallback, and a cheap-model-first escalation router. Running a model server is out of scope. | Keep decree small. |
+| R8 | Each router run is its own child run with its logs, `request.json` and `reply.json`; every decision is a `decision` event linking to it. | Replay and audit. |
 | R9 | Beyond Choice | Jev's Score and Noul (yes/no probability) could back conditions, for example "is this diff risky?" | Out of scope for 0.5.0. Note what it would take. |
 
 ## Method
@@ -107,80 +107,37 @@ For how a machine declares a decision, confidence gating and human escalation, s
 
 ## Decision record
 
-### Decided
+The decision model changed during the spike. A decision is no longer a special kind of state with a router; it is a function a state invokes, like a script (spec section 5, Invoke): `check` (deterministic), `choose: model` or `choose: person`. Each option is one of the state's transitions, with a description.
 
 | # | Decision | Reason |
 | --- | --- | --- |
-| R1 | JSON `RouterRequest` on a router command's stdin, JSON `RouterReply` on its stdout. | Any language, no HTTP client in decree, one small adapter per backend. |
-| R2 | Named routers in config; a decision names the one it uses. | Different decisions can use different backends (chat, Jev, self-hosted, human). |
-| R3 | decree renders the chat prompt and passes it in the request as `prompt`. | One tested prompt for every chat backend; typed backends ignore it. |
-| R8 | Every router log holds the full JSON request and reply. | Any decision can be replayed against another backend; this is also the benchmark harness. |
+| R1 | A router is a command: it reads the rendered prompt (`input: prompt`) or the JSON request (`input: request`) on stdin and prints a reply. | Any language and any backend; no HTTP client in decree. |
+| R2 | Named `routers:` in `config.yml`, plus `default_router`; `choose: model, router: <name>` picks one. | Different decisions can use different backends. |
+| R3 | decree renders the chat prompt (spec section 7, Prompt template). | One tested prompt for every chat backend. |
+| R4 | `min_confidence` on `choose: model`; below it the state produces `unsure`, an ordinary event. Escalating to a person is a transition from `unsure` to a `choose: person` state. No bands. | The threshold is one number where the decision is made; escalation is visible in the machine and the graph. |
+| R5 | `choose: person`: the `ask` script asks; the run pauses; a reply message delivers one option. | decree never knows there is a question; any tool can answer; no `decree retry`. |
+| R6 | The request holds descriptions, options, the input state's output (cut from the top), the message body (cut from the end) and the run's history, within the router's `max_input_bytes`; cuts are recorded. A script can write `context.md` to choose what the model sees. | Bounded, explainable input; secrets stay out by design, not by redaction. |
+| R7 | Self-hosting is a router configuration. `docs/routers.md` (M3.3) covers a chat CLI, Jev through an adapter, SGLang, and Ollama as a CPU fallback. Running a model server is out of scope. | Keep decree small. |
+| R8 | Every model call logs the full request and reply; every decision is a `decision` event. | Replay and audit. |
+| R9 | AI and people appear only where a machine says `choose`; deterministic decisions are `check`. Graph edges say who decided: `(check)`, `(model)`, `(person)`. | It is always clear when an AI is involved. Typed conditions, not expression strings, keep YAML readable and checkable. |
+| R10 | Not pursued: detecting AI use inside scripts. | What a script does internally is the script's business. |
 
-### R6: decided
+## Research: decision models (2026-10-02)
 
-The backend's request holds:
+Checked so that the request and reply contract fits real decision backends.
 
-- the machine and state descriptions and the options, never truncated;
-- the tail of the step's combined log (stdout plus `[stderr]` lines), cut from the top;
-- the message body, cut from the end;
-- a short history of this run: visits per state, and earlier decisions with their reasons.
+| | Input | Output | Runs | Sources |
+| --- | --- | --- | --- | --- |
+| TypeSafe Jev, Choice | `state` (any JSON), `instructions` (the question), `criteria` (option name to description); up to 255 options; several questions per call | `choice`, `probabilities` (sum to 1), `confidence` (from the distribution's shape) | Hosted only; `POST https://api.typesafe.ai/v1/systemone` | [Choice](https://docs.typesafe.ai/primitives/choice.md), [API](https://docs.typesafe.ai/api.md) |
+| Fastino GLiNER2.5-Decide (1B) | Text; labels, optionally with descriptions; optional instructions; yes/no as a two-label task | The label; per-label confidence with `include_confidence=True` | Local on CPU or GPU (`pip install gliner2`, Apache-2.0); also Fastino's cloud API | [Model card](https://huggingface.co/fastino/GLiNER2.5-Decide-1B), [GLiNER2](https://github.com/fastino-ai/GLiNER2) |
+| OpenAI Decisions API | Context (text or images); questions with fixed answer lists | One answer per question; confidence reported in coverage, not documented | Limited preview since 2026-09-29; no schema, endpoint or pricing published as of 2026-09-30 | [Overview](https://www.firecrawl.dev/blog/openai-decisions-api-vs-jev) |
 
-Each named router sets a byte budget; anything cut is listed in the decision event as `truncated`. If the step's script wrote `$DECREE_RUN_DIR/context.md`, that file replaces the log tail. This is how a script chooses what the model sees, and it is the main defence against leaking secrets. decree does no redaction of its own.
+What it changed:
 
-### Decided: asking a person (R5)
+- **`question` is required on `choose`.** All three take a question; the state description was optional and often empty. It maps to Jev's `instructions`, GLiNER2's instructions, and the Decisions API's question.
+- **Options keep their descriptions.** Jev's `criteria` and GLiNER2's described labels both use them, and GLiNER2 in particular reads meaning from label text: an adapter should pass descriptions, not just terse event names.
+- **`input` and `message_body` stay separate** in the request, so an adapter can send structured context (Jev's `state` takes any JSON).
+- **Confidence is per router.** Jev's comes from its distribution, GLiNER2's is a per-label score, chat models self-report. `min_confidence` must be calibrated for the router it is used with; the `decision` event records the router.
+- **GLiNER2.5-Decide is the self-hosted answer to R7:** a small CPU model built for this, better suited than a general LLM. Load it once in a long-running local server; do not start Python per decision.
 
-decree has waiting states (spec section 5, Kinds of state; section 4, Events for waiting runs): a state with no `invoke` and no `done` pauses the run until a reply message delivers one of its events. decree does not know there is a question or a person; the state's `onentry` script asks however it likes, and `decree event` or any tool writes the reply. No `decree retry` is involved. `decree process` prints every waiting run with the commands to reply, and exits 0.
-
-### Designed, awaiting confirmation: confidence bands (R4)
-
-A decision acts on the band of the highest confidence floor it meets. To escalate, a band takes an event that leads to a waiting state.
-
-```yaml
-verify:
-  invoke: verify
-  decide:
-    by: jev                          # a named router (R2)
-    shape: choice
-    default: ask                     # the router failed twice
-    confidence:                      # highest floor met wins
-      - { at_least: 0.85, take: choice }    # high: act on the backend's pick
-      - { at_least: 0.6,  take: ask }       # medium: ask a person
-      - { at_least: 0,    take: default }   # low: recorded in the decision event, then the default
-  transitions:
-    pass:  { target: verified, description: All acceptance criteria are met. }
-    retry: { target: implement, description: Failures look fixable; implement again. }
-    ask:   { target: review, description: Not sure; ask a person. }
-review:                              # a waiting state, as in mock/.decree/machines/feature.yml
-  description: A person sends approve, retry or reject.
-  onentry: [ask_person]
-  transitions: { approve: verified, retry: implement, reject: failed }
-```
-
-- `take` is `choice` (act on the pick), `default`, or an event in `transitions`. Events named in `confidence` are never offered to the backend.
-- Floors must be in descending order and the last must be `0`, so every confidence lands in a band. A backend that reports no confidence counts as 0.
-
-**R7: self-hosted.** Routers are configurable (R2), so self-hosting is a matter of adapters plus guidance. Running the model server is out of this project's scope. Candidates for the benchmark and the guide:
-
-| Option | How it fits a typed choice | Notes |
-| --- | --- | --- |
-| [SGLang](https://docs.sglang.ai/frontend/choices_methods.html) `select` | Scores every declared option by normalized log-probability, so it yields a real distribution over the options. | Closest to Jev's Choice. GPU. |
-| [vLLM](https://docs.vllm.ai/en/v0.11.0/serving/openai_compatible_server.html) OpenAI-compatible server, `structured_outputs: {choice: [...]}` | Output constrained to the options. Probabilities only approximated from token log-probs. | `guided_choice` is deprecated in favour of `structured_outputs`. GPU. |
-| llama.cpp server or Ollama (0.12+) with a JSON-schema `enum` | Constrained to the options, runs on CPU. | Log-prob support is uneven, so confidence is weak. |
-| NLI zero-shot classifier (e.g. DeBERTa via `transformers`) | One probability per label. | CPU, small. Short context (about 512 tokens) and weak on technical output. Hugging Face TEI does not serve the zero-shot pipeline. |
-
-Leaning: SGLang as the reference self-hosted backend, Ollama as the CPU fallback without confidence gating.
-
-**R9: AI is always explicit.** Rules:
-
-- `decide:` is the only place in a machine where a model chooses. It replaces `router: llm` and `default`. People choose outside decree (R4 + R5). Every other decision is deterministic: exit codes, events printed by scripts, `cond`s (always deterministic: `data` and `visits` only), attempts and timeouts.
-- `shape` declares the response:
-  - `choice`: options are the `transitions` events; the reply is an event, plus probabilities and confidence if the backend reports them.
-  - `yes_no`: needs `question:`; `transitions` must have exactly `yes` and `no` (plus optional `error`). The reply is p(yes) from 0 to 1; the event is `yes` when p ≥ 0.5; confidence is max(p, 1 − p).
-  - `score`: needs `question:` and `levels:`, 2 to 10 ordered `{description, event}` entries (several levels may share an event). The reply is a probability per level and their weighted score; the event is the level at the rounded score; confidence comes from the backend.
-- The `router` event becomes `decision`, carrying `by`, `shape`, the reply, the confidence and the band taken.
-- `decree graph` marks every decided edge with who decides and in what shape, e.g. `pass (choice: jev)`, `yes (yes_no: local)`, and band-diverted edges with their floor, e.g. `review (jev confidence < 0.85)`. Unmarked edges are deterministic. Each decision state gets a note with its `by`, `shape` and bands.
-- Spec gets a "Who decides" table listing every mechanism as deterministic, model or human, with its response shape.
-
-### Dropped
-
-**R10: detecting AI use inside scripts.** Not pursued (2026-10-01). decree marks where a model makes a routing decision (R9); what a script does internally is the script's business.
+Not covered yet: images as context (the Decisions API accepts them). The request is versioned (`v: 1`), so an `attachments` field can be added later without breaking routers.

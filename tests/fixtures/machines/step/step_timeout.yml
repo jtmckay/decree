@@ -1,0 +1,11 @@
+name: step_timeout
+description: An invoke that runs past its timeout.
+initial: work
+states:
+  work:
+    invoke: sleep_long
+    timeout_s: 1
+    max_attempts: 1
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

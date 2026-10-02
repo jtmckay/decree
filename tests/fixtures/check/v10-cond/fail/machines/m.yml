@@ -1,0 +1,16 @@
+name: m
+description: A router state with a cond.
+data:
+  max_rounds: { type: int, default: 2 }
+initial: work
+states:
+  work:
+    description: Decide whether the work is finished.
+    invoke: work
+    router: llm
+    default: pass
+    transitions:
+      pass: { target: done, description: The work is finished. }
+      retry: { target: work, description: Run the work again., cond: "visits.work < data.rounds" }
+  done: { final: true }
+  failed: { final: true }

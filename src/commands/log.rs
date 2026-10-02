@@ -1,7 +1,8 @@
 use crate::config;
-use crate::error::color;
 use crate::error::DecreeError;
 use crate::message;
+use colored::Colorize;
+use std::io::IsTerminal;
 use std::path::Path;
 
 /// Run `decree log [ID]`.
@@ -22,7 +23,7 @@ pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
 
 /// No ID provided.
 fn run_no_id(project_root: &Path, runs: &[String]) -> Result<(), DecreeError> {
-    if color::is_tty() {
+    if std::io::stdout().is_terminal() {
         // TTY: arrow-key selector (most recent first)
         let mut options: Vec<String> = runs.to_vec();
         options.reverse();
@@ -48,7 +49,7 @@ fn run_with_id(project_root: &Path, query: &str) -> Result<(), DecreeError> {
         0 => Err(DecreeError::MessageNotFound(query.to_string())),
         1 => display_run_logs(project_root, &matches[0]),
         _ => {
-            if color::is_tty() {
+            if std::io::stdout().is_terminal() {
                 // Ambiguous + TTY: arrow-key selector
                 let selection = inquire::Select::new("Multiple matches — select run:", matches)
                     .prompt()
@@ -80,20 +81,13 @@ fn display_run_logs(project_root: &Path, run_name: &str) -> Result<(), DecreeErr
     // Collect log files, sorted
     let mut logs: Vec<String> = std::fs::read_dir(&run_dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "log")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     logs.sort();
 
     if logs.is_empty() {
-        println!(
-            "{}: no logs found",
-            color::dim(run_name),
-        );
+        println!("{}: no logs found", run_name.dimmed());
         return Ok(());
     }
 
@@ -104,10 +98,10 @@ fn display_run_logs(project_root: &Path, run_name: &str) -> Result<(), DecreeErr
             let attempt = i + 1;
             println!(
                 "{}",
-                color::bold(&format!("=== {run_name} — Attempt {attempt} ({log_name}) ==="))
+                format!("=== {run_name} — Attempt {attempt} ({log_name}) ===").bold()
             );
         } else {
-            println!("{}", color::bold(&format!("=== {run_name} ===")));
+            println!("{}", format!("=== {run_name} ===").bold());
         }
 
         let log_path = run_dir.join(log_name);

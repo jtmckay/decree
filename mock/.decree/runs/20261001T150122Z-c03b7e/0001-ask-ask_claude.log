@@ -1,0 +1,38 @@
+You choose the next step of a workflow. Reply with only a JSON object:
+{"event": "<one option name>", "reason": "<one sentence>", "confidence": <0 to 1>}
+
+Workflow: feature: Implement one feature spec with an AI agent, verify it, and commit.
+Current step: triage: 
+Question: Should we implement again or split the work?
+
+Output of the previous step:
+running 18 tests
+...
+test plans::reads_plans_toml ... FAILED
+  No such file: config/plans.toml
+
+test result: FAILED. 17 passed; 1 failed
+
+Task message:
+# Per-plan upload limits
+
+## Requirements
+
+Replace the fixed limit of 10 per minute with a per-plan limit read from
+`plans.toml`. Unknown plans use the free-plan limit.
+
+## Acceptance Criteria
+
+- **Given** a key on the `pro` plan with `uploads_per_minute = 100`
+  **When** it uploads for the 50th time in a minute
+  **Then** the upload succeeds
+
+Run so far:
+- implement: 1 visit
+- rounds_left: yes
+
+Options:
+- retry: The failures look fixable; implement again.
+- split: The scope is too large; emit smaller follow-up messages.
+--- reply
+{"event": "retry", "reason": "Only one test fails, but it reads a file whose location the spec does not give.", "confidence": 0.55}

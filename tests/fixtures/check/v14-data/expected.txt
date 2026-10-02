@@ -1,0 +1,1 @@
+machines/m.yml: line 6: data `strict`: default `yes` is not of type `bool` (V14)

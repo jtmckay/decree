@@ -1,0 +1,12 @@
+name: m
+description: A waiting state.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: wait }
+  wait:
+    description: A person sends approve or reject.
+    transitions: { approve: done, reject: failed }
+  done: { final: true }
+  failed: { final: true }

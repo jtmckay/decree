@@ -1,0 +1,13 @@
+name: step_exit_fail
+description: The first onexit script of a state fails.
+onentry: [root_entry]
+onexit: [root_exit]
+initial: a
+states:
+  a:
+    onentry: [a_entry]
+    invoke: a_invoke
+    onexit: [a_exit_fail, a_exit]
+    transitions: { done: done }
+  done:   { final: true, onentry: [done_entry] }
+  failed: { final: true, onentry: [failed_entry] }

@@ -31,3 +31,16 @@
 31-docs-and-help-refresh.md
 32-skill-docs-refresh.md
 33-remove-prompt-command.md
+34-v05-inventory.md
+35-v05-serde-norway.md
+36-v05-delete-color.md
+37-v05-pub-crate.md
+38-v05-noninteractive-init.md
+39-v05-machine-types.md
+40-v05-conds.md
+41-v05-script-resolver.md
+42-v05-check.md
+43-v05-graph.md
+44-v05-script-executor.md
+45-v05-step-loop.md
+46-v05-composition-waiting.md

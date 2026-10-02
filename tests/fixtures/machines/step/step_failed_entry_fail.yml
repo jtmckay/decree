@@ -1,0 +1,11 @@
+name: step_failed_entry_fail
+description: An invoke fails, then an onentry script of failed itself fails.
+onexit: [root_exit]
+initial: a
+states:
+  a:
+    invoke: a_invoke_fail
+    max_attempts: 1
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true, onentry: [failed_entry_fail, failed_entry] }

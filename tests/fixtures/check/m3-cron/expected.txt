@@ -1,0 +1,2 @@
+cron/a.md: line 1: no `cron:` expression (M3)
+cron/b.md: line 3: unknown machine `nope` (M3)

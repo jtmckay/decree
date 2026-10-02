@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "machine": "triage",
+  "machine_description": "Read a free-form request and hand it to the machine that should do the work.",
+  "state": "classify",
+  "state_description": "The request is in the message body. Decide which kind of work it is.",
+  "question": "What kind of work is this request?",
+  "options": [
+    {
+      "event": "feature",
+      "description": "A feature with acceptance criteria that should be verified and committed."
+    },
+    {
+      "event": "reject",
+      "description": "Not actionable, or not a code change."
+    },
+    {
+      "event": "small_change",
+      "description": "A small, self-contained code change with no formal spec."
+    }
+  ],
+  "input": "",
+  "message_body": "Add a dark mode toggle to the settings page. Remember the choice per user.\n",
+  "history": []
+}

@@ -1,0 +1,44 @@
+name: feature
+description: Implement one feature spec with an AI agent, verify it, and commit.
+data:
+  max_rounds: { type: int, default: 2 }
+onentry: [git_baseline]            # root onentry: once, when the run starts
+onexit: [notify]                   # root onexit: once, after a root final state is entered
+initial: precheck
+states:
+  precheck:
+    invoke: precheck
+    transitions: { done: work }
+  work:                            # compound: the implement/verify loop as one unit
+    initial: implement
+    transitions:
+      done.state.work: done        # raised when work reaches its own final state
+    states:
+      implement:
+        invoke: implement
+        max_attempts: 2            # extension: re-run a crashing invoke in place
+        onentry: [snapshot]
+        onexit: [collect_logs]
+        transitions: { done: verify }
+      verify:
+        description: Tests and acceptance criteria have run; decide what happens next.
+        invoke: verify
+        router: llm                # extension: a model picks one of these events
+        default: ask
+        transitions:
+          pass:  { target: verified, description: All acceptance criteria are met. }
+          retry: { target: implement, description: Failures look fixable; implement again., cond: "visits.implement < data.max_rounds" }
+          split: { target: spawn_followups, description: Scope is too large; emit smaller follow-up messages. }
+          ask:   { target: review, description: Not sure; ask a person. }
+      review:                      # waits for a person
+        description: A person sends approve, retry or reject.
+        onentry: [ask_person]
+        timeout_s: 172800
+        transitions: { approve: verified, retry: implement, reject: failed }
+      verified: { final: true }    # raises done.state.work
+  spawn_followups:
+    invoke: spawn
+    emits: [feature]               # extension: machines its scripts may emit messages for
+    transitions: { done: done }
+  done:   { final: true, onentry: [commit] }   # migrations: processed.md is written first, so the commit includes it
+  failed: { final: true }

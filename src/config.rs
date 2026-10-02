@@ -21,6 +21,8 @@ pub const GITIGNORE_FILE: &str = ".gitignore";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandsConfig {
     pub ai_router: String,
+    // Removed in section 3; optional so a 0.5 `config.yml` loads until M4.1 rewrites this.
+    #[serde(default)]
     pub ai_interactive: String,
 }
 
@@ -100,9 +102,14 @@ pub struct AppConfig {
     pub max_depth: u32,
     #[serde(default = "default_max_log_size")]
     pub max_log_size: u64,
-    #[serde(default = "default_routine")]
+    // `default_machine` and `shared_source` are the section 3 names, read until M4.1.
+    #[serde(default = "default_routine", alias = "default_machine")]
     pub default_routine: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "shared_source"
+    )]
     pub routine_source: Option<String>,
     #[serde(default)]
     pub hooks: HooksConfig,
@@ -145,7 +152,7 @@ impl AppConfig {
     /// Load config from a file path.
     pub fn load(path: &Path) -> Result<Self, DecreeError> {
         let contents = std::fs::read_to_string(path)?;
-        let config: AppConfig = serde_yaml::from_str(&contents)?;
+        let config: AppConfig = serde_norway::from_str(&contents)?;
         Ok(config)
     }
 
@@ -168,7 +175,7 @@ impl AppConfig {
     /// Save config to the project's `.decree/config.yml`.
     pub fn save(&self, project_root: &Path) -> Result<(), DecreeError> {
         let path = project_root.join(DECREE_DIR).join(CONFIG_FILE);
-        let yaml = serde_yaml::to_string(self)?;
+        let yaml = serde_norway::to_string(self)?;
         std::fs::write(&path, yaml)?;
         Ok(())
     }
@@ -222,7 +229,7 @@ hooks:
   beforeEach: "git-baseline"
   afterEach: "git-stash-changes"
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: AppConfig = serde_norway::from_str(yaml).unwrap();
         assert_eq!(config.commands.ai_router, "claude -p {prompt}");
         assert_eq!(config.commands.ai_interactive, "claude");
         assert_eq!(config.max_attempts, 5);
@@ -240,7 +247,7 @@ commands:
   ai_router: "opencode run {prompt}"
   ai_interactive: "opencode"
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: AppConfig = serde_norway::from_str(yaml).unwrap();
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.default_routine, "develop");
@@ -261,7 +268,7 @@ routines:
     enabled: true
     max_retries: 4
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: AppConfig = serde_norway::from_str(yaml).unwrap();
         assert_eq!(config.max_attempts, 7);
         let routines = config.routines.as_ref().unwrap();
         assert_eq!(routines["develop"].max_attempts, Some(4));
@@ -288,11 +295,8 @@ shared_routines:
   notify:
     enabled: false
 "#;
-        let config: AppConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            config.routine_source.as_deref(),
-            Some("~/.decree/routines")
-        );
+        let config: AppConfig = serde_norway::from_str(yaml).unwrap();
+        assert_eq!(config.routine_source.as_deref(), Some("~/.decree/routines"));
 
         let routines = config.routines.as_ref().unwrap();
         assert_eq!(routines.len(), 3);
@@ -310,7 +314,7 @@ shared_routines:
     fn test_routine_entry_defaults() {
         // enabled defaults to true, deprecated to false
         let yaml = "{}";
-        let entry: RoutineEntry = serde_yaml::from_str(yaml).unwrap();
+        let entry: RoutineEntry = serde_norway::from_str(yaml).unwrap();
         assert!(entry.enabled);
         assert!(!entry.deprecated);
         assert!(entry.is_active());
@@ -330,8 +334,14 @@ shared_routines:
     #[test]
     fn test_expand_tilde() {
         // Can't test with actual HOME since it varies, but test the non-tilde case
-        assert_eq!(expand_tilde("/absolute/path"), PathBuf::from("/absolute/path"));
-        assert_eq!(expand_tilde("relative/path"), PathBuf::from("relative/path"));
+        assert_eq!(
+            expand_tilde("/absolute/path"),
+            PathBuf::from("/absolute/path")
+        );
+        assert_eq!(
+            expand_tilde("relative/path"),
+            PathBuf::from("relative/path")
+        );
     }
 
     #[test]
@@ -360,7 +370,7 @@ shared_routines:
     #[test]
     fn test_routine_entry_serialization_skips_deprecated_false() {
         let entry = RoutineEntry::new(true);
-        let yaml = serde_yaml::to_string(&entry).unwrap();
+        let yaml = serde_norway::to_string(&entry).unwrap();
         assert!(yaml.contains("enabled: true"));
         assert!(!yaml.contains("deprecated"));
     }

@@ -1,0 +1,10 @@
+{
+  "chain": "D0001-1921-01-unicorn-landscape",
+  "height": 400,
+  "id": "D0001-1921-01-unicorn-landscape-0",
+  "migration": "01-unicorn-landscape.md",
+  "output_prefix": "unicorn_landscape",
+  "routine": "comfy-image-text",
+  "seq": 0,
+  "width": 800
+}

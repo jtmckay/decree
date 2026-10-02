@@ -42,7 +42,10 @@ pub enum DecreeError {
     Io(#[from] std::io::Error),
 
     #[error("yaml error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_norway::Error),
+
+    #[error(".decree/ already exists; decree init does not touch an existing project")]
+    AlreadyInitialized,
 
     #[error("{0}")]
     Other(String),
@@ -53,6 +56,7 @@ impl DecreeError {
     pub fn exit_code(&self) -> i32 {
         match self {
             DecreeError::PreCheckFailed(_) => EXIT_PRECHECK,
+            DecreeError::AlreadyInitialized => EXIT_USAGE,
             _ => EXIT_FAILURE,
         }
     }
@@ -74,56 +78,6 @@ pub fn find_project_root() -> Option<PathBuf> {
 /// Require that we're inside a decree project, returning the root path.
 pub fn require_project_root() -> Result<PathBuf, DecreeError> {
     find_project_root().ok_or_else(|| {
-        DecreeError::Config(
-            "not inside a decree project (run `decree init` first)".to_string(),
-        )
+        DecreeError::Config("not inside a decree project (run `decree init` first)".to_string())
     })
-}
-
-/// Color output helper module.
-pub mod color {
-    use colored::Colorize;
-    use std::io::IsTerminal;
-    use std::sync::Once;
-
-    static INIT: Once = Once::new();
-
-    /// Initialize color settings based on --no-color flag, NO_COLOR env, and TTY detection.
-    /// Must be called once at startup.
-    pub fn init(no_color_flag: bool) {
-        INIT.call_once(|| {
-            if no_color_flag {
-                colored::control::set_override(false);
-            } else if std::env::var("NO_COLOR").is_ok() {
-                colored::control::set_override(false);
-            } else if !std::io::stdout().is_terminal() {
-                colored::control::set_override(false);
-            }
-            // else: color enabled by default
-        });
-    }
-
-    pub fn success(s: &str) -> String {
-        s.green().to_string()
-    }
-
-    pub fn error(s: &str) -> String {
-        s.red().to_string()
-    }
-
-    pub fn warning(s: &str) -> String {
-        s.yellow().to_string()
-    }
-
-    pub fn bold(s: &str) -> String {
-        s.bold().to_string()
-    }
-
-    pub fn dim(s: &str) -> String {
-        s.dimmed().to_string()
-    }
-
-    pub fn is_tty() -> bool {
-        std::io::stdout().is_terminal()
-    }
 }

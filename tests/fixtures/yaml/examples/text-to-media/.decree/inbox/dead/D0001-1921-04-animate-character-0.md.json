@@ -1,0 +1,11 @@
+{
+  "chain": "D0001-1921-04-animate-character",
+  "height": 640,
+  "id": "D0001-1921-04-animate-character-0",
+  "input_image": "character_lily_fullbody_00001_.png",
+  "migration": "04-animate-character.md",
+  "output_prefix": "lily_waving",
+  "routine": "comfy-video-i2v",
+  "seq": 0,
+  "width": 640
+}

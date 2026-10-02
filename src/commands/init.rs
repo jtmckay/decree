@@ -1,12 +1,11 @@
+use crate::cli::AiBackend;
 use crate::commands::skill;
 use crate::config;
-use crate::error::color::is_tty;
 use crate::error::DecreeError;
-use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-/// AI backends we search for, in priority order.
+/// AI backends in 0.4.2's detection order.
 const AI_BACKENDS: &[(&str, &str, &str)] = &[
     // (command, ai_router template, ai_interactive template)
     ("opencode", "opencode run {prompt}", "opencode"),
@@ -48,13 +47,33 @@ fn is_git_repo() -> bool {
         .unwrap_or(false)
 }
 
-/// Detect available AI backends. Returns list of (command, router_template, interactive_template).
-fn detect_ai_backends() -> Vec<(&'static str, &'static str, &'static str)> {
+/// The `AI_BACKENDS` entry for a backend.
+fn backend_entry(ai: AiBackend) -> (&'static str, &'static str, &'static str) {
+    let name = match ai {
+        AiBackend::Opencode => "opencode",
+        AiBackend::Claude => "claude",
+        AiBackend::Copilot => "copilot",
+    };
+    *AI_BACKENDS
+        .iter()
+        .find(|(cmd, _, _)| *cmd == name)
+        .expect("every AiBackend has an AI_BACKENDS entry")
+}
+
+/// The backend `--ai` names; without it, the first in detection order for which
+/// `found` holds, else opencode.
+fn select_backend(
+    ai: Option<AiBackend>,
+    found: impl Fn(&str) -> bool,
+) -> (&'static str, &'static str, &'static str) {
+    if let Some(ai) = ai {
+        return backend_entry(ai);
+    }
     AI_BACKENDS
         .iter()
         .copied()
-        .filter(|(cmd, _, _)| command_exists(cmd))
-        .collect()
+        .find(|(cmd, _, _)| found(cmd))
+        .unwrap_or_else(|| backend_entry(AiBackend::Opencode))
 }
 
 /// Derive the AI invocation prefix from an ai_router template by stripping {prompt}.
@@ -117,7 +136,9 @@ fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
         "opencode" => {
             let settings_path = "opencode.json";
             if Path::new(settings_path).exists() {
-                println!("Note: opencode.json already exists — add Write and Edit permissions manually.");
+                println!(
+                    "Note: opencode.json already exists — add Write and Edit permissions manually."
+                );
             } else {
                 std::fs::write(
                     settings_path,
@@ -163,7 +184,8 @@ fn generate_config(
     config.push_str("max_depth: 10\n");
     config.push_str("max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable\n");
     config.push_str("default_routine: develop\n");
-    config.push_str("routine_source: \"~/.decree/routines\" # optional, shared routines directory\n");
+    config
+        .push_str("routine_source: \"~/.decree/routines\" # optional, shared routines directory\n");
     config.push('\n');
 
     config.push_str("hooks:\n");
@@ -207,66 +229,24 @@ fn generate_config(
     config
 }
 
-/// Run `decree init`.
-pub fn run() -> Result<(), DecreeError> {
+/// Run `decree init`. Never prompts; refuses to touch an existing `.decree/`.
+pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> {
     let decree_dir = Path::new(config::DECREE_DIR);
-
-    // Re-run check
     if decree_dir.exists() {
-        if is_tty() {
-            eprint!("Decree is already configured in this directory.\nOverwrite existing configuration? [y/N] ");
-            std::io::stderr().flush()?;
-            let mut input = String::new();
-            std::io::stdin().read_line(&mut input)?;
-            if !input.trim().eq_ignore_ascii_case("y") {
-                println!("Aborted.");
-                return Ok(());
-            }
-        } else {
-            // Non-TTY: error if unresolvable (spec says auto-detect AI, accept hooks)
-            // We proceed with overwrite in non-TTY mode since there's no way to ask
-            eprintln!("Decree is already configured in this directory. Overwriting in non-TTY mode.");
-        }
+        return Err(DecreeError::AlreadyInitialized);
     }
 
-    // 1. Detect AI backend
-    let available = detect_ai_backends();
-    let (ai_name, ai_router, ai_interactive) = if available.is_empty() {
-        println!("No AI backend detected (opencode, claude, copilot).");
-        println!("Visit https://opencode.ai/ to install opencode.");
-        println!("Defaulting to opencode.");
-        AI_BACKENDS[0] // opencode defaults
-    } else if available.len() == 1 {
-        println!("Detected AI backend: {}", available[0].0);
-        available[0]
-    } else if is_tty() {
-        // Multiple backends found — present selector
-        let options: Vec<String> = available.iter().map(|(cmd, _, _)| cmd.to_string()).collect();
-        let selection = inquire::Select::new("Select AI backend:", options)
-            .prompt()
-            .map_err(|e| DecreeError::Other(format!("selection cancelled: {e}")))?;
-        *available
-            .iter()
-            .find(|(cmd, _, _)| *cmd == selection.as_str())
-            .expect("selection came from available list")
-    } else {
-        // Non-TTY with multiple: pick first
-        println!("Multiple AI backends detected, using: {}", available[0].0);
-        available[0]
-    };
+    // 1. Pick the AI backend
+    let (ai_name, ai_router, ai_interactive) = select_backend(ai, command_exists);
+    if ai.is_none() && !command_exists(ai_name) {
+        println!("No AI backend detected (opencode, claude, copilot); defaulting to opencode.");
+        println!("Visit https://opencode.ai/ to install opencode, or pass --ai.");
+    }
+    println!("AI backend: {ai_name}");
 
-    // 2. Offer to create default permissions for the selected AI backend
-    if is_tty() {
-        eprint!(
-            "Create default {ai_name} permissions (Write, Edit)? [Y/n] "
-        );
-        std::io::stderr().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        let trimmed = input.trim();
-        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("y") {
-            create_permissions_file(ai_name)?;
-        }
+    // 2. Default permissions for the selected AI backend
+    if permissions {
+        create_permissions_file(ai_name)?;
     }
 
     // 3. Detect git (hook scripts are written but not enabled by default)
@@ -279,9 +259,19 @@ pub fn run() -> Result<(), DecreeError> {
         &format!("{}/{}", config::DECREE_DIR, config::ROUTINES_DIR),
         &format!("{}/{}", config::DECREE_DIR, config::CRON_DIR),
         &format!("{}/{}", config::DECREE_DIR, config::INBOX_DIR),
-        &format!("{}/{}/{}", config::DECREE_DIR, config::INBOX_DIR, config::DEAD_DIR),
+        &format!(
+            "{}/{}/{}",
+            config::DECREE_DIR,
+            config::INBOX_DIR,
+            config::DEAD_DIR
+        ),
         &format!("{}/{}", config::DECREE_DIR, config::OUTBOX_DIR),
-        &format!("{}/{}/{}", config::DECREE_DIR, config::OUTBOX_DIR, config::DEAD_DIR),
+        &format!(
+            "{}/{}/{}",
+            config::DECREE_DIR,
+            config::OUTBOX_DIR,
+            config::DEAD_DIR
+        ),
         &format!("{}/{}", config::DECREE_DIR, config::RUNS_DIR),
         &format!("{}/{}", config::DECREE_DIR, config::MIGRATIONS_DIR),
     ];
@@ -337,10 +327,7 @@ pub fn run() -> Result<(), DecreeError> {
 
     // 9. Write git hook routines when inside a git repo (not enabled by default)
     if has_git {
-        std::fs::write(
-            format!("{routines_base}/git-baseline.sh"),
-            GIT_BASELINE_SH,
-        )?;
+        std::fs::write(format!("{routines_base}/git-baseline.sh"), GIT_BASELINE_SH)?;
         std::fs::write(
             format!("{routines_base}/git-stash-changes.sh"),
             GIT_STASH_CHANGES_SH,
@@ -415,7 +402,12 @@ mod tests {
             "opencode run {prompt}",
             "opencode",
             true,
-            &["develop", "rust-develop", "git-baseline", "git-stash-changes"],
+            &[
+                "develop",
+                "rust-develop",
+                "git-baseline",
+                "git-stash-changes",
+            ],
             &[],
         );
         assert!(config.contains("ai_router: \"opencode run {prompt}\""));
@@ -458,6 +450,97 @@ mod tests {
         assert!(config.contains("shared_routines:\n"));
         assert!(config.contains("  deploy:\n    enabled: false"));
         assert!(config.contains("  notify:\n    enabled: false"));
+    }
+
+    /// The generated config.yml parses to the values committed in
+    /// `tests/fixtures/yaml/init/` (produced by serde_yaml 0.9).
+    #[test]
+    fn test_generate_config_matches_expected_yaml() {
+        let cases = [
+            (
+                generate_config(
+                    "claude",
+                    "claude -p {prompt}",
+                    "claude",
+                    false,
+                    &["develop", "rust-develop"],
+                    &[],
+                ),
+                include_str!("../../tests/fixtures/yaml/init/claude.json"),
+            ),
+            (
+                generate_config(
+                    "opencode",
+                    "opencode run {prompt}",
+                    "opencode",
+                    true,
+                    &[
+                        "develop",
+                        "rust-develop",
+                        "git-baseline",
+                        "git-stash-changes",
+                    ],
+                    &["deploy".to_string()],
+                ),
+                include_str!("../../tests/fixtures/yaml/init/opencode-git-hooks.json"),
+            ),
+        ];
+        for (config, expected) in cases {
+            let value: serde_norway::Value = serde_norway::from_str(&config).unwrap();
+            let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+            assert_eq!(serde_json::to_value(value).unwrap(), expected);
+            // The template also loads as the typed config.
+            serde_norway::from_str::<config::AppConfig>(&config).unwrap();
+        }
+    }
+
+    /// The config `init` writes loads from disk as the typed config with the defaults.
+    #[test]
+    fn test_generate_config_loads_as_app_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(config::CONFIG_FILE);
+        let content = generate_config(
+            "opencode",
+            "opencode run {prompt}",
+            "opencode",
+            false,
+            &["develop", "rust-develop"],
+            &[],
+        );
+        std::fs::write(&path, content).unwrap();
+
+        let config = config::AppConfig::load(&path).unwrap();
+        assert_eq!(config.max_attempts, 3);
+        assert_eq!(config.max_depth, 10);
+        assert_eq!(config.max_log_size, 2_097_152);
+        assert_eq!(config.default_routine, "develop");
+    }
+
+    #[test]
+    fn test_select_backend_flag_wins_over_detection() {
+        assert_eq!(
+            select_backend(Some(AiBackend::Claude), |_| true),
+            ("claude", "claude -p {prompt}", "claude")
+        );
+        assert_eq!(
+            select_backend(Some(AiBackend::Copilot), |_| false).1,
+            "copilot -p {prompt}"
+        );
+    }
+
+    #[test]
+    fn test_select_backend_detects_in_0_4_2_order() {
+        assert_eq!(select_backend(None, |_| true).0, "opencode");
+        assert_eq!(select_backend(None, |c| c != "opencode").0, "claude");
+        assert_eq!(select_backend(None, |c| c == "copilot").0, "copilot");
+    }
+
+    #[test]
+    fn test_select_backend_defaults_to_opencode() {
+        assert_eq!(
+            select_backend(None, |_| false),
+            ("opencode", "opencode run {prompt}", "opencode")
+        );
     }
 
     #[test]
