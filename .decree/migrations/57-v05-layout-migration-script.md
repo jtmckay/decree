@@ -1,17 +1,17 @@
 ---
 routine: rust-develop
 ---
-# 57: v0.5 M5.5 README, help and 0.5.0
+# 57: v0.5 M5.4 0.4 to 0.5 layout script
 
 ## Overview
 
-Document the three building blocks and cut 0.5.0. Part of the 0.5.0 rewrite specified in `docs/0.5-spec.md` (ticket M5.5).
+Upgrade existing projects once, outside the binary. Part of the 0.5.0 rewrite specified in `docs/0.5-spec.md` (ticket M5.4).
 
 ## Requirements
 
-Read spec sections 1 and 2, 3, 4, 8, 13; `mock/README.md` first.
+Read spec sections 1 and 3, 4, 11 (M5.4) first.
 
-Rewrite `README.md` and `src/templates/help.txt` around messages, machines and scripts, and link `docs/routers.md` and `docs/services.md`. Set the version to 0.5.0. Make sure `decree check` passes with `mock/` as the project root.
+Write `scripts/migrate-0.4-to-0.5.sh` as section 11 M5.4 describes. Leave `migrations/` and `processed.md` untouched. Do not run it on this repository's `.decree/`.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
@@ -21,20 +21,15 @@ Rewrite `README.md` and `src/templates/help.txt` around messages, machines and s
 
 ## Files to Modify
 
-- README.md
-- src/templates/help.txt
-- Cargo.toml
+- scripts/migrate-0.4-to-0.5.sh — new
+- tests/fixtures/legacy-0.4/ — new
 
 ## Acceptance Criteria
 
-- **Given** a fresh `decree init` in a temp directory
-  **When** every README command runs as written
-  **Then** each succeeds
+- **Given** a 0.4.2 project fixture in a temp directory
+  **When** the script runs
+  **Then** `decree check` and `decree status` succeed
 
-- **Given** the updated crate
-  **When** `decree --version` runs
-  **Then** it prints 0.5.0
-
-- **Given** `mock/` as the working directory
-  **When** `decree check` runs
-  **Then** it exits 0
+- **Given** the same fixture
+  **When** the script runs
+  **Then** `migrations/` and `processed.md` are byte-identical to before

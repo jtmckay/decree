@@ -17,24 +17,6 @@ pub const ROUTER_FILE: &str = "router.md";
 pub const CONFIG_FILE: &str = "config.yml";
 pub const GITIGNORE_FILE: &str = ".gitignore";
 
-/// Commands configuration — AI tool settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandsConfig {
-    pub ai_router: String,
-    // Removed in section 3; optional so a 0.5 `config.yml` loads until M4.1 rewrites this.
-    #[serde(default)]
-    pub ai_interactive: String,
-}
-
-impl Default for CommandsConfig {
-    fn default() -> Self {
-        Self {
-            ai_router: "opencode run {prompt}".to_string(),
-            ai_interactive: "opencode".to_string(),
-        }
-    }
-}
-
 /// Lifecycle hooks configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
@@ -95,9 +77,6 @@ impl RoutineEntry {
 /// Top-level application config (deserialized from config.yml).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    // Optional so a 0.5 `config.yml`, which has no `commands`, loads until M4.1.
-    #[serde(default)]
-    pub commands: CommandsConfig,
     /// Router machine for `choose: model` invokes that name none (section 3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_router: Option<String>,
@@ -140,7 +119,6 @@ fn default_routine() -> String {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            commands: CommandsConfig::default(),
             default_router: None,
             max_attempts: default_max_attempts(),
             max_depth: default_max_depth(),
@@ -208,8 +186,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AppConfig::default();
-        assert_eq!(config.commands.ai_router, "opencode run {prompt}");
-        assert_eq!(config.commands.ai_interactive, "opencode");
+        assert!(config.default_router.is_none());
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_log_size, 2_097_152);
@@ -222,9 +199,7 @@ mod tests {
     #[test]
     fn test_deserialize_config() {
         let yaml = r#"
-commands:
-  ai_router: "claude -p {prompt}"
-  ai_interactive: "claude"
+default_router: claude_router
 max_attempts: 5
 max_depth: 20
 max_log_size: 0
@@ -236,8 +211,7 @@ hooks:
   afterEach: "git-stash-changes"
 "#;
         let config: AppConfig = serde_norway::from_str(yaml).unwrap();
-        assert_eq!(config.commands.ai_router, "claude -p {prompt}");
-        assert_eq!(config.commands.ai_interactive, "claude");
+        assert_eq!(config.default_router.as_deref(), Some("claude_router"));
         assert_eq!(config.max_attempts, 5);
         assert_eq!(config.max_depth, 20);
         assert_eq!(config.max_log_size, 0);
@@ -248,11 +222,7 @@ hooks:
 
     #[test]
     fn test_deserialize_minimal_config() {
-        let yaml = r#"
-commands:
-  ai_router: "opencode run {prompt}"
-  ai_interactive: "opencode"
-"#;
+        let yaml = "default_router: claude_router\n";
         let config: AppConfig = serde_norway::from_str(yaml).unwrap();
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
@@ -265,9 +235,6 @@ commands:
         // Existing on-disk configs use the old `max_retries` key. The serde
         // alias keeps them working after the rename to `max_attempts`.
         let yaml = r#"
-commands:
-  ai_router: "claude -p {prompt}"
-  ai_interactive: "claude"
 max_retries: 7
 routines:
   develop:
@@ -283,9 +250,6 @@ routines:
     #[test]
     fn test_deserialize_config_with_routines() {
         let yaml = r#"
-commands:
-  ai_router: "claude -p {prompt}"
-  ai_interactive: "claude"
 routine_source: "~/.decree/routines"
 routines:
   develop:

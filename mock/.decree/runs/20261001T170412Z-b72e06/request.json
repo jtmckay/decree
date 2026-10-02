@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "machine": "sort_document",
+  "machine_description": "File one scanned document as an invoice, a receipt or other paperwork.",
+  "state": "local_model",
+  "state_description": "",
+  "question": "Which kind of document is this?",
+  "options": [
+    {
+      "event": "invoice",
+      "description": "A bill asking for payment, with an amount due."
+    },
+    {
+      "event": "other",
+      "description": "Any other paperwork."
+    },
+    {
+      "event": "receipt",
+      "description": "Proof of a payment already made."
+    }
+  ],
+  "input": "ACME OFFICE SUPPLY                     Order 88213\n1 x Toner cartridge, black            $64.00\nSubtotal $64.00   Tax $5.28   Total $69.28\nCard ending 4417   Status: PAID   Balance due: $0.00\nQuestions about this order? billing@acme.example\n",
+  "message_body": "Scanned on the office scanner, tray 2.\n",
+  "history": [
+    "by_name: no",
+    "read_text: done",
+    "by_text: no"
+  ],
+  "min_confidence": 0.9
+}

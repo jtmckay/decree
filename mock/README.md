@@ -1,6 +1,6 @@
 # decree 0.5 mock project
 
-This directory is a decree 0.5 project frozen partway through its life: seven machines, their scripts, two finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs yet; it shows exactly what the files will look like once 0.5 ships. The contract is [`docs/0.5-spec.md`](../docs/0.5-spec.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `.decree/graph/*.md` byte for byte.
+This directory is a decree 0.5 project frozen partway through its life: nine machines, their scripts, three finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs yet; it shows exactly what the files will look like once 0.5 ships. The contract is [`docs/0.5-spec.md`](../docs/0.5-spec.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `.decree/graph/*.md` byte for byte.
 
 ## The three building blocks
 
@@ -14,7 +14,9 @@ mock/.decree/
     triage.yml                      free-form request -> the right machine (0.4's global router, rebuilt)
     feature.yml                     everything: nesting, a check, a model's choice, escalation to a person, commit
     ship.yml                        composes two machines: feature, then deploy
+    sort_document.yml               an escalation ladder: two checks, a local model, a large model, a person
     claude_router.yml               the router: how a model is asked (replaceable)
+    local_router.yml                a second router: a small local classifier that scores every option
   scripts/                        SCRIPTS: the work, bash, no routing; shared by every machine
   scripts/<machine>/                  a machine's own scripts, checked before scripts/
   migrations/  processed.md       MESSAGES: ordered, run-once queue, committed
@@ -256,6 +258,31 @@ In 0.4 a message without `routine:` went to a global LLM router that could pick 
 4. That message is waiting in [`inbox/`](.decree/inbox/20261001T151502Z-a41c07.md). The inbox drains in filename order (FIFO): it runs first, then the reply for migration 02, then `fix-login-typo.md`.
 
 If the model had failed twice, `classify` would have produced `error`, which goes to `failed`: nothing is forwarded on a guess.
+
+## An escalation ladder
+
+[`machines/sort_document.yml`](.decree/machines/sort_document.yml) files one scanned document. It tries the cheapest way to decide first, and each step hands on only what it could not decide:
+
+| Step | State | How it decides | Acts when | Otherwise |
+| --- | --- | --- | --- | --- |
+| 1 | `by_name` | `check: { data: file, matches: '^scans/invoice-[0-9]+\.pdf$' }` (free, certain) | `yes` | `no` |
+| 2 | `by_text` | `check: { matches: '(?i)invoice (no\|number)[.:]', input: read_text }` (free, likely) | `yes` | `no` |
+| 3 | `local_model` | `choose: model, router: local_router, min_confidence: 0.9` (a small CPU classifier, measured scores) | confidence ≥ 0.9 | `unsure` |
+| 4 | `big_model` | `choose: model, min_confidence: 0.7` (the default router, Claude) | confidence ≥ 0.7 | `unsure` |
+| 5 | `worth_asking` | `check: { confidence: big_model, at_least: 0.4 }` | 0.4 to 0.7: `yes`, ask a person | below 0.4: `no`, set aside |
+| 6 | `ask_person` | `choose: person, ask: ask_person` | the person's pick | no reply in a week: `error`, set aside |
+
+So there are three thresholds, and each one is a number in the machine: 0.9 to trust the small model, 0.7 to trust the large one, and 0.4 below which a person's time is not worth spending. Each model's threshold is calibrated for that model: GLiNER2.5-Decide's scores are probabilities across the options, while Claude's confidence is self-reported. Where an option leads is written once per deciding state, so each state's options are exactly what that model or person sees.
+
+[`runs/20261001T170412Z-3f9a51/`](.decree/runs/20261001T170412Z-3f9a51/events.jsonl) climbs every step. The scan is `scans/2026-10-01-scan-0412.pdf`, an order confirmation marked PAID:
+
+1. `by_name` said `no`, because the name is not `invoice-<n>.pdf` (event 2). `read_text` printed the text ([log](.decree/runs/20261001T170412Z-3f9a51/0001-read_text-extract_text.log)), and `by_text` found no invoice number (event 6).
+2. `local_model` ran `local_router` as child run [`20261001T170412Z-b72e06`](.decree/runs/20261001T170412Z-b72e06/0001-ask-ask_local.log). The classifier scored receipt 0.62, invoice 0.31 and other 0.07 ([`reply.json`](.decree/runs/20261001T170412Z-b72e06/reply.json)). 0.62 is below 0.9, so the event was `unsure` (event 9), and the `decision` event keeps the pick and all three scores.
+3. `big_model` asked Claude through `claude_router` ([`20261001T170412Z-d10c3a`](.decree/runs/20261001T170412Z-d10c3a/0001-ask-ask_claude.log)), with the run so far in the request's `history`. Claude also picked receipt, but only at 0.55: "titled as an order, not a receipt". That is below 0.7, so `unsure` again (event 12).
+4. `worth_asking` checked 0.55 ≥ 0.4: `yes` (event 14). Had Claude said 0.2, the run would have ended in `set_aside`, and nobody would have been asked.
+5. `ask_person` printed how to reply ([log](.decree/runs/20261001T170412Z-3f9a51/0002-ask_person-ask_person.log)) and the run waited on `20261001T170412Z-3f9a51.w15`. Eighteen minutes later a reply arrived ([`received/`](.decree/runs/20261001T170412Z-3f9a51/received/20261001T172208Z-e7d204.md)) with `event: receipt`, and `file_away` moved the scan to `filed/receipt/`.
+
+Most scans would stop at step 1 or 2 and cost nothing; few would ever reach a person.
 
 ## The whole system
 

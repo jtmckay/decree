@@ -354,6 +354,18 @@ pub struct RunInfo {
     pub max_attempts: u32,
     /// Config `max_log_size`; 0 disables truncation.
     pub max_log_size: u64,
+    /// `DECREE_PARENT`: in a child run, the parent run's id.
+    pub parent: Option<String>,
+    /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
+    /// where the reply must go (section 7, Choose: model).
+    pub router: Option<RouterFiles>,
+}
+
+/// The two files of a router run, both in its run folder.
+#[derive(Debug, Clone)]
+pub struct RouterFiles {
+    pub request: PathBuf,
+    pub reply: PathBuf,
 }
 
 /// One script execution: what to run and the per-execution `DECREE_*` values.
@@ -684,6 +696,10 @@ impl Executor {
         let mut events = run.events.to_vec();
         events.sort();
         let received = self.received.as_deref().unwrap_or(Path::new(""));
+        let (request, reply) = match &info.router {
+            Some(r) => (r.request.as_path(), r.reply.as_path()),
+            None => (Path::new(""), Path::new("")),
+        };
         let mut vars: Vec<(String, std::ffi::OsString)> = [
             ("PROJECT_ROOT", info.project_root.as_os_str().into()),
             ("MESSAGE", info.run_dir.join(MESSAGE_FILE).into()),
@@ -701,6 +717,9 @@ impl Executor {
             ),
             ("TRIGGER", info.trigger.clone().into()),
             ("EVENTS", events.join(" ").into()),
+            ("PARENT", info.parent.clone().unwrap_or_default().into()),
+            ("REQUEST", request.as_os_str().into()),
+            ("REPLY", reply.as_os_str().into()),
             ("WAIT_ID", run.wait_id.into()),
             ("QUESTION", run.question.into()),
             ("CHOICES", run.choices.as_os_str().into()),
@@ -1190,6 +1209,8 @@ mod executor_tests {
                 data: Vec::new(),
                 max_attempts: 3,
                 max_log_size: 0,
+                parent: None,
+                router: None,
             }
         }
 
@@ -1485,6 +1506,12 @@ mod executor_tests {
         let params: serde_norway::Mapping =
             serde_norway::from_str("label: release\nmax_rounds: 5").unwrap();
         info.data = data_env(&m.data, &params);
+        info.parent = Some("20261001T120000Z-0b12aa".to_string());
+        let (request, reply) = (p.run_dir().join("request.json"), p.run_dir().join("reply.json"));
+        info.router = Some(RouterFiles {
+            request: request.clone(),
+            reply: reply.clone(),
+        });
         let mut exec = Executor::open(info, Arc::clone(&p.shutdown)).unwrap();
         let received = p.run_dir().join("received/reply.md");
         exec.received = Some(received.clone());
@@ -1526,6 +1553,9 @@ mod executor_tests {
             ("DECREE_FINAL_ATTEMPT", "true".to_string()),
             ("DECREE_TRIGGER", "inbox".to_string()),
             ("DECREE_EVENTS", "approve retry".to_string()),
+            ("DECREE_PARENT", "20261001T120000Z-0b12aa".to_string()),
+            ("DECREE_REQUEST", request.to_str().unwrap().to_string()),
+            ("DECREE_REPLY", reply.to_str().unwrap().to_string()),
             ("DECREE_WAIT_ID", "w-id".to_string()),
             (
                 "DECREE_QUESTION",
@@ -1572,6 +1602,9 @@ mod executor_tests {
             "DECREE_MAX_ATTEMPTS=2",
             "DECREE_FINAL_ATTEMPT=false",
             "DECREE_EVENTS=",
+            "DECREE_PARENT=",
+            "DECREE_REQUEST=",
+            "DECREE_REPLY=",
             "DECREE_WAIT_ID=",
             "DECREE_QUESTION=",
             "DECREE_CHOICES=",

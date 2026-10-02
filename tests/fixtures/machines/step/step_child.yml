@@ -1,0 +1,12 @@
+name: step_child
+description: A child machine that ends in done, rejected or failed, as its script says.
+data:
+  label: { type: string, default: none }
+initial: work
+states:
+  work:
+    invoke: child_work
+    transitions: { done: done, reject: rejected }
+  done:     { final: true }
+  rejected: { final: true }
+  failed:   { final: true }

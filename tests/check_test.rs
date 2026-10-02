@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-const CONFIG: &str = "commands:\n  ai_router: \"true {prompt}\"\n  ai_interactive: \"true\"\n";
+const CONFIG: &str = "max_attempts: 3\n";
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")

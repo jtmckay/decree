@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-const CONFIG: &str = "commands:\n  ai_router: \"true {prompt}\"\n";
+const CONFIG: &str = "max_attempts: 3\n";
 
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

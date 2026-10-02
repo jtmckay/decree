@@ -1,17 +1,17 @@
 ---
 routine: rust-develop
 ---
-# 54: v0.5 M5.2 Port hooks and git-stash templates
+# 58: v0.5 M5.5 README, help and 0.5.0
 
 ## Overview
 
-Hooks become `onentry` and `onexit` scripts. Part of the 0.5.0 rewrite specified in `docs/0.5-spec.md` (ticket M5.2).
+Document the three building blocks and cut 0.5.0. Part of the 0.5.0 rewrite specified in `docs/0.5-spec.md` (ticket M5.5).
 
 ## Requirements
 
-Read spec sections 1 and 5 (onentry and onexit), 6 (Environment) first.
+Read spec sections 1 and 2, 3, 4, 8, 13; `mock/README.md` first.
 
-Map `beforeAll` to root `onentry`, `afterAll` to root `onexit`, `beforeEach` to each atomic state's `onentry`, `afterEach` to each atomic state's `onexit`, and `onDeadLetter` to `failed`'s `onentry`. Port `git-baseline.sh` and `git-stash-changes.sh` to scripts `decree init` writes, using `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS` and `DECREE_FINAL_ATTEMPT`.
+Rewrite `README.md` and `src/templates/help.txt` around messages, machines and scripts, and link `docs/routers.md` and `docs/services.md`. Set the version to 0.5.0. Make sure `decree check` passes with `mock/` as the project root.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
@@ -21,16 +21,20 @@ Map `beforeAll` to root `onentry`, `afterAll` to root `onexit`, `beforeEach` to 
 
 ## Files to Modify
 
-- src/templates/git-baseline.sh
-- src/templates/git-stash-changes.sh
-- src/commands/init.rs
+- README.md
+- src/templates/help.txt
+- Cargo.toml
 
 ## Acceptance Criteria
 
-- **Given** the 0.4.2 hook tests rewritten as machines
-  **When** they run
-  **Then** the scripts run in the same order as in 0.4.2
+- **Given** a fresh `decree init` in a temp directory
+  **When** every README command runs as written
+  **Then** each succeeds
 
-- **Given** a run that ends `failed`
-  **When** it finishes
-  **Then** the former `onDeadLetter` script ran exactly once
+- **Given** the updated crate
+  **When** `decree --version` runs
+  **Then** it prints 0.5.0
+
+- **Given** `mock/` as the working directory
+  **When** `decree check` runs
+  **Then** it exits 0

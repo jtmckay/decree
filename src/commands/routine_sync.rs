@@ -193,7 +193,7 @@ mod tests {
         std::fs::create_dir_all(decree.join("inbox")).unwrap();
         std::fs::write(
             decree.join("config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\n",
+            "max_attempts: 3\n",
         )
         .unwrap();
     }

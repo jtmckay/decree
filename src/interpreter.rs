@@ -3,35 +3,45 @@
 //! `events.jsonl`. State, status and visits are derived from that log (section 4, Source
 //! of truth).
 //!
-//! Interpreted here: the section 5 subset with script, `check` and `choose: person`
-//! invokes. Transitions on compound states, with events bubbling from the atomic state
-//! outward; `type: internal`; final states at any level, a nested one raising
-//! `done.state.<parent>`; and `choose: person`, which runs its `ask` script, appends
-//! `waiting` and stops until a `received` event continues the run. `machine` and
-//! `choose: model` invokes are parsed and validated, but running them is ticket M3.3.
-//! Delivering replies is ticket M4.3; `decree retry` and the run lock are ticket M4.2.
+//! Interpreted here: the whole section 5 subset. Transitions on compound states, with
+//! events bubbling from the atomic state outward; `type: internal`; final states at any
+//! level, a nested one raising `done.state.<parent>`; `choose: person`, which runs its
+//! `ask` script, appends `waiting` and stops until a `received` event continues the run;
+//! and child runs (section 7, Sub-machines): a `machine` invoke, and the router machine of
+//! a `choose: model` invoke. Delivering replies is ticket M4.3; `decree retry` and the run
+//! lock are ticket M4.2.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
 use crate::cond::{self, CondError};
-use crate::config::{DECREE_DIR, PROCESSED_FILE};
+use crate::config::{DECREE_DIR, INBOX_DIR, PROCESSED_FILE, RUNS_DIR};
 use crate::machine::{
-    event_matches, CheckInvoke, ChooseInvoke, ChooseKind, Invoke, LoadedMachine, FAILED,
+    event_matches, CheckInvoke, ChooseInvoke, ChooseKind, Invoke, LoadedMachine, MachineInvoke,
+    FAILED,
 };
 use crate::runtime::{
-    timestamp, EventLog, Executor, InvokeEvent, Phase, RuntimeError, ScriptRun, EVENTS_FILE,
-    MESSAGE_FILE, RECEIVED_DIR, ROOT_STATE,
+    data_env, timestamp, EventLog, Executor, InvokeEvent, Phase, RouterFiles, RunInfo,
+    RuntimeError, ScriptRun, EVENTS_FILE, MESSAGE_FILE, RECEIVED_DIR, ROOT_STATE,
 };
 
 /// The JSON file, in the run folder, mapping each option of the `choose: person` state the
 /// run waits in to its description: what `DECREE_CHOICES` names (section 6).
 pub const CHOICES_FILE: &str = "choices.json";
+
+/// The request a `choose: model` invoke writes in its router run's folder (section 7).
+pub const REQUEST_FILE: &str = "request.json";
+
+/// Where a router machine writes its reply, in its run folder (section 7).
+pub const REPLY_FILE: &str = "reply.json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum InterpreterError {
@@ -78,15 +88,34 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> InterpreterError + '_ {
 }
 
 /// What the interpreter needs from the claimed message.
-#[derive(Debug, Clone)]
-pub struct RunInput<'a> {
+#[derive(Debug, Clone, Default)]
+pub struct RunInput {
     /// Frontmatter `params`, already validated against the machine's `data`.
-    pub params: &'a serde_norway::Mapping,
-    /// The message body, for a model's request.
-    pub message_body: &'a str,
-    /// Original inbox or migration filename, recorded on the claim event. For a migration
-    /// (`trigger: migration`) it is also the `processed.md` ledger line.
-    pub file: &'a str,
+    pub params: serde_norway::Mapping,
+    /// The message body, for a model's request and for child runs.
+    pub message_body: String,
+    /// Original inbox or migration filename, recorded on the claim event; `None` for a child
+    /// run. For a migration (`trigger: migration`) it is also the `processed.md` ledger line.
+    pub file: Option<String>,
+    /// Frontmatter `depth`: 0 unless the message was emitted or is a child run.
+    pub depth: u32,
+}
+
+/// Everything stepping a run needs beyond the run itself: the project's machines, and the
+/// settings each run's executor and its child runs use (section 7, Sub-machines).
+pub struct Context<'a> {
+    /// The directory containing `.decree/`.
+    pub project_root: PathBuf,
+    pub shared_source: Option<PathBuf>,
+    /// Every machine, by name: the children a run may start.
+    pub machines: &'a BTreeMap<String, LoadedMachine>,
+    /// Config `default_router`.
+    pub default_router: Option<String>,
+    pub max_attempts: u32,
+    pub max_depth: u32,
+    pub max_log_size: u64,
+    /// Set on SIGINT or SIGTERM; stops the running script (section 4, Stopping).
+    pub shutdown: Arc<AtomicBool>,
 }
 
 /// How a call to the step loop ended.
@@ -101,6 +130,14 @@ pub enum Outcome {
     /// The run entered this `choose: person` state, its `ask` script ran, and a `waiting`
     /// event was appended. A reply must name `wait_id` (section 4, Replies).
     Waiting { state: String, wait_id: String },
+    /// The run waits in this `machine` or `choose: model` state for child run `child`, which
+    /// stopped with `outcome` before finishing: it waits for a reply itself, or was
+    /// interrupted. The run continues when the child finishes (section 7, Sub-machines).
+    Child {
+        state: String,
+        child: String,
+        outcome: Box<Outcome>,
+    },
 }
 
 /// What a state's invoke led to (steps 2 and 3).
@@ -118,6 +155,14 @@ enum Next {
     Step(Option<Decision>),
 }
 
+/// A child run this run started, and how stepping it ended.
+struct Child {
+    id: String,
+    outcome: Outcome,
+    /// Wall time of stepping the child.
+    duration_ms: u64,
+}
+
 /// The event chosen for the current state (step 3), and where it came from.
 #[derive(Debug, Clone)]
 struct Decision {
@@ -125,6 +170,8 @@ struct Decision {
     source: &'static str,
     exit_code: Option<i32>,
     invalid_event: Option<String>,
+    /// Why a `machine` invoke started no child: the `transition` event's `error`.
+    error: Option<String>,
     /// A root `onentry` script failed: the target is `failed`, whatever the state handles.
     to_failed: bool,
 }
@@ -136,6 +183,7 @@ impl Decision {
             source,
             exit_code,
             invalid_event: None,
+            error: None,
             to_failed: false,
         }
     }
@@ -151,11 +199,13 @@ impl Decision {
 
 /// Steps one run. Scripts run through `executor`, which owns the run's event log.
 pub struct Interpreter<'a> {
+    ctx: &'a Context<'a>,
     machine: &'a LoadedMachine,
     executor: Executor,
     data: BTreeMap<String, cond::Value>,
     message_body: String,
-    file: String,
+    file: Option<String>,
+    depth: u32,
     /// The atomic state the run is in, for the `interrupted` event.
     current: usize,
     /// `seq` of the last `transition` event, which names the wait id of a waiting state.
@@ -164,16 +214,19 @@ pub struct Interpreter<'a> {
 
 impl<'a> Interpreter<'a> {
     pub fn new(
+        ctx: &'a Context<'a>,
         machine: &'a LoadedMachine,
         executor: Executor,
         input: RunInput,
     ) -> Result<Self, InterpreterError> {
         Ok(Interpreter {
+            ctx,
             machine,
-            data: data_values(machine, input.params)?,
+            data: data_values(machine, &input.params)?,
             executor,
-            message_body: input.message_body.to_string(),
-            file: input.file.to_string(),
+            message_body: input.message_body,
+            file: input.file,
+            depth: input.depth,
             current: 0,
             entered_seq: 0,
         })
@@ -185,9 +238,11 @@ impl<'a> Interpreter<'a> {
         self.interrupt_on_signal(result)
     }
 
-    /// Continue a waiting run whose last event is `received` (step 1): take that event's
-    /// transition at step 4, with `source: "person"` after a `decision` event for a reply,
-    /// or `source: "timeout"`. Nothing is re-run, because the run only paused.
+    /// Continue a `pending` run (step 1): its last event is `received`, or `waiting` for a
+    /// child run that has finished. Take the event's transition at step 4: with
+    /// `source: "person"` after a `decision` event for a reply, `source: "timeout"`, or
+    /// `source: "machine"` for a child's final state; a finished router run is validated as
+    /// section 7, Choose: model says. Nothing is re-run, because the run only paused.
     pub fn resume(&mut self) -> Result<Outcome, InterpreterError> {
         let result = self.continue_received();
         self.interrupt_on_signal(result)
@@ -246,27 +301,15 @@ impl<'a> Interpreter<'a> {
         let m = self.machine;
         let events = self.read_events()?;
         let not_received = |message: &str| InterpreterError::NotReceived(message.to_string());
-        let received = events
+        let last = events
             .last()
-            .filter(|e| e.get("type").and_then(Value::as_str) == Some("received"))
-            .ok_or_else(|| not_received("its last event is not `received`"))?;
-        let event = received
-            .get("event")
-            .and_then(Value::as_str)
-            .ok_or_else(|| not_received("the `received` event has no `event`"))?;
-        let event = event.to_string();
-        let timed_out = received.get("timed_out").and_then(Value::as_bool) == Some(true);
-        let reply = received
-            .get("file")
-            .and_then(Value::as_str)
-            .map(String::from);
+            .ok_or_else(|| not_received("it has no events"))?;
+        let last_type = last.get("type").and_then(Value::as_str);
+        let child = last.get("child").and_then(Value::as_str).map(String::from);
         let s = current_state(&events)
             .and_then(|id| m.find(id))
-            .filter(|&s| {
-                let invoke = m.nodes[s].invoke.as_ref();
-                invoke.and_then(|i| i.choose(ChooseKind::Person)).is_some()
-            })
-            .ok_or_else(|| not_received("its current state is not a `choose: person` state"))?;
+            .ok_or_else(|| not_received("its current state is not in the machine"))?;
+        let invoke = m.nodes[s].invoke.as_ref();
         self.entered_seq = events
             .iter()
             .rev()
@@ -274,6 +317,45 @@ impl<'a> Interpreter<'a> {
             .and_then(|e| e.get("seq"))
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        self.current = s;
+
+        // Waiting for a child run that has finished: take its result now.
+        if last_type == Some("waiting") {
+            let child = child.ok_or_else(|| not_received("its last event is not `received`"))?;
+            let finished = self.child_final(&child)?.ok_or_else(|| {
+                InterpreterError::NotReceived(format!("child run `{child}` has not finished"))
+            })?;
+            let decision = match invoke {
+                Some(Invoke::Machine(_)) => self.machine_finished(&child, &finished)?,
+                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
+                    let duration_ms = self.child_duration(&child)?;
+                    self.model_finished(s, c, &child, &finished, duration_ms)?
+                }
+                _ => return Err(not_received("its current state does not start child runs")),
+            };
+            return self.step_from(s, Some(decision));
+        }
+        if last_type != Some("received") {
+            return Err(not_received("its last event is not `received`"));
+        }
+        let event = last
+            .get("event")
+            .and_then(Value::as_str)
+            .ok_or_else(|| not_received("the `received` event has no `event`"))?
+            .to_string();
+        if child.is_some() {
+            if !matches!(invoke, Some(Invoke::Machine(_))) {
+                return Err(not_received("its current state is not a `machine` state"));
+            }
+            return self.step_from(s, Some(Decision::new(&event, "machine", None)));
+        }
+        if invoke.and_then(|i| i.choose(ChooseKind::Person)).is_none() {
+            return Err(not_received(
+                "its current state is not a `choose: person` state",
+            ));
+        }
+        let timed_out = last.get("timed_out").and_then(Value::as_bool) == Some(true);
+        let reply = last.get("file").and_then(Value::as_str).map(String::from);
         // `DECREE_RECEIVED`: the last reply, not a timeout, which has no file.
         let run_dir = self.executor.info().run_dir.clone();
         self.executor.received = events
@@ -282,7 +364,6 @@ impl<'a> Interpreter<'a> {
             .filter(|e| e.get("type").and_then(Value::as_str) == Some("received"))
             .find_map(|e| e.get("file").and_then(Value::as_str))
             .map(|file| run_dir.join(RECEIVED_DIR).join(file));
-        self.current = s;
         let decision = if timed_out {
             Decision::new(&event, "timeout", None)
         } else {
@@ -336,6 +417,9 @@ impl<'a> Interpreter<'a> {
             });
             if let Some(invalid) = &decision.invalid_event {
                 fields["invalid_event"] = json!(invalid);
+            }
+            if let Some(error) = &decision.error {
+                fields["error"] = json!(error);
             }
             if !exit_failures.is_empty() {
                 fields["exit_failures"] = json!(exit_failures);
@@ -477,9 +561,164 @@ impl<'a> Interpreter<'a> {
             }
             Some(Invoke::Check(check)) => self.check(s, check).map(Invoked::Event),
             Some(Invoke::Choose(c)) if c.choose == ChooseKind::Person => self.ask(s, c),
-            Some(Invoke::Choose(_)) => Err(self.not_supported(s, "choose: model")),
-            Some(Invoke::Machine(_)) => Err(self.not_supported(s, "machine")),
+            Some(Invoke::Choose(c)) => self.choose_model(s, c),
+            Some(Invoke::Machine(invoke)) => self.invoke_machine(s, invoke),
         }
+    }
+
+    /// Step 2 for a `machine` invoke (section 7, Sub-machines): run the machine as a child
+    /// run. Its final state is the event, `failed` as `error`.
+    fn invoke_machine(
+        &mut self,
+        s: usize,
+        invoke: &MachineInvoke,
+    ) -> Result<Invoked, InterpreterError> {
+        let child = match self.run_child(s, &invoke.machine, &invoke.params, None)? {
+            Ok(child) => child,
+            Err(reason) => {
+                return Ok(Invoked::Event(Decision {
+                    error: Some(reason),
+                    ..Decision::new("error", "machine", None)
+                }))
+            }
+        };
+        match child.outcome {
+            Outcome::Finished(state) => self.machine_finished(&child.id, &state).map(Invoked::Event),
+            outcome => Ok(self.wait_for_child(s, child.id, outcome)),
+        }
+    }
+
+    /// Step 2 for a `choose: model` invoke (section 7, Choose: model): write the request,
+    /// run the router machine as a child run, and validate its reply.
+    fn choose_model(&mut self, s: usize, choose: &ChooseInvoke) -> Result<Invoked, InterpreterError> {
+        Err(self.not_supported(s, "choose: model"))
+    }
+
+    /// A router run finished in `state`: validate its reply and append the `decision` event.
+    fn model_finished(
+        &mut self,
+        s: usize,
+        _choose: &ChooseInvoke,
+        _child: &str,
+        _state: &str,
+        _duration_ms: u64,
+    ) -> Result<Decision, InterpreterError> {
+        Err(self.not_supported(s, "choose: model"))
+    }
+
+    /// The parent's side of a child that stopped before finishing: the run stays `waiting`.
+    fn wait_for_child(&self, s: usize, child: String, outcome: Outcome) -> Invoked {
+        Invoked::Wait(Outcome::Child {
+            state: self.machine.nodes[s].id.clone(),
+            child,
+            outcome: Box::new(outcome),
+        })
+    }
+
+    /// A `machine` invoke's child reached root final state `state`: append the `received`
+    /// event, whose event is that state (`failed` as `error`).
+    fn machine_finished(&mut self, child: &str, state: &str) -> Result<Decision, InterpreterError> {
+        let event = if state == FAILED { "error" } else { state };
+        self.append("received", json!({ "event": event, "child": child }))?;
+        Ok(Decision::new(event, "machine", None))
+    }
+
+    /// Start machine `name` as a child run of state `s` and step it until it finishes, waits
+    /// or is interrupted (section 7, Sub-machines). The child's `message.md` holds `machine`,
+    /// `id`, `parent`, `depth`, `trigger: invoke`, any `params` and this run's body; a
+    /// `request` is written to its `request.json`, which makes it a router run. Appends the
+    /// `waiting` event naming the child first. `Err` holds why no child started: its
+    /// `depth` would exceed `max_depth`.
+    fn run_child(
+        &mut self,
+        s: usize,
+        name: &str,
+        params: &serde_norway::Mapping,
+        request: Option<&Value>,
+    ) -> Result<Result<Child, String>, InterpreterError> {
+        let ctx = self.ctx;
+        let machine = ctx
+            .machines
+            .get(name)
+            .ok_or_else(|| self.invalid(format!("machine `{name}` does not exist")))?;
+        let depth = self.depth + 1;
+        if depth > ctx.max_depth {
+            return Ok(Err(format!("max_depth {} reached", ctx.max_depth)));
+        }
+        let (id, run_dir) = create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
+        let parent = self.executor.info().run_id.clone();
+        let mut frontmatter = serde_norway::Mapping::new();
+        frontmatter.insert("machine".into(), name.into());
+        frontmatter.insert("id".into(), id.as_str().into());
+        frontmatter.insert("parent".into(), parent.as_str().into());
+        frontmatter.insert("depth".into(), depth.into());
+        frontmatter.insert("trigger".into(), "invoke".into());
+        if !params.is_empty() {
+            frontmatter.insert("params".into(), params.clone().into());
+        }
+        let message_path = run_dir.join(MESSAGE_FILE);
+        let yaml = serde_norway::to_string(&frontmatter).map_err(|e| InterpreterError::Message {
+            path: message_path.clone(),
+            message: e.to_string(),
+        })?;
+        let message = format!("---\n{yaml}---\n{}", self.message_body);
+        write_replace(&message_path, message.as_bytes())?;
+        if let Some(request) = request {
+            let path = run_dir.join(REQUEST_FILE);
+            let text = serde_json::to_string_pretty(request).unwrap_or_default() + "\n";
+            write_replace(&path, text.as_bytes())?;
+        }
+
+        self.append(
+            "waiting",
+            json!({ "state": self.machine.nodes[s].id, "child": id }),
+        )?;
+        let executor = ctx.executor(machine, &id, "invoke", params, Some(&parent))?;
+        let input = RunInput {
+            params: params.clone(),
+            message_body: self.message_body.clone(),
+            file: None,
+            depth,
+        };
+        let started = Instant::now();
+        let outcome = Interpreter::new(ctx, machine, executor, input)?.start()?;
+        Ok(Ok(Child {
+            id,
+            outcome,
+            duration_ms: started.elapsed().as_millis() as u64,
+        }))
+    }
+
+    /// The root final state child run `child` reached, or `None` if it has not finished.
+    fn child_final(&self, child: &str) -> Result<Option<String>, InterpreterError> {
+        let dir = self.ctx.runs_dir().join(child);
+        let events = read_events(&dir).map_err(io_err(&dir.join(EVENTS_FILE)))?;
+        let machine = events
+            .first()
+            .and_then(|e| e.get("machine"))
+            .and_then(Value::as_str)
+            .and_then(|name| self.ctx.machines.get(name));
+        let Some(machine) = machine else {
+            return Ok(None);
+        };
+        Ok(
+            (run_status(machine, &events, false) == RunStatus::Finished)
+                .then(|| current_state(&events).map(String::from))
+                .flatten(),
+        )
+    }
+
+    /// How long finished child run `child` took: its `run_finished` event's `duration_ms`.
+    fn child_duration(&self, child: &str) -> Result<u64, InterpreterError> {
+        let dir = self.ctx.runs_dir().join(child);
+        let events = read_events(&dir).map_err(io_err(&dir.join(EVENTS_FILE)))?;
+        Ok(events
+            .iter()
+            .rev()
+            .find(|e| e.get("type").and_then(Value::as_str) == Some("run_finished"))
+            .and_then(|e| e.get("duration_ms"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0))
     }
 
     /// Section 7, Check: evaluate the condition against the input, `data` and visits,
@@ -722,7 +961,8 @@ impl<'a> Interpreter<'a> {
     /// state finishes the run, so a nested one writes nothing.
     fn ledger_line(&self, t: usize) -> Option<String> {
         let finishes = is_root_final(self.machine, t) && self.machine.nodes[t].id != FAILED;
-        (self.executor.info().trigger == "migration" && finishes).then(|| self.file.clone())
+        let migration = self.executor.info().trigger == "migration";
+        self.file.clone().filter(|_| migration && finishes)
     }
 
     fn ledger_path(&self) -> PathBuf {
@@ -768,6 +1008,168 @@ impl<'a> Interpreter<'a> {
             kind,
         }
     }
+}
+
+impl Context<'_> {
+    /// `.decree/runs/`.
+    pub fn runs_dir(&self) -> PathBuf {
+        self.project_root.join(DECREE_DIR).join(RUNS_DIR)
+    }
+
+    /// The executor for run `run_id` of machine `m`, whose folder exists. A run whose
+    /// folder holds `request.json` is a router run: its scripts get `DECREE_REQUEST` and
+    /// `DECREE_REPLY`.
+    pub fn executor(
+        &self,
+        m: &LoadedMachine,
+        run_id: &str,
+        trigger: &str,
+        params: &serde_norway::Mapping,
+        parent: Option<&str>,
+    ) -> Result<Executor, InterpreterError> {
+        let run_dir = self.runs_dir().join(run_id);
+        let router = run_dir.join(REQUEST_FILE).is_file().then(|| RouterFiles {
+            request: run_dir.join(REQUEST_FILE),
+            reply: run_dir.join(REPLY_FILE),
+        });
+        let info = RunInfo {
+            project_root: self.project_root.clone(),
+            shared_source: self.shared_source.clone(),
+            run_dir,
+            run_id: run_id.to_string(),
+            machine: m.id.clone(),
+            trigger: trigger.to_string(),
+            data: data_env(&m.data, params),
+            max_attempts: self.max_attempts,
+            max_log_size: self.max_log_size,
+            parent: parent.map(String::from),
+            router,
+        };
+        Ok(Executor::open(info, Arc::clone(&self.shutdown))?)
+    }
+
+    /// A run's status (section 4, Run status), where a run left `waiting` for a child that
+    /// has already finished is `pending` (section 7, Sub-machines).
+    pub fn status(
+        &self,
+        m: &LoadedMachine,
+        events: &[Map<String, Value>],
+        lock_alive: bool,
+    ) -> RunStatus {
+        let status = run_status(m, events, lock_alive);
+        let child = events
+            .last()
+            .filter(|e| e.get("type").and_then(Value::as_str) == Some("waiting"))
+            .and_then(|e| e.get("child"))
+            .and_then(Value::as_str);
+        let Some(child) = child.filter(|_| status == RunStatus::Waiting) else {
+            return status;
+        };
+        let events = read_events(&self.runs_dir().join(child)).unwrap_or_default();
+        let finished = events
+            .first()
+            .and_then(|e| e.get("machine"))
+            .and_then(Value::as_str)
+            .and_then(|name| self.machines.get(name))
+            .is_some_and(|cm| run_status(cm, &events, false) == RunStatus::Finished);
+        if finished {
+            RunStatus::Pending
+        } else {
+            status
+        }
+    }
+}
+
+/// Continue `pending` run `run_id` from its folder (section 7, step 1): its last event is
+/// `received`, or `waiting` for a child run that has finished. A child run that finishes
+/// continues its parent, if the parent waits for it, and so on up: the result is that of
+/// the last run continued.
+pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterError> {
+    let run_dir = ctx.runs_dir().join(run_id);
+    let message_path = run_dir.join(MESSAGE_FILE);
+    let bytes = fs::read(&message_path).map_err(io_err(&message_path))?;
+    let (frontmatter, body) = split_message(&message_path, &bytes)?;
+    let text = |key: &str| frontmatter.get(key).and_then(|v| v.as_str()).map(String::from);
+    let name = text("machine")
+        .or_else(|| text("routine"))
+        .ok_or_else(|| InterpreterError::Message {
+            path: message_path.clone(),
+            message: "frontmatter names no `machine`".to_string(),
+        })?;
+    let machine = ctx.machines.get(&name).ok_or_else(|| InterpreterError::Invalid {
+        machine: name.clone(),
+        message: "no such machine".to_string(),
+    })?;
+    let trigger = text("trigger").unwrap_or_else(|| "inbox".to_string());
+    let parent = text("parent");
+    let params = match frontmatter.get("params") {
+        Some(serde_norway::Value::Mapping(params)) => params.clone(),
+        _ => serde_norway::Mapping::new(),
+    };
+    let depth = frontmatter
+        .get("depth")
+        .and_then(|v| v.as_u64())
+        .map_or(0, |d| u32::try_from(d).unwrap_or(u32::MAX));
+    let events = read_events(&run_dir).map_err(io_err(&run_dir.join(EVENTS_FILE)))?;
+    let file = events
+        .iter()
+        .find(|e| is_transition(e) && e.get("source").and_then(Value::as_str) == Some("claim"))
+        .and_then(|e| e.get("file"))
+        .and_then(Value::as_str)
+        .map(String::from);
+
+    let executor = ctx.executor(machine, run_id, &trigger, &params, parent.as_deref())?;
+    let input = RunInput {
+        params,
+        message_body: body,
+        file,
+        depth,
+    };
+    let outcome = Interpreter::new(ctx, machine, executor, input)?.resume()?;
+    let Some(parent) = parent.filter(|_| trigger == "invoke") else {
+        return Ok(outcome);
+    };
+    if !matches!(outcome, Outcome::Finished(_)) {
+        return Ok(outcome);
+    }
+    let parent_dir = ctx.runs_dir().join(&parent);
+    let parent_events = read_events(&parent_dir).map_err(io_err(&parent_dir.join(EVENTS_FILE)))?;
+    let waits_for_this = parent_events.last().is_some_and(|e| {
+        e.get("type").and_then(Value::as_str) == Some("waiting")
+            && e.get("child").and_then(Value::as_str) == Some(run_id)
+    });
+    if waits_for_this {
+        continue_run(ctx, &parent)
+    } else {
+        Ok(outcome)
+    }
+}
+
+/// Create `runs/<id>/` for a new run (section 4, Frontmatter keys): `id` is the UTC time,
+/// `YYYYMMDDTHHMMSSZ`, then `-` and 6 lowercase hex chars, the low 24 bits of (sub-second
+/// nanoseconds XOR process id). While that id exists in `inbox/` or `runs/`, add 1.
+pub fn create_run_dir(decree_dir: &Path) -> Result<(String, PathBuf), InterpreterError> {
+    let now = Utc::now();
+    let stamp = now.format("%Y%m%dT%H%M%SZ");
+    let mut low = (now.timestamp_subsec_nanos() ^ std::process::id()) & 0xff_ffff;
+    let runs = decree_dir.join(RUNS_DIR);
+    fs::create_dir_all(&runs).map_err(io_err(&runs))?;
+    for _ in 0..=0xff_ffff {
+        let id = format!("{stamp}-{low:06x}");
+        let dir = runs.join(&id);
+        let queued = decree_dir.join(INBOX_DIR).join(format!("{id}.md")).exists();
+        if !queued {
+            match fs::create_dir(&dir) {
+                Ok(()) => return Ok((id, dir)),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(io_err(&dir)(e)),
+            }
+        }
+        low = (low + 1) & 0xff_ffff;
+    }
+    Err(io_err(&runs)(io::Error::other(format!(
+        "every id for {stamp} is taken"
+    ))))
 }
 
 /// A final state whose parent is the root: entering it ends the run.
@@ -957,16 +1359,33 @@ pub fn reject(
 /// Set frontmatter `state` in the message at `path`, keeping every other key, the key
 /// order and the body bytes (section 4, Parsing and writing).
 pub fn mirror_state(path: &Path, state: &str) -> Result<(), InterpreterError> {
+    let bytes = fs::read(path).map_err(io_err(path))?;
+    let (mut mapping, body) = split_message(path, &bytes)?;
+    mapping.insert("state".into(), state.into());
+    let yaml = serde_norway::to_string(&mapping).map_err(|e| InterpreterError::Message {
+        path: path.to_path_buf(),
+        message: e.to_string(),
+    })?;
+    let mut out = format!("---\n{yaml}---\n").into_bytes();
+    out.extend_from_slice(body.as_bytes());
+    write_replace(path, &out)
+}
+
+/// A message's frontmatter and its body, exactly as written (section 4, Parsing and
+/// writing). `path` names the message in errors.
+fn split_message(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(serde_norway::Mapping, String), InterpreterError> {
     let message_err = |message: String| InterpreterError::Message {
         path: path.to_path_buf(),
         message,
     };
-    let bytes = fs::read(path).map_err(io_err(path))?;
-    let text = std::str::from_utf8(&bytes).map_err(|e| message_err(e.to_string()))?;
+    let text = std::str::from_utf8(bytes).map_err(|e| message_err(e.to_string()))?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
 
     let mut lines = text.split_inclusive('\n');
-    let (mut mapping, body) = match lines.next() {
+    match lines.next() {
         Some(first) if first.trim_end() == "---" => {
             let mut yaml = String::new();
             let mut offset = first.len();
@@ -990,15 +1409,10 @@ pub fn mirror_state(path: &Path, state: &str) -> Result<(), InterpreterError> {
                 serde_norway::from_str(&yaml)
                     .map_err(|e| message_err(format!("frontmatter: {e}")))?
             };
-            (mapping, &text[offset..])
+            Ok((mapping, text[offset..].to_string()))
         }
-        _ => (serde_norway::Mapping::new(), text),
-    };
-    mapping.insert("state".into(), state.into());
-    let yaml = serde_norway::to_string(&mapping).map_err(|e| message_err(e.to_string()))?;
-    let mut out = format!("---\n{yaml}---\n").into_bytes();
-    out.extend_from_slice(body.as_bytes());
-    write_replace(path, &out)
+        _ => Ok((serde_norway::Mapping::new(), text.to_string())),
+    }
 }
 
 fn read_or_empty(path: &Path) -> Result<String, InterpreterError> {
@@ -1024,7 +1438,6 @@ fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), InterpreterError> {
 mod tests {
     use super::*;
     use crate::machine::{load_machine_text, CheckEnv};
-    use crate::runtime::{data_env, RunInfo};
     use std::collections::{BTreeSet, HashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -1037,12 +1450,15 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     }
 
-    /// A temp project holding fixture machine `tests/fixtures/machines/step/<name>.yml`, a run
-    /// folder with its `message.md`, and every script the machine names: `record.sh`
-    /// installed under that name, unless `scripts` maps the name to another fixture.
+    /// A temp project holding fixture machine `tests/fixtures/machines/step/<name>.yml` (or
+    /// several machines, the first of which the run uses), a run folder with its
+    /// `message.md`, and every script the machines name: `record.sh` installed under that
+    /// name, unless `scripts` maps the name to another fixture.
     struct Project {
         tmp: TempDir,
-        machine: LoadedMachine,
+        name: String,
+        machines: BTreeMap<String, LoadedMachine>,
+        default_router: Option<String>,
         shutdown: Arc<AtomicBool>,
     }
 
@@ -1069,43 +1485,61 @@ mod tests {
 
         /// The same, for machine `name` written as `text`.
         fn from_text(name: &str, text: &str, scripts: &[(&str, &str)]) -> Self {
+            Self::from_texts(&[(name, text)], scripts, None)
+        }
+
+        /// The same, for several machines: the run uses the first. `default_router` is the
+        /// config value.
+        fn from_texts(
+            machines: &[(&str, &str)],
+            scripts: &[(&str, &str)],
+            default_router: Option<&str>,
+        ) -> Self {
             let tmp = TempDir::new().unwrap();
             let decree = tmp.path().join(DECREE_DIR);
-            let machine = load_machine_text(name, Path::new("m.yml"), text).unwrap();
+            let loaded: BTreeMap<String, LoadedMachine> = machines
+                .iter()
+                .map(|(name, text)| {
+                    let m = load_machine_text(name, Path::new("m.yml"), text).unwrap();
+                    (name.to_string(), m)
+                })
+                .collect();
 
             let script_dir = decree.join("scripts");
             fs::create_dir_all(&script_dir).unwrap();
             let fixtures = repo().join("tests/fixtures/scripts");
-            {
-                for script in script_names(&machine) {
-                    let file = scripts
-                        .iter()
-                        .find(|(s, _)| *s == script)
-                        .map_or("record", |(_, f)| f);
-                    // fs::copy keeps the fixture's executable bit.
-                    fs::copy(
-                        fixtures.join(format!("{file}.sh")),
-                        script_dir.join(format!("{script}.sh")),
-                    )
-                    .unwrap();
-                }
+            for script in loaded.values().flat_map(script_names) {
+                let file = scripts
+                    .iter()
+                    .find(|(s, _)| *s == script)
+                    .map_or("record", |(_, f)| f);
+                // fs::copy keeps the fixture's executable bit.
+                fs::copy(
+                    fixtures.join(format!("{file}.sh")),
+                    script_dir.join(format!("{script}.sh")),
+                )
+                .unwrap();
             }
             // Every fixture machine passes `decree check`.
-            let ids = BTreeSet::from([name.to_string()]);
-            let machines = BTreeMap::new();
+            let ids: BTreeSet<String> = loaded.keys().cloned().collect();
             let env = CheckEnv {
                 decree_dir: &decree,
                 shared_source: None,
                 machine_ids: &ids,
-                machines: &machines,
-                default_router: None,
+                machines: &loaded,
+                default_router,
             };
-            let problems = machine.validate(text, &env);
-            assert!(problems.is_empty(), "{name}: {problems:?}");
+            for (name, text) in machines {
+                let problems = loaded[*name].validate(text, &env);
+                assert!(problems.is_empty(), "{name}: {problems:?}");
+            }
 
+            let name = machines[0].0;
             let project = Project {
                 tmp,
-                machine,
+                name: name.to_string(),
+                machines: loaded,
+                default_router: default_router.map(String::from),
                 shutdown: Arc::new(AtomicBool::new(false)),
             };
             fs::create_dir_all(project.run_dir()).unwrap();
@@ -1113,6 +1547,24 @@ mod tests {
                 format!("---\nid: {RUN_ID}\nmachine: {name}\ntrigger: inbox\n---\n{BODY}");
             fs::write(project.run_dir().join(MESSAGE_FILE), message).unwrap();
             project
+        }
+
+        /// The machine the run uses.
+        fn machine(&self) -> &LoadedMachine {
+            &self.machines[&self.name]
+        }
+
+        fn ctx(&self) -> Context<'_> {
+            Context {
+                project_root: self.root(),
+                shared_source: None,
+                machines: &self.machines,
+                default_router: self.default_router.clone(),
+                max_attempts: 3,
+                max_depth: 10,
+                max_log_size: 0,
+                shutdown: Arc::clone(&self.shutdown),
+            }
         }
 
         fn root(&self) -> PathBuf {
@@ -1124,18 +1576,9 @@ mod tests {
         }
 
         fn executor(&self, trigger: &str, params: &serde_norway::Mapping) -> Executor {
-            let info = RunInfo {
-                project_root: self.root(),
-                shared_source: None,
-                run_dir: self.run_dir(),
-                run_id: RUN_ID.to_string(),
-                machine: self.machine.id.clone(),
-                trigger: trigger.to_string(),
-                data: data_env(&self.machine.data, params),
-                max_attempts: 3,
-                max_log_size: 0,
-            };
-            Executor::open(info, Arc::clone(&self.shutdown)).unwrap()
+            self.ctx()
+                .executor(self.machine(), RUN_ID, trigger, params, None)
+                .unwrap()
         }
 
         fn run(&self) -> Outcome {
@@ -1153,11 +1596,13 @@ mod tests {
             params: &serde_norway::Mapping,
         ) -> Result<Outcome, InterpreterError> {
             let input = RunInput {
-                params,
-                message_body: BODY,
-                file,
+                params: params.clone(),
+                message_body: BODY.to_string(),
+                file: Some(file.to_string()),
+                depth: 0,
             };
-            Interpreter::new(&self.machine, self.executor(trigger, params), input)?.start()
+            let ctx = self.ctx();
+            Interpreter::new(&ctx, self.machine(), self.executor(trigger, params), input)?.start()
         }
 
         /// The log of the first `script` event of `script`.
@@ -1212,6 +1657,15 @@ mod tests {
 
         fn processed(&self) -> String {
             fs::read_to_string(self.root().join(".decree/processed.md")).unwrap_or_default()
+        }
+    }
+
+    /// The input of an inbox message `inbox.md` with no params.
+    fn inbox_input() -> RunInput {
+        RunInput {
+            message_body: BODY.to_string(),
+            file: Some("inbox.md".to_string()),
+            ..RunInput::default()
         }
     }
 
@@ -1274,7 +1728,7 @@ mod tests {
             (&json!("script"), &json!("root_exit"))
         );
         assert_eq!(mirrored_state(&p), "done");
-        assert_eq!(run_status(&p.machine, &events, false), RunStatus::Finished);
+        assert_eq!(run_status(p.machine(), &events, false), RunStatus::Finished);
     }
 
     #[test]
@@ -1733,36 +2187,6 @@ mod tests {
         assert!(p.events_of("script").iter().all(|e| e["state"] != "decide"));
     }
 
-    #[test]
-    fn machine_and_model_invokes_are_not_run_yet() {
-        for (invoke, kind) in [
-            ("{ machine: other }", "machine"),
-            ("{ choose: model, question: \"Go?\" }", "choose: model"),
-        ] {
-            let text = format!(
-                "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    invoke: {invoke}\n    \
-                 transitions:\n      done: {{ target: done, description: Done. }}\n      \
-                 stop: {{ target: done, description: Stop. }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
-            );
-            let m = load_machine_text("m", Path::new("m.yml"), &text).unwrap();
-            let p = Project::new("step_normal", &[]);
-            let params = serde_norway::Mapping::new();
-            let input = RunInput {
-                params: &params,
-                message_body: BODY,
-                file: "inbox.md",
-            };
-            let err = Interpreter::new(&m, p.executor("inbox", &params), input)
-                .unwrap()
-                .start()
-                .unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                format!("machine `m`: a: running `{kind}` invokes is not implemented yet")
-            );
-        }
-    }
-
     // ---------------------------------------------------------------
     // Other events
     // ---------------------------------------------------------------
@@ -1804,7 +2228,7 @@ mod tests {
         assert_eq!(last["script"], "root_entry");
         assert!(p.order().is_empty());
         assert_eq!(
-            run_status(&p.machine, &events, false),
+            run_status(p.machine(), &events, false),
             RunStatus::Interrupted
         );
     }
@@ -1946,7 +2370,7 @@ mod tests {
         assert_eq!(run_finished.len(), 1);
         assert_eq!(run_finished[0]["state"], "done");
         assert_eq!(
-            run_status(&p.machine, &events[..=at + 1], false),
+            run_status(p.machine(), &events[..=at + 1], false),
             RunStatus::Interrupted
         );
         assert_eq!(visits(&events)["finished"], 1);
@@ -2025,13 +2449,8 @@ mod tests {
             .events()
             .append("received", fields.as_object().unwrap().clone())
             .unwrap();
-        let params = serde_norway::Mapping::new();
-        let input = RunInput {
-            params: &params,
-            message_body: BODY,
-            file: "inbox.md",
-        };
-        Interpreter::new(&p.machine, executor, input)
+        let ctx = p.ctx();
+        Interpreter::new(&ctx, p.machine(), executor, inbox_input())
             .unwrap()
             .resume()
             .unwrap()
@@ -2081,7 +2500,7 @@ mod tests {
         let ahead = (timeout_at - before).num_seconds();
         assert!((59..=61).contains(&ahead), "{ahead}");
         assert!(p.events_of("run_finished").is_empty());
-        assert_eq!(run_status(&p.machine, &events, false), RunStatus::Waiting);
+        assert_eq!(run_status(p.machine(), &events, false), RunStatus::Waiting);
         assert_eq!(mirrored_state(&p), "approval");
     }
 
@@ -2155,7 +2574,7 @@ mod tests {
         );
         assert!(log.contains("DECREE_WAIT_ID=\n"), "{log}");
         assert!(log.contains("DECREE_CHOICES=\n"), "{log}");
-        assert_eq!(run_status(&p.machine, &events, false), RunStatus::Finished);
+        assert_eq!(run_status(p.machine(), &events, false), RunStatus::Finished);
         // Log numbers continue after the logs written before the wait.
         let logs: Vec<&str> = scripts.iter().map(|e| e["log"].as_str().unwrap()).collect();
         let unique: HashSet<&&str> = logs.iter().collect();
@@ -2207,12 +2626,8 @@ mod tests {
     fn resume_refuses_a_run_that_has_not_received_an_event() {
         let (p, _) = person_project(&[]);
         let params = serde_norway::Mapping::new();
-        let input = RunInput {
-            params: &params,
-            message_body: BODY,
-            file: "inbox.md",
-        };
-        let err = Interpreter::new(&p.machine, p.executor("inbox", &params), input)
+        let ctx = p.ctx();
+        let err = Interpreter::new(&ctx, p.machine(), p.executor("inbox", &params), inbox_input())
             .unwrap()
             .resume()
             .unwrap_err();
@@ -2264,6 +2679,324 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // Sub-machines (section 7)
+    // ---------------------------------------------------------------
+
+    fn fixture(name: &str) -> String {
+        fs::read_to_string(repo().join(format!("tests/fixtures/machines/step/{name}.yml"))).unwrap()
+    }
+
+    /// `step_parent` invoking `step_child`, whose `child_work` script is `child_work`.
+    fn parent_project(child_work: &str) -> Project {
+        Project::from_texts(
+            &[
+                ("step_parent", &fixture("step_parent")),
+                ("step_child", &fixture("step_child")),
+            ],
+            &[("child_work", child_work)],
+            None,
+        )
+    }
+
+    impl Project {
+        fn child_dir(&self, id: &str) -> PathBuf {
+            self.root().join(".decree/runs").join(id)
+        }
+
+        fn child_events(&self, id: &str) -> Vec<Map<String, Value>> {
+            read_events(&self.child_dir(id)).unwrap()
+        }
+
+        /// The child run id named by the first `waiting` event.
+        fn child_id(&self) -> String {
+            self.events_of("waiting")[0]["child"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    }
+
+    fn is_run_id(id: &str) -> bool {
+        let (stamp, hex) = id.split_once('-').unwrap();
+        stamp.len() == 16
+            && DateTime::parse_from_str(&format!("{stamp}+0000"), "%Y%m%dT%H%M%SZ%z").is_ok()
+            && hex.len() == 6
+            && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+
+    #[test]
+    fn machine_invoke_runs_a_child_run_in_its_own_folder() {
+        let p = parent_project("print_env");
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
+        let child = p.child_id();
+        assert!(is_run_id(&child), "{child}");
+
+        // The child's message.md: machine, id, parent, depth, trigger, params, the body.
+        let message = fs::read_to_string(p.child_dir(&child).join(MESSAGE_FILE)).unwrap();
+        assert_eq!(
+            message,
+            format!(
+                "---\nmachine: step_child\nid: {child}\nparent: {RUN_ID}\ndepth: 1\n\
+                 trigger: invoke\nparams:\n  label: release\nstate: done\n---\n{BODY}"
+            )
+        );
+        // An ordinary run with its own events and logs.
+        let events = p.child_events(&child);
+        let claim = &events[0];
+        assert_eq!(claim["machine"], "step_child");
+        assert_eq!(claim["run_id"], json!(child));
+        assert_eq!(claim["trigger"], "invoke");
+        assert_eq!(claim["file"], Value::Null);
+        assert_eq!(events.last().unwrap()["type"], "run_finished");
+        assert_eq!(events.last().unwrap()["state"], "done");
+        let script = events.iter().find(|e| e["type"] == "script").unwrap();
+        let log =
+            fs::read_to_string(p.child_dir(&child).join(script["log"].as_str().unwrap())).unwrap();
+        for line in [
+            format!("DECREE_PARENT={RUN_ID}"),
+            format!("DECREE_MESSAGE_ID={child}"),
+            "DECREE_MACHINE=step_child".to_string(),
+            "DECREE_TRIGGER=invoke".to_string(),
+            "DECREE_DATA_LABEL=release".to_string(),
+            "DECREE_REQUEST=".to_string(),
+            "DECREE_REPLY=".to_string(),
+        ] {
+            assert!(log.lines().any(|l| l == line), "{line}\n{log}");
+        }
+
+        // The parent: waiting for the child, received its final state, then the transition.
+        let kinds: Vec<String> = p
+            .events()
+            .iter()
+            .map(|e| e["type"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            kinds,
+            ["transition", "waiting", "received", "script", "transition", "run_finished"]
+        );
+        let waiting = &p.events_of("waiting")[0];
+        assert_eq!(waiting["state"], "build");
+        assert!(waiting.get("wait_id").is_none());
+        let received = &p.events_of("received")[0];
+        assert_eq!(received["event"], "done");
+        assert_eq!(received["child"], json!(child));
+        assert!(received.get("wait_id").is_none());
+        let taken = &p.events_of("transition")[1];
+        assert_eq!(p.transitions()[1], "build done done machine");
+        assert_eq!(taken["exit_code"], Value::Null);
+        assert_eq!(p.order(), ["build_exit"]);
+    }
+
+    #[test]
+    fn machine_invoke_takes_the_childs_final_state_and_failed_as_error() {
+        let p = parent_project("print_reject");
+        assert_eq!(p.run(), Outcome::Finished("rejected".into()));
+        assert_eq!(p.events_of("received")[0]["event"], "rejected");
+        assert_eq!(p.transitions()[1], "build rejected rejected machine");
+
+        let p = parent_project("exit_three");
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
+        let child = p.child_id();
+        assert_eq!(p.child_events(&child).last().unwrap()["state"], "failed");
+        assert_eq!(p.events_of("received")[0]["event"], "error");
+        assert_eq!(p.transitions()[1], "build error failed machine");
+    }
+
+    #[test]
+    fn machine_invoke_past_max_depth_starts_no_child_and_is_error() {
+        let p = parent_project("print_env");
+        let input = RunInput {
+            depth: 10,
+            ..inbox_input()
+        };
+        let ctx = p.ctx();
+        let empty = serde_norway::Mapping::new();
+        let outcome = Interpreter::new(&ctx, p.machine(), p.executor("emit", &empty), input)
+            .unwrap()
+            .start()
+            .unwrap();
+        assert_eq!(outcome, Outcome::Finished("failed".into()));
+        assert!(p.events_of("waiting").is_empty());
+        let taken = &p.events_of("transition")[1];
+        assert_eq!(p.transitions()[1], "build error failed machine");
+        assert_eq!(taken["error"], "max_depth 10 reached");
+        let runs: Vec<_> = fs::read_dir(p.root().join(".decree/runs"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(runs, [RUN_ID]);
+    }
+
+    /// `step_parent` invoking `step_person`, run until the child waits for a reply.
+    fn parent_of_person() -> (Project, String, String) {
+        let parent = fixture("step_parent").replace("machine: step_child, params: { label: release }", "machine: step_person");
+        let p = Project::from_texts(
+            &[("step_parent", &parent), ("step_person", &fixture("step_person"))],
+            &[],
+            None,
+        );
+        let outcome = p.run();
+        let child = p.child_id();
+        let entered = p
+            .child_events(&child)
+            .into_iter()
+            .find(|e| e["type"] == "transition" && e["to"] == "approval")
+            .unwrap();
+        let wait_id = format!("{child}.w{}", entered["seq"]);
+        assert_eq!(
+            outcome,
+            Outcome::Child {
+                state: "build".into(),
+                child: child.clone(),
+                outcome: Box::new(Outcome::Waiting {
+                    state: "approval".into(),
+                    wait_id: wait_id.clone()
+                })
+            }
+        );
+        (p, child, wait_id)
+    }
+
+    /// Append a `received` event to run `id`, as reply delivery (M4.3) does.
+    fn deliver(p: &Project, id: &str, fields: Value) {
+        let m = &p.machines[p.child_events(id)[0]["machine"].as_str().unwrap()];
+        let mut events = EventLog::open(&p.child_dir(id), id, &m.id, "invoke").unwrap();
+        events
+            .append("received", fields.as_object().unwrap().clone())
+            .unwrap();
+    }
+
+    #[test]
+    fn child_waiting_for_a_person_leaves_the_parent_waiting_until_the_reply_finishes_both() {
+        let (p, child, wait_id) = parent_of_person();
+        let ctx = p.ctx();
+        let events = p.events();
+        assert_eq!(events.last().unwrap()["type"], "waiting");
+        assert_eq!(events.last().unwrap()["child"], json!(child));
+        assert_eq!(ctx.status(p.machine(), &events, false), RunStatus::Waiting);
+        let person = &p.machines["step_person"];
+        assert_eq!(
+            run_status(person, &p.child_events(&child), false),
+            RunStatus::Waiting
+        );
+
+        // The reply finishes the child, then the parent.
+        deliver(
+            &p,
+            &child,
+            json!({ "wait_id": wait_id, "event": "approve", "file": "reply.md" }),
+        );
+        assert_eq!(
+            continue_run(&ctx, &child).unwrap(),
+            Outcome::Finished("done".into())
+        );
+        let child_events = p.child_events(&child);
+        assert_eq!(child_events.last().unwrap()["type"], "run_finished");
+        assert_eq!(child_events.last().unwrap()["state"], "done");
+        let received = &p.events_of("received")[0];
+        assert_eq!(received["child"], json!(child));
+        assert_eq!(received["event"], "done");
+        assert_eq!(
+            p.transitions(),
+            ["- claimed build claim", "build done done machine"]
+        );
+        let events = p.events();
+        assert_eq!(events.last().unwrap()["type"], "run_finished");
+        assert_eq!(ctx.status(p.machine(), &events, false), RunStatus::Finished);
+        // The child's scripts ran in the child; the parent's onexit after it finished.
+        assert_eq!(p.order().last().unwrap(), "build_exit");
+        assert_eq!(mirrored_state(&p), "done");
+    }
+
+    #[test]
+    fn parent_of_a_finished_child_is_pending_and_continues() {
+        let (p, child, wait_id) = parent_of_person();
+        let ctx = p.ctx();
+        deliver(
+            &p,
+            &child,
+            json!({ "wait_id": wait_id, "event": "reject", "file": "reply.md" }),
+        );
+        // Continue only the child, as if decree stopped before continuing the parent.
+        let person = &p.machines["step_person"];
+        let executor = ctx
+            .executor(person, &child, "invoke", &serde_norway::Mapping::new(), Some(RUN_ID))
+            .unwrap();
+        let input = RunInput {
+            depth: 1,
+            ..inbox_input()
+        };
+        let outcome = Interpreter::new(&ctx, person, executor, input)
+            .unwrap()
+            .resume()
+            .unwrap();
+        assert_eq!(outcome, Outcome::Finished("rejected".into()));
+        let events = p.events();
+        assert_eq!(run_status(p.machine(), &events, false), RunStatus::Waiting);
+        assert_eq!(ctx.status(p.machine(), &events, false), RunStatus::Pending);
+
+        assert_eq!(
+            continue_run(&ctx, RUN_ID).unwrap(),
+            Outcome::Finished("rejected".into())
+        );
+        assert_eq!(p.transitions()[1], "build rejected rejected machine");
+    }
+
+    #[test]
+    fn parent_of_an_unfinished_child_does_not_continue() {
+        let (p, child, _) = parent_of_person();
+        let err = continue_run(&p.ctx(), RUN_ID).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("cannot continue the run: child run `{child}` has not finished")
+        );
+        assert_eq!(p.events().last().unwrap()["type"], "waiting");
+    }
+
+    #[test]
+    fn interrupted_child_leaves_the_parent_waiting() {
+        let p = parent_project("print_env");
+        p.shutdown.store(true, Ordering::SeqCst);
+        let outcome = p.run();
+        let child = p.child_id();
+        assert_eq!(
+            outcome,
+            Outcome::Child {
+                state: "build".into(),
+                child: child.clone(),
+                outcome: Box::new(Outcome::Interrupted("work".into()))
+            }
+        );
+        assert_eq!(p.child_events(&child).last().unwrap()["type"], "interrupted");
+        let events = p.events();
+        assert_eq!(events.last().unwrap()["type"], "waiting");
+        assert_eq!(p.ctx().status(p.machine(), &events, false), RunStatus::Waiting);
+    }
+
+    #[test]
+    fn run_ids_are_unique_and_skip_ids_taken_in_the_inbox() {
+        let tmp = TempDir::new().unwrap();
+        let decree = tmp.path().join(DECREE_DIR);
+        let mut ids = BTreeSet::new();
+        for _ in 0..50 {
+            let (id, dir) = create_run_dir(&decree).unwrap();
+            assert!(is_run_id(&id), "{id}");
+            assert!(dir.is_dir());
+            assert!(ids.insert(id));
+        }
+        // Every next id of this second is queued in the inbox: the run takes another.
+        fs::create_dir_all(decree.join(INBOX_DIR)).unwrap();
+        let (id, _) = create_run_dir(&decree).unwrap();
+        let stamp = id.split_once('-').unwrap().0.to_string();
+        let low = u32::from_str_radix(id.split_once('-').unwrap().1, 16).unwrap();
+        for k in 1..=3 {
+            let next = format!("{stamp}-{:06x}", (low + k) & 0xff_ffff);
+            fs::write(decree.join(INBOX_DIR).join(format!("{next}.md")), "").unwrap();
+        }
+        let _ = id;
+    }
+
+    // ---------------------------------------------------------------
     // W3C SCXML IRP tests (tests/fixtures/scxml/)
     // ---------------------------------------------------------------
 
@@ -2282,11 +3015,11 @@ mod tests {
             let p = Project::new("step_normal", &[]);
             let params = serde_norway::Mapping::new();
             let input = RunInput {
-                params: &params,
-                message_body: "",
-                file: "irp.md",
+                file: Some("irp.md".to_string()),
+                ..RunInput::default()
             };
-            let outcome = Interpreter::new(&m, p.executor("inbox", &params), input)
+            let ctx = p.ctx();
+            let outcome = Interpreter::new(&ctx, &m, p.executor("inbox", &params), input)
                 .unwrap()
                 .start()
                 .unwrap();
@@ -2406,7 +3139,7 @@ mod tests {
         assert_eq!(t["error"], "params: unknown name `x`");
         assert_eq!(t["file"], "bad.md");
         assert_eq!(mirrored_state(&p), "failed");
-        assert_eq!(run_status(&p.machine, &events, false), RunStatus::Finished);
+        assert_eq!(run_status(p.machine(), &events, false), RunStatus::Finished);
         assert!(p.order().is_empty());
     }
 
@@ -2417,7 +3150,7 @@ mod tests {
     #[test]
     fn run_status_follows_the_section_4_order() {
         let p = Project::new("step_normal", &[]);
-        let m = &p.machine;
+        let m = p.machine();
         let event = |v: Value| v.as_object().unwrap().clone();
         let claim = event(json!({"type": "transition", "to": "a", "source": "claim"}));
         let finished = event(json!({"type": "transition", "to": "done", "source": "exit_code"}));

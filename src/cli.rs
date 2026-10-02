@@ -25,7 +25,7 @@ pub struct Cli {
 pub enum Command {
     /// Initialize project (refuses to touch an existing .decree/)
     Init {
-        /// AI backend for commands.ai_router [default: first found on PATH, else opencode]
+        /// AI backend of the router machine init writes [default: first found on PATH, else opencode]
         #[arg(long, value_enum)]
         ai: Option<AiBackend>,
 

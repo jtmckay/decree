@@ -1,4 +1,1 @@
-commands:
-  ai_router: "true {prompt}"
-  ai_interactive: "true"
 default_routine: m

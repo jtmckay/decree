@@ -266,19 +266,9 @@ pub fn process_single_message(
     // Parse and normalize the message
     let mut msg = InboxMessage::from_file(project_root, filename)?;
 
-    // Build the AI router callback if configured
-    let ai_router_cmd = config.commands.ai_router.clone();
-    let ai_router_fn: Option<Box<message::RouterFn>> = if ai_router_cmd.is_empty() {
-        None
-    } else {
-        Some(Box::new(move |prompt: &str| {
-            invoke_ai_router(&ai_router_cmd, prompt)
-        }))
-    };
-    let ai_router_ref = ai_router_fn
-        .as_ref()
-        .map(|f| f.as_ref() as &dyn Fn(&str) -> Result<String, DecreeError>);
-    let was_modified = msg.normalize(project_root, config, ai_router_ref)?;
+    // Until M5.3, a message with no `routine:` goes to `default_routine`; the model's
+    // choice moved into router machines (`claude_router`'s `ask_claude`).
+    let was_modified = msg.normalize(project_root, config, None)?;
 
     // After normalization, rename the inbox file if the ID-based name differs from the original.
     let active_filename: String = if was_modified {
@@ -1066,52 +1056,6 @@ fn print_progress(msg: &str) {
     }
 }
 
-/// Format a log block exposing the literal prompt sent to an AI invocation.
-///
-/// Makes decree's own AI calls (currently the routing call) visible so the
-/// user can see exactly what prompt/context was handed to the AI.
-fn format_ai_call_log(label: &str, command: &str, prompt: &str) -> String {
-    format!(
-        "[decree] AI call ({label}) — command: {command}\n\
-         [decree] ──── prompt ────\n\
-         {prompt}\n\
-         [decree] ──── end prompt ────"
-    )
-}
-
-/// Invoke the AI router command with the given prompt.
-///
-/// The router command template uses `{prompt}` as a placeholder for the actual prompt.
-/// Falls back to passing the prompt as a trailing argument if no placeholder is found.
-fn invoke_ai_router(cmd_template: &str, prompt: &str) -> Result<String, DecreeError> {
-    // Surface the literal prompt before invoking, so it is visible even if the
-    // AI call hangs or fails.
-    eprintln!("{}", format_ai_call_log("router", cmd_template, prompt));
-
-    let cmd_str = if cmd_template.contains("{prompt}") {
-        cmd_template.replace("{prompt}", &shell_escape(prompt))
-    } else {
-        format!("{} {}", cmd_template, shell_escape(prompt))
-    };
-
-    let output = std::process::Command::new("bash")
-        .arg("-c")
-        .arg(&cmd_str)
-        .output()
-        .map_err(|e| DecreeError::Other(format!("failed to run AI router: {e}")))?;
-
-    if !output.status.success() {
-        return Err(DecreeError::Other(format!(
-            "AI router exited with code {}",
-            output.status.code().unwrap_or(1)
-        )));
-    }
-
-    let response = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    eprintln!("[decree] AI response (router): {response}");
-    Ok(response)
-}
-
 /// Write hook output to a log file.
 fn write_hook_log(log_path: &Path, hook_type: HookType, output: &str) -> Result<(), DecreeError> {
     if output.is_empty() {
@@ -1449,7 +1393,7 @@ mod tests {
         std::fs::write(decree.join("processed.md"), "").unwrap();
         std::fs::write(
             decree.join("config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\n",
+            "max_attempts: 3\n",
         )
         .unwrap();
     }
@@ -2008,7 +1952,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: fail-before\n",
+            "hooks:\n  beforeEach: fail-before\n",
         )
         .unwrap();
 
@@ -2093,7 +2037,7 @@ mod tests {
 
         std::fs::write(
             dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  onDeadLetter: on-dead-letter\n",
+            "hooks:\n  onDeadLetter: on-dead-letter\n",
         )
         .unwrap();
 
@@ -2139,7 +2083,7 @@ mod tests {
 
         std::fs::write(
             dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: fail-before\n  onDeadLetter: on-dead-letter\n",
+            "hooks:\n  beforeEach: fail-before\n  onDeadLetter: on-dead-letter\n",
         )
         .unwrap();
 
@@ -2588,7 +2532,7 @@ mod tests {
         // Config with beforeEach hook
         std::fs::write(
             dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: git-baseline\n",
+            "hooks:\n  beforeEach: git-baseline\n",
         )
         .unwrap();
 
@@ -2633,7 +2577,7 @@ mod tests {
 
         std::fs::write(
             dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: silent\n",
+            "hooks:\n  beforeEach: silent\n",
         )
         .unwrap();
 
@@ -2676,7 +2620,7 @@ mod tests {
 
         std::fs::write(
             dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: echo\n  ai_interactive: echo\nhooks:\n  beforeEach: fail-hook\n",
+            "hooks:\n  beforeEach: fail-hook\n",
         )
         .unwrap();
 
@@ -2724,92 +2668,7 @@ mod tests {
     }
 
     #[test]
-    fn test_invoke_ai_router_success() {
-        // Use printf to avoid trailing args from the prompt
-        let result = invoke_ai_router("printf rust-develop", "ignored prompt");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "rust-develop");
-    }
-
-    #[test]
-    fn test_format_ai_call_log_contains_literal_prompt() {
-        let block = format_ai_call_log("router", "claude -p {prompt}", "Pick a routine for: do X");
-        assert!(block.contains("AI call (router)"));
-        assert!(block.contains("command: claude -p {prompt}"));
-        // The literal prompt must appear verbatim.
-        assert!(block.contains("Pick a routine for: do X"));
-        assert!(block.contains("prompt"));
-    }
-
-    #[test]
-    fn test_invoke_ai_router_failure() {
-        let result = invoke_ai_router("exit 1", "test prompt");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_invoke_ai_router_with_prompt_placeholder() {
-        let result = invoke_ai_router("echo {prompt}", "hello world");
-        assert!(result.is_ok());
-        // The prompt is shell-escaped, so it comes through as the literal string
-        assert!(result.unwrap().contains("hello world"));
-    }
-
-    #[test]
-    fn test_ai_router_used_in_normalize() {
-        let dir = TempDir::new().unwrap();
-        setup_decree_dir(&dir);
-
-        // Create both routines
-        std::fs::write(
-            dir.path().join(".decree/routines/develop.sh"),
-            "#!/usr/bin/env bash\necho 'done'\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join(".decree/routines/rust-develop.sh"),
-            "#!/usr/bin/env bash\necho 'done'\n",
-        )
-        .unwrap();
-
-        // Router template
-        std::fs::write(
-            dir.path().join(".decree/router.md"),
-            "Select routine.\n\n{routines}\n\n{message}\n",
-        )
-        .unwrap();
-
-        // Config with ai_router that prints "rust-develop" (printf ignores extra args)
-        std::fs::write(
-            dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: printf rust-develop\n  ai_interactive: echo\n",
-        )
-        .unwrap();
-
-        // Message with NO routine field — should trigger router
-        let content =
-            "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\n---\nTest body.\n";
-        std::fs::write(
-            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
-            content,
-        )
-        .unwrap();
-
-        let config = AppConfig::load_from_project(dir.path()).unwrap();
-        let shutdown = Arc::new(AtomicBool::new(false));
-
-        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
-        assert!(result.is_ok());
-
-        // Verify the message was normalized with "rust-develop" routine
-        let run_msg =
-            std::fs::read_to_string(dir.path().join(".decree/runs/D0001-1432-test-0/message.md"))
-                .unwrap();
-        assert!(run_msg.contains("routine: rust-develop"));
-    }
-
-    #[test]
-    fn test_ai_router_fallback_on_empty_config() {
+    fn test_message_without_routine_goes_to_default_routine() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
 
@@ -2819,10 +2678,9 @@ mod tests {
         )
         .unwrap();
 
-        // Config with empty ai_router
         std::fs::write(
             dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: ''\n  ai_interactive: echo\ndefault_routine: develop\n",
+            "default_routine: develop\n",
         )
         .unwrap();
 
@@ -2836,50 +2694,6 @@ mod tests {
         let config = AppConfig::load_from_project(dir.path()).unwrap();
         let shutdown = Arc::new(AtomicBool::new(false));
 
-        let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
-        assert!(result.is_ok());
-
-        let run_msg =
-            std::fs::read_to_string(dir.path().join(".decree/runs/D0001-1432-test-0/message.md"))
-                .unwrap();
-        assert!(run_msg.contains("routine: develop"));
-    }
-
-    #[test]
-    fn test_ai_router_fallback_on_failure() {
-        let dir = TempDir::new().unwrap();
-        setup_decree_dir(&dir);
-
-        std::fs::write(
-            dir.path().join(".decree/routines/develop.sh"),
-            "#!/usr/bin/env bash\necho 'done'\n",
-        )
-        .unwrap();
-
-        std::fs::write(
-            dir.path().join(".decree/router.md"),
-            "{routines}\n{message}\n",
-        )
-        .unwrap();
-
-        // Router command that fails
-        std::fs::write(
-            dir.path().join(".decree/config.yml"),
-            "commands:\n  ai_router: 'exit 1'\n  ai_interactive: echo\ndefault_routine: develop\n",
-        )
-        .unwrap();
-
-        let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\n---\nTest.\n";
-        std::fs::write(
-            dir.path().join(".decree/inbox/D0001-1432-test-0.md"),
-            content,
-        )
-        .unwrap();
-
-        let config = AppConfig::load_from_project(dir.path()).unwrap();
-        let shutdown = Arc::new(AtomicBool::new(false));
-
-        // Should succeed with fallback to default_routine
         let result = process_single_message(dir.path(), &config, "D0001-1432-test-0.md", &shutdown);
         assert!(result.is_ok());
 

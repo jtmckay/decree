@@ -1,0 +1,14 @@
+# Graph: ../graph/local_router.md
+# A router for a small local classifier (GLiNER2.5-Decide) that scores every
+# option, so its confidence is a measured probability, not a model's guess.
+# The classifier runs as a long-running service (docs/services.md); this
+# machine only talks to it.
+name: local_router
+description: Ask the local classifier to score the options in the request.
+initial: ask
+states:
+  ask:
+    invoke: ask_local
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

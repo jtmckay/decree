@@ -52,7 +52,12 @@ gate() {
     cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 }
 
-progress="${message_dir}/progress.md"
+# Progress is kept per migration, not per run: each `decree process` makes a
+# new run folder, and a migration may be renumbered before it is processed.
+# D0002-1309-48-v05-sub-machines-routers-0 -> v05-sub-machines-routers
+progress_key="$(echo "${message_id}" | sed -E 's/^D[0-9]+-[0-9]+-[0-9]+-//; s/-[0-9]+$//')"
+mkdir -p .decree/progress
+progress=".decree/progress/${progress_key}.md"
 work_rules="Work in small steps, one requirement or acceptance criterion at a time,
 and keep the tree compiling between steps. After each step, append a line to
 ${progress}: what is done (files, test names) and what is next. If ${progress}

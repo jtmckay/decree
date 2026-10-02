@@ -1,7 +1,7 @@
 ---
 routine: rust-develop
 ---
-# 58: v0.5 M5.6 Decree skill for 0.5
+# 59: v0.5 M5.6 Decree skill for 0.5
 
 ## Overview
 

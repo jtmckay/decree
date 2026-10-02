@@ -1,7 +1,7 @@
 ---
 routine: rust-develop
 ---
-# 50: v0.5 M4.2 Interrupts, run status and lock
+# 51: v0.5 M4.2 Interrupts, run status and lock
 
 ## Overview
 

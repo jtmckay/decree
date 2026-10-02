@@ -1065,7 +1065,7 @@ mod tests {
         std::fs::write(decree.join("processed.md"), "").unwrap();
         std::fs::write(
             decree.join("config.yml"),
-            "commands:\n  ai_router: test\n  ai_interactive: test\n",
+            "max_attempts: 3\n",
         )
         .unwrap();
     }
