@@ -2,6 +2,8 @@
 
 Implement a feature, then deploy it.
 
+Machine: [machines/ship.yml](../machines/ship.yml)
+
 ```mermaid
 stateDiagram-v2
     [*] --> build

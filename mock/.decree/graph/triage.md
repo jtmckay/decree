@@ -2,6 +2,8 @@
 
 Read a free-form request and hand it to the machine that should do the work.
 
+Machine: [machines/triage.yml](../machines/triage.yml)
+
 ```mermaid
 stateDiagram-v2
     [*] --> classify

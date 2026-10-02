@@ -11,7 +11,7 @@ Document the three building blocks and cut 0.5.0. Part of the 0.5.0 rewrite spec
 
 Read spec sections 1 and 2, 3, 4, 8, 13; `mock/README.md` first.
 
-Rewrite `README.md` and `src/templates/help.txt` around messages, machines and scripts. Set the version to 0.5.0. Make sure `decree check` passes with `mock/` as the project root.
+Rewrite `README.md` and `src/templates/help.txt` around messages, machines and scripts, and link `docs/routers.md` and `docs/services.md`. Set the version to 0.5.0. Make sure `decree check` passes with `mock/` as the project root.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.

@@ -2,6 +2,8 @@
 
 Make a small code change with an AI agent, then run the tests.
 
+Machine: [machines/develop.yml](../machines/develop.yml)
+
 ```mermaid
 stateDiagram-v2
     [*] --> implement

@@ -1,13 +1,13 @@
 # decree 0.5 mock project
 
-This directory is a decree 0.5 project frozen partway through its life: seven machines, their scripts, two finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs yet; it shows exactly what the files will look like once 0.5 ships. The contract is [`docs/0.5-spec.md`](../docs/0.5-spec.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `graph/*.md` byte for byte.
+This directory is a decree 0.5 project frozen partway through its life: seven machines, their scripts, two finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs yet; it shows exactly what the files will look like once 0.5 ships. The contract is [`docs/0.5-spec.md`](../docs/0.5-spec.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `.decree/graph/*.md` byte for byte.
 
 ## The three building blocks
 
 ```text
 mock/.decree/
   config.yml                      global settings (default router, defaults)
-  machines/                       MACHINES: control flow, no code
+  machines/                       MACHINES: control flow, no code (first line: # Graph: ../graph/<name>.md)
     hello.yml                       the smallest machine: one script
     deploy.yml                      build, wait for a person to approve, ship
     develop.yml                     small change, then tests (the default machine)
@@ -21,7 +21,7 @@ mock/.decree/
   inbox/                          MESSAGES: FIFO queue (emit, cron, humans), not committed
   cron/                           message templates that drop into inbox/ on a schedule
   runs/<id>/                      one folder per run: message copy, events.jsonl, numbered logs
-graph/                            what `decree graph` prints: Markdown with a Mermaid diagram
+  graph/                          written by `decree graph`: one Markdown file per machine, plus system.md
 observability/config.alloy        shipping events and logs to Loki
 ```
 
@@ -74,7 +74,7 @@ states:
 
 `approval` invokes `choose: person`: its `ask` script, [`ask_person.sh`](.decree/scripts/ask_person.sh), tells someone the options, and the run pauses until a reply picks one (see Asking a person, below). decree only knows the run is waiting for `approve` or `reject`. No reply in a day (`timeout_s`) is an `error`.
 
-[`machines/feature.yml`](.decree/machines/feature.yml) uses everything, drawn by `decree graph feature` ([`graph/feature.md`](graph/feature.md)):
+[`machines/feature.yml`](.decree/machines/feature.yml) uses everything, drawn by `decree graph feature` ([`.decree/graph/feature.md`](.decree/graph/feature.md)):
 
 ```mermaid
 stateDiagram-v2
@@ -259,7 +259,7 @@ If the model had failed twice, `classify` would have produced `error`, which goe
 
 ## The whole system
 
-`decree graph` with no argument ([`graph/system.md`](graph/system.md)) shows how machines connect: one box per machine, `emits` edges between them, and cron files as entry points. Each machine's own graph shows its states.
+`decree graph` with no argument ([`.decree/graph/system.md`](.decree/graph/system.md)) shows how machines connect: one box per machine, `emits` edges between them, and cron files as entry points. Each machine's own graph shows its states.
 
 ```mermaid
 flowchart LR
@@ -277,10 +277,10 @@ flowchart LR
 
 ## Viewing the graphs
 
-`decree graph` prints a Markdown document with the diagram in a `mermaid` block; the files in [`graph/`](graph/) are exactly that output.
+`decree graph` writes one Markdown file per machine into [`.decree/graph/`](.decree/graph/), plus [`system.md`](.decree/graph/system.md), which links to all of them. They are committed, so they render on GitHub as they are. Each starts with a link back to its machine file, and each machine file's first line points to its graph: `# Graph: ../graph/feature.md`.
 
-1. Save it: `decree graph feature > feature.md`.
-2. Open it in VS Code and press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS). VS Code 1.121 and later render Mermaid in the Markdown preview with no extension. GitHub, GitLab and Obsidian render it as it is.
+1. Run `decree graph` after changing a machine; `decree check` warns when the files are out of date.
+2. Open a file in VS Code and press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS). VS Code 1.121 and later render Mermaid in the Markdown preview with no extension. GitHub, GitLab and Obsidian render it as it is.
 3. Anywhere else: copy the lines inside the `mermaid` fence into https://mermaid.live.
 
 Mermaid and its live editor are MIT-licensed, so a team can host its own copy.
@@ -318,6 +318,10 @@ decree never continues a run on its own. A kill may be deliberate, and decree ca
 3. `decree retry 20261001T030000Z-c4e81b` appends a `transition` with `source: "retry"` back into `implement`. That makes the run `pending`, and the next `process` or `daemon` continues it: root `onentry`, then the `onentry` scripts down to `implement`, then the invoke. Scripts must be safe to re-run; `git_baseline.sh` only writes its baseline the first time.
 
 An interrupted migration blocks the migrations after it, exactly as a failed one does. `runs/<id>/.lock` only stops two decree processes from stepping the same run at once.
+
+## Watching it live
+
+`decree status` shows what each active run is doing right now: the script, its pid, how long it has run, and its log path. `decree tail` follows that log as it is written, moving on to the next script and into child runs. Long-running services (model servers, ComfyUI) run outside decree under systemd or llama-swap; a state that needs one starts it in an `onentry` script. [`docs/services.md`](../docs/services.md) shows how, including switching a GPU between services and a tmux dashboard.
 
 ## Watching it in Grafana
 

@@ -2,6 +2,8 @@
 
 Build, ask a person to approve, then ship.
 
+Machine: [machines/deploy.yml](../machines/deploy.yml)
+
 ```mermaid
 stateDiagram-v2
     [*] --> build

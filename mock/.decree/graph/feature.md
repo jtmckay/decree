@@ -2,6 +2,8 @@
 
 Implement one feature spec with an AI agent, verify it, and commit.
 
+Machine: [machines/feature.yml](../machines/feature.yml)
+
 ```mermaid
 stateDiagram-v2
     [*] --> precheck

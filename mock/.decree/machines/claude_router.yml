@@ -1,3 +1,4 @@
+# Graph: ../graph/claude_router.md
 name: claude_router
 description: Ask Claude to pick one of the options in the request.
 initial: ask
