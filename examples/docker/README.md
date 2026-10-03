@@ -1,7 +1,7 @@
 # Docker — Containerized Decree
 
 Run decree in a Docker container with on-demand AI tool installation and
-optional shared routine libraries.
+optional shared machines.
 
 ## What This Demonstrates
 
@@ -9,10 +9,19 @@ optional shared routine libraries.
   install required
 - **On-demand AI tools** — set `DECREE_AI` to install opencode, claude, or
   copilot at startup
-- **Shared routine volumes** — mount a host directory of routines into the
-  container so multiple projects share the same library
+- **Shared machine volumes** — mount a host directory of machines and scripts
+  into the container so multiple projects share the same library
 - **Daemon mode** — container runs `decree daemon` by default, polling for
-  new migrations and cron jobs
+  new migrations, inbox messages and cron jobs
+
+## The Project
+
+`.decree/` holds one machine, `develop`
+([`.decree/machines/develop.yml`](.decree/machines/develop.yml), drawn in
+[`.decree/graph/develop.md`](.decree/graph/develop.md)): `precheck` checks
+that opencode is installed, `implement` hands the message to opencode, and
+`verify` has opencode check the acceptance criteria. The scripts are in
+`.decree/scripts/`. The sample migration asks for a `hello.sh`.
 
 ## Usage
 
@@ -27,7 +36,12 @@ This starts a decree container that:
 3. Starts `decree daemon` polling every 2 seconds
 
 Drop migration files into `.decree/migrations/` and they'll be processed
-automatically.
+automatically. Check the project from the host (or inside the container) with:
+
+```bash
+decree check
+decree status
+```
 
 ## docker-compose.yml
 
@@ -41,8 +55,6 @@ services:
       - DECREE_AI=opencode
       - DECREE_DAEMON=true
       - DECREE_INTERVAL=2
-      - DECREE_CONTAINER=decree_docker_example
-    tty: false
     restart: unless-stopped
 ```
 
@@ -53,11 +65,10 @@ services:
 | `DECREE_AI` | (none) | AI tool to install: `opencode`, `claude`, or `copilot` |
 | `DECREE_DAEMON` | `true` | `true` runs daemon; `false` drops to bash shell |
 | `DECREE_INTERVAL` | `2` | Daemon polling interval in seconds |
-| `DECREE_CONTAINER` | hostname | Container name for git stash labels |
 
-## Shared Routines
+## Shared Machines
 
-Mount a shared routine directory to reuse routines across projects:
+Mount a shared directory to reuse machines and scripts across projects:
 
 ```yaml
 services:
@@ -65,20 +76,20 @@ services:
     image: ghcr.io/jtmckay/decree:latest
     volumes:
       - .:/work
-      - ~/my-routines:/routines
+      - ~/my-machines:/shared
     environment:
       - DECREE_AI=claude
 ```
 
-Then in your project's `.decree/config.yml`:
+The shared directory has the same layout as `.decree/`: `machines/<name>.yml`
+and `scripts/` (with optional `scripts/<machine>/`). Then in your project's
+`.decree/config.yml`:
 
 ```yaml
-routine_source: /routines
-
-shared_routines:
-  my-shared-routine:
-    enabled: true
+shared_source: /shared
 ```
+
+A project-local machine or script with the same name hides the shared one.
 
 ## Interactive Shell
 

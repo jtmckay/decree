@@ -132,27 +132,27 @@ const AI_PLAIN_SH: &str = include_str!("../templates/ai/plain.sh");
 
 const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
 
-/// The decree skill `init` writes: path under the skill directory, and content.
+/// The decree skill `init` writes (M5.6): path under the skill directory, and content.
 const DECREE_SKILL: &[(&str, &str)] = &[
     (
         "SKILL.md",
         include_str!("../templates/skills/decree/SKILL.md"),
     ),
     (
-        "reference/hooks-and-cron.md",
-        include_str!("../templates/skills/decree/reference/hooks-and-cron.md"),
+        "reference/machines.md",
+        include_str!("../templates/skills/decree/reference/machines.md"),
     ),
     (
-        "reference/migrations.md",
-        include_str!("../templates/skills/decree/reference/migrations.md"),
+        "reference/messages.md",
+        include_str!("../templates/skills/decree/reference/messages.md"),
     ),
     (
-        "reference/pipeline-and-vars.md",
-        include_str!("../templates/skills/decree/reference/pipeline-and-vars.md"),
+        "reference/runs.md",
+        include_str!("../templates/skills/decree/reference/runs.md"),
     ),
     (
-        "reference/routines.md",
-        include_str!("../templates/skills/decree/reference/routines.md"),
+        "reference/scripts.md",
+        include_str!("../templates/skills/decree/reference/scripts.md"),
     ),
 ];
 
@@ -638,5 +638,110 @@ mod tests {
         let script = dir.path().join("scripts/copilot_router/ask_copilot.sh");
         let mode = std::fs::metadata(&script).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o755);
+    }
+
+    /// Every file under `dir`, as paths relative to it with `/` separators, sorted.
+    fn files_under(dir: &Path) -> Vec<String> {
+        fn walk(base: &Path, dir: &Path, out: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(base, &path, out);
+                } else {
+                    let rel = path.strip_prefix(base).unwrap();
+                    out.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(dir, dir, &mut out);
+        out.sort();
+        out
+    }
+
+    fn skill_names() -> Vec<String> {
+        let mut names: Vec<String> = DECREE_SKILL.iter().map(|(n, _)| n.to_string()).collect();
+        names.sort();
+        names
+    }
+
+    /// `DECREE_SKILL` lists exactly the files in `src/templates/skills/decree/`.
+    #[test]
+    fn test_decree_skill_lists_every_template_file() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = root.join("src/templates/skills/decree");
+        assert_eq!(files_under(&dir), skill_names());
+    }
+
+    /// The skill mentions no 0.4 concept (M5.6).
+    #[test]
+    fn test_decree_skill_mentions_no_0_4_concept() {
+        for (name, content) in DECREE_SKILL {
+            let lower = content.to_lowercase();
+            for term in ["routine", "outbox", "hooks", "router.md"] {
+                assert!(!lower.contains(term), "{name} mentions {term}");
+            }
+        }
+    }
+
+    /// SKILL.md points to every reference file, and the skill covers the 0.5 building
+    /// blocks and commands.
+    #[test]
+    fn test_decree_skill_covers_messages_machines_scripts_and_commands() {
+        let skill = DECREE_SKILL[0].1;
+        assert!(skill.starts_with("---\nname: decree\ndescription: "));
+        for (name, _) in &DECREE_SKILL[1..] {
+            assert!(
+                skill.contains(&format!("`{name}`")),
+                "SKILL.md omits {name}"
+            );
+        }
+        for needle in [
+            "message",
+            "machine",
+            "script",
+            "decree check",
+            "decree graph",
+            "decree emit",
+        ] {
+            assert!(skill.contains(needle), "SKILL.md omits {needle}");
+        }
+    }
+
+    /// The skill's examples are the mock's: `hello` in SKILL.md, `feature`'s verify
+    /// script, and the cron file.
+    #[test]
+    fn test_decree_skill_examples_are_the_mocks() {
+        let text: String = DECREE_SKILL.iter().map(|(_, c)| *c).collect();
+        let hello = mock("machines/hello.yml");
+        assert!(text.contains(&hello), "hello.yml");
+        let verify = mock("scripts/feature/verify.sh");
+        let body = verify
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains(body.trim()), "verify.sh");
+        assert!(
+            text.contains(&mock("cron/nightly-audit.md")),
+            "nightly-audit.md"
+        );
+    }
+
+    /// This repository's installed copies are the templates, byte for byte.
+    #[test]
+    fn test_repository_skill_copies_are_the_templates() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for b in AI_BACKENDS {
+            let Some(skill_dir) = b.skill_dir else {
+                continue;
+            };
+            let dir = root.join(skill_dir);
+            assert_eq!(files_under(&dir), skill_names(), "{skill_dir}");
+            for (name, content) in DECREE_SKILL {
+                let installed = std::fs::read_to_string(dir.join(name)).unwrap();
+                assert_eq!(&installed, content, "{skill_dir}/{name}");
+            }
+        }
     }
 }

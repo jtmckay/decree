@@ -1,54 +1,111 @@
 ---
 name: decree
 description: >
-  Work within the Decree automation ecosystem — routines, cron jobs, hooks, inbox/outbox
-  messages, and migrations in automations/.
-  INVOKE when: user mentions automations/, decree, routines, cron jobs, hooks, inbox, outbox,
-  or the decree container; user asks how to automate something, schedule a task, trigger a
-  workflow, or process messages; user adds/modifies anything in automations/ or services/decree/.
-  SKIP for: general shell scripting, Docker, or infrastructure work unrelated to decree.
+  Work in a decree project: messages (migrations, inbox, cron), machines (YAML statecharts in
+  .decree/machines/) and scripts (.decree/scripts/), checked with `decree check`, drawn with
+  `decree graph`, and queued with `decree emit`.
+  INVOKE when: the user mentions decree or .decree/; writes or edits a migration, inbox message,
+  cron file, machine or script; asks how to automate, schedule or chain work, ask a model or a
+  person to decide a step, or why a run failed, is waiting or was interrupted.
+  SKIP for: shell scripting, CI or infrastructure work unrelated to decree.
 ---
 
-# Decree Skill
+# decree
 
-Decree is an AI orchestrator for structured, reproducible workflows. It processes
-ordered migration files through configurable routines, with lifecycle hooks and
-cron scheduling.
+decree runs work through three building blocks:
 
-**Loaded via:** `/decree` slash command (project or user scope).
+- A **message** (markdown) says *what* to do in its body, and *which machine* does it
+  (`machine:` in the frontmatter). Migrations, inbox messages and cron templates are all messages.
+- A **machine** (`.decree/machines/<name>.yml`) says *in what order*: a W3C SCXML statechart
+  written in YAML. States, what each state invokes, and which event leads to which state. No
+  code, no paths.
+- A **script** (`.decree/scripts/<name>.sh`, or `.decree/scripts/<machine>/<name>.sh` for one
+  machine's own) does one piece of work and reports one outcome: exit 0 is `done`, non-zero is
+  `error`, or a JSON last stdout line names a richer event (`{"event":"pass"}`).
 
-## Core Rules
+Every state invokes one function, and its result is an event. The function is a script, a child
+machine (`{ machine: deploy }`), or a built-in decision: `check` (deterministic), `choose: model`
+(a model picks an option, asked through a router machine) or `choose: person` (the run pauses
+until a reply picks one). AI and people appear only where a machine says `choose`.
 
-- **Ordered by filename** — use numeric prefix (`01-add-feature.md`)
-- **Immutable once processed** — never edit a migration in `.decree/processed.md`; create a new one instead
-- **Self-contained** — independently implementable, no sibling runtime dependencies
-- **One concern per migration** — day-sized; a migration spanning five subsystems is five migrations
-- **Always set `routine:`** — required frontmatter field; check `automations/config.yml` or run `decree routine`
-- **Acceptance criteria required** — Given / When / Then with observable outcomes (exit codes, file contents, HTTP responses — not "works correctly")
-- **All changes go through migrations** — no direct repo edits outside the workflow; if a script is needed by later migrations, create a migration for it first
+## Rules
 
-## Project Patterns
+- **Never edit a migration.** Files in `.decree/migrations/` are immutable; the ones listed in
+  `.decree/processed.md` have run. To change something, write a new migration with the next
+  number.
+- **One concern per migration**, day-sized, with Given / When / Then acceptance criteria whose
+  outcomes are observable (exit codes, file contents, output).
+- **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
+- **Machines decide, scripts work.** A script makes no routing decision beyond printing one
+  event; a decision is a state of its own (`check` or `choose`), never logic hidden in a script.
+- **Queue follow-up work with `decree emit`**, never by writing into `.decree/inbox/` by hand
+  from a script. The emitting state must list the target in `emits:`.
+- **Run `decree check` after every change** to a machine, script, message or cron file, and
+  `decree graph` after changing a machine. Commit `.decree/graph/`.
+- **Scripts must be safe to re-run**: `decree retry` re-runs a step that was interrupted.
+- Do not commit `.decree/inbox/` or `.decree/runs/`.
 
-### Outbox (follow-up messages)
+## Commands
 
-Routines must write follow-up messages to `.decree/outbox/`, **not** directly to `.decree/inbox/`.
-Decree relays `outbox/ → inbox/` automatically. Writing directly to inbox bypasses the relay.
+| Command | Use |
+| --- | --- |
+| `decree check` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line. |
+| `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
+| `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
+| `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
+| `decree daemon [--interval <s>]` | The same, in a loop, with cron. |
+| `decree status [<id>] [--cron]` | Runs by status; one run's events; cron schedule. |
+| `decree tail [<id>]` | Follow the output of the script running now. |
+| `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `choose: person` state. |
+| `decree retry <id> [--state <s>]` | Continue an interrupted (or finished) run. |
 
-### This project's paths
+## Worked example
 
-- Working directory: `automations/` (mounted at `/work/.decree` in the container)
-- Routines: `automations/routines/`
-- Hooks: `automations/hooks/`
-- Cron: `automations/cron/`
-- Config: `automations/config.yml`
+A migration for the `feature` machine:
 
-## Reference Files
+```markdown
+---
+machine: feature
+---
+# Rate-limit /api/upload
 
-Read these when you need specifics — don't load all of them upfront:
+## Requirements
 
-- **`reference/migrations.md`** — migration format, acceptance criteria, sizing, immutability, placement
-- **`reference/routines.md`** — routine script structure, pre-check, custom params, registry config
-- **`reference/hooks-and-cron.md`** — lifecycle hooks, firing semantics, cron scheduling
-- **`reference/pipeline-and-vars.md`** — processing pipeline, all environment variables, run.json fields
+Limit each API key to 10 uploads per minute on `POST /api/upload`.
 
-Reference files are at `.claude/skills/decree/reference/` relative to the project root.
+## Acceptance Criteria
+
+- **Given** a key that has uploaded 10 times in the last minute
+  **When** it uploads again
+  **Then** the response is 429 with `Retry-After`
+```
+
+The smallest machine:
+
+```yaml
+# Graph: ../graph/hello.md
+name: hello
+description: Run one script.
+initial: greet
+states:
+  greet:
+    invoke: greet                  # runs scripts/greet (or scripts/hello/greet)
+    transitions: { done: done }    # exit 0 -> done; non-zero -> failed, implicitly
+  done:   { final: true }
+  failed: { final: true }          # every machine has one
+```
+
+## Reference files
+
+Read the one you need; don't load them all upfront:
+
+- **`reference/messages.md`**: frontmatter keys, migrations and `processed.md`, the inbox,
+  cron files, `decree emit`, replies to a waiting run.
+- **`reference/machines.md`**: every machine key, the invoke types, conditions, choices and
+  routers, composition, events and transitions, validation rules, full examples.
+- **`reference/scripts.md`**: where scripts live, how they run, how they report an event,
+  every `DECREE_*` variable.
+- **`reference/runs.md`**: run folders, `events.jsonl`, run status, waiting and interrupted
+  runs, `decree retry`, graphs.
+
+The reference files sit next to this file, in `reference/`.

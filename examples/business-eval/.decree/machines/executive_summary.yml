@@ -1,0 +1,23 @@
+# Graph: ../graph/executive_summary.md
+name: executive_summary
+description: Last step of a business evaluation. Synthesize the prior analyses into a scorecard and a go/no-go recommendation.
+data:
+  report: { type: string, default: 04-executive-summary.md }
+  market_analysis_path: { type: string, default: "" }
+  competitive_landscape_path: { type: string, default: "" }
+  financial_model_path: { type: string, default: "" }
+initial: precheck
+states:
+  precheck:
+    invoke: precheck
+    max_attempts: 1
+    transitions: { done: analyze }
+  analyze:
+    invoke: analyze
+    transitions: { done: check_report }
+  check_report:
+    invoke: check_report
+    max_attempts: 1
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

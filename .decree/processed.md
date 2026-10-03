@@ -55,3 +55,6 @@
 55-v05-port-hooks.md
 56-v05-delete-routine-system.md
 57-v05-layout-migration-script.md
+58-v05-readme-release.md
+59-v05-skill.md
+60-v05-examples-blackbox.md

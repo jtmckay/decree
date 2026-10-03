@@ -1,6 +1,7 @@
 ---
-routine: tts
-filename: greeting
+machine: tts
+params:
+  filename: greeting
 ---
 Hello and welcome! This is a demonstration of the decree text-to-speech
 pipeline. Each migration becomes an audio file, processed automatically

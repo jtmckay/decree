@@ -1,0 +1,27 @@
+# Graph: ../graph/financial_model.md
+name: financial_model
+description: Third step of a business evaluation. Build projections, unit economics and funding needs from the prior analyses, then hand off to executive_summary.
+data:
+  report: { type: string, default: 03-financial-model.md }
+  market_analysis_path: { type: string, default: "" }
+  competitive_landscape_path: { type: string, default: "" }
+  projection_years: { type: int, default: 5 }
+initial: precheck
+states:
+  precheck:
+    invoke: precheck
+    max_attempts: 1
+    transitions: { done: analyze }
+  analyze:
+    invoke: analyze
+    transitions: { done: check_report }
+  check_report:
+    invoke: check_report
+    max_attempts: 1
+    transitions: { done: hand_off }
+  hand_off:
+    invoke: hand_off
+    emits: [executive_summary]
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

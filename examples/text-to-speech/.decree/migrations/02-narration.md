@@ -1,7 +1,8 @@
 ---
-routine: tts
-filename: narration
-predefined_voice_id: Emily.wav
+machine: tts
+params:
+  filename: narration
+  predefined_voice_id: Emily.wav
 ---
 
 Once upon a time, in a small village nestled between rolling hills,

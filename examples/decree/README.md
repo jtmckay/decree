@@ -23,14 +23,17 @@ specs/
 └── 11-post-cleanup.spec.md
 ```
 
-Each spec was processed by the `rust-develop` routine, which hands the spec
-to an AI, builds with `cargo build --release`, runs `cargo test`, and has a
-QA pass fix any failures — all in one automated cycle.
+Each spec was processed by the `rust-develop` routine of decree 0.4, which
+hands the spec to an AI, builds with `cargo build --release`, runs
+`cargo test`, and has a QA pass fix any failures — all in one automated cycle.
+In 0.5 that routine became the `rust_develop` machine that `decree init`
+writes, with one script per step (`precheck`, `implement`, `build`, `test`,
+`qa`).
 
 ```bash
-decree process     # process next unprocessed spec
-decree status      # check processing progress
-decree log         # review routine execution output
+decree process         # process next unprocessed spec
+decree status          # check processing progress
+decree status <id>     # review one run: its states, scripts and log files
 ```
 
 Repeat until all 11 specs are processed. The result is the `src/` directory,

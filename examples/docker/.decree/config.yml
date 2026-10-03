@@ -1,17 +1,4 @@
-commands:
-  ai_router: "opencode run {prompt}"
-  ai_interactive: "opencode"
-
-max_attempts: 3
-max_depth: 10
-default_routine: develop
-
-hooks:
-  beforeAll: ""
-  afterAll: ""
-  beforeEach: ""
-  afterEach: ""
-
-routines:
-  develop:
-    enabled: true
+max_attempts: 3 # default attempts per invoke
+max_depth: 10 # max emit chain depth
+max_log_size: 2097152 # max bytes per script log, 0 to disable
+default_machine: develop # machine for messages with no machine: key

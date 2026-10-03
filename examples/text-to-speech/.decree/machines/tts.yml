@@ -1,0 +1,31 @@
+# Graph: ../graph/tts.md
+name: tts
+description: Speak a message's body with a local Chatterbox TTS server and save it as an MP3.
+data:
+  filename: { type: string, default: "" }               # required: output file name, without extension
+  output_dir: { type: string, default: output }
+  predefined_voice_id: { type: string, default: Emily.wav }
+  temperature: { type: string, default: "0.8" }          # numbers with a fraction are strings
+  exaggeration: { type: string, default: "1.3" }
+  cfg_weight: { type: string, default: "0.5" }
+  seed: { type: int, default: 3000 }
+  language: { type: string, default: en }
+  voice_mode: { type: string, default: predefined }
+  split_text: { type: bool, default: true }
+  chunk_size: { type: int, default: 240 }
+  output_format: { type: string, default: wav }
+  tts_host: { type: string, default: "http://localhost:8004" }
+initial: precheck
+states:
+  precheck:                        # fails fast if curl, ffmpeg or jq is missing
+    invoke: precheck
+    max_attempts: 1
+    transitions: { done: synthesize }
+  synthesize:                      # body -> Chatterbox -> WAV in the run folder
+    invoke: synthesize
+    transitions: { done: convert }
+  convert:                         # WAV -> output/<filename>.mp3
+    invoke: convert
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

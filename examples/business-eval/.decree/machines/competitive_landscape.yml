@@ -1,0 +1,25 @@
+# Graph: ../graph/competitive_landscape.md
+name: competitive_landscape
+description: Second step of a business evaluation. Map competitors and positioning, building on the market analysis, then hand off to financial_model.
+data:
+  report: { type: string, default: 02-competitive-landscape.md }
+  market_analysis_path: { type: string, default: "" }
+initial: precheck
+states:
+  precheck:
+    invoke: precheck
+    max_attempts: 1
+    transitions: { done: analyze }
+  analyze:
+    invoke: analyze
+    transitions: { done: check_report }
+  check_report:
+    invoke: check_report
+    max_attempts: 1
+    transitions: { done: hand_off }
+  hand_off:
+    invoke: hand_off
+    emits: [financial_model]
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

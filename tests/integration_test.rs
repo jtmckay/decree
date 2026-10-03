@@ -615,8 +615,15 @@ fn test_init_writes_decree_skill_for_claude_and_copilot() {
                 "Decree skill: ./{skill_dir} (5 written, 0 existing kept)"
             )));
         let skill = dir.path().join(skill_dir);
-        assert!(skill.join("SKILL.md").is_file(), "{ai}");
-        assert!(skill.join("reference/migrations.md").is_file(), "{ai}");
+        let text = fs::read_to_string(skill.join("SKILL.md")).unwrap();
+        // M5.6: no 0.4 concept in the skill.
+        for term in ["routine", "outbox", "hooks", "router.md"] {
+            assert!(!text.to_lowercase().contains(term), "{ai}: {term}");
+        }
+        for name in ["machines", "messages", "runs", "scripts"] {
+            let path = skill.join(format!("reference/{name}.md"));
+            assert!(path.is_file(), "{ai}: {name}");
+        }
     }
 }
 
@@ -632,6 +639,7 @@ fn test_init_opencode_writes_no_skill() {
     assert!(!dir.path().join(".github").exists());
 }
 
+/// M5.6: `init` never overwrites a skill file; here `SKILL.md` exists and `.decree/` does not.
 #[test]
 fn test_init_keeps_existing_skill_files() {
     let dir = TempDir::new().unwrap();
@@ -650,7 +658,7 @@ fn test_init_keeps_existing_skill_files() {
         fs::read_to_string(skill.join("SKILL.md")).unwrap(),
         "custom\n"
     );
-    assert!(skill.join("reference/routines.md").is_file());
+    assert!(skill.join("reference/machines.md").is_file());
     assert_eq!(
         fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap(),
         "{}"

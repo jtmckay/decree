@@ -5,51 +5,65 @@ via decree migrations.
 
 ## What This Demonstrates
 
-- **Non-AI routines** — decree routines don't have to invoke an AI; any shell
-  script works
-- **Custom parameters from frontmatter** — `input_file`, `output_file`, and
-  `model` are passed as env vars from message frontmatter
-- **File-based processing** — each migration references an audio file to
+- **Machines without AI agents** — a machine's scripts can be any program;
+  here they call Whisper
+- **Parameters from the message** — `input_file`, `output_file` and `model`
+  are the machine's `data`, set per message with `params` and read by the
+  scripts as `DECREE_DATA_INPUT_FILE`, `DECREE_DATA_OUTPUT_FILE` and
+  `DECREE_DATA_MODEL`
+- **File-based processing** — each migration names an audio file to
   transcribe
 
 ## How It Works
 
-Each migration specifies an audio file path and optional parameters in
-frontmatter. The `transcribe` routine calls Whisper to produce a `.txt`
-transcription alongside the original file.
+Each migration names an audio file and optional settings in `params`. The
+`transcribe` machine ([`.decree/machines/transcribe.yml`](.decree/machines/transcribe.yml),
+drawn in [`.decree/graph/transcribe.md`](.decree/graph/transcribe.md)) runs
+two scripts from `.decree/scripts/`:
+
+1. `precheck` — fails fast if `whisper` or the input file is missing
+2. `transcribe` — calls Whisper and writes a `.txt` transcription next to
+   the original (or to `output_file`)
 
 ## Prerequisites
 
-```bash
+```text
 pip install -U openai-whisper
 ```
+
+The sample migration transcribes `audio/meeting-notes.mp3`; put a recording
+there first.
 
 ## Message Format
 
 ```yaml
 ---
-routine: transcribe
-input_file: ./audio/meeting-notes.mp3
-model: base # optional, defaults to "large"
-output_file: ./out.txt # optional, defaults to input with .txt extension
+machine: transcribe
+params:
+  input_file: ./audio/meeting-notes.mp3
+  model: base             # optional, default: large
+  output_file: ./out.txt  # optional, default: input with a .txt extension
 ---
-Transcribe description (ignored by routine, for human context).
+Transcribe description (ignored by the scripts, for human context).
 ```
 
 ## Usage
 
 ```bash
 cd examples/whisper-transcribe
+decree check
 decree process
+decree status
 ```
 
 ## Daemon Mode
 
-Drop messages into `.decree/inbox/` for continuous processing:
+Queue messages in `.decree/inbox/` for continuous processing:
 
 ```bash
+echo "Transcribe the meeting notes." | decree emit --machine transcribe --param input_file=./audio/meeting-notes.mp3
 decree daemon
 ```
 
-External tools can write messages directly to the inbox directory and
-decree will pick them up automatically.
+External tools can queue messages the same way (or write `.decree/inbox/<name>.md`
+through a temp file and rename), and decree picks them up automatically.

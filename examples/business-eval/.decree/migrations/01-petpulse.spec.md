@@ -1,5 +1,5 @@
 ---
-routine: market-analysis
+machine: market_analysis
 ---
 
 # PetPulse

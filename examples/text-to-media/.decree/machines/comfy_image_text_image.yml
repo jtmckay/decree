@@ -1,0 +1,24 @@
+# Graph: ../graph/comfy_image_text_image.md
+name: comfy_image_text_image
+description: Generate an image from a text prompt and a reference image with the ComfyUI FLUX2 workflow.
+data:
+  width: { type: int, default: 1024 }
+  height: { type: int, default: 1024 }
+  input_image: { type: string, default: "" }      # required: file name in ComfyUI's input folder
+  output_prefix: { type: string, default: "" }    # required: ComfyUI output file name prefix
+  api_url: { type: string, default: "http://127.0.0.1:8288/api/prompt" }
+initial: precheck
+states:
+  precheck:                        # fails fast if curl or jq is missing
+    invoke: precheck
+    max_attempts: 1
+    transitions: { done: build_payload }
+  build_payload:                   # patches the workflow template into runs/<id>/comfy-payload.json
+    invoke: build_payload
+    max_attempts: 1
+    transitions: { done: queue_prompt }
+  queue_prompt:                    # posts the payload to ComfyUI
+    invoke: queue_prompt
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

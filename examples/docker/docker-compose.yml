@@ -7,6 +7,4 @@ services:
       - DECREE_AI=opencode
       - DECREE_DAEMON=true
       - DECREE_INTERVAL=2
-      - DECREE_CONTAINER=decree_docker_example
-    tty: false
     restart: unless-stopped
