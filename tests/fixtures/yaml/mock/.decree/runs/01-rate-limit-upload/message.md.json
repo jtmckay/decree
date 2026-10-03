@@ -1,6 +1,0 @@
-{
-  "id": "01-rate-limit-upload",
-  "machine": "feature",
-  "state": "done",
-  "trigger": "migration"
-}

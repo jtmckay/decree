@@ -583,14 +583,20 @@ impl<'a> Interpreter<'a> {
             }
         };
         match child.outcome {
-            Outcome::Finished(state) => self.machine_finished(&child.id, &state).map(Invoked::Event),
+            Outcome::Finished(state) => {
+                self.machine_finished(&child.id, &state).map(Invoked::Event)
+            }
             outcome => Ok(self.wait_for_child(s, child.id, outcome)),
         }
     }
 
     /// Step 2 for a `choose: model` invoke (section 7, Choose: model): write the request,
     /// run the router machine as a child run, and validate its reply.
-    fn choose_model(&mut self, s: usize, choose: &ChooseInvoke) -> Result<Invoked, InterpreterError> {
+    fn choose_model(
+        &mut self,
+        s: usize,
+        _choose: &ChooseInvoke,
+    ) -> Result<Invoked, InterpreterError> {
         Err(self.not_supported(s, "choose: model"))
     }
 
@@ -657,10 +663,11 @@ impl<'a> Interpreter<'a> {
             frontmatter.insert("params".into(), params.clone().into());
         }
         let message_path = run_dir.join(MESSAGE_FILE);
-        let yaml = serde_norway::to_string(&frontmatter).map_err(|e| InterpreterError::Message {
-            path: message_path.clone(),
-            message: e.to_string(),
-        })?;
+        let yaml =
+            serde_norway::to_string(&frontmatter).map_err(|e| InterpreterError::Message {
+                path: message_path.clone(),
+                message: e.to_string(),
+            })?;
         let message = format!("---\n{yaml}---\n{}", self.message_body);
         write_replace(&message_path, message.as_bytes())?;
         if let Some(request) = request {
@@ -701,11 +708,9 @@ impl<'a> Interpreter<'a> {
         let Some(machine) = machine else {
             return Ok(None);
         };
-        Ok(
-            (run_status(machine, &events, false) == RunStatus::Finished)
-                .then(|| current_state(&events).map(String::from))
-                .flatten(),
-        )
+        Ok((run_status(machine, &events, false) == RunStatus::Finished)
+            .then(|| current_state(&events).map(String::from))
+            .flatten())
     }
 
     /// How long finished child run `child` took: its `run_finished` event's `duration_ms`.
@@ -726,13 +731,20 @@ impl<'a> Interpreter<'a> {
     fn check(&mut self, s: usize, check: &CheckInvoke) -> Result<Decision, InterpreterError> {
         let m = self.machine;
         let events = self.read_events()?;
-        let input = match &check.check.matches {
-            Some(_) => self.input_text(&events, check.input.as_deref())?,
-            None => String::new(),
+        let input = match check.check.shape() {
+            Ok((cond::Subject::Matches(_), _)) => {
+                self.input_text(&events, check.input.as_deref())?
+            }
+            _ => String::new(),
         };
         let result = check
             .check
-            .eval(&self.data, &visits(&events), &input)
+            .eval(&cond::Facts {
+                data: &self.data,
+                visits: &visits(&events),
+                confidence: &confidences(&events),
+                input: &input,
+            })
             .map_err(|source| InterpreterError::Check {
                 machine: m.id.clone(),
                 at: m.state_path(s),
@@ -1089,17 +1101,26 @@ pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterE
     let message_path = run_dir.join(MESSAGE_FILE);
     let bytes = fs::read(&message_path).map_err(io_err(&message_path))?;
     let (frontmatter, body) = split_message(&message_path, &bytes)?;
-    let text = |key: &str| frontmatter.get(key).and_then(|v| v.as_str()).map(String::from);
-    let name = text("machine")
-        .or_else(|| text("routine"))
-        .ok_or_else(|| InterpreterError::Message {
-            path: message_path.clone(),
-            message: "frontmatter names no `machine`".to_string(),
+    let text = |key: &str| {
+        frontmatter
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(String::from)
+    };
+    let name =
+        text("machine")
+            .or_else(|| text("routine"))
+            .ok_or_else(|| InterpreterError::Message {
+                path: message_path.clone(),
+                message: "frontmatter names no `machine`".to_string(),
+            })?;
+    let machine = ctx
+        .machines
+        .get(&name)
+        .ok_or_else(|| InterpreterError::Invalid {
+            machine: name.clone(),
+            message: "no such machine".to_string(),
         })?;
-    let machine = ctx.machines.get(&name).ok_or_else(|| InterpreterError::Invalid {
-        machine: name.clone(),
-        message: "no such machine".to_string(),
-    })?;
     let trigger = text("trigger").unwrap_or_else(|| "inbox".to_string());
     let parent = text("parent");
     let params = match frontmatter.get("params") {
@@ -1267,6 +1288,25 @@ pub fn visits(events: &[Map<String, Value>]) -> BTreeMap<String, u32> {
         }
     }
     visits
+}
+
+/// Each state's confidence from its latest `decision` event, 0 when that event has none
+/// (section 5, Conditions). A state with no `decision` event is missing.
+pub fn confidences(events: &[Map<String, Value>]) -> BTreeMap<String, f64> {
+    let mut confidences = BTreeMap::new();
+    for event in events
+        .iter()
+        .filter(|e| e.get("type").and_then(Value::as_str) == Some("decision"))
+    {
+        if let Some(state) = event.get("state").and_then(Value::as_str) {
+            let confidence = event
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            confidences.insert(state.to_string(), confidence);
+        }
+    }
+    confidences
 }
 
 /// The run's state: the `to` of the last `transition` event (section 4, Source of truth).
@@ -2627,10 +2667,15 @@ mod tests {
         let (p, _) = person_project(&[]);
         let params = serde_norway::Mapping::new();
         let ctx = p.ctx();
-        let err = Interpreter::new(&ctx, p.machine(), p.executor("inbox", &params), inbox_input())
-            .unwrap()
-            .resume()
-            .unwrap_err();
+        let err = Interpreter::new(
+            &ctx,
+            p.machine(),
+            p.executor("inbox", &params),
+            inbox_input(),
+        )
+        .unwrap()
+        .resume()
+        .unwrap_err();
         assert_eq!(
             err.to_string(),
             "cannot continue the run: its last event is not `received`"
@@ -2721,7 +2766,9 @@ mod tests {
         stamp.len() == 16
             && DateTime::parse_from_str(&format!("{stamp}+0000"), "%Y%m%dT%H%M%SZ%z").is_ok()
             && hex.len() == 6
-            && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     }
 
     #[test]
@@ -2772,7 +2819,14 @@ mod tests {
             .collect();
         assert_eq!(
             kinds,
-            ["transition", "waiting", "received", "script", "transition", "run_finished"]
+            [
+                "transition",
+                "waiting",
+                "received",
+                "script",
+                "transition",
+                "run_finished"
+            ]
         );
         let waiting = &p.events_of("waiting")[0];
         assert_eq!(waiting["state"], "build");
@@ -2829,9 +2883,15 @@ mod tests {
 
     /// `step_parent` invoking `step_person`, run until the child waits for a reply.
     fn parent_of_person() -> (Project, String, String) {
-        let parent = fixture("step_parent").replace("machine: step_child, params: { label: release }", "machine: step_person");
+        let parent = fixture("step_parent").replace(
+            "machine: step_child, params: { label: release }",
+            "machine: step_person",
+        );
         let p = Project::from_texts(
-            &[("step_parent", &parent), ("step_person", &fixture("step_person"))],
+            &[
+                ("step_parent", &parent),
+                ("step_person", &fixture("step_person")),
+            ],
             &[],
             None,
         );
@@ -2920,7 +2980,13 @@ mod tests {
         // Continue only the child, as if decree stopped before continuing the parent.
         let person = &p.machines["step_person"];
         let executor = ctx
-            .executor(person, &child, "invoke", &serde_norway::Mapping::new(), Some(RUN_ID))
+            .executor(
+                person,
+                &child,
+                "invoke",
+                &serde_norway::Mapping::new(),
+                Some(RUN_ID),
+            )
             .unwrap();
         let input = RunInput {
             depth: 1,
@@ -2967,10 +3033,16 @@ mod tests {
                 outcome: Box::new(Outcome::Interrupted("work".into()))
             }
         );
-        assert_eq!(p.child_events(&child).last().unwrap()["type"], "interrupted");
+        assert_eq!(
+            p.child_events(&child).last().unwrap()["type"],
+            "interrupted"
+        );
         let events = p.events();
         assert_eq!(events.last().unwrap()["type"], "waiting");
-        assert_eq!(p.ctx().status(p.machine(), &events, false), RunStatus::Waiting);
+        assert_eq!(
+            p.ctx().status(p.machine(), &events, false),
+            RunStatus::Waiting
+        );
     }
 
     #[test]

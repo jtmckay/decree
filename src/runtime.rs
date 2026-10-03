@@ -1507,7 +1507,10 @@ mod executor_tests {
             serde_norway::from_str("label: release\nmax_rounds: 5").unwrap();
         info.data = data_env(&m.data, &params);
         info.parent = Some("20261001T120000Z-0b12aa".to_string());
-        let (request, reply) = (p.run_dir().join("request.json"), p.run_dir().join("reply.json"));
+        let (request, reply) = (
+            p.run_dir().join("request.json"),
+            p.run_dir().join("reply.json"),
+        );
         info.router = Some(RouterFiles {
             request: request.clone(),
             reply: reply.clone(),

@@ -129,7 +129,7 @@ fn graph_mock_rewrites_mock_graph_unchanged() {
     assert_eq!(code, 0, "{stderr}");
     let mock = repo().join("mock/.decree/graph");
     let names = md_names(&mock);
-    assert_eq!(names.len(), 8, "{names:?}");
+    assert_eq!(names.len(), 10, "{names:?}");
     assert_eq!(md_names(&tmp.path().join(".decree/graph")), names);
     for name in &names {
         assert_eq!(

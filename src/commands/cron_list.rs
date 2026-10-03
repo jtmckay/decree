@@ -117,11 +117,7 @@ mod tests {
         std::fs::create_dir_all(decree.join("inbox")).unwrap();
         std::fs::create_dir_all(decree.join("runs")).unwrap();
         std::fs::write(decree.join("processed.md"), "").unwrap();
-        std::fs::write(
-            decree.join("config.yml"),
-            "max_attempts: 3\n",
-        )
-        .unwrap();
+        std::fs::write(decree.join("config.yml"), "max_attempts: 3\n").unwrap();
     }
 
     #[test]

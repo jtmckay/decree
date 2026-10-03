@@ -1,4 +1,0 @@
-{
-  "description": "Work within the Decree automation ecosystem — routines, cron jobs, hooks, inbox/outbox messages, and migrations in automations/. INVOKE when: user mentions automations/, decree, routines, cron jobs, hooks, inbox, outbox, or the decree container; user asks how to automate something, schedule a task, trigger a workflow, or process messages; user adds/modifies anything in automations/ or services/decree/. SKIP for: general shell scripting, Docker, or infrastructure work unrelated to decree.",
-  "name": "decree"
-}

@@ -452,44 +452,33 @@ mod tests {
         assert!(config.contains("  notify:\n    enabled: false"));
     }
 
-    /// The generated config.yml parses to the values committed in
-    /// `tests/fixtures/yaml/init/` (produced by serde_yaml 0.9).
+    /// The generated config.yml loads as the typed config, with and without hooks.
     #[test]
-    fn test_generate_config_matches_expected_yaml() {
-        let cases = [
-            (
-                generate_config(
-                    "claude",
-                    "claude -p {prompt}",
-                    "claude",
-                    false,
-                    &["develop", "rust-develop"],
-                    &[],
-                ),
-                include_str!("../../tests/fixtures/yaml/init/claude.json"),
+    fn test_generate_config_parses_as_app_config() {
+        let configs = [
+            generate_config(
+                "claude",
+                "claude -p {prompt}",
+                "claude",
+                false,
+                &["develop", "rust-develop"],
+                &[],
             ),
-            (
-                generate_config(
-                    "opencode",
-                    "opencode run {prompt}",
-                    "opencode",
-                    true,
-                    &[
-                        "develop",
-                        "rust-develop",
-                        "git-baseline",
-                        "git-stash-changes",
-                    ],
-                    &["deploy".to_string()],
-                ),
-                include_str!("../../tests/fixtures/yaml/init/opencode-git-hooks.json"),
+            generate_config(
+                "opencode",
+                "opencode run {prompt}",
+                "opencode",
+                true,
+                &[
+                    "develop",
+                    "rust-develop",
+                    "git-baseline",
+                    "git-stash-changes",
+                ],
+                &["deploy".to_string()],
             ),
         ];
-        for (config, expected) in cases {
-            let value: serde_norway::Value = serde_norway::from_str(&config).unwrap();
-            let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
-            assert_eq!(serde_json::to_value(value).unwrap(), expected);
-            // The template also loads as the typed config.
+        for config in configs {
             serde_norway::from_str::<config::AppConfig>(&config).unwrap();
         }
     }

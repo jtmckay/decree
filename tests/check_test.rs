@@ -296,7 +296,7 @@ fn check_warns_when_the_graph_files_are_out_of_date() {
 fn check_warns_when_the_graph_directory_is_missing() {
     let (code, _, stderr) = check_mock(|decree| fs::remove_dir_all(decree.join("graph")).unwrap());
     assert_eq!(code, 0);
-    assert_eq!(stderr.lines().count(), 8, "{stderr}");
+    assert_eq!(stderr.lines().count(), 10, "{stderr}");
     assert!(
         stderr.contains("warning: graph/system.md: missing"),
         "{stderr}"

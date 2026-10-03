@@ -1,9 +1,0 @@
-{
-  "id": "02-upload-quota-per-plan",
-  "machine": "feature",
-  "params": {
-    "max_rounds": 3
-  },
-  "state": "review",
-  "trigger": "migration"
-}

@@ -191,11 +191,7 @@ mod tests {
         let decree = dir.path().join(".decree");
         std::fs::create_dir_all(decree.join("routines")).unwrap();
         std::fs::create_dir_all(decree.join("inbox")).unwrap();
-        std::fs::write(
-            decree.join("config.yml"),
-            "max_attempts: 3\n",
-        )
-        .unwrap();
+        std::fs::write(decree.join("config.yml"), "max_attempts: 3\n").unwrap();
     }
 
     #[test]

@@ -1391,11 +1391,7 @@ mod tests {
         std::fs::create_dir_all(decree.join("migrations")).unwrap();
         std::fs::create_dir_all(decree.join("cron")).unwrap();
         std::fs::write(decree.join("processed.md"), "").unwrap();
-        std::fs::write(
-            decree.join("config.yml"),
-            "max_attempts: 3\n",
-        )
-        .unwrap();
+        std::fs::write(decree.join("config.yml"), "max_attempts: 3\n").unwrap();
     }
 
     #[test]

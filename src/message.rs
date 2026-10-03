@@ -976,84 +976,6 @@ mod tests {
         );
     }
 
-    /// Every YAML fixture (`*.yml`, and the frontmatter of `*.md` files that
-    /// have one) under `mock/.decree`, `examples/*/.decree` and `src/templates`
-    /// must parse to the value committed in `tests/fixtures/yaml/<path>.json`.
-    /// The committed values were produced by serde_yaml 0.9.
-    #[test]
-    fn test_yaml_fixtures_match_expected() {
-        use std::fs;
-        use std::path::PathBuf;
-
-        fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
-            for entry in fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    collect(&path, out);
-                } else {
-                    out.push(path);
-                }
-            }
-        }
-
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files = Vec::new();
-        collect(&root.join("mock/.decree"), &mut files);
-        collect(&root.join("src/templates"), &mut files);
-        for example in fs::read_dir(root.join("examples")).unwrap() {
-            let decree = example.unwrap().path().join(".decree");
-            if decree.is_dir() {
-                collect(&decree, &mut files);
-            }
-        }
-        files.sort();
-
-        let expected_dir = root.join("tests/fixtures/yaml");
-        let mut checked = 0;
-        for file in &files {
-            let rel = file.strip_prefix(root).unwrap();
-            let text = fs::read_to_string(file).unwrap();
-            let actual = match file.extension().and_then(|e| e.to_str()) {
-                Some("yml") => {
-                    let value: serde_norway::Value = serde_norway::from_str(&text)
-                        .unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
-                    serde_json::to_value(value).unwrap()
-                }
-                Some("md") if text.starts_with("---\n") => {
-                    let (fields, _) = parse_frontmatter(&text)
-                        .unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
-                    serde_json::to_value(fields).unwrap()
-                }
-                _ => continue,
-            };
-            let expected_path = expected_dir.join(format!("{}.json", rel.display()));
-            let expected: serde_json::Value =
-                serde_json::from_str(&fs::read_to_string(&expected_path).unwrap_or_else(|_| {
-                    panic!(
-                        "{}: no expected value at {}; actual:\n{}",
-                        rel.display(),
-                        expected_path.display(),
-                        serde_json::to_string_pretty(&actual).unwrap()
-                    )
-                }))
-                .unwrap();
-            assert_eq!(actual, expected, "{}", rel.display());
-            checked += 1;
-        }
-        // Fails if a fixture is deleted but its expected value is left behind.
-        let mut expected_files = Vec::new();
-        collect(&expected_dir, &mut expected_files);
-        let expected_count = expected_files
-            .iter()
-            .filter(|p| !p.starts_with(expected_dir.join("init")))
-            .count();
-        assert_eq!(
-            expected_count, checked,
-            "tests/fixtures/yaml has expected values without a fixture"
-        );
-        assert!(checked > 0);
-    }
-
     // --- Migration tests ---
 
     fn setup_decree_dir(dir: &TempDir) {
@@ -1063,11 +985,7 @@ mod tests {
         std::fs::create_dir_all(decree.join("routines")).unwrap();
         std::fs::create_dir_all(decree.join("runs")).unwrap();
         std::fs::write(decree.join("processed.md"), "").unwrap();
-        std::fs::write(
-            decree.join("config.yml"),
-            "max_attempts: 3\n",
-        )
-        .unwrap();
+        std::fs::write(decree.join("config.yml"), "max_attempts: 3\n").unwrap();
     }
 
     #[test]

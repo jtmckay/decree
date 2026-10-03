@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 
-use crate::cond::{Condition, Operand, Subject};
+use crate::cond::{Condition, Operand, Subject, Test};
 use crate::error::DecreeError;
 use crate::runtime::{is_reserved_event, resolve_script};
 
@@ -1157,7 +1157,8 @@ impl Validator<'_> {
                     );
                 }
             } else if let Invoke::Check(c) = invoke {
-                if c.check.matches.is_some() && !self.script_before(i) {
+                if matches!(c.check.shape(), Ok((Subject::Matches(_), _))) && !self.script_before(i)
+                {
                     self.push(
                         at,
                         "`matches` without `input` reads the most recent script's output, but no script state comes before this state (V9)".into(),
@@ -1205,7 +1206,7 @@ impl Validator<'_> {
 
     /// What is wrong with one condition, without the rule tag.
     fn condition_problems(&self, cond: &Condition) -> Vec<String> {
-        let (subject, op) = match cond.shape() {
+        let (subject, test) = match cond.shape() {
             Ok(shape) => shape,
             Err(e) => return vec![e.to_string()],
         };
@@ -1230,12 +1231,54 @@ impl Validator<'_> {
                 Some(DataType::Int)
             }
             Subject::Data(name) => self.data_type(name, &mut out),
+            Subject::Confidence(state) => {
+                let model = self.m.find(state).is_some_and(|s| {
+                    self.m.nodes[s]
+                        .invoke
+                        .as_ref()
+                        .and_then(|i| i.choose(ChooseKind::Model))
+                        .is_some()
+                });
+                if !model {
+                    out.push(format!(
+                        "`confidence` names `{state}`, which is not a `choose: model` state"
+                    ));
+                }
+                if let Some(Test::Compare(_, operand)) = test {
+                    if let Err(e) = crate::cond::confidence_operand(operand) {
+                        out.push(e.to_string());
+                    }
+                }
+                return out;
+            }
         };
-        let Some((op, operand)) = op else {
-            return out;
+        let (op, operand) = match test {
+            None => return out,
+            Some(Test::Matches(pattern)) => {
+                match left {
+                    Some(DataType::String) | None => {}
+                    Some(kind) => out.push(format!(
+                        "`matches` needs string data, but `{}` is {}",
+                        cond.data.as_deref().unwrap_or_default(),
+                        kind.as_str()
+                    )),
+                }
+                if let Err(e) = crate::cond::compile(pattern) {
+                    out.push(e.to_string());
+                }
+                return out;
+            }
+            Some(Test::Compare(op, operand)) => (op, operand),
         };
         let right = match operand {
             Operand::Int(_) => Some(DataType::Int),
+            Operand::Float(x) => {
+                out.push(format!(
+                    "`{}` compares with {x}, but only `confidence` takes a number that is not an int",
+                    subject.key()
+                ));
+                None
+            }
             Operand::Str(_) => Some(DataType::String),
             Operand::Bool(_) => Some(DataType::Bool),
             Operand::Data(name) => self.data_type(name, &mut out),

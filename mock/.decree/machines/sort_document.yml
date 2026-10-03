@@ -20,7 +20,7 @@ states:
 
   # 2. Free and likely: wording only invoices have.
   by_text:
-    invoke: { check: { matches: '(?i)invoice (no|number)[.:]', input: read_text } }
+    invoke: { check: { matches: '(?i)invoice (no|number)[.:]' }, input: read_text }
     transitions: { yes: file_invoice, no: local_model }
 
   # 3. Cheap: a small classifier on this machine. Sure enough (0.9 or more) -> act.

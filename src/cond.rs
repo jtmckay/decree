@@ -1,15 +1,18 @@
 //! Conditions of `check` invokes (spec section 5, Conditions): typed objects with one
-//! subject and, for `visits` and `data`, one operator, so the YAML parser and `decree check`
+//! subject and, except a bare `matches`, one operator, so the YAML parser and `decree check`
 //! catch mistakes.
 //!
 //! ```yaml
 //! { matches: '^ok' }
+//! { data: file, matches: '\.md$' }
 //! { visits: implement, less_than: { data: max_rounds } }
 //! { data: mode, equals: fast }
+//! { confidence: big_model, at_least: 0.4 }
 //! ```
 //!
 //! The spec defines no type coercion, so evaluation refuses to compare values of different
-//! types, and the ordering operators apply to integers only.
+//! types, and the ordering operators apply to integers only. `confidence` is the exception:
+//! it is a number from 0 to 1, the only place floats appear.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -19,16 +22,19 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 /// A `check` condition, as written. `shape` checks that it has exactly one subject and the
-/// operators that subject needs (V10).
+/// operator that subject needs (V10).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Condition {
+    /// A subject alone, or the operator of a `data` subject.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matches: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visits: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub equals: Option<Operand>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,10 +49,12 @@ pub struct Condition {
     pub at_least: Option<Operand>,
 }
 
-/// The value an operator compares with: a literal, or `{ data: <name> }`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The value an operator compares with: a literal, or `{ data: <name> }`. Floats are for
+/// `confidence` only (V10).
+#[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
     Int(i64),
+    Float(f64),
     Str(String),
     Bool(bool),
     Data(String),
@@ -62,8 +70,8 @@ pub enum Op {
     AtLeast,
 }
 
-/// A condition's subject and, for `visits` and `data`, its operator and value.
-pub type Shape<'a> = (Subject<'a>, Option<(Op, &'a Operand)>);
+/// A condition's subject and, except for a bare `matches`, its test.
+pub type Shape<'a> = (Subject<'a>, Option<Test<'a>>);
 
 /// What a condition tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +82,28 @@ pub enum Subject<'a> {
     Visits(&'a str),
     /// This `data` value.
     Data(&'a str),
+    /// The confidence of this state's latest `choose: model` decision.
+    Confidence(&'a str),
+}
+
+/// What a subject is tested with: a comparison, or (on `data`) a regular expression.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Test<'a> {
+    Compare(Op, &'a Operand),
+    Matches(&'a str),
+}
+
+/// What a condition is evaluated against.
+#[derive(Debug, Clone, Copy)]
+pub struct Facts<'a> {
+    /// The run's `data`.
+    pub data: &'a BTreeMap<String, Value>,
+    /// Visit counts; a state missing here has not been entered.
+    pub visits: &'a BTreeMap<String, u32>,
+    /// The confidence of each state's latest decision; a state missing here counts 0.
+    pub confidence: &'a BTreeMap<String, f64>,
+    /// The text a bare `matches` reads.
+    pub input: &'a str,
 }
 
 /// A value a condition compares: a literal, a `data` value or a visit count.
@@ -86,7 +116,7 @@ pub enum Value {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CondError {
-    #[error("a condition needs one subject: `matches`, `visits` or `data`")]
+    #[error("a condition needs one subject: `matches`, `visits`, `data` or `confidence`")]
     NoSubject,
     #[error("a condition has exactly one subject, not {0}; use two `check` states in a row")]
     ManySubjects(String),
@@ -96,6 +126,10 @@ pub enum CondError {
     ManyOperators(String),
     #[error("`matches` takes no operator, but has `{0}`")]
     OperatorOnMatches(&'static str),
+    #[error("`matches` tests the input or a `data` value, not `{0}`")]
+    MatchesOn(&'static str),
+    #[error("`matches` needs a string, not {0}")]
+    MatchesNotString(&'static str),
     #[error("`matches` '{pattern}' is not a regular expression: {message}")]
     Regex { pattern: String, message: String },
     #[error("unknown data `{0}`")]
@@ -107,6 +141,8 @@ pub enum CondError {
     },
     #[error("`{op}` compares integers only, not {kind}")]
     NotOrdered { op: Op, kind: &'static str },
+    #[error("`confidence` compares to a number from 0 to 1, not {0}")]
+    NotConfidence(String),
 }
 
 impl Op {
@@ -118,6 +154,18 @@ impl Op {
             Op::AtMost => "at_most",
             Op::MoreThan => "more_than",
             Op::AtLeast => "at_least",
+        }
+    }
+
+    /// Compare two numbers (`confidence` only).
+    pub fn compare(self, a: f64, b: f64) -> bool {
+        match self {
+            Op::Equals => a == b,
+            Op::NotEquals => a != b,
+            Op::LessThan => a < b,
+            Op::AtMost => a <= b,
+            Op::MoreThan => a > b,
+            Op::AtLeast => a >= b,
         }
     }
 
@@ -148,6 +196,7 @@ impl fmt::Display for Operand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Operand::Int(n) => write!(f, "{n}"),
+            Operand::Float(x) => write!(f, "{x}"),
             Operand::Str(s) => f.write_str(s),
             Operand::Bool(b) => write!(f, "{b}"),
             Operand::Data(name) => write!(f, "data.{name}"),
@@ -158,14 +207,15 @@ impl fmt::Display for Operand {
 impl<'de> Deserialize<'de> for Operand {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde_norway::Value as Yaml;
-        let expected = "a value is an int, a string, a bool or `{ data: <name> }`";
+        let expected = "a value is a number, a string, a bool or `{ data: <name> }`";
         match Yaml::deserialize(deserializer)? {
             Yaml::String(s) => Ok(Operand::Str(s)),
             Yaml::Bool(b) => Ok(Operand::Bool(b)),
-            Yaml::Number(n) => n
-                .as_i64()
-                .map(Operand::Int)
-                .ok_or_else(|| D::Error::custom(format!("`{n}`: {expected}"))),
+            Yaml::Number(n) => match (n.as_i64(), n.as_f64()) {
+                (Some(i), _) => Ok(Operand::Int(i)),
+                (None, Some(x)) => Ok(Operand::Float(x)),
+                (None, None) => Err(D::Error::custom(format!("`{n}`: {expected}"))),
+            },
             Yaml::Mapping(map) => {
                 let mut entries = map.into_iter();
                 match (entries.next(), entries.next()) {
@@ -184,6 +234,7 @@ impl Serialize for Operand {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Operand::Int(n) => serializer.serialize_i64(*n),
+            Operand::Float(x) => serializer.serialize_f64(*x),
             Operand::Str(s) => serializer.serialize_str(s),
             Operand::Bool(b) => serializer.serialize_bool(*b),
             Operand::Data(name) => BTreeMap::from([("data", name)]).serialize(serializer),
@@ -207,61 +258,121 @@ impl Condition {
         .collect()
     }
 
-    /// The subject and, for `visits` and `data`, the operator: exactly one of each (V10).
+    /// The subject and, except for a bare `matches`, the test: exactly one of each (V10).
+    /// `matches` is the subject when nothing else is, and otherwise an operator of `data`.
     pub fn shape(&self) -> Result<Shape<'_>, CondError> {
         let subjects: Vec<Subject> = [
-            self.matches.as_deref().map(Subject::Matches),
             self.visits.as_deref().map(Subject::Visits),
             self.data.as_deref().map(Subject::Data),
+            self.confidence.as_deref().map(Subject::Confidence),
         ]
         .into_iter()
         .flatten()
         .collect();
-        let subject = match subjects.as_slice() {
-            [] => return Err(CondError::NoSubject),
-            [one] => *one,
-            many => {
+        let ops = self.operators();
+        let subject = match (subjects.as_slice(), self.matches.as_deref()) {
+            ([], None) => return Err(CondError::NoSubject),
+            ([], Some(pattern)) => {
+                return match ops.first() {
+                    None => Ok((Subject::Matches(pattern), None)),
+                    Some((op, _)) => Err(CondError::OperatorOnMatches(op.as_str())),
+                };
+            }
+            ([one], _) => *one,
+            (many, _) => {
                 let names: Vec<String> = many.iter().map(|s| format!("`{}`", s.key())).collect();
                 return Err(CondError::ManySubjects(names.join(" and ")));
             }
         };
-        let ops = self.operators();
-        match (subject, ops.as_slice()) {
-            (Subject::Matches(_), []) => Ok((subject, None)),
-            (Subject::Matches(_), [(op, _), ..]) => Err(CondError::OperatorOnMatches(op.as_str())),
-            (_, []) => Err(CondError::NoOperator(subject.key())),
-            (_, [one]) => Ok((subject, Some(*one))),
-            (_, many) => {
-                let names: Vec<String> = many.iter().map(|(op, _)| format!("`{op}`")).collect();
+        let mut tests: Vec<Test> = ops
+            .into_iter()
+            .map(|(op, v)| Test::Compare(op, v))
+            .collect();
+        if let Some(pattern) = self.matches.as_deref() {
+            tests.push(Test::Matches(pattern));
+        }
+        match tests.as_slice() {
+            [] => Err(CondError::NoOperator(subject.key())),
+            [Test::Matches(_)] if !matches!(subject, Subject::Data(_)) => {
+                Err(CondError::MatchesOn(subject.key()))
+            }
+            [one] => Ok((subject, Some(*one))),
+            many => {
+                let names: Vec<String> = many.iter().map(|t| format!("`{}`", t.key())).collect();
                 Err(CondError::ManyOperators(names.join(" and ")))
             }
         }
     }
 
-    /// Evaluate against the run's `data`, its visit counts and the input text. A state
-    /// missing from `visits` has not been entered, so its count is 0.
-    pub fn eval(
-        &self,
-        data: &BTreeMap<String, Value>,
-        visits: &BTreeMap<String, u32>,
-        input: &str,
-    ) -> Result<bool, CondError> {
-        let (subject, op) = self.shape()?;
-        let left = match subject {
-            Subject::Matches(pattern) => return Ok(compile(pattern)?.is_match(input)),
-            Subject::Visits(state) => Value::Int(visits.get(state).copied().unwrap_or(0).into()),
-            Subject::Data(name) => lookup(data, name)?,
+    /// Evaluate against the run's facts: `data`, visit counts, decision confidences and the
+    /// input text.
+    pub fn eval(&self, facts: &Facts) -> Result<bool, CondError> {
+        let (subject, test) = self.shape()?;
+        let Some(test) = test else {
+            let Subject::Matches(pattern) = subject else {
+                unreachable!("shape gives every subject but a bare `matches` a test");
+            };
+            return Ok(compile(pattern)?.is_match(facts.input));
         };
-        let Some((op, operand)) = op else {
-            unreachable!("shape gives `visits` and `data` an operator");
+        let left = match subject {
+            Subject::Matches(_) => unreachable!("shape gives a bare `matches` no test"),
+            Subject::Visits(state) => {
+                Value::Int(facts.visits.get(state).copied().unwrap_or(0).into())
+            }
+            Subject::Data(name) => lookup(facts.data, name)?,
+            Subject::Confidence(state) => {
+                let Test::Compare(op, operand) = test else {
+                    unreachable!("shape gives `confidence` a comparison");
+                };
+                let left = facts.confidence.get(state).copied().unwrap_or(0.0);
+                return Ok(op.compare(left, confidence_operand(operand)?));
+            }
+        };
+        let (op, operand) = match test {
+            Test::Matches(pattern) => {
+                return match left {
+                    Value::Str(s) => Ok(compile(pattern)?.is_match(&s)),
+                    other => Err(CondError::MatchesNotString(other.kind())),
+                };
+            }
+            Test::Compare(op, operand) => (op, operand),
         };
         let right = match operand {
             Operand::Int(n) => Value::Int(*n),
+            Operand::Float(_) => {
+                return Err(CondError::TypeMismatch {
+                    left: left.kind(),
+                    right: "a float",
+                });
+            }
             Operand::Str(s) => Value::Str(s.clone()),
             Operand::Bool(b) => Value::Bool(*b),
-            Operand::Data(name) => lookup(data, name)?,
+            Operand::Data(name) => lookup(facts.data, name)?,
         };
         compare(&left, op, &right)
+    }
+}
+
+/// The number a `confidence` compares to: an int or a float from 0 to 1, not `data`.
+pub fn confidence_operand(operand: &Operand) -> Result<f64, CondError> {
+    let x = match operand {
+        Operand::Int(n) => *n as f64,
+        Operand::Float(x) => *x,
+        other => return Err(CondError::NotConfidence(other.to_string())),
+    };
+    if (0.0..=1.0).contains(&x) {
+        Ok(x)
+    } else {
+        Err(CondError::NotConfidence(operand.to_string()))
+    }
+}
+
+impl Test<'_> {
+    pub fn key(self) -> &'static str {
+        match self {
+            Test::Compare(op, _) => op.as_str(),
+            Test::Matches(_) => "matches",
+        }
     }
 }
 
@@ -271,26 +382,31 @@ impl Subject<'_> {
             Subject::Matches(_) => "matches",
             Subject::Visits(_) => "visits",
             Subject::Data(_) => "data",
+            Subject::Confidence(_) => "confidence",
         }
     }
 }
 
 impl fmt::Display for Condition {
     /// As a graph note shows it: `<subject> <name> <op> <value>`, e.g.
-    /// `visits implement less_than data.max_rounds`, or `matches '<regex>'`.
+    /// `visits implement less_than data.max_rounds`, `data file matches '<regex>'`,
+    /// `confidence big_model at_least 0.4`, or `matches '<regex>'`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut words = Vec::new();
-        if let Some(pattern) = &self.matches {
-            words.push(format!("matches '{pattern}'"));
-        }
         if let Some(state) = &self.visits {
             words.push(format!("visits {state}"));
         }
         if let Some(name) = &self.data {
             words.push(format!("data {name}"));
         }
+        if let Some(state) = &self.confidence {
+            words.push(format!("confidence {state}"));
+        }
         for (op, value) in self.operators() {
             words.push(format!("{op} {value}"));
+        }
+        if let Some(pattern) = &self.matches {
+            words.push(format!("matches '{pattern}'"));
         }
         f.write_str(&words.join(" "))
     }
@@ -355,6 +471,7 @@ mod tests {
             ("max_rounds".to_string(), Value::Int(2)),
             ("mode".to_string(), Value::Str("fast".to_string())),
             ("strict".to_string(), Value::Bool(true)),
+            ("file".to_string(), Value::Str("notes/a.md".to_string())),
         ])
     }
 
@@ -362,8 +479,26 @@ mod tests {
         BTreeMap::from([("implement".to_string(), 1)])
     }
 
+    fn confidence() -> BTreeMap<String, f64> {
+        BTreeMap::from([("big_model".to_string(), 0.55)])
+    }
+
+    fn eval_with(
+        yaml: &str,
+        data: &BTreeMap<String, Value>,
+        visits: &BTreeMap<String, u32>,
+        confidence: &BTreeMap<String, f64>,
+    ) -> Result<bool, CondError> {
+        parse(yaml).eval(&Facts {
+            data,
+            visits,
+            confidence,
+            input: "tests: 3 passed\n[stderr] warning\n",
+        })
+    }
+
     fn eval(yaml: &str) -> Result<bool, CondError> {
-        parse(yaml).eval(&data(), &visits(), "tests: 3 passed\n[stderr] warning\n")
+        eval_with(yaml, &data(), &visits(), &confidence())
     }
 
     // One test per operator, on each subject that takes one.
@@ -422,6 +557,49 @@ mod tests {
     }
 
     #[test]
+    fn subject_data_with_matches_tests_the_string_value() {
+        assert_eq!(eval(r"{ data: file, matches: '\.md$' }"), Ok(true));
+        let txt = BTreeMap::from([("file".to_string(), Value::Str("notes/a.txt".to_string()))]);
+        assert_eq!(
+            eval_with(
+                r"{ data: file, matches: '\.md$' }",
+                &txt,
+                &visits(),
+                &confidence()
+            ),
+            Ok(false)
+        );
+        // It reads the value, not the input.
+        assert_eq!(eval("{ data: file, matches: passed }"), Ok(false));
+    }
+
+    #[test]
+    fn subject_confidence_reads_the_latest_decision() {
+        assert_eq!(eval("{ confidence: big_model, at_least: 0.4 }"), Ok(true));
+        assert_eq!(eval("{ confidence: big_model, at_least: 0.6 }"), Ok(false));
+        assert_eq!(eval("{ confidence: big_model, less_than: 1 }"), Ok(true));
+        assert_eq!(eval("{ confidence: big_model, equals: 0.55 }"), Ok(true));
+        assert_eq!(
+            eval("{ confidence: big_model, not_equals: 0.55 }"),
+            Ok(false)
+        );
+        assert_eq!(eval("{ confidence: big_model, at_most: 0.55 }"), Ok(true));
+        assert_eq!(
+            eval("{ confidence: big_model, more_than: 0.55 }"),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn subject_confidence_is_zero_when_none_was_reported() {
+        assert_eq!(
+            eval("{ confidence: local_model, at_least: 0.4 }"),
+            Ok(false)
+        );
+        assert_eq!(eval("{ confidence: local_model, equals: 0 }"), Ok(true));
+    }
+
+    #[test]
     fn subject_data() {
         assert_eq!(eval("{ data: strict, equals: true }"), Ok(true));
     }
@@ -434,9 +612,25 @@ mod tests {
             cond.less_than,
             Some(Operand::Data("max_rounds".to_string()))
         );
-        assert_eq!(cond.eval(&data(), &visits(), ""), Ok(true));
+        assert_eq!(
+            eval_with(
+                "{ visits: implement, less_than: { data: max_rounds } }",
+                &data(),
+                &visits(),
+                &confidence()
+            ),
+            Ok(true)
+        );
         let two = BTreeMap::from([("implement".to_string(), 2)]);
-        assert_eq!(cond.eval(&data(), &two, ""), Ok(false));
+        assert_eq!(
+            eval_with(
+                "{ visits: implement, less_than: { data: max_rounds } }",
+                &data(),
+                &two,
+                &confidence()
+            ),
+            Ok(false)
+        );
     }
 
     #[test]
@@ -468,6 +662,30 @@ mod tests {
             Err(CondError::OperatorOnMatches("equals"))
         );
         assert!(parse("{ matches: x }").shape().is_ok());
+        assert_eq!(
+            parse("{ data: f, matches: x }").shape(),
+            Ok((Subject::Data("f"), Some(Test::Matches("x"))))
+        );
+        assert_eq!(
+            parse("{ data: f, matches: x, equals: y }").shape(),
+            Err(CondError::ManyOperators("`equals` and `matches`".into()))
+        );
+        assert_eq!(
+            parse("{ visits: a, matches: x }").shape(),
+            Err(CondError::MatchesOn("visits"))
+        );
+        assert_eq!(
+            parse("{ confidence: a, matches: x }").shape(),
+            Err(CondError::MatchesOn("confidence"))
+        );
+        assert_eq!(
+            parse("{ confidence: a }").shape(),
+            Err(CondError::NoOperator("confidence"))
+        );
+        assert_eq!(
+            parse("{ confidence: a, visits: b, at_least: 0.5 }").shape(),
+            Err(CondError::ManySubjects("`visits` and `confidence`".into()))
+        );
     }
 
     #[test]
@@ -475,7 +693,6 @@ mod tests {
         for yaml in [
             "{ visits: a, lt: 1 }",
             "{ and: [] }",
-            "{ visits: a, equals: 1.5 }",
             "{ visits: a, equals: { state: b } }",
             "{ visits: a, equals: { data: b, other: c } }",
             "{ visits: a, equals: [1] }",
@@ -485,6 +702,40 @@ mod tests {
                 "{yaml} parsed"
             );
         }
+    }
+
+    #[test]
+    fn numbers_parse_as_ints_or_floats() {
+        assert_eq!(
+            parse("{ visits: a, equals: 1 }").equals,
+            Some(Operand::Int(1))
+        );
+        assert_eq!(
+            parse("{ confidence: a, at_least: 0.4 }").at_least,
+            Some(Operand::Float(0.4))
+        );
+    }
+
+    #[test]
+    fn confidence_operand_is_a_number_from_0_to_1() {
+        assert_eq!(confidence_operand(&Operand::Float(0.4)), Ok(0.4));
+        assert_eq!(confidence_operand(&Operand::Int(1)), Ok(1.0));
+        assert_eq!(
+            confidence_operand(&Operand::Float(1.5)),
+            Err(CondError::NotConfidence("1.5".into()))
+        );
+        assert_eq!(
+            confidence_operand(&Operand::Int(-1)),
+            Err(CondError::NotConfidence("-1".into()))
+        );
+        assert_eq!(
+            confidence_operand(&Operand::Data("x".into())),
+            Err(CondError::NotConfidence("data.x".into()))
+        );
+        assert_eq!(
+            confidence_operand(&Operand::Str("high".into())),
+            Err(CondError::NotConfidence("high".into()))
+        );
     }
 
     #[test]
@@ -511,6 +762,21 @@ mod tests {
             eval("{ matches: '(' }"),
             Err(CondError::Regex { .. })
         ));
+        assert_eq!(
+            eval("{ data: max_rounds, matches: '2' }"),
+            Err(CondError::MatchesNotString("an int"))
+        );
+        assert_eq!(
+            eval("{ confidence: big_model, at_least: 1.5 }"),
+            Err(CondError::NotConfidence("1.5".into()))
+        );
+        assert_eq!(
+            eval("{ visits: implement, equals: 1.5 }"),
+            Err(CondError::TypeMismatch {
+                left: "an int",
+                right: "a float"
+            })
+        );
     }
 
     #[test]
@@ -524,6 +790,14 @@ mod tests {
             parse("{ data: strict, equals: true }").to_string(),
             "data strict equals true"
         );
+        assert_eq!(
+            parse(r"{ data: file, matches: '\.md$' }").to_string(),
+            r"data file matches '\.md$'"
+        );
+        assert_eq!(
+            parse("{ confidence: big_model, at_least: 0.4 }").to_string(),
+            "confidence big_model at_least 0.4"
+        );
     }
 
     #[test]
@@ -532,6 +806,11 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&cond).unwrap(),
             serde_json::json!({ "visits": "implement", "less_than": { "data": "max_rounds" } })
+        );
+        let cond = parse("{ confidence: big_model, at_least: 0.4 }");
+        assert_eq!(
+            serde_json::to_string(&cond).unwrap(),
+            r#"{"confidence":"big_model","at_least":0.4}"#
         );
     }
 }

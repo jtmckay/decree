@@ -1,8 +1,0 @@
-{
-  "depth": 1,
-  "id": "20261001T144327Z-6a1f03",
-  "machine": "claude_router",
-  "parent": "01-rate-limit-upload",
-  "state": "done",
-  "trigger": "invoke"
-}

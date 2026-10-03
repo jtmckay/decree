@@ -266,7 +266,7 @@ If the model had failed twice, `classify` would have produced `error`, which goe
 | Step | State | How it decides | Acts when | Otherwise |
 | --- | --- | --- | --- | --- |
 | 1 | `by_name` | `check: { data: file, matches: '^scans/invoice-[0-9]+\.pdf$' }` (free, certain) | `yes` | `no` |
-| 2 | `by_text` | `check: { matches: '(?i)invoice (no\|number)[.:]', input: read_text }` (free, likely) | `yes` | `no` |
+| 2 | `by_text` | `check: { matches: '(?i)invoice (no\|number)[.:]' }, input: read_text` (free, likely) | `yes` | `no` |
 | 3 | `local_model` | `choose: model, router: local_router, min_confidence: 0.9` (a small CPU classifier, measured scores) | confidence ≥ 0.9 | `unsure` |
 | 4 | `big_model` | `choose: model, min_confidence: 0.7` (the default router, Claude) | confidence ≥ 0.7 | `unsure` |
 | 5 | `worth_asking` | `check: { confidence: big_model, at_least: 0.4 }` | 0.4 to 0.7: `yes`, ask a person | below 0.4: `no`, set aside |

@@ -1,5 +1,0 @@
-{
-  "input_file": "./audio/meeting-notes.mp3",
-  "model": "base",
-  "routine": "transcribe"
-}

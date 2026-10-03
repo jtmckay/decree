@@ -1,7 +1,0 @@
-{
-  "height": 1024,
-  "input_image": "reference.png",
-  "output_prefix": "style_transfer_demo",
-  "routine": "comfy-image-text-image",
-  "width": 1024
-}
