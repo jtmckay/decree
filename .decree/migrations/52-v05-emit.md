@@ -9,9 +9,9 @@ Replace the outbox relay with one safe writer, used for emitted messages, replie
 
 ## Requirements
 
-Read spec sections 1 and 4 (Lifecycle step 1, Replies), 8 (emit and event rows), 10 (item 5) first.
+Read spec sections 1 and 4 (Lifecycle step 1, Replies), 8 (emit and event rows), 10 (Delete with the last caller; items 4, 5, 7) first.
 
-Add `decree emit` and `decree event`, and reply delivery (section 4, Replies), including `timeout_s` deadlines. Make cron write through the same temp-file-and-rename writer, with `trigger: cron`. Delete section 10 item 5 after the rg check.
+Add `decree emit` and `decree event`, and reply delivery (section 4, Replies), including `timeout_s` deadlines. Make cron write through the same temp-file-and-rename writer, with `trigger: cron`. Delete section 10 item 5, `InboxMessage` (item 4), and `next_day_counter` and `build_chain_id` (item 7) after the rg check.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.

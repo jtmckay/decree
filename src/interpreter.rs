@@ -70,14 +70,6 @@ pub enum InterpreterError {
         at: String,
         source: CondError,
     },
-
-    /// The state invokes a type this interpreter does not run yet.
-    #[error("machine `{machine}`: {at}: running `{kind}` invokes is not implemented yet")]
-    NotSupported {
-        machine: String,
-        at: String,
-        kind: &'static str,
-    },
 }
 
 fn io_err(path: &Path) -> impl FnOnce(io::Error) -> InterpreterError + '_ {
@@ -595,21 +587,163 @@ impl<'a> Interpreter<'a> {
     fn choose_model(
         &mut self,
         s: usize,
-        _choose: &ChooseInvoke,
+        choose: &ChooseInvoke,
     ) -> Result<Invoked, InterpreterError> {
-        Err(self.not_supported(s, "choose: model"))
+        let request = self.request(s, choose)?;
+        let router = self.router(s, choose)?;
+        let params = serde_norway::Mapping::new();
+        let child = match self.run_child(s, &router, &params, Some(&request))? {
+            Ok(child) => child,
+            Err(reason) => {
+                let reply = Reply::Rejected(reason);
+                return self
+                    .model_decision(s, choose, &router, None, reply, 0)
+                    .map(Invoked::Event);
+            }
+        };
+        match child.outcome {
+            Outcome::Finished(state) => self
+                .model_finished(s, choose, &child.id, &state, child.duration_ms)
+                .map(Invoked::Event),
+            outcome => Ok(self.wait_for_child(s, child.id, outcome)),
+        }
+    }
+
+    /// The router machine of `choose: model` state `s`: its `router`, else `default_router`.
+    fn router(&self, s: usize, choose: &ChooseInvoke) -> Result<String, InterpreterError> {
+        choose
+            .router
+            .clone()
+            .or_else(|| self.ctx.default_router.clone())
+            .ok_or_else(|| {
+                self.invalid(format!(
+                    "{}: `choose: model` names no `router`, and config.yml sets no `default_router`",
+                    self.machine.state_path(s)
+                ))
+            })
+    }
+
+    /// Section 7, Choose: model, step 1: the request for state `s`, as the text of
+    /// `request.json`, its keys in section 7's order.
+    fn request(&self, s: usize, choose: &ChooseInvoke) -> Result<String, InterpreterError> {
+        let m = self.machine;
+        let node = &m.nodes[s];
+        let events = self.read_events()?;
+        let history = events
+            .iter()
+            .filter(|e| is_transition(e))
+            .filter(|e| e.get("source").and_then(Value::as_str) != Some("claim"))
+            .map(|e| {
+                let field = |key: &str| e.get(key).and_then(Value::as_str).unwrap_or_default();
+                format!("{}: {}", field("from"), field("event"))
+            })
+            .collect();
+        let request = Request {
+            v: 1,
+            machine: &m.id,
+            machine_description: m.description(),
+            state: &node.id,
+            state_description: node.description.as_deref().unwrap_or_default(),
+            question: choose.question.as_deref().unwrap_or_default(),
+            options: m
+                .options(s)
+                .map(|e| RequestOption {
+                    event: &e.event,
+                    description: e.description.as_deref().unwrap_or_default(),
+                })
+                .collect(),
+            min_confidence: choose.min_confidence,
+            input: self.input_text(&events, choose.input.as_deref())?,
+            message_body: &self.message_body,
+            history,
+        };
+        Ok(serde_json::to_string_pretty(&request).unwrap_or_default() + "\n")
     }
 
     /// A router run finished in `state`: validate its reply and append the `decision` event.
     fn model_finished(
         &mut self,
         s: usize,
-        _choose: &ChooseInvoke,
-        _child: &str,
-        _state: &str,
-        _duration_ms: u64,
+        choose: &ChooseInvoke,
+        child: &str,
+        state: &str,
+        duration_ms: u64,
     ) -> Result<Decision, InterpreterError> {
-        Err(self.not_supported(s, "choose: model"))
+        let router = self.router(s, choose)?;
+        let reply = if state == FAILED {
+            Reply::Rejected(format!("router run `{child}` ended in `{FAILED}`"))
+        } else {
+            let path = self.ctx.runs_dir().join(child).join(REPLY_FILE);
+            match fs::read(&path) {
+                Ok(bytes) => {
+                    let options = option_names(self.machine, s);
+                    Reply::parse(&bytes, &options).unwrap_or_else(Reply::Rejected)
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    Reply::Rejected(format!("router run `{child}` wrote no {REPLY_FILE}"))
+                }
+                Err(e) => return Err(io_err(&path)(e)),
+            }
+        };
+        self.model_decision(s, choose, &router, Some(child), reply, duration_ms)
+    }
+
+    /// Section 7, Choose: model, step 4: the event from a validated `reply`, which is
+    /// `unsure` when `min_confidence` is set and the confidence is missing or lower, and
+    /// the `decision` event that records it.
+    fn model_decision(
+        &mut self,
+        s: usize,
+        choose: &ChooseInvoke,
+        router: &str,
+        child: Option<&str>,
+        reply: Reply,
+        duration_ms: u64,
+    ) -> Result<Decision, InterpreterError> {
+        let mut fields = json!({
+            "state": self.machine.nodes[s].id,
+            "kind": "model",
+            "options": option_names(self.machine, s),
+            "router": router,
+        });
+        if let Some(child) = child {
+            fields["child_run"] = json!(child);
+        }
+        let event = match reply {
+            Reply::Rejected(reason) => {
+                fields["router_error"] = json!(reason);
+                "error".to_string()
+            }
+            Reply::Pick {
+                event,
+                reason,
+                confidence,
+                probabilities,
+            } => {
+                fields["pick"] = json!(event);
+                if let Some(reason) = reason {
+                    fields["reason"] = json!(reason);
+                }
+                if let Some(confidence) = confidence {
+                    fields["confidence"] = json!(confidence);
+                }
+                if let Some(probabilities) = probabilities {
+                    fields["probabilities"] = Value::Object(probabilities);
+                }
+                let sure = choose
+                    .min_confidence
+                    .is_none_or(|min| confidence.is_some_and(|c| c >= min));
+                if sure {
+                    event
+                } else {
+                    "unsure".to_string()
+                }
+            }
+        };
+        fields["event"] = json!(event);
+        fields["duration_ms"] = json!(duration_ms);
+        self.append("decision", fields)?;
+        Ok(Decision::new(&event, "model", None))
     }
 
     /// The parent's side of a child that stopped before finishing: the run stays `waiting`.
@@ -640,7 +774,7 @@ impl<'a> Interpreter<'a> {
         s: usize,
         name: &str,
         params: &serde_norway::Mapping,
-        request: Option<&Value>,
+        request: Option<&str>,
     ) -> Result<Result<Child, String>, InterpreterError> {
         let ctx = self.ctx;
         let machine = ctx
@@ -671,9 +805,7 @@ impl<'a> Interpreter<'a> {
         let message = format!("---\n{yaml}---\n{}", self.message_body);
         write_replace(&message_path, message.as_bytes())?;
         if let Some(request) = request {
-            let path = run_dir.join(REQUEST_FILE);
-            let text = serde_json::to_string_pretty(request).unwrap_or_default() + "\n";
-            write_replace(&path, text.as_bytes())?;
+            write_replace(&run_dir.join(REQUEST_FILE), request.as_bytes())?;
         }
 
         self.append(
@@ -1012,14 +1144,6 @@ impl<'a> Interpreter<'a> {
             message,
         }
     }
-
-    fn not_supported(&self, s: usize, kind: &'static str) -> InterpreterError {
-        InterpreterError::NotSupported {
-            machine: self.machine.id.clone(),
-            at: self.machine.state_path(s),
-            kind,
-        }
-    }
 }
 
 impl Context<'_> {
@@ -1191,6 +1315,96 @@ pub fn create_run_dir(decree_dir: &Path) -> Result<(String, PathBuf), Interprete
     Err(io_err(&runs)(io::Error::other(format!(
         "every id for {stamp} is taken"
     ))))
+}
+
+/// `request.json` (section 7, Choose: model, step 1). Field order is the spec's.
+#[derive(serde::Serialize)]
+struct Request<'r> {
+    v: u32,
+    machine: &'r str,
+    machine_description: &'r str,
+    state: &'r str,
+    state_description: &'r str,
+    question: &'r str,
+    options: Vec<RequestOption<'r>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_confidence: Option<f64>,
+    input: String,
+    message_body: &'r str,
+    history: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct RequestOption<'r> {
+    event: &'r str,
+    description: &'r str,
+}
+
+/// A router's reply (section 7, Choose: model, steps 3 and 4).
+#[derive(Debug, PartialEq)]
+enum Reply {
+    /// `reply.json` names one of the options.
+    Pick {
+        event: String,
+        reason: Option<String>,
+        confidence: Option<f64>,
+        probabilities: Option<Map<String, Value>>,
+    },
+    /// No valid reply: the `router_error`.
+    Rejected(String),
+}
+
+impl Reply {
+    /// Validate `reply.json` against the state's options. Only `event` is required, and it
+    /// must name an option exactly. `reason`, `confidence` (0 to 1) and `probabilities`
+    /// (option to number) must have their types when present; `null` counts as absent.
+    fn parse(bytes: &[u8], options: &[String]) -> Result<Reply, String> {
+        let bad = |what: &str| format!("{REPLY_FILE}: {what}");
+        let value: Value =
+            serde_json::from_slice(bytes).map_err(|e| bad(&format!("not JSON: {e}")))?;
+        let Value::Object(mut reply) = value else {
+            return Err(bad("not a JSON object"));
+        };
+        let mut take = |key: &str| reply.remove(key).filter(|v| !v.is_null());
+        let event = match take("event") {
+            Some(Value::String(event)) => event,
+            Some(_) => return Err(bad("`event` is not a string")),
+            None => return Err(bad("no `event`")),
+        };
+        if !options.contains(&event) {
+            return Err(bad(&format!(
+                "`{event}` is not one of the options: {}",
+                options.join(", ")
+            )));
+        }
+        let reason = match take("reason") {
+            Some(Value::String(reason)) => Some(reason),
+            Some(_) => return Err(bad("`reason` is not a string")),
+            None => None,
+        };
+        let confidence = match take("confidence") {
+            Some(v) => match v.as_f64().filter(|c| (0.0..=1.0).contains(c)) {
+                Some(c) => Some(c),
+                None => {
+                    return Err(bad(&format!(
+                        "`confidence` {v} is not a number from 0 to 1"
+                    )))
+                }
+            },
+            None => None,
+        };
+        let probabilities = match take("probabilities") {
+            Some(Value::Object(p)) if p.values().all(Value::is_number) => Some(p),
+            Some(_) => return Err(bad("`probabilities` is not a map of option to number")),
+            None => None,
+        };
+        Ok(Reply::Pick {
+            event,
+            reason,
+            confidence,
+            probabilities,
+        })
+    }
 }
 
 /// A final state whose parent is the root: entering it ends the run.
@@ -2188,6 +2402,89 @@ mod tests {
     }
 
     #[test]
+    fn check_data_matches_tests_the_string_value_set_by_params() {
+        let text = "name: step_file\ndescription: Check a file name.\n\
+                    data:\n  file: { type: string, default: \"\" }\ninitial: decide\nstates:\n  \
+                    decide:\n    invoke: { check: { data: file, matches: '\\.md$' } }\n    \
+                    transitions: { yes: passed, no: refused }\n  \
+                    passed: { final: true }\n  refused: { final: true }\n  failed: { final: true }\n";
+        for (file, want, end) in [
+            ("notes/a.md", "yes", "passed"),
+            ("notes/a.txt", "no", "refused"),
+        ] {
+            let p = Project::from_text("step_file", text, &[]);
+            let outcome = p.run_with("inbox", "inbox.md", &params(&format!("file: {file}")));
+            assert_eq!(outcome, Outcome::Finished(end.into()), "{file}");
+            let decision = &p.events_of("decision")[0];
+            assert_eq!(decision["event"], want, "{file}");
+            assert_eq!(
+                decision["condition"],
+                json!({ "data": "file", "matches": "\\.md$" })
+            );
+        }
+    }
+
+    /// Machine `step_confidence`: `worth_asking` checks `big_model`'s confidence. `gate`
+    /// skips `big_model`, which only exists so the condition names a `choose: model` state;
+    /// instead the run's `events.jsonl` starts with `decision`, a decision event of it.
+    fn confidence_project(decision: Value) -> Project {
+        let text = "name: step_confidence\ndescription: Check a model's confidence.\n\
+                    initial: gate\nstates:\n  \
+                    gate:\n    invoke: { check: { visits: big_model, equals: 0 } }\n    \
+                    transitions: { yes: worth_asking, no: big_model }\n  \
+                    worth_asking:\n    invoke: { check: { confidence: big_model, at_least: 0.4 } }\n    \
+                    transitions: { yes: ask_person, no: set_aside }\n  \
+                    big_model:\n    invoke: { choose: model, router: router, question: \"Which kind?\", min_confidence: 0.7 }\n    \
+                    transitions:\n      \
+                    invoice: { target: ask_person, description: A bill. }\n      \
+                    receipt: { target: set_aside, description: A paid bill. }\n      \
+                    unsure: { target: worth_asking }\n  \
+                    ask_person: { final: true }\n  set_aside: { final: true }\n  failed: { final: true }\n";
+        let router = "name: router\ndescription: A router.\ninitial: ask\nstates:\n  \
+                      ask: { invoke: ask, transitions: { done: done } }\n  \
+                      done: { final: true }\n  failed: { final: true }\n";
+        let p = Project::from_texts(&[("step_confidence", text), ("router", router)], &[], None);
+        let mut event = json!({
+            "v": 1, "seq": 1, "ts": "2026-10-01T17:04:12.000Z", "type": "decision",
+            "run_id": RUN_ID, "machine": "step_confidence", "trigger": "inbox",
+            "state": "big_model", "kind": "model", "event": "unsure",
+            "options": ["invoice", "receipt"], "router": "router",
+        });
+        event
+            .as_object_mut()
+            .unwrap()
+            .extend(decision.as_object().unwrap().clone());
+        fs::write(p.run_dir().join(EVENTS_FILE), format!("{event}\n")).unwrap();
+        p
+    }
+
+    #[test]
+    fn check_confidence_reads_the_latest_decision_of_the_state() {
+        for (decision, want, end) in [
+            (
+                json!({ "pick": "invoice", "confidence": 0.55 }),
+                "yes",
+                "ask_person",
+            ),
+            (json!({}), "no", "set_aside"),
+        ] {
+            let p = confidence_project(decision.clone());
+            assert_eq!(p.run(), Outcome::Finished(end.into()), "{decision}");
+            let checks: Vec<_> = p
+                .events_of("decision")
+                .into_iter()
+                .filter(|d| d["state"] == "worth_asking")
+                .collect();
+            assert_eq!(checks.len(), 1);
+            assert_eq!(checks[0]["event"], want, "{decision}");
+            assert_eq!(
+                checks[0]["condition"],
+                json!({ "confidence": "big_model", "at_least": 0.4 })
+            );
+        }
+    }
+
+    #[test]
     fn check_appends_a_decision_before_its_transition() {
         let p = check_project(
             "{ visits: work, less_than: { data: max_rounds } }",
@@ -3043,6 +3340,318 @@ mod tests {
             p.ctx().status(p.machine(), &events, false),
             RunStatus::Waiting
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Choose: model (section 7)
+    // ---------------------------------------------------------------
+
+    /// `step_model`, whose `triage` state asks `step_router` (config `default_router`);
+    /// the router's `ask` script is `ask`, and `work` prints 60 lines. With `reply`, the
+    /// project root holds it as `reply.json`, for the `router_reply` script.
+    fn model_project(ask: &str, reply: Option<&str>) -> Project {
+        let p = Project::from_texts(
+            &[
+                ("step_model", &fixture("step_model")),
+                ("step_router", &fixture("step_router")),
+            ],
+            &[("work", "print_lines"), ("ask", ask)],
+            Some("step_router"),
+        );
+        if let Some(reply) = reply {
+            fs::write(p.root().join("reply.json"), reply).unwrap();
+        }
+        p
+    }
+
+    /// The `decision` event of `triage`.
+    fn model_decision_of(p: &Project) -> Map<String, Value> {
+        let decisions = p.events_of("decision");
+        assert_eq!(decisions.len(), 1, "{decisions:?}");
+        decisions.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn model_router_reply_is_the_event_and_the_request_matches_section_7() {
+        let p = model_project("router_retry", None);
+        assert_eq!(p.run(), Outcome::Finished("retried".into()));
+        assert_eq!(
+            p.transitions(),
+            [
+                "- claimed work claim",
+                "work done triage exit_code",
+                "triage retry retried model",
+            ]
+        );
+        let child = p.child_id();
+        let child_dir = p.child_dir(&child);
+
+        // The router is an ordinary child run, with the request and reply in its folder.
+        let message = fs::read_to_string(child_dir.join(MESSAGE_FILE)).unwrap();
+        assert!(
+            message.starts_with(&format!(
+                "---\nmachine: step_router\nid: {child}\nparent: {RUN_ID}\ndepth: 1\n\
+                 trigger: invoke\n"
+            )),
+            "{message}"
+        );
+        let request = fs::read_to_string(child_dir.join(REQUEST_FILE)).unwrap();
+        let copied = fs::read_to_string(child_dir.join("request_copy.json")).unwrap();
+        assert_eq!(copied, request);
+        let input: String = (1..=60).map(|i| format!("line {i}\n")).collect::<String>() + "\n\n";
+        let want = json!({
+            "v": 1,
+            "machine": "step_model",
+            "machine_description": "Ask a router machine whether to implement again or split the work.",
+            "state": "triage",
+            "state_description": "The tests failed. Decide what to do next.",
+            "question": "Should we implement again or split the work?",
+            "options": [
+                {"event": "retry", "description": "The failures look fixable; implement again."},
+                {"event": "split", "description": "The scope is too large; split it."},
+            ],
+            "min_confidence": 0.8,
+            "input": input,
+            "message_body": BODY,
+            "history": ["work: done"],
+        });
+        assert_eq!(serde_json::from_str::<Value>(&copied).unwrap(), want);
+        // Keys in section 7's order.
+        let keys: Vec<usize> = [
+            "\"v\"",
+            "\"machine\"",
+            "\"machine_description\"",
+            "\"state\"",
+            "\"state_description\"",
+            "\"question\"",
+            "\"options\"",
+            "\"min_confidence\"",
+            "\"input\"",
+            "\"message_body\"",
+            "\"history\"",
+        ]
+        .iter()
+        .map(|k| copied.find(k).unwrap())
+        .collect();
+        assert!(keys.windows(2).all(|w| w[0] < w[1]), "{copied}");
+
+        // The router's script saw DECREE_REQUEST and DECREE_REPLY in its own folder.
+        assert!(child_dir.join(REPLY_FILE).is_file());
+        let decision = model_decision_of(&p);
+        let mut want = json!({
+            "state": "triage", "kind": "model", "event": "retry",
+            "options": ["retry", "split"], "router": "step_router",
+            "child_run": child, "pick": "retry", "confidence": 0.9,
+        });
+        for (key, value) in want.as_object_mut().unwrap() {
+            assert_eq!(&decision[key], value, "{key}");
+        }
+        assert!(decision["duration_ms"].is_u64());
+        assert!(decision.get("router_error").is_none());
+        // `waiting` for the child comes before the decision, which comes before the transition.
+        let kinds: Vec<_> = p
+            .events()
+            .iter()
+            .skip(3)
+            .map(|e| e["type"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            kinds,
+            ["waiting", "decision", "transition", "run_finished"],
+            "{:?}",
+            p.events()
+        );
+    }
+
+    #[test]
+    fn model_request_omits_min_confidence_when_unset_and_router_overrides_the_default() {
+        let text = fixture("step_model")
+            .replace(", min_confidence: 0.8", ", router: other_router")
+            .replace("      unsure: asked_person\n", "")
+            .replace("  asked_person: { final: true }\n", "");
+        let router = fixture("step_router").replace("name: step_router", "name: other_router");
+        let p = Project::from_texts(
+            &[("step_model", &text), ("other_router", &router)],
+            &[("work", "print_lines"), ("ask", "router_retry")],
+            Some("step_router"),
+        );
+        assert_eq!(p.run(), Outcome::Finished("retried".into()));
+        let child = p.child_id();
+        let request: Value = serde_json::from_str(
+            &fs::read_to_string(p.child_dir(&child).join(REQUEST_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert!(request.get("min_confidence").is_none(), "{request}");
+        assert_eq!(model_decision_of(&p)["router"], "other_router");
+        assert_eq!(p.child_events(&child)[0]["machine"], "other_router");
+    }
+
+    #[test]
+    fn model_confidence_below_min_confidence_is_unsure_with_the_pick_recorded() {
+        for (reply, event, end) in [
+            (
+                r#"{"event":"retry","reason":"One test fails.","confidence":0.5}"#,
+                "unsure",
+                "asked_person",
+            ),
+            // No confidence reported, with min_confidence set: unsure too.
+            (r#"{"event":"split"}"#, "unsure", "asked_person"),
+            (r#"{"event":"split","confidence":0.8}"#, "split", "split_up"),
+        ] {
+            let p = model_project("router_reply", Some(reply));
+            assert_eq!(p.run(), Outcome::Finished(end.into()), "{reply}");
+            let decision = model_decision_of(&p);
+            let sent: Value = serde_json::from_str(reply).unwrap();
+            assert_eq!(decision["event"], event, "{reply}");
+            assert_eq!(decision["pick"], sent["event"], "{reply}");
+            for key in ["reason", "confidence"] {
+                assert_eq!(decision.get(key), sent.get(key), "{reply}: {key}");
+            }
+            let taken = p.transitions().last().unwrap().clone();
+            assert_eq!(taken, format!("triage {event} {end} model"));
+        }
+    }
+
+    #[test]
+    fn model_reply_probabilities_and_reason_are_recorded() {
+        let reply = r#"{"event":"retry","reason":"Fixable.","confidence":0.86,"probabilities":{"retry":0.86,"split":0.14}}"#;
+        let p = model_project("router_reply", Some(reply));
+        assert_eq!(p.run(), Outcome::Finished("retried".into()));
+        let decision = model_decision_of(&p);
+        assert_eq!(decision["reason"], "Fixable.");
+        assert_eq!(
+            decision["probabilities"],
+            json!({ "retry": 0.86, "split": 0.14 })
+        );
+    }
+
+    #[test]
+    fn model_invalid_reply_or_failed_router_is_error_with_router_error() {
+        let cases = [
+            (
+                "router_reply",
+                Some(r#"{"event":"merge","confidence":0.99}"#),
+                "reply.json: `merge` is not one of the options: retry, split",
+            ),
+            // Never fuzzy-matched.
+            (
+                "router_reply",
+                Some(r#"{"event":"Retry"}"#),
+                "reply.json: `Retry` is not one of the options: retry, split",
+            ),
+            (
+                "router_reply",
+                Some(r#"{"reason":"no pick"}"#),
+                "reply.json: no `event`",
+            ),
+            (
+                "router_reply",
+                Some("Retry, I think."),
+                "reply.json: not JSON: expected value at line 1 column 1",
+            ),
+            (
+                "router_reply",
+                Some(r#"{"event":"retry","confidence":1.5}"#),
+                "reply.json: `confidence` 1.5 is not a number from 0 to 1",
+            ),
+            ("exit_zero", None, "wrote no reply.json"),
+            ("exit_three", None, "ended in `failed`"),
+        ];
+        for (ask, reply, want) in cases {
+            let p = model_project(ask, reply);
+            assert_eq!(p.run(), Outcome::Finished("failed".into()), "{want}");
+            let child = p.child_id();
+            let decision = model_decision_of(&p);
+            assert_eq!(decision["event"], "error", "{want}");
+            assert_eq!(decision["child_run"], json!(child));
+            let error = decision["router_error"].as_str().unwrap();
+            assert!(error.ends_with(want), "{error} / {want}");
+            assert!(decision.get("pick").is_none(), "{want}");
+            assert_eq!(p.transitions()[2], "triage error failed model", "{want}");
+        }
+    }
+
+    #[test]
+    fn model_past_max_depth_starts_no_router_and_is_error() {
+        let p = model_project("router_retry", None);
+        let input = RunInput {
+            depth: 10,
+            ..inbox_input()
+        };
+        let ctx = p.ctx();
+        let empty = serde_norway::Mapping::new();
+        let outcome = Interpreter::new(&ctx, p.machine(), p.executor("emit", &empty), input)
+            .unwrap()
+            .start()
+            .unwrap();
+        assert_eq!(outcome, Outcome::Finished("failed".into()));
+        assert!(p.events_of("waiting").is_empty());
+        let decision = model_decision_of(&p);
+        assert_eq!(decision["router_error"], "max_depth 10 reached");
+        assert_eq!(decision["router"], "step_router");
+        assert!(decision.get("child_run").is_none());
+        assert_eq!(p.transitions()[2], "triage error failed model");
+    }
+
+    #[test]
+    fn model_router_finished_after_a_crash_is_validated_when_the_parent_continues() {
+        let p = model_project("router_retry", None);
+        assert_eq!(p.run(), Outcome::Finished("retried".into()));
+        // Cut the parent back to its `waiting` event, as if decree stopped there.
+        let path = p.run_dir().join(EVENTS_FILE);
+        let text = fs::read_to_string(&path).unwrap();
+        let kept: String = text
+            .lines()
+            .take_while(|l| !l.contains("\"type\":\"decision\""))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        fs::write(&path, kept).unwrap();
+        let events = p.events();
+        assert_eq!(events.last().unwrap()["type"], "waiting");
+        assert_eq!(
+            p.ctx().status(p.machine(), &events, false),
+            RunStatus::Pending
+        );
+        assert_eq!(
+            continue_run(&p.ctx(), RUN_ID).unwrap(),
+            Outcome::Finished("retried".into())
+        );
+        let decision = model_decision_of(&p);
+        assert_eq!(decision["event"], "retry");
+        assert_eq!(decision["confidence"], 0.9);
+    }
+
+    #[test]
+    fn reply_parse_validates_each_field() {
+        let options = ["retry".to_string(), "split".to_string()];
+        let parse = |text: &str| Reply::parse(text.as_bytes(), &options);
+        assert_eq!(
+            parse(r#"{"event":"retry","reason":null,"confidence":null}"#),
+            Ok(Reply::Pick {
+                event: "retry".into(),
+                reason: None,
+                confidence: None,
+                probabilities: None,
+            })
+        );
+        for (text, want) in [
+            ("[]", "reply.json: not a JSON object"),
+            (r#"{"event":3}"#, "reply.json: `event` is not a string"),
+            (
+                r#"{"event":"retry","reason":1}"#,
+                "reply.json: `reason` is not a string",
+            ),
+            (
+                r#"{"event":"retry","confidence":"high"}"#,
+                "reply.json: `confidence` \"high\" is not a number from 0 to 1",
+            ),
+            (
+                r#"{"event":"retry","probabilities":{"retry":"most"}}"#,
+                "reply.json: `probabilities` is not a map of option to number",
+            ),
+        ] {
+            assert_eq!(parse(text), Err(want.to_string()), "{text}");
+        }
     }
 
     #[test]

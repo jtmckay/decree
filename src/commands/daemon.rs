@@ -155,7 +155,7 @@ fn process_single_message(
 ) -> Result<(), DecreeError> {
     // Parse and normalize the message
     let mut msg = InboxMessage::from_file(project_root, filename)?;
-    let was_modified = msg.normalize(project_root, config, None)?;
+    let was_modified = msg.normalize(project_root, config)?;
 
     // If normalization changed the message (including possible rename), update on disk
     // and track the new filename for all subsequent operations.

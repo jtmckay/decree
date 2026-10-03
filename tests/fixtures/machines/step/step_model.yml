@@ -1,0 +1,18 @@
+name: step_model
+description: Ask a router machine whether to implement again or split the work.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: triage }
+  triage:
+    description: The tests failed. Decide what to do next.
+    invoke: { choose: model, question: "Should we implement again or split the work?", min_confidence: 0.8, input: work }
+    transitions:
+      retry:  { target: retried, description: "The failures look fixable; implement again." }
+      split:  { target: split_up, description: "The scope is too large; split it." }
+      unsure: asked_person
+  retried:      { final: true }
+  split_up:     { final: true }
+  asked_person: { final: true }
+  failed:       { final: true }

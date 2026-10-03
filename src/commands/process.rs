@@ -268,7 +268,7 @@ pub fn process_single_message(
 
     // Until M5.3, a message with no `routine:` goes to `default_routine`; the model's
     // choice moved into router machines (`claude_router`'s `ask_claude`).
-    let was_modified = msg.normalize(project_root, config, None)?;
+    let was_modified = msg.normalize(project_root, config)?;
 
     // After normalization, rename the inbox file if the ID-based name differs from the original.
     let active_filename: String = if was_modified {

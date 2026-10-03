@@ -357,6 +357,38 @@ fn check_rejects_the_old_shapes_with_the_section_5_messages() {
     );
 }
 
+/// The escalation conditions in `sort_document` broken one at a time (migration 48, V10).
+#[test]
+fn check_rejects_bad_escalation_conditions_with_v10() {
+    let cases = [
+        (
+            "file: { type: string, default: \"\" }",
+            "file: { type: int, default: 0 }",
+            "machines/sort_document.yml: by_name: check: `matches` needs string data, but `file` is int (V10)",
+        ),
+        (
+            "confidence: big_model",
+            "confidence: read_text",
+            "machines/sort_document.yml: worth_asking: check: `confidence` names `read_text`, which is not a `choose: model` state (V10)",
+        ),
+        (
+            "at_least: 0.4",
+            "at_least: 1.5",
+            "machines/sort_document.yml: worth_asking: check: `confidence` compares to a number from 0 to 1, not 1.5 (V10)",
+        ),
+    ];
+    for (from, to, expected) in cases {
+        let (code, stdout, _) = check_mock(|decree| {
+            let path = decree.join("machines/sort_document.yml");
+            let text = fs::read_to_string(&path).unwrap();
+            assert!(text.contains(from), "{from}");
+            fs::write(&path, text.replacen(from, to, 1)).unwrap();
+        });
+        assert_eq!(code, 1, "{expected}");
+        assert_eq!(stdout, format!("{expected}\n"));
+    }
+}
+
 #[test]
 fn check_outside_a_project_fails() {
     let tmp = TempDir::new().unwrap();

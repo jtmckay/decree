@@ -56,8 +56,8 @@ fn test_init_config_has_required_fields() {
 
     let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
 
-    assert!(config.contains("ai_router:"));
-    assert!(config.contains("ai_interactive:"));
+    assert!(config.contains("default_router: "));
+    assert!(!config.contains("commands:"));
     assert!(config.contains("max_attempts: 3"));
     assert!(config.contains("max_depth: 10"));
     assert!(config.contains("max_log_size: 2097152"));
@@ -67,23 +67,6 @@ fn test_init_config_has_required_fields() {
     assert!(config.contains("afterAll:"));
     assert!(config.contains("# beforeEach: \"git-baseline\""));
     assert!(config.contains("# afterEach: \"git-stash-changes\""));
-}
-
-#[test]
-fn test_init_config_has_commented_alternatives() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-
-    // At least two of the three backends should appear (one uncommented, others commented)
-    let ai_lines: Vec<&str> = config.lines().filter(|l| l.contains("ai_router")).collect();
-    // Should have one active + at least one commented alternative
-    assert!(
-        ai_lines.len() >= 2,
-        "Expected multiple ai_router entries, got: {ai_lines:?}"
-    );
 }
 
 #[test]
@@ -138,7 +121,11 @@ fn test_init_stdin_closed_asks_nothing() {
 
     // Without --ai and with nothing on PATH, the backend is opencode.
     let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-    assert!(config.contains("  ai_router: \"opencode run {prompt}\"\n"));
+    assert!(config.starts_with("default_router: opencode_router "));
+    assert!(dir
+        .path()
+        .join(".decree/machines/opencode_router.yml")
+        .is_file());
     // Without --permissions, no permissions file is written.
     assert!(!dir.path().join("opencode.json").exists());
 }
@@ -170,8 +157,24 @@ fn test_init_existing_empty_decree_dir_exits_2() {
     assert_eq!(fs::read_dir(dir.path().join(".decree")).unwrap().count(), 0);
 }
 
+/// `decree check` in `dir`: it exits 0 and prints nothing, not even a stale-graph warning.
+fn assert_check_passes(dir: &TempDir) {
+    let out = decree_cmd(dir).arg("check").output().unwrap();
+    assert_eq!(
+        (
+            out.status.code(),
+            out.stdout.as_slice(),
+            out.stderr.as_slice()
+        ),
+        (Some(0), &b""[..], &b""[..]),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
-fn test_init_ai_claude_sets_ai_router() {
+fn test_init_ai_claude_writes_claude_router_and_check_passes() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
@@ -180,27 +183,132 @@ fn test_init_ai_claude_sets_ai_router() {
         .assert()
         .success();
 
-    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-    assert!(config.contains("  ai_router: \"claude -p {prompt}\"\n"));
-    assert!(config.contains("  # ai_router: \"opencode run {prompt}\"\n"));
+    let decree = dir.path().join(".decree");
+    assert!(decree.join("machines/claude_router.yml").is_file());
+    assert!(decree.join("scripts/claude_router/ask_claude.sh").is_file());
+    assert!(decree.join("graph/claude_router.md").is_file());
+    let config = fs::read_to_string(decree.join("config.yml")).unwrap();
+    assert!(config.starts_with("default_router: claude_router "));
+    assert!(!config.contains("ai_router"));
+    assert_check_passes(&dir);
     // The decree skill is installed for the chosen backend.
     assert!(dir.path().join(".claude/skills").is_dir());
     assert!(!dir.path().join(".claude/settings.json").exists());
 }
 
 #[test]
-fn test_init_ai_opencode_and_copilot_set_ai_router() {
-    for (ai, router) in [
-        ("opencode", "opencode run {prompt}"),
-        ("copilot", "copilot -p {prompt}"),
-    ] {
+fn test_init_ai_opencode_and_copilot_write_their_routers() {
+    for ai in ["opencode", "copilot"] {
         let dir = TempDir::new().unwrap();
         decree_cmd(&dir)
             .args(["init", "--ai", ai])
             .assert()
             .success();
-        let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-        assert!(config.contains(&format!("  ai_router: \"{router}\"\n")));
+        let decree = dir.path().join(".decree");
+        let config = fs::read_to_string(decree.join("config.yml")).unwrap();
+        assert!(config.starts_with(&format!("default_router: {ai}_router ")));
+        let machine = fs::read_to_string(decree.join(format!("machines/{ai}_router.yml"))).unwrap();
+        assert!(
+            machine.contains(&format!("invoke: ask_{ai}\n")),
+            "{machine}"
+        );
+        assert!(decree
+            .join(format!("scripts/{ai}_router/ask_{ai}.sh"))
+            .is_file());
+        assert!(!decree.join("machines/claude_router.yml").exists());
+        assert_check_passes(&dir);
+    }
+}
+
+/// Run the `ask_claude` that `decree init --ai claude` writes, with a stub `claude` on
+/// `PATH` that prints `stub_reply`: (exit code, `reply.json` if written, stderr).
+fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude"])
+        .assert()
+        .success();
+    let bin = dir.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(bin.join("reply.txt"), stub_reply).unwrap();
+    // The stub reads the prompt from stdin, as `claude -p` does, and keeps it.
+    let stub = bin.join("claude");
+    fs::write(
+        &stub,
+        format!(
+            "#!/usr/bin/env bash\n[ \"$1\" = -p ] || exit 9\ncat > {bin}/prompt.txt\ncat {bin}/reply.txt\n",
+            bin = bin.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    let run = dir.path().join(".decree/runs/r1");
+    fs::create_dir_all(&run).unwrap();
+    let request = serde_json::json!({
+        "v": 1, "machine": "feature", "machine_description": "Implement one feature.",
+        "state": "triage", "state_description": "",
+        "question": "Should we implement again or split the work?",
+        "options": [
+            {"event": "retry", "description": "Implement again."},
+            {"event": "split", "description": "Split the work."},
+        ],
+        "input": "1 test failed", "message_body": "# Task\n", "history": ["verify: fail"],
+    });
+    fs::write(run.join("request.json"), request.to_string()).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = std::process::Command::new(
+        dir.path()
+            .join(".decree/scripts/claude_router/ask_claude.sh"),
+    )
+    .current_dir(dir.path())
+    .env("PATH", path)
+    .env("DECREE_REQUEST", run.join("request.json"))
+    .env("DECREE_REPLY", run.join("reply.json"))
+    .output()
+    .unwrap();
+    let prompt = fs::read_to_string(bin.join("prompt.txt")).unwrap();
+    assert!(prompt.contains("Question: Should we implement again or split the work?\n"));
+    assert!(prompt.contains("- retry: Implement again.\n- split: Split the work."));
+    (
+        out.status.code().unwrap(),
+        fs::read_to_string(run.join("reply.json")).ok(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn test_ask_claude_takes_the_fenced_json_after_prose() {
+    let cases = [
+        // Prose, then a fenced one-line object.
+        "The failure is one off-by-one; fixing it is local.\n\n```json\n{\"event\": \"retry\", \"reason\": \"Local fix.\", \"confidence\": 0.86}\n```\n",
+        // A fenced object over several lines, with an earlier object in the prose.
+        "Not {\"event\": \"split\"} but:\n```\n{\n  \"event\": \"retry\",\n  \"reason\": \"Local fix.\",\n  \"confidence\": 0.86\n}\n```\nThanks.\n",
+    ];
+    for stub_reply in cases {
+        let (code, reply, stderr) = run_ask_claude(stub_reply);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(
+            reply.as_deref(),
+            Some("{\"event\":\"retry\",\"reason\":\"Local fix.\",\"confidence\":0.86}\n"),
+            "{stub_reply}"
+        );
+    }
+}
+
+#[test]
+fn test_ask_claude_fails_on_a_reply_that_is_not_an_option() {
+    for (stub_reply, want) in [
+        (
+            "```json\n{\"event\": \"merge\"}\n```\n",
+            "not an option: merge",
+        ),
+        ("I would retry.\n", "not an option: "),
+    ] {
+        let (code, reply, stderr) = run_ask_claude(stub_reply);
+        assert_eq!(code, 1, "{stub_reply}");
+        assert!(reply.is_none(), "{stub_reply}");
+        assert!(stderr.contains(want), "{stderr}");
     }
 }
 

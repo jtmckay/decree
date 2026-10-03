@@ -5,9 +5,6 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use walkdir::WalkDir;
 
-/// Callback that sends the router prompt to the AI and returns its reply.
-pub type RouterFn = dyn Fn(&str) -> Result<String, DecreeError>;
-
 // Known frontmatter field names (everything else is "custom").
 const KNOWN_FIELDS: &[&str] = &["id", "chain", "seq", "routine", "migration", "trigger"];
 
@@ -406,14 +403,10 @@ impl InboxMessage {
     /// Normalize the message, filling in missing fields.
     ///
     /// Returns `true` if the message was modified and should be rewritten.
-    ///
-    /// `ai_router` is an optional callback for AI-based routine selection.
-    /// It receives the populated router prompt and should return the routine name.
     pub fn normalize(
         &mut self,
         project_root: &Path,
         config: &AppConfig,
-        ai_router: Option<&RouterFn>,
     ) -> Result<bool, DecreeError> {
         let mut modified = false;
 
@@ -472,7 +465,7 @@ impl InboxMessage {
 
         // 5. Routine selection
         if self.routine.is_none() {
-            self.routine = Some(select_routine(project_root, config, &self.body, ai_router)?);
+            self.routine = Some(select_routine(config));
         }
 
         Ok(true)
@@ -744,37 +737,14 @@ pub fn build_router_prompt(
     Ok(prompt)
 }
 
-/// Select a routine for a message.
-///
-/// Fallback chain: AI router → config `default_routine` → `"develop"`.
-fn select_routine(
-    project_root: &Path,
-    config: &AppConfig,
-    message_body: &str,
-    ai_router: Option<&RouterFn>,
-) -> Result<String, DecreeError> {
-    // Try AI router if provided
-    if let Some(router_fn) = ai_router {
-        let routines = list_routines(project_root, config)?;
-        if !routines.is_empty() {
-            if let Ok(prompt) = build_router_prompt(project_root, &routines, message_body) {
-                if let Ok(selected) = router_fn(&prompt) {
-                    let trimmed = selected.trim().to_string();
-                    if routines.iter().any(|r| r.name == trimmed) {
-                        return Ok(trimmed);
-                    }
-                }
-            }
-        }
+/// The routine for a message that names none: config `default_routine`, else `"develop"`.
+/// Choosing one with a model is a `choose: model` state now (spec section 7).
+fn select_routine(config: &AppConfig) -> String {
+    if config.default_routine.is_empty() {
+        "develop".to_string()
+    } else {
+        config.default_routine.clone()
     }
-
-    // Fallback: config default
-    if !config.default_routine.is_empty() {
-        return Ok(config.default_routine.clone());
-    }
-
-    // Ultimate fallback
-    Ok("develop".to_string())
 }
 
 // =================================================================
@@ -1248,7 +1218,7 @@ mod tests {
             filename: "D0001-1432-test-0.md".into(),
         };
 
-        let modified = msg.normalize(dir.path(), &config, None).unwrap();
+        let modified = msg.normalize(dir.path(), &config).unwrap();
         assert!(!modified, "complete message should not be modified");
     }
 
@@ -1260,7 +1230,7 @@ mod tests {
 
         let mut msg = InboxMessage::parse("D0001-1432-01-add-auth-0.md", "Add auth.\n").unwrap();
 
-        let modified = msg.normalize(dir.path(), &config, None).unwrap();
+        let modified = msg.normalize(dir.path(), &config).unwrap();
         assert!(modified);
         assert_eq!(msg.chain.as_deref(), Some("D0001-1432-01-add-auth"));
         assert_eq!(msg.seq, Some(0));
@@ -1278,7 +1248,7 @@ mod tests {
         let content = "---\nchain: my-chain\nseq: 5\n---\nBody.\n";
         let mut msg = InboxMessage::parse("D0001-1432-01-add-auth-0.md", content).unwrap();
 
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
         // Frontmatter values should take priority over filename
         assert_eq!(msg.chain.as_deref(), Some("my-chain"));
         assert_eq!(msg.seq, Some(5));
@@ -1294,7 +1264,7 @@ mod tests {
         // Filename without chain-seq pattern
         let mut msg = InboxMessage::parse("random-name.md", "Body.\n").unwrap();
 
-        let modified = msg.normalize(dir.path(), &config, None).unwrap();
+        let modified = msg.normalize(dir.path(), &config).unwrap();
         assert!(modified);
         assert!(msg.chain.is_some());
         assert!(msg.chain.as_ref().unwrap().starts_with("D0001-"));
@@ -1312,7 +1282,7 @@ mod tests {
         };
 
         let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
         assert_eq!(msg.routine.as_deref(), Some("rust-develop"));
     }
 
@@ -1326,67 +1296,7 @@ mod tests {
         };
 
         let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
-        msg.normalize(dir.path(), &config, None).unwrap();
-        assert_eq!(msg.routine.as_deref(), Some("develop"));
-    }
-
-    #[test]
-    fn test_normalize_routine_ai_selection() {
-        let dir = TempDir::new().unwrap();
-        setup_decree_dir(&dir);
-        let config = AppConfig::default();
-
-        // Write a routine and router.md
-        std::fs::write(
-            dir.path().join(".decree/routines/develop.sh"),
-            "#!/usr/bin/env bash\n# Develop\n#\n# General purpose.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join(".decree/routines/rust-develop.sh"),
-            "#!/usr/bin/env bash\n# Rust Develop\n#\n# Rust specific.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join(".decree/router.md"),
-            "Select routine.\n\n{routines}\n\n{message}\n",
-        )
-        .unwrap();
-
-        // AI selects "rust-develop"
-        let ai_fn =
-            |_prompt: &str| -> Result<String, DecreeError> { Ok("rust-develop".to_string()) };
-
-        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Add Rust auth.\n").unwrap();
-        msg.normalize(dir.path(), &config, Some(&ai_fn)).unwrap();
-        assert_eq!(msg.routine.as_deref(), Some("rust-develop"));
-    }
-
-    #[test]
-    fn test_normalize_routine_ai_invalid_falls_back() {
-        let dir = TempDir::new().unwrap();
-        setup_decree_dir(&dir);
-        let config = AppConfig::default();
-
-        std::fs::write(
-            dir.path().join(".decree/routines/develop.sh"),
-            "#!/usr/bin/env bash\n# Develop\n#\n# General.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join(".decree/router.md"),
-            "{routines}\n{message}\n",
-        )
-        .unwrap();
-
-        // AI returns a non-existent routine
-        let ai_fn = |_prompt: &str| -> Result<String, DecreeError> {
-            Ok("nonexistent-routine".to_string())
-        };
-
-        let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
-        msg.normalize(dir.path(), &config, Some(&ai_fn)).unwrap();
-        // Should fall back to config default
+        msg.normalize(dir.path(), &config).unwrap();
         assert_eq!(msg.routine.as_deref(), Some("develop"));
     }
 
@@ -1399,7 +1309,7 @@ mod tests {
         let content = "---\npriority: high\ntags: urgent\n---\nBody.\n";
         let mut msg = InboxMessage::parse("D0001-1432-test-0.md", content).unwrap();
 
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
         assert_eq!(msg.custom_fields.len(), 2);
         assert_eq!(
             msg.custom_fields.get("priority"),
@@ -1416,7 +1326,7 @@ mod tests {
         let content = "---\nmigration: 01-auth.md\n---\nBody.\n";
         let mut msg = InboxMessage::parse("D0001-1432-01-auth-0.md", content).unwrap();
 
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
         assert_eq!(msg.migration.as_deref(), Some("01-auth.md"));
     }
 
@@ -1428,7 +1338,7 @@ mod tests {
 
         let mut msg = InboxMessage::parse("D0001-1432-test-0.md", "Body.\n").unwrap();
         assert!(msg.trigger.is_none());
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
         assert_eq!(msg.trigger.as_deref(), Some("inbox"));
     }
 
@@ -1440,7 +1350,7 @@ mod tests {
 
         let content = "---\ntrigger: chain\n---\nBody.\n";
         let mut msg = InboxMessage::parse("D0001-1432-test-0.md", content).unwrap();
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
         assert_eq!(msg.trigger.as_deref(), Some("chain"));
     }
 
@@ -1454,7 +1364,7 @@ mod tests {
         let content = "---\nid: D0001-1432-test-0\nchain: D0001-1432-test\nseq: 0\nroutine: develop\n---\nBody.\n";
         let mut msg = InboxMessage::parse("D0001-1432-test-0.md", content).unwrap();
         assert!(msg.trigger.is_none());
-        let modified = msg.normalize(dir.path(), &config, None).unwrap();
+        let modified = msg.normalize(dir.path(), &config).unwrap();
         assert!(modified);
         assert_eq!(msg.trigger.as_deref(), Some("inbox"));
     }
@@ -1467,7 +1377,7 @@ mod tests {
 
         // File "fix-errors.md" has no chain-seq pattern and no migration field
         let mut msg = InboxMessage::parse("fix-errors.md", "Body.\n").unwrap();
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
 
         let chain = msg.chain.as_deref().unwrap();
         assert!(
@@ -1486,7 +1396,7 @@ mod tests {
         // File "random.md" with migration: 01-auth.md — migration stem wins
         let content = "---\nmigration: 01-auth.md\n---\nBody.\n";
         let mut msg = InboxMessage::parse("random.md", content).unwrap();
-        msg.normalize(dir.path(), &config, None).unwrap();
+        msg.normalize(dir.path(), &config).unwrap();
 
         let chain = msg.chain.as_deref().unwrap();
         assert!(

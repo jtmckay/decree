@@ -45,3 +45,5 @@
 45-v05-step-loop.md
 46-v05-composition-waiting.md
 47-v05-decision-invokes.md
+48-v05-escalation-conditions.md
+49-v05-sub-machines-routers.md

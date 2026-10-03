@@ -1,0 +1,11 @@
+# Graph: ../graph/{ai}_router.md
+name: {ai}_router
+description: Ask {ai_title} to pick one of the options in the request.
+initial: ask
+states:
+  ask:                             # renders the prompt from $DECREE_REQUEST, runs {ai_cli}, writes $DECREE_REPLY
+    invoke: ask_{ai}
+    max_attempts: 2                # a reply that is not one of the options fails the script; it runs once more
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

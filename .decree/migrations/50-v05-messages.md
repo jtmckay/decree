@@ -9,9 +9,9 @@ One message type for inbox, cron and migrations, with the migration rules kept f
 
 ## Requirements
 
-Read spec sections 1 and 4, 10 (items 4, 6, 7) first.
+Read spec sections 1 and 4, 10 (Delete with the last caller; items 4, 22) first.
 
-Implement message parse and write, inbox claim, validation, and the six section 4 migration rules with the `processed.md` ledger. Then delete section 10 items 4, 6 and 7 after the rg check.
+Implement message parse and write, inbox claim, validation, and the six section 4 migration rules with the `processed.md` ledger. Rewire `decree process` to run messages and migrations through machines. Then, after the rg check, delete section 10 item 22 (the 0.4 pipeline in `process.rs` and the run mode of `decree routine <name>`) and item 4's M4.1 symbols. `InboxMessage`, `DEAD_DIR`, `MessageId`, `next_day_counter`, `build_chain_id` and `find_matching_runs` stay: their last callers go in M4.3 and M4.4. `daemon` keeps its own 0.4 pipeline until M4.4.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.

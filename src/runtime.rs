@@ -23,7 +23,7 @@ use serde_json::{json, Map, Value};
 use crate::machine::{is_ident, DataSpec, LoadedMachine};
 
 /// Directory holding scripts, relative to `.decree/` or `shared_source`.
-const SCRIPTS_DIR: &str = "scripts";
+pub const SCRIPTS_DIR: &str = "scripts";
 
 /// Why a script name does not resolve to exactly one executable file (V12).
 #[derive(Debug, thiserror::Error)]

@@ -9,9 +9,9 @@ Wire the new pieces into the CLI. The daemon stops having its own copy of the pi
 
 ## Requirements
 
-Read spec sections 1 and 3, 8, 10 (items 13, 19, 21), 12 first.
+Read spec sections 1 and 3, 8, 10 (Delete with the last caller; items 6, 7, 13, 19, 21), 12 first.
 
-Implement section 8 for `init`, `process` (with `--dry-run`), `daemon` (with `--interval`, calling the same functions as `process`), `status` (including the running script, its pid, elapsed time and log path), `tail` and `retry`. Delete section 10 items 13, 19 and 21 after the rg check.
+Implement section 8 for `init`, `process` (with `--dry-run`), `daemon` (with `--interval`, calling the same functions as `process`), `status` (including the running script, its pid, elapsed time and log path), `tail` and `retry`. Delete section 10 items 6, 13, 19 and 21, and `MessageId` and `find_matching_runs` (item 7), after the rg check.
 
 - Only this migration's scope; the other v0.5 migrations cover the rest of spec section 11.
 - If the code does something the spec does not cover, or the spec is ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.

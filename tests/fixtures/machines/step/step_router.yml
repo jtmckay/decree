@@ -1,0 +1,9 @@
+name: step_router
+description: A router machine whose one script writes the reply.
+initial: ask
+states:
+  ask:
+    invoke: ask
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

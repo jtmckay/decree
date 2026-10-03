@@ -1,17 +1,51 @@
 use crate::cli::AiBackend;
-use crate::commands::skill;
+use crate::commands::{graph, skill};
 use crate::config;
 use crate::error::DecreeError;
+use crate::machine::MACHINES_DIR;
+use crate::runtime::SCRIPTS_DIR;
 use std::path::Path;
 use std::process::Command;
 
-/// AI backends in 0.4.2's detection order.
-const AI_BACKENDS: &[(&str, &str, &str)] = &[
-    // (command, ai_router template, ai_interactive template)
-    ("opencode", "opencode run {prompt}", "opencode"),
-    ("claude", "claude -p {prompt}", "claude"),
-    ("copilot", "copilot -p {prompt}", "copilot"),
+/// An AI backend: its CLI, and how the routine templates and its router call it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Backend {
+    /// The command, which also names the router machine (`<name>_router`) and its
+    /// script (`ask_<name>`).
+    name: &'static str,
+    /// The name the router machine's description and script use.
+    title: &'static str,
+    /// The non-interactive prompt command, prompt last: `{ai_invoke}` in routines.
+    invoke: &'static str,
+    /// The line of `ask_<name>` that sends `$prompt` and prints the reply.
+    ask: &'static str,
+}
+
+/// AI backends in 0.4.2's detection order. The routers differ only in the CLI call.
+const AI_BACKENDS: &[Backend] = &[
+    Backend {
+        name: "opencode",
+        title: "OpenCode",
+        invoke: "opencode run",
+        ask: "opencode run \"$prompt\"",
+    },
+    Backend {
+        name: "claude",
+        title: "Claude",
+        invoke: "claude -p",
+        ask: "printf '%s' \"$prompt\" | claude -p",
+    },
+    Backend {
+        name: "copilot",
+        title: "Copilot",
+        invoke: "copilot -p",
+        ask: "copilot -p \"$prompt\"",
+    },
 ];
+
+/// The router machine `init` writes (spec section 7, The default router), and its script.
+const ROUTER_YML: &str = include_str!("../templates/router/router.yml");
+const ROUTER_ASK_SH: &str = include_str!("../templates/router/ask.sh");
 
 /// Git stash hook routine: git-baseline.sh (beforeEach hook)
 const GIT_BASELINE_SH: &str = include_str!("../templates/git-baseline.sh");
@@ -48,7 +82,7 @@ fn is_git_repo() -> bool {
 }
 
 /// The `AI_BACKENDS` entry for a backend.
-fn backend_entry(ai: AiBackend) -> (&'static str, &'static str, &'static str) {
+fn backend_entry(ai: AiBackend) -> Backend {
     let name = match ai {
         AiBackend::Opencode => "opencode",
         AiBackend::Claude => "claude",
@@ -56,33 +90,46 @@ fn backend_entry(ai: AiBackend) -> (&'static str, &'static str, &'static str) {
     };
     *AI_BACKENDS
         .iter()
-        .find(|(cmd, _, _)| *cmd == name)
+        .find(|b| b.name == name)
         .expect("every AiBackend has an AI_BACKENDS entry")
 }
 
 /// The backend `--ai` names; without it, the first in detection order for which
 /// `found` holds, else opencode.
-fn select_backend(
-    ai: Option<AiBackend>,
-    found: impl Fn(&str) -> bool,
-) -> (&'static str, &'static str, &'static str) {
+fn select_backend(ai: Option<AiBackend>, found: impl Fn(&str) -> bool) -> Backend {
     if let Some(ai) = ai {
         return backend_entry(ai);
     }
     AI_BACKENDS
         .iter()
         .copied()
-        .find(|(cmd, _, _)| found(cmd))
+        .find(|b| found(b.name))
         .unwrap_or_else(|| backend_entry(AiBackend::Opencode))
 }
 
-/// Derive the AI invocation prefix from an ai_router template by stripping {prompt}.
-fn ai_invoke_prefix(ai_router: &str) -> String {
-    ai_router
-        .replace(" {prompt}", "")
-        .replace("{prompt}", "")
-        .trim()
-        .to_string()
+impl Backend {
+    /// `<name>_router`: the machine `default_router` names.
+    fn router(&self) -> String {
+        format!("{}_router", self.name)
+    }
+
+    /// `machines/<name>_router.yml`.
+    fn router_yml(&self) -> String {
+        self.fill(ROUTER_YML)
+    }
+
+    /// `scripts/<name>_router/ask_<name>.sh`.
+    fn router_ask_sh(&self) -> String {
+        self.fill(ROUTER_ASK_SH)
+    }
+
+    fn fill(&self, template: &str) -> String {
+        template
+            .replace("{ai_title}", self.title)
+            .replace("{ai_call}", self.ask)
+            .replace("{ai_cli}", self.invoke)
+            .replace("{ai}", self.name)
+    }
 }
 
 /// Detect shared routines in `~/.decree/routines/`.
@@ -108,11 +155,10 @@ fn detect_shared_routines() -> Vec<String> {
 }
 
 /// Replace AI placeholders in a routine template.
-fn replace_ai_placeholders(template: &str, ai_name: &str, ai_router: &str) -> String {
-    let invoke = ai_invoke_prefix(ai_router);
+fn replace_ai_placeholders(template: &str, backend: Backend) -> String {
     template
-        .replace("{ai_name}", ai_name)
-        .replace("{ai_invoke}", &invoke)
+        .replace("{ai_name}", backend.name)
+        .replace("{ai_invoke}", backend.invoke)
 }
 
 /// Create a default permissions file for the selected AI backend.
@@ -156,30 +202,19 @@ fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Generate config.yml content with the selected AI command.
+/// Generate config.yml content, with the selected backend's router as `default_router`.
 fn generate_config(
-    ai_name: &str,
-    ai_router: &str,
-    ai_interactive: &str,
+    backend: Backend,
     git_hooks: bool,
     routine_names: &[&str],
     shared_routine_names: &[String],
 ) -> String {
     let mut config = String::new();
 
-    config.push_str("commands:\n");
-    config.push_str(&format!("  ai_router: \"{ai_router}\"\n"));
-    config.push_str(&format!("  ai_interactive: \"{ai_interactive}\"\n"));
-
-    // Add commented alternatives
-    for &(name, router, interactive) in AI_BACKENDS {
-        if name != ai_name {
-            config.push_str(&format!("  # ai_router: \"{router}\"\n"));
-            config.push_str(&format!("  # ai_interactive: \"{interactive}\"\n"));
-        }
-    }
-
-    config.push('\n');
+    config.push_str(&format!(
+        "default_router: {} # router machine for choose: model invokes that name none\n",
+        backend.router()
+    ));
     config.push_str("max_attempts: 3\n");
     config.push_str("max_depth: 10\n");
     config.push_str("max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable\n");
@@ -229,6 +264,25 @@ fn generate_config(
     config
 }
 
+/// Write `machines/<ai>_router.yml` and its executable script
+/// `scripts/<ai>_router/ask_<ai>.sh` under `decree_dir`.
+fn write_router(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
+    let router = backend.router();
+    let machines = decree_dir.join(MACHINES_DIR);
+    std::fs::create_dir_all(&machines)?;
+    std::fs::write(machines.join(format!("{router}.yml")), backend.router_yml())?;
+    let scripts = decree_dir.join(SCRIPTS_DIR).join(&router);
+    std::fs::create_dir_all(&scripts)?;
+    let script = scripts.join(format!("ask_{}.sh", backend.name));
+    std::fs::write(&script, backend.router_ask_sh())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
 /// Run `decree init`. Never prompts; refuses to touch an existing `.decree/`.
 pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> {
     let decree_dir = Path::new(config::DECREE_DIR);
@@ -237,7 +291,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     }
 
     // 1. Pick the AI backend
-    let (ai_name, ai_router, ai_interactive) = select_backend(ai, command_exists);
+    let backend = select_backend(ai, command_exists);
+    let ai_name = backend.name;
     if ai.is_none() && !command_exists(ai_name) {
         println!("No AI backend detected (opencode, claude, copilot); defaulting to opencode.");
         println!("Visit https://opencode.ai/ to install opencode, or pass --ai.");
@@ -289,14 +344,7 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     // Check for shared routines at ~/.decree/routines/
     let shared_routine_names = detect_shared_routines();
 
-    let config_content = generate_config(
-        ai_name,
-        ai_router,
-        ai_interactive,
-        git_hooks,
-        &routine_names,
-        &shared_routine_names,
-    );
+    let config_content = generate_config(backend, git_hooks, &routine_names, &shared_routine_names);
     std::fs::write(
         format!("{}/{}", config::DECREE_DIR, config::CONFIG_FILE),
         &config_content,
@@ -318,11 +366,11 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     let routines_base = format!("{}/{}", config::DECREE_DIR, config::ROUTINES_DIR);
     std::fs::write(
         format!("{routines_base}/develop.sh"),
-        replace_ai_placeholders(DEVELOP_SH, ai_name, ai_router),
+        replace_ai_placeholders(DEVELOP_SH, backend),
     )?;
     std::fs::write(
         format!("{routines_base}/rust-develop.sh"),
-        replace_ai_placeholders(RUST_DEVELOP_SH, ai_name, ai_router),
+        replace_ai_placeholders(RUST_DEVELOP_SH, backend),
     )?;
 
     // 9. Write git hook routines when inside a git repo (not enabled by default)
@@ -339,6 +387,9 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
         format!("{}/{}", config::DECREE_DIR, config::PROCESSED_FILE),
         "",
     )?;
+
+    // 11. Write the router machine and its script (section 7, The default router)
+    write_router(decree_dir, backend)?;
 
     // Make routine scripts executable
     #[cfg(unix)]
@@ -359,6 +410,9 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     // Install the decree skill for the selected AI at project scope.
     skill::install_for_init(ai_name)?;
 
+    // Draw the machines, so `.decree/graph/` is current from the start.
+    graph::write(Path::new("."))?;
+
     println!("Decree initialized successfully.");
     if has_git {
         println!(
@@ -373,19 +427,20 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 mod tests {
     use super::*;
 
+    fn claude() -> Backend {
+        backend_entry(AiBackend::Claude)
+    }
+
+    fn opencode() -> Backend {
+        backend_entry(AiBackend::Opencode)
+    }
+
     #[test]
     fn test_generate_config_without_git_hooks() {
-        let config = generate_config(
-            "claude",
-            "claude -p {prompt}",
-            "claude",
-            false,
-            &["develop", "rust-develop"],
-            &[],
-        );
-        assert!(config.contains("ai_router: \"claude -p {prompt}\""));
-        assert!(config.contains("ai_interactive: \"claude\""));
-        assert!(!config.contains("ai_command"));
+        let config = generate_config(claude(), false, &["develop", "rust-develop"], &[]);
+        assert!(config.starts_with("default_router: claude_router "));
+        assert!(!config.contains("commands:"));
+        assert!(!config.contains("ai_router"));
         assert!(config.contains("max_attempts: 3"));
         assert!(config.contains("beforeEach: \"\""));
         assert!(config.contains("# beforeEach: \"git-baseline\""));
@@ -398,9 +453,7 @@ mod tests {
     #[test]
     fn test_generate_config_with_git_hooks() {
         let config = generate_config(
-            "opencode",
-            "opencode run {prompt}",
-            "opencode",
+            opencode(),
             true,
             &[
                 "develop",
@@ -410,7 +463,7 @@ mod tests {
             ],
             &[],
         );
-        assert!(config.contains("ai_router: \"opencode run {prompt}\""));
+        assert!(config.starts_with("default_router: opencode_router "));
         assert!(config.contains("beforeEach: \"git-baseline\""));
         assert!(config.contains("afterEach: \"git-stash-changes\""));
         // Should still contain commented versions
@@ -421,28 +474,9 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_config_includes_alternatives() {
-        let config = generate_config(
-            "claude",
-            "claude -p {prompt}",
-            "claude",
-            false,
-            &["develop"],
-            &[],
-        );
-        // Other backends should be commented out
-        assert!(config.contains("# ai_router: \"opencode run {prompt}\""));
-        assert!(config.contains("# ai_router: \"copilot -p {prompt}\""));
-        // Selected should not be commented
-        assert!(config.contains("  ai_router: \"claude -p {prompt}\"\n"));
-    }
-
-    #[test]
     fn test_generate_config_with_shared_routines() {
         let config = generate_config(
-            "claude",
-            "claude -p {prompt}",
-            "claude",
+            claude(),
             false,
             &["develop"],
             &["deploy".to_string(), "notify".to_string()],
@@ -456,18 +490,9 @@ mod tests {
     #[test]
     fn test_generate_config_parses_as_app_config() {
         let configs = [
+            generate_config(claude(), false, &["develop", "rust-develop"], &[]),
             generate_config(
-                "claude",
-                "claude -p {prompt}",
-                "claude",
-                false,
-                &["develop", "rust-develop"],
-                &[],
-            ),
-            generate_config(
-                "opencode",
-                "opencode run {prompt}",
-                "opencode",
+                opencode(),
                 true,
                 &[
                     "develop",
@@ -488,14 +513,7 @@ mod tests {
     fn test_generate_config_loads_as_app_config() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join(config::CONFIG_FILE);
-        let content = generate_config(
-            "opencode",
-            "opencode run {prompt}",
-            "opencode",
-            false,
-            &["develop", "rust-develop"],
-            &[],
-        );
+        let content = generate_config(opencode(), false, &["develop", "rust-develop"], &[]);
         std::fs::write(&path, content).unwrap();
 
         let config = config::AppConfig::load(&path).unwrap();
@@ -503,33 +521,28 @@ mod tests {
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_log_size, 2_097_152);
         assert_eq!(config.default_routine, "develop");
+        assert_eq!(config.default_router.as_deref(), Some("opencode_router"));
     }
 
     #[test]
     fn test_select_backend_flag_wins_over_detection() {
+        assert_eq!(select_backend(Some(AiBackend::Claude), |_| true), claude());
         assert_eq!(
-            select_backend(Some(AiBackend::Claude), |_| true),
-            ("claude", "claude -p {prompt}", "claude")
-        );
-        assert_eq!(
-            select_backend(Some(AiBackend::Copilot), |_| false).1,
-            "copilot -p {prompt}"
+            select_backend(Some(AiBackend::Copilot), |_| false).invoke,
+            "copilot -p"
         );
     }
 
     #[test]
     fn test_select_backend_detects_in_0_4_2_order() {
-        assert_eq!(select_backend(None, |_| true).0, "opencode");
-        assert_eq!(select_backend(None, |c| c != "opencode").0, "claude");
-        assert_eq!(select_backend(None, |c| c == "copilot").0, "copilot");
+        assert_eq!(select_backend(None, |_| true).name, "opencode");
+        assert_eq!(select_backend(None, |c| c != "opencode").name, "claude");
+        assert_eq!(select_backend(None, |c| c == "copilot").name, "copilot");
     }
 
     #[test]
     fn test_select_backend_defaults_to_opencode() {
-        assert_eq!(
-            select_backend(None, |_| false),
-            ("opencode", "opencode run {prompt}", "opencode")
-        );
+        assert_eq!(select_backend(None, |_| false), opencode());
     }
 
     #[test]
@@ -608,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_ai_placeholder_replacement() {
-        let replaced = replace_ai_placeholders(DEVELOP_SH, "claude", "claude -p {prompt}");
+        let replaced = replace_ai_placeholders(DEVELOP_SH, claude());
         // {ai_invoke} is replaced with the command; the prompt is built into a
         // variable that is echoed (for visibility) then passed to the AI.
         assert!(replaced.contains("claude -p ${resume_flag} \"${implement_prompt}\""));
@@ -618,11 +631,61 @@ mod tests {
         assert!(!replaced.contains("{ai_invoke}"));
     }
 
+    fn mock(path: &str) -> String {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(root.join("mock/.decree").join(path)).unwrap()
+    }
+
+    /// `claude_router` and `ask_claude` are the mock's, byte for byte (section 7, The
+    /// default router).
     #[test]
-    fn test_ai_invoke_prefix() {
-        assert_eq!(ai_invoke_prefix("opencode run {prompt}"), "opencode run");
-        assert_eq!(ai_invoke_prefix("claude -p {prompt}"), "claude -p");
-        assert_eq!(ai_invoke_prefix("copilot -p {prompt}"), "copilot -p");
+    fn test_claude_router_is_the_mocks() {
+        assert_eq!(claude().router_yml(), mock("machines/claude_router.yml"));
+        assert_eq!(
+            claude().router_ask_sh(),
+            mock("scripts/claude_router/ask_claude.sh")
+        );
+    }
+
+    /// The copilot and opencode routers are claude's with their own names and CLI call.
+    #[test]
+    fn test_routers_differ_only_in_names_and_the_cli_call() {
+        let claude = claude();
+        for ai in [AiBackend::Copilot, AiBackend::Opencode] {
+            let b = backend_entry(ai);
+            let swap = |text: String| {
+                text.replace(claude.ask, b.ask)
+                    .replace(claude.invoke, b.invoke)
+                    .replace(claude.title, b.title)
+                    .replace(claude.name, b.name)
+            };
+            assert_eq!(swap(claude.router_yml()), b.router_yml(), "{}", b.name);
+            assert_eq!(
+                swap(claude.router_ask_sh()),
+                b.router_ask_sh(),
+                "{}",
+                b.name
+            );
+            assert!(b
+                .router_yml()
+                .contains(&format!("name: {}_router\n", b.name)));
+            assert!(b
+                .router_yml()
+                .contains(&format!("invoke: ask_{}\n", b.name)));
+            assert!(b.router_ask_sh().contains(&format!("reply=$({})\n", b.ask)));
+        }
+    }
+
+    #[test]
+    fn test_write_router_writes_the_machine_and_an_executable_script() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        write_router(dir.path(), backend_entry(AiBackend::Copilot)).unwrap();
+        let yml = std::fs::read_to_string(dir.path().join("machines/copilot_router.yml")).unwrap();
+        assert!(yml.contains("name: copilot_router\n"));
+        let script = dir.path().join("scripts/copilot_router/ask_copilot.sh");
+        let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
     }
 
     #[test]

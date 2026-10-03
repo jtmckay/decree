@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude_router's only script. Reads the request decree wrote, asks Claude,
+# {ai}_router's only script. Reads the request decree wrote, asks {ai_title},
 # and writes the reply. Exits non-zero (and so runs once more, max_attempts)
 # unless the reply names one of the options. Replace this machine to use
 # another model; decree validates the reply again either way.
@@ -17,7 +17,7 @@ prompt=$(jq -r '
   "Options:\n\(.options | map("- \(.event): \(.description)") | join("\n"))"' "$req")
 echo "$prompt"
 echo "--- reply"
-reply=$(printf '%s' "$prompt" | claude -p)
+reply=$({ai_call})
 echo "$reply"
 # the last JSON object in the reply, fences and prose around it allowed: the last
 # fenced block (which may span lines) if there is one, else the last line holding one
