@@ -506,7 +506,7 @@ fn test_version_flag() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("decree 0.4.2"));
+        .stdout(predicate::str::contains("decree 0.5.0"));
 }
 
 // --- decree --no-color ---

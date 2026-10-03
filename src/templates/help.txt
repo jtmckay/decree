@@ -1,212 +1,131 @@
-Decree is an AI orchestrator for structured, reproducible workflows.
+decree runs work through state machines. It is built from three blocks:
 
-It processes migration files through AI-powered routines, with optional
-git stash hooks for change tracking and retry on failure.
+  Messages  Markdown files that say what to do (the body) and which machine
+            does it (`machine:` in the frontmatter). One message is one run.
+  Machines  YAML statecharts in .decree/machines/ that say in what order:
+            states, what each state invokes, which event leads where. They
+            name scripts but contain no code and no paths.
+  Scripts   Executables in .decree/scripts/ that do one piece of work and
+            report one outcome. Bash by default.
 
-Core workflow:
-  1. Write migration files describing work in .decree/migrations/
-  2. Run `decree process` to execute them through AI routines
-  3. Routines invoke AI tools (opencode, claude, copilot) to do the work
-  4. Optional git stash hooks isolate each routine's changes
+A model or a person only ever picks among the transitions a machine declares,
+in a state that says `choose`.
 
 Commands:
-  decree process [--dry-run]  Process all pending migrations + drain inbox
+  decree init [--ai AI] [--permissions]
+                              Create .decree/ with config, machines, scripts and
+                              a router machine for AI (claude, copilot or
+                              opencode). claude and copilot also get the skill
   decree check                Validate machines and pending messages
   decree graph                Write .decree/graph/: Mermaid diagrams in Markdown
-  decree daemon [--interval]  Continuous inbox + cron monitoring
+  decree process [--dry-run]  Deliver replies, continue pending runs, drain
+                              inbox/, then run pending migrations in order
+  decree daemon [--interval S]
+                              The same passes plus cron, every S seconds
+  decree emit --machine M [--param K=V]...
+                              Queue a message for M; the body is read from
+                              stdin. Prints its id
+  decree event ID EVENT [-m NOTE]
+                              Reply to a run waiting for a person
   decree status [ID]          Runs by status and queued messages; one run's events
-  decree status --cron        List cron files and their next fire time
+  decree status --cron        Cron files and when each fires next
   decree tail [ID]            Follow the live output of a run
   decree retry ID [--state S] Make an interrupted or finished run pending again
-  decree init [--ai AI]       Initialize a new decree project (claude and copilot
-                              also get the decree skill)
   decree help                 This help text
+  decree --version            Print the version
 
-Message Format:
-  Messages use optional YAML frontmatter followed by a markdown body.
-  Frontmatter fields control routing and parameters.
+Files (.decree/):
+  config.yml                  Global settings (below)
+  machines/<name>.yml         Machines
+  scripts/<name>              Scripts shared by every machine
+  scripts/<machine>/<name>    A machine's own scripts, found before scripts/
+  migrations/  processed.md   Ordered, run-once messages and their ledger; commit both
+  inbox/                      Queued messages, run in filename order
+  cron/                       Message templates queued on a schedule
+  runs/<id>/                  One folder per run: message.md, events.jsonl, logs
+  graph/                      Written by `decree graph`; commit it
 
+Messages:
   ---
-  routine: develop              # Which routine to execute
-  custom_field: value           # Custom fields become env vars
+  machine: develop            # machines/develop.yml; default: default_machine
+  params:                     # sets the machine's data for this run
+    max_rounds: 3
   ---
-  Description of the work to do.
+  # Add rate limiting to /api/upload
+  The body is the task. decree never changes it.
 
-  The body can be empty. All frontmatter fields are optional — decree
-  fills in missing fields automatically (chain, seq, id, routine).
-  Migration content is copied into the message body when processed.
+  decree adds `id`, `trigger` and `parent` when it claims a message, and mirrors
+  the run's `state` into runs/<id>/message.md. runs/<id>/events.jsonl is the
+  record. Migrations are never edited: each runs from a copy, once, in
+  filename order, and a failed one blocks the ones after it.
 
-Processing Pipeline:
-  1. Migration files in .decree/migrations/ are read in alphabetical order
-  2. Each migration becomes an inbox message in .decree/inbox/
-  3. Messages are normalized (missing fields filled, routine selected). When
-     the AI router is consulted to pick a routine, the literal prompt and the
-     AI's response are printed to stderr so you can see what was sent.
-  4. Lifecycle hooks run (beforeEach — e.g. git stash baseline)
-  5. The selected routine executes with parameters as env vars. The bundled
-     routines echo each AI prompt before invoking the assistant, so the literal
-     prompt/context is captured in the run's script logs (decree status <ID>).
-  6. On success: afterEach hook runs, message deleted from inbox; run.json is
-     written to the run directory with metadata about the completed run
-  7. On failure: retry strategy applies (hooks handle state management).
-     The develop and rust_develop scripts that `decree init --ai claude` writes
-     wait out Claude's usage limit themselves, then resume the same session.
-  8. After all retries: dead-letter the message. If the dead-lettered message
-     was a migration, decree process stops immediately and exits non-zero —
-     subsequent migrations are not started.
-  9. Follow-up messages from routines are processed depth-first
-  10. Inbox is fully drained before the next migration starts
+Machines:
+  # Graph: ../graph/deploy.md
+  name: deploy
+  description: Build, ask a person to approve, then ship.
+  initial: build
+  states:
+    build:
+      invoke: build               # scripts/deploy/build, else scripts/build
+      transitions: { done: approval }
+    approval:
+      invoke: { choose: person, question: "Ship it?", ask: ask_person }
+      transitions:
+        approve: { target: ship, description: Ship this build. }
+        reject:  { target: rejected, description: Do not ship. }
+    ship:
+      invoke: ship
+      max_attempts: 2             # re-run on a non-zero exit
+      transitions: { done: done }
+    done:     { final: true }
+    rejected: { final: true }
+    failed:   { final: true }     # every machine has one; unhandled errors go here
 
-Environment Variables:
-  Decree sets these env vars before running every routine and hook:
+  A machine is an SCXML statechart written in YAML. A state invokes one of:
+    <script>                                  a script
+    { check: { visits: S, less_than: 3 } }    a condition: yes or no
+    { choose: model, question: "..." }        a router machine asks a model
+    { choose: person, question: "...", ask: <script> }
+                                              a person replies with `decree event`
+    { machine: <name> }                       a child run of another machine
+  Other keys: onentry and onexit (scripts run on entering or leaving a state,
+  or the whole run at the root), data, emits, timeout_s, compound states
+  (initial plus states), and final.
 
-  message_file  Path to message.md in the run directory
-  message_id    Full message ID (e.g., D0001-1432-01-add-auth-0)
-  message_dir   Run directory path (contains logs from prior attempts)
-  chain         Chain ID (D<NNNN>-HHmm-<name>)
-  seq           Sequence number in chain
+Scripts:
+  An invoked script's event is `done` on exit 0 and `error` otherwise, unless
+  its last stdout line is a JSON object such as {"event":"pass"}. Output goes
+  to runs/<id>/<NNNN>-<state>-<script>.log. A script queues more work with
+  `decree emit`, for the machines listed in its state's `emits`.
 
-  Hook-only env vars:
-  DECREE_HOOK            Hook type name (beforeAll, afterAll, etc.)
-  DECREE_ATTEMPT         Current attempt number (beforeEach/afterEach)
-  DECREE_MAX_ATTEMPTS    Configured max attempts (beforeEach/afterEach)
-  DECREE_ROUTINE_EXIT_CODE  Routine exit code (afterEach only)
-  DECREE_PRE_CHECK       Set to "true" during pre-check runs
-  DECREE_FINAL_ATTEMPT   "true" on final attempt (afterEach only)
-  DECREE_TRIGGER         How the run was initiated: inbox | cron:<stem> | chain
+  Environment: DECREE_PROJECT_ROOT, DECREE_MESSAGE, DECREE_MESSAGE_ID,
+  DECREE_MACHINE, DECREE_STATE, DECREE_PHASE, DECREE_VISITS, DECREE_RUN_DIR,
+  DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS, DECREE_FINAL_ATTEMPT, DECREE_TRIGGER,
+  DECREE_EVENTS, DECREE_PARENT, DECREE_RECEIVED, DECREE_DATA_<NAME>; in a
+  router run DECREE_REQUEST and DECREE_REPLY; for an ask script
+  DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES.
 
-  Custom frontmatter fields are also passed as env vars.
+config.yml:
+  default_router: claude_router   # router machine for choose: model
+  max_attempts: 3                 # default attempts per invoke
+  max_depth: 10                   # max emit chain depth
+  max_log_size: 2097152           # max bytes per script log
+  default_machine: develop        # machine for messages without machine:
+  shared_source: ~/.decree/shared # shared machines/ and scripts/
 
-Defining Routines:
-  Routines are shell scripts in .decree/routines/ (nested dirs allowed).
-  They call AI tools directly — no magic variables.
-
-  Required structure:
-    #!/usr/bin/env bash
-    # Title
-    #
-    # Description shown by `decree routine`.
-    set -euo pipefail
-
-    # --- Standard Environment Variables ---
-    # message_file  - Path to message.md in the run directory
-    # message_id    - Full message ID (e.g., D0001-1432-01-add-auth-0)
-    # message_dir   - Run directory path (contains logs from prior attempts)
-    # chain         - Chain ID (D<NNNN>-HHmm-<name>)
-    # seq           - Sequence number
-    message_file="${message_file:-}"
-    message_id="${message_id:-}"
-    message_dir="${message_dir:-}"
-    chain="${chain:-}"
-    seq="${seq:-}"
-
-    # Pre-check (required — exit 0 if ready, non-zero if not):
-    if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-        command -v claude >/dev/null 2>&1 || { echo "claude not found" >&2; exit 1; }
-        exit 0
-    fi
-
-    # Custom params (from frontmatter, discovered automatically):
-    my_param="${my_param:-default}"
-
-    # Implementation (call your AI tool directly):
-    claude -p "Read ${message_file} and implement the requirements.
-    Previous attempt logs (if any) are in ${message_dir} for context."
-
-  Custom parameter discovery:
-    Decree scans for var="${var:-default}" patterns after the pre-check
-    block. Standard params are excluded. Remaining are custom parameters
-    whose values come from message frontmatter.
-
-  Tips:
-    - Pre-check failures should print to stderr
-    - Use ${message_dir} for prior attempt logs as AI context on retries
-    - Call your AI tool directly (e.g., claude -p, copilot -p, opencode run)
-    - Use --no-color flag or NO_COLOR env var to disable color output
-
-Routine Registry & Shared Routines:
-  Routines are registered in config.yml under `routines` (project-local) and
-  `shared_routines` (shared library). A routine must be registered AND enabled
-  to be discoverable or executable. Deprecated routines are treated as disabled.
-
-  Config layout:
-    routine_source: "~/.decree/routines"    # shared routines directory
-    max_attempts: 3                         # global default
-    routines:
-      develop:
-        enabled: true
-      gmail-sync:
-        enabled: true
-        max_attempts: 5       # overrides global max_attempts for this routine
-      actual-budget:
-        enabled: true
-        timeout_s: 60         # kill with SIGTERM after 60 s; treated as exit 1
-    shared_routines:
-      deploy:
-        enabled: true
-
-  Per-routine overrides:
-    max_attempts Overrides the global attempt cap for that routine only.
-    timeout_s    If set, the routine process is killed with SIGTERM after the
-                 given seconds and the attempt is treated as exit code 1.
-
-  Directory layering:
-    1. .decree/routines/       — project-local (wins if present)
-    2. routine_source path     — shared library (fallback)
-
-  Discovery runs automatically at `decree process`, `decree daemon`, and
-  `decree init`. New project routines are registered as enabled; new shared
-  routines as disabled. Routines whose files disappear are marked deprecated.
-
-  Hooks bypass the registry — they only need the script to exist on disk.
-
-Lifecycle Hooks (config.yml):
-  hooks:
-    beforeAll: ""      # Routine to run before all processing
-    afterAll: ""       # Routine to run after all processing
-    beforeEach: ""     # Routine to run before each message
-    afterEach: ""      # Routine to run after each message
-    onDeadLetter: ""   # Routine to run when a message is dead-lettered
-
-  onDeadLetter fires exactly once when a message moves to inbox/dead/ after
-  exhausting all retries. It does NOT fire on beforeEach failures.
-
-  Hooks receive additional env vars:
-    DECREE_HOOK            — hook type name
-    DECREE_ATTEMPT         — current attempt number (beforeEach/afterEach)
-    DECREE_MAX_ATTEMPTS    — configured max attempts (beforeEach/afterEach)
-    DECREE_ROUTINE_EXIT_CODE — routine exit code (afterEach only)
-    DECREE_FINAL_ATTEMPT   — "true" in afterEach on the last attempt only
-    DECREE_TRIGGER         — how the run was initiated (inbox/cron:<stem>/chain)
-
-  onDeadLetter additional env vars:
-    DECREE_ATTEMPT              Equals max_attempts (all attempts were exhausted)
-    DECREE_MAX_ATTEMPTS         Configured max attempts
-    DECREE_ROUTINE_EXIT_CODE    Exit code of the last attempt
-    DECREE_TRIGGER              How the run was initiated
-
-Cron Scheduling:
-  Place .md files with a `cron` frontmatter field in .decree/cron/:
-
+Cron (.decree/cron/<name>.md, run by `decree daemon`):
   ---
-  cron: "0 9 * * 1-5"
-  routine: develop
+  cron: "0 9 * * 1-5"             # weekdays at 9:00
+  machine: develop
   ---
   Run the weekday morning task.
 
-  Common schedules:
-    * * * * *       Every minute
-    0 * * * *       Every hour
-    0 9 * * *       Daily at 9:00 AM
-    0 9 * * 1-5     Weekdays at 9:00 AM
-    0 0 * * 0       Weekly on Sunday
-    0 0 1 * *       Monthly on the 1st
-    */15 * * * *    Every 15 minutes
+Getting started:
+  1. decree init                  Set up the project
+  2. Write .decree/migrations/01-<name>.md
+  3. decree check                 Validate machines and pending messages
+  4. decree process               Run it; `decree status` shows what happened
 
-  Run `decree daemon` to start monitoring cron and inbox.
-  Run `decree status --cron` to see when each cron file fires next.
-
-Getting Started:
-  1. decree init                            # Set up project
-  2. decree check                           # Validate machines and pending messages
-  3. decree process                         # Execute all migrations
+More: README.md, docs/routers.md (router machines for other models) and
+docs/services.md (model servers and other long-running services), at
+https://github.com/jtmckay/decree
