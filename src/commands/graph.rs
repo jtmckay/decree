@@ -68,19 +68,16 @@ pub fn stale(project_root: &Path) -> Result<Vec<String>, DecreeError> {
 
 /// Every document `decree graph` writes, by filename: one per machine, then `system.md`.
 pub fn render(project_root: &Path) -> Result<BTreeMap<String, String>, DecreeError> {
-    // 0.4 config: `default_routine` and `routine_source` are the section 3
-    // `default_machine` and `shared_source` until the config is rewritten.
     let config = AppConfig::load_from_project(project_root)?;
     let decree_dir = AppConfig::decree_dir(project_root);
-    let machines =
-        machine::load_machines(&decree_dir, config.resolved_routine_source().as_deref())?;
+    let machines = machine::load_machines(&decree_dir, config.resolved_shared_source().as_deref())?;
     let default_router = config.default_router.as_deref();
     let mut documents = BTreeMap::new();
     for (id, m) in &machines {
         let text = graph::machine_document(m, default_router).map_err(DecreeError::Other)?;
         documents.insert(format!("{id}.md"), text);
     }
-    let crons = cron_machines(&decree_dir, &config.default_routine)?;
+    let crons = cron_machines(&decree_dir, config.default_machine.as_deref())?;
     documents.insert(
         graph::SYSTEM_FILE.to_string(),
         graph::system_document(&machines, &crons, default_router),
@@ -89,10 +86,10 @@ pub fn render(project_root: &Path) -> Result<BTreeMap<String, String>, DecreeErr
 }
 
 /// `(stem, machine)` for every `cron/*.md` in filename order. A file without `machine:`
-/// (or its alias `routine:`) points at the default machine.
+/// (or its alias `routine:`) points at `default_machine`, and is an error if that is unset.
 fn cron_machines(
     decree_dir: &Path,
-    default_machine: &str,
+    default_machine: Option<&str>,
 ) -> Result<Vec<(String, String)>, DecreeError> {
     let dir = decree_dir.join(config::CRON_DIR);
     let mut crons = Vec::new();
@@ -106,7 +103,14 @@ fn cron_machines(
             .get("machine")
             .or_else(|| fm.frontmatter.get("routine"))
         {
-            None => default_machine.to_string(),
+            None => match default_machine {
+                Some(m) => m.to_string(),
+                None => {
+                    return Err(DecreeError::Other(format!(
+                    "{rel}: no `machine` key and `default_machine` is not set (run `decree check`)"
+                )))
+                }
+            },
             Some(Value::String(m)) => m.clone(),
             Some(_) => {
                 return Err(DecreeError::Other(format!(

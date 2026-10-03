@@ -1,5 +1,5 @@
 ---
-machine: claude_router
+machine: router
 id: 20261001T150122Z-c03b7e
 parent: 02-upload-quota-per-plan
 depth: 1

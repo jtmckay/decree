@@ -159,7 +159,7 @@ fn graph_cron_without_machine_points_at_default_machine() {
     let decree = tmp.path().join(".decree");
     fs::write(
         decree.join("config.yml"),
-        format!("{CONFIG}default_routine: hello\n"),
+        format!("{CONFIG}default_machine: hello\n"),
     )
     .unwrap();
     fs::create_dir_all(decree.join("cron")).unwrap();

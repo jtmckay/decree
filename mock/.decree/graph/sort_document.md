@@ -42,7 +42,7 @@ stateDiagram-v2
         person: ask_person
     end note
     note right of big_model
-        model: claude_router, min_confidence 0.7
+        model: router, min_confidence 0.7
     end note
     note right of by_name
         check: data file matches '^scans/invoice-[0-9]+\.pdf$'

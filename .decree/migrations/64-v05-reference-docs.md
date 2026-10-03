@@ -1,7 +1,7 @@
 ---
 routine: rust-develop
 ---
-# 63: v0.5 cleanup: reference docs and a decision log
+# 64: v0.5 cleanup: reference docs and a decision log
 
 ## Overview
 
@@ -12,7 +12,7 @@ routine: rust-develop
 Read `docs/0.5-spec.md` in full, `docs/0.5-inventory.md`, `docs/spikes/router.md`, `docs/spikes/graph.md`, `docs/routers.md`, `docs/services.md` and `mock/README.md` first.
 
 1. Write `docs/reference/`, one file per subject, describing behaviour only:
-   - `README.md`: what decree is, the terms (spec section 1, Terms), the architecture, the `.decree/` layout and `config.yml`, and an index of the other files.
+   - `README.md`: what decree is, the terms (spec section 1, Terms), the architecture, the `.decree/` layout (there is no configuration file), and an index of the other files.
    - `messages.md`: section 4 (frontmatter, parsing, lifecycle, replies, run lock, migrations).
    - `machines.md`: section 5 (examples, invoke, keys, the SCXML subset with every difference, rules, validation V1–V21). The examples stay identical to the files in `mock/.decree/machines/`.
    - `scripts.md`: section 6.
@@ -30,7 +30,7 @@ Read `docs/0.5-spec.md` in full, `docs/0.5-inventory.md`, `docs/spikes/router.md
    - every machine example in `docs/reference/machines.md` (a `yaml` block whose first non-comment key is `name:`) is byte-identical to `mock/.decree/machines/<name>.yml`;
    - no file outside `.decree/migrations/` mentions `0.5-spec`.
 
-- Only this migration's scope; migrations 64–67 cover the rest of the cleanup.
+- Only this migration's scope; migrations 65–68 cover the rest of the cleanup.
 - Change no behaviour. If the spec and the code disagree, or the spec is ambiguous, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
 - Tests build their own `.decree/` in a temp directory and never touch this repository's `.decree/`. No test calls a real LLM or the network. No new dependencies.
 - Print the evidence for each acceptance criterion (test names or command output) at the end of your reply, so it lands in the run log.

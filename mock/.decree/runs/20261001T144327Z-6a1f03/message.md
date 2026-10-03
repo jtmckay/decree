@@ -1,5 +1,5 @@
 ---
-machine: claude_router
+machine: router
 id: 20261001T144327Z-6a1f03
 parent: 01-rate-limit-upload
 depth: 1

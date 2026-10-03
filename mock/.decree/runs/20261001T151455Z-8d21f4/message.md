@@ -1,5 +1,5 @@
 ---
-machine: claude_router
+machine: router
 id: 20261001T151455Z-8d21f4
 parent: 20261001T151455Z-5d2e90
 depth: 1

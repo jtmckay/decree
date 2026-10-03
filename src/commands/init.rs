@@ -449,9 +449,9 @@ mod tests {
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_log_size, 2_097_152);
-        assert_eq!(config.default_routine, "develop");
+        assert_eq!(config.default_machine.as_deref(), Some("develop"));
         assert_eq!(config.default_router.as_deref(), Some("opencode_router"));
-        assert!(config.routine_source.is_none());
+        assert!(config.shared_source.is_none());
     }
 
     /// `write_layout` creates the section 3 entries except `graph/`, which `decree graph` writes.

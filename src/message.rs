@@ -462,7 +462,7 @@ pub fn validate(
             None => {
                 return Err(vec![(
                     1,
-                    "no `machine` key and no default machine is configured".to_string(),
+                    "no `machine` key and `default_machine` is not set".to_string(),
                 )]);
             }
         },

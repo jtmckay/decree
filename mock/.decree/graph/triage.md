@@ -19,6 +19,6 @@ stateDiagram-v2
     failed --> [*]
     rejected --> [*]
     note right of classify
-        model: claude_router
+        model: router
     end note
 ```

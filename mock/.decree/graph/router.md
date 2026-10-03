@@ -1,8 +1,8 @@
-# claude_router
+# router
 
 Ask Claude to pick one of the options in the request.
 
-Machine: [machines/claude_router.yml](../machines/claude_router.yml)
+Machine: [machines/router.yml](../machines/router.yml)
 
 ```mermaid
 stateDiagram-v2

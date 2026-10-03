@@ -12,28 +12,37 @@ pub const PROCESSED_FILE: &str = "processed.md";
 pub const CONFIG_FILE: &str = "config.yml";
 pub const GITIGNORE_FILE: &str = ".gitignore";
 
-/// Top-level application config (deserialized from config.yml).
+/// Top-level application config (deserialized from config.yml, section 3).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     /// Router machine for `choose: model` invokes that name none (section 3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_router: Option<String>,
-    #[serde(default = "default_max_attempts", alias = "max_retries")]
+    #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
     #[serde(default = "default_max_depth")]
     pub max_depth: u32,
     #[serde(default = "default_max_log_size")]
     pub max_log_size: u64,
-    // `default_machine` and `shared_source` are the section 3 names, read until M4.1.
-    #[serde(default = "default_routine", alias = "default_machine")]
-    pub default_routine: String,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        alias = "shared_source"
-    )]
-    pub routine_source: Option<String>,
+    /// Machine for messages with no `machine:` key; unset means they fail validation (M1–M3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_machine: Option<String>,
+    /// Directory with shared `machines/` and `scripts/` (section 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_source: Option<String>,
 }
+
+/// Top-level keys of a 0.4 `config.yml` that 0.5 removed or renamed (section 3).
+const KEYS_0_4: [&str; 7] = [
+    "routines",
+    "shared_routines",
+    "hooks",
+    "commands",
+    "default_routine",
+    "routine_source",
+    "max_retries",
+];
 
 fn default_max_attempts() -> u32 {
     3
@@ -44,9 +53,6 @@ fn default_max_depth() -> u32 {
 fn default_max_log_size() -> u64 {
     2_097_152
 }
-fn default_routine() -> String {
-    "develop".to_string()
-}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -55,8 +61,8 @@ impl Default for AppConfig {
             max_attempts: default_max_attempts(),
             max_depth: default_max_depth(),
             max_log_size: default_max_log_size(),
-            default_routine: default_routine(),
-            routine_source: None,
+            default_machine: None,
+            shared_source: None,
         }
     }
 }
@@ -65,8 +71,19 @@ impl AppConfig {
     /// Load config from a file path.
     pub fn load(path: &Path) -> Result<Self, DecreeError> {
         let contents = std::fs::read_to_string(path)?;
-        let config: AppConfig = serde_norway::from_str(&contents)?;
-        Ok(config)
+        Self::parse(&contents)
+    }
+
+    /// Parse `config.yml` text. Errors read `config.yml: <serde's message>`, plus a pointer
+    /// to the M5.4 script when the text has a 0.4 key.
+    pub fn parse(text: &str) -> Result<Self, DecreeError> {
+        serde_norway::from_str(text).map_err(|e| {
+            let mut msg = format!("{CONFIG_FILE}: {e}");
+            if has_0_4_key(text) {
+                msg.push_str("; this is a 0.4 config; run scripts/migrate-0.4-to-0.5.sh");
+            }
+            DecreeError::Other(msg)
+        })
     }
 
     /// Load config from the project root's `.decree/config.yml`.
@@ -80,9 +97,19 @@ impl AppConfig {
         project_root.join(DECREE_DIR)
     }
 
-    /// Resolve `routine_source` with tilde expansion.
-    pub fn resolved_routine_source(&self) -> Option<PathBuf> {
-        self.routine_source.as_ref().map(|s| expand_tilde(s))
+    /// Resolve `shared_source` with tilde expansion.
+    pub fn resolved_shared_source(&self) -> Option<PathBuf> {
+        self.shared_source.as_ref().map(|s| expand_tilde(s))
+    }
+}
+
+/// Whether `text` is a YAML mapping with a top-level key from a 0.4 config.
+fn has_0_4_key(text: &str) -> bool {
+    match serde_norway::from_str::<serde_norway::Value>(text) {
+        Ok(serde_norway::Value::Mapping(map)) => map
+            .keys()
+            .any(|k| k.as_str().is_some_and(|k| KEYS_0_4.contains(&k))),
+        _ => false,
     }
 }
 
@@ -111,8 +138,8 @@ mod tests {
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_log_size, 2_097_152);
-        assert_eq!(config.default_routine, "develop");
-        assert!(config.routine_source.is_none());
+        assert!(config.default_machine.is_none());
+        assert!(config.shared_source.is_none());
     }
 
     #[test]
@@ -122,14 +149,16 @@ default_router: claude_router
 max_attempts: 5
 max_depth: 20
 max_log_size: 0
-default_routine: rust-develop
+default_machine: rust-develop
+shared_source: ~/.decree/shared
 "#;
         let config: AppConfig = serde_norway::from_str(yaml).unwrap();
         assert_eq!(config.default_router.as_deref(), Some("claude_router"));
         assert_eq!(config.max_attempts, 5);
         assert_eq!(config.max_depth, 20);
         assert_eq!(config.max_log_size, 0);
-        assert_eq!(config.default_routine, "rust-develop");
+        assert_eq!(config.default_machine.as_deref(), Some("rust-develop"));
+        assert_eq!(config.shared_source.as_deref(), Some("~/.decree/shared"));
     }
 
     #[test]
@@ -138,15 +167,40 @@ default_routine: rust-develop
         let config: AppConfig = serde_norway::from_str(yaml).unwrap();
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
-        assert_eq!(config.default_routine, "develop");
+        assert!(config.default_machine.is_none());
     }
 
     #[test]
-    fn test_deserialize_legacy_max_retries_alias() {
-        // Existing on-disk configs use the old `max_retries` key. The serde
-        // alias keeps them working after the rename to `max_attempts`.
-        let config: AppConfig = serde_norway::from_str("max_retries: 7\n").unwrap();
-        assert_eq!(config.max_attempts, 7);
+    fn test_parse_rejects_unknown_key() {
+        let err = AppConfig::parse("max_attempts: 2\nbogus: 1\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.starts_with("config.yml: "), "{err}");
+        assert!(err.contains("bogus"), "{err}");
+        assert!(!err.contains("migrate-0.4-to-0.5.sh"), "{err}");
+    }
+
+    #[test]
+    fn test_parse_rejects_0_4_keys_with_migration_hint() {
+        for key in KEYS_0_4 {
+            let err = AppConfig::parse(&format!("{key}: 1\n"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.starts_with("config.yml: "), "{err}");
+            assert!(err.contains(key), "{err}");
+            assert!(
+                err.ends_with("this is a 0.4 config; run scripts/migrate-0.4-to-0.5.sh"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_reports_type_errors() {
+        let err = AppConfig::parse("max_attempts: many\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.starts_with("config.yml: max_attempts"), "{err}");
     }
 
     #[test]
@@ -173,15 +227,15 @@ default_routine: rust-develop
     }
 
     #[test]
-    fn test_resolved_routine_source() {
+    fn test_resolved_shared_source() {
         let config = AppConfig {
-            routine_source: Some("~/.decree/routines".to_string()),
+            shared_source: Some("~/.decree/shared".to_string()),
             ..AppConfig::default()
         };
         let home = std::env::var("HOME").unwrap();
         assert_eq!(
-            config.resolved_routine_source().unwrap(),
-            PathBuf::from(&home).join(".decree/routines")
+            config.resolved_shared_source().unwrap(),
+            PathBuf::from(&home).join(".decree/shared")
         );
     }
 }

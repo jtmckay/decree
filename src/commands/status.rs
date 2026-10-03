@@ -315,7 +315,11 @@ fn show_cron(project_root: &Path) -> Result<(), DecreeError> {
         "CRON FILE", "SCHEDULE", "MACHINE"
     );
     for cf in &files {
-        let machine = cf.machine.as_deref().unwrap_or(&config.default_routine);
+        let machine = cf
+            .machine
+            .as_deref()
+            .or(config.default_machine.as_deref())
+            .unwrap_or("\u{2014}");
         let next = cf.schedule.upcoming(Local).next().map_or_else(
             || "\u{2014}".to_string(),
             |t| format!("{} (in {})", t.format("%Y-%m-%d %H:%M"), countdown(t)),

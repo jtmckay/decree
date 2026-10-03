@@ -1,11 +1,11 @@
 ---
 routine: rust-develop
 ---
-# 67: v0.5 cleanup: review and simplify src/
+# 68: v0.5 cleanup: review and simplify src/
 
 ## Overview
 
-`src/` was built by fourteen migrations, several of which reworked what earlier ones built (decision invokes replaced router states, `process` and `daemon` were merged late). Review it for what that left behind and simplify it, without changing behaviour. The black-box tests from migrations 65 and 66 are the safety net.
+`src/` was built by fourteen migrations, several of which reworked what earlier ones built (decision invokes replaced router states, `process` and `daemon` were merged late). Review it for what that left behind and simplify it, without changing behaviour. The black-box tests from migrations 66 and 67 are the safety net.
 
 ## Requirements
 

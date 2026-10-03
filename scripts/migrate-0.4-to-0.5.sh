@@ -6,7 +6,8 @@
 # - Leaves migrations/ and processed.md untouched.
 # - Moves pending outbox/*.md into inbox/ (pending inbox/*.md stay where they are).
 # - config.yml: default_routine -> default_machine, routine_source -> shared_source,
-#   and removes commands, hooks, routines and shared_routines.
+#   max_retries -> max_attempts (dropped if max_attempts is set), and removes commands,
+#   hooks, routines and shared_routines.
 # - Moves the removed paths (outbox/, inbox/dead/, dead/, router.md, routines/, prompts/)
 #   and 0.4 run folders (runs/<id>/ without events.jsonl) into .decree/legacy-0.4/,
 #   keeping their paths.
@@ -63,16 +64,21 @@ for i in "${!sources[@]}"; do
     echo "moved ${sources[$i]} -> ${targets[$i]}"
 done
 
-# --- config.yml: rename two keys, drop the removed ones with their indented blocks. ---
+# --- config.yml: rename three keys, drop the removed ones with their indented blocks. ---
 
 if [[ -f $D/config.yml ]]; then
-    awk '
+    has_attempts=0
+    grep -Eq "^[\"']?max_attempts[\"']?[[:space:]]*:" "$D/config.yml" && has_attempts=1
+    awk -v has_attempts="$has_attempts" '
         /^[^ \t#]/ {
             key = $0
             sub(/[ \t]*:.*/, "", key)
             gsub(/["\047]/, "", key)
             skip = (key == "commands" || key == "hooks" || key == "routines" || key == "shared_routines")
+            skip = skip || (key == "max_retries" && has_attempts)
             if (skip) next
+            sub(/^max_retries:/, "max_attempts:")
+            sub(/^"max_retries":/, "max_attempts:")
             sub(/^default_routine:/, "default_machine:")
             sub(/^"default_routine":/, "default_machine:")
             sub(/^routine_source:/, "shared_source:")

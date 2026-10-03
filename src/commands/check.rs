@@ -71,11 +71,9 @@ pub(crate) struct Project {
 
 impl Project {
     pub(crate) fn load(project_root: &Path) -> Result<Project, DecreeError> {
-        // 0.4 config: `default_routine` and `routine_source` are the section 3
-        // `default_machine` and `shared_source` until the config is rewritten.
         let config = AppConfig::load_from_project(project_root)?;
         let decree_dir = AppConfig::decree_dir(project_root);
-        let shared_source = config.resolved_routine_source();
+        let shared_source = config.resolved_shared_source();
 
         let paths = machine::machine_paths(&decree_dir, shared_source.as_deref())?;
         let machine_ids: BTreeSet<String> = paths.keys().cloned().collect();
@@ -123,7 +121,7 @@ impl Project {
 
     /// The machine for messages with no `machine:` key.
     pub(crate) fn default_machine(&self) -> Option<&str> {
-        Some(self.config.default_routine.as_str())
+        self.config.default_machine.as_deref()
     }
 
     /// `migrations/*.md` not in `processed.md`, in byte order (section 4, Migrations).

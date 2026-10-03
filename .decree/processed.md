@@ -59,3 +59,4 @@
 59-v05-skill.md
 60-v05-examples-blackbox.md
 61-v05-scxml-conformance.md
+62-v05-config-strict.md

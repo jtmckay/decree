@@ -242,3 +242,67 @@ fn test_without_decree_dir_exits_2() {
     assert_eq!(code, 2);
     assert!(stderr.contains("no .decree/"), "{stderr}");
 }
+
+/// Run `decree check` in `tmp`: (exit code, stderr).
+fn check_stderr(tmp: &TempDir) -> (i32, String) {
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("HOME", tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("check")
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn test_check_rejects_the_0_4_config_until_migrated() {
+    let tmp = project();
+    let (code, stderr) = check_stderr(&tmp);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(
+        stderr.contains("config.yml: unknown field `commands`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("this is a 0.4 config; run scripts/migrate-0.4-to-0.5.sh"),
+        "{stderr}"
+    );
+}
+
+/// `max_retries` has no 0.5 alias: the script renames it, or drops it when `max_attempts`
+/// is set too, and `decree check` accepts the result.
+#[test]
+fn test_renames_max_retries_to_max_attempts() {
+    for (config, expected) in [
+        (
+            "max_retries: 5\ndefault_routine: develop\n",
+            "max_attempts: 5\ndefault_machine: develop\n",
+        ),
+        (
+            "max_attempts: 4\nmax_retries: 5\ndefault_routine: develop\n",
+            "max_attempts: 4\ndefault_machine: develop\n",
+        ),
+    ] {
+        let tmp = project();
+        let decree_dir = tmp.path().join(".decree");
+        fs::write(decree_dir.join("config.yml"), config).unwrap();
+        migrate(&tmp);
+        assert_eq!(
+            fs::read_to_string(decree_dir.join("config.yml")).unwrap(),
+            expected
+        );
+
+        fs::create_dir_all(decree_dir.join("machines")).unwrap();
+        fs::create_dir_all(decree_dir.join("scripts")).unwrap();
+        fs::write(decree_dir.join("machines/develop.yml"), DEVELOP_YML).unwrap();
+        let work = decree_dir.join("scripts/work");
+        fs::write(&work, "#!/usr/bin/env bash\necho work\n").unwrap();
+        fs::set_permissions(&work, fs::Permissions::from_mode(0o755)).unwrap();
+        let (code, stdout) = decree(&tmp, &["check"]);
+        assert_eq!(code, 0, "decree check:\n{stdout}");
+    }
+}

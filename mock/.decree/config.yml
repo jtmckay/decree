@@ -1,5 +1,0 @@
-default_router: claude_router
-max_attempts: 3
-max_depth: 10
-max_log_size: 2097152
-default_machine: develop

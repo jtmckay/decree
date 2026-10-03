@@ -1,7 +1,7 @@
 ---
 routine: rust-develop
 ---
-# 64: v0.5 cleanup: one copy of everything
+# 65: v0.5 cleanup: one copy of everything
 
 ## Overview
 
@@ -12,11 +12,11 @@ The decree skill exists three times (`src/templates/skills/decree/`, `.claude/sk
 Read `docs/reference/README.md`, `docs/reference/cli.md` (`decree init`) and `mock/README.md` first.
 
 1. `src/templates/skills/decree/` is the only copy of the decree skill. Replace `.claude/skills/decree` and `.github/skills/decree` with relative symlinks to it. Replace `.github/skills/sow` with a relative symlink to `.claude/skills/sow`. Check that `decree init` still writes real files (not symlinks) into a new project.
-2. `mock/` shows a project as `decree init` writes it, so some files must exist in both places. Add a test that every file under `mock/.decree/` with a counterpart in `src/templates/` (for example `scripts/git_baseline.sh`, `scripts/snapshot.sh`, `machines/claude_router.yml`, `scripts/claude_router/ask_claude.sh`) is byte-identical to it. List the pairs in the test, and fail if a listed file is missing on either side.
+2. `mock/` shows a project as `decree init` writes it, so some files must exist in both places. Add a test that every file under `mock/.decree/` with a counterpart in `src/templates/` (for example `scripts/git_baseline.sh`, `scripts/snapshot.sh`, `machines/router.yml`, `scripts/router/ask_claude.sh`) is byte-identical to it. List the pairs in the test, and fail if a listed file is missing on either side.
 3. Check `Dockerfile` and `.dockerignore` against the 0.5 layout and CLI: fix stale paths, commands or 0.4 terms. If the image builds a binary, `docker build` is not available in tests; check the file by reading it and say what you changed.
 4. Leave `SOW.md`, `promote.sh`, `examples/` and this repository's own `.decree/` alone.
 
-- Only this migration's scope; migrations 65–67 cover the rest of the cleanup.
+- Only this migration's scope; migrations 66–68 cover the rest of the cleanup.
 - Change no behaviour of the binary. If the reference docs and the code disagree, or the docs are ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
 - Tests build their own `.decree/` in a temp directory and never touch this repository's `.decree/`. No test calls a real LLM or the network. No new dependencies.
 - Print the evidence for each acceptance criterion (test names or command output) at the end of your reply, so it lands in the run log.
