@@ -15,37 +15,54 @@ fn decree_cmd(dir: &TempDir) -> Command {
 
 // --- decree init ---
 
+/// After `init`, `.decree/` holds exactly the section 3 entries.
 #[test]
 fn test_init_creates_directory_structure() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
-        .arg("init")
+        .args(["init", "--ai", "claude"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Decree initialized successfully"));
 
     let decree = dir.path().join(".decree");
-
-    // Required directories
-    assert!(decree.join("routines").is_dir());
-    assert!(decree.join("cron").is_dir());
-    assert!(decree.join("inbox").is_dir());
-    assert!(decree.join("inbox/dead").is_dir());
-    assert!(decree.join("outbox").is_dir());
-    assert!(decree.join("outbox/dead").is_dir());
-    assert!(decree.join("runs").is_dir());
-    assert!(decree.join("migrations").is_dir());
-
-    // Required files
-    assert!(decree.join("config.yml").is_file());
-    assert!(decree.join(".gitignore").is_file());
-    assert!(decree.join("router.md").is_file());
-    assert!(decree.join("processed.md").is_file());
-
-    // Routine templates
-    assert!(decree.join("routines/develop.sh").is_file());
-    assert!(decree.join("routines/rust-develop.sh").is_file());
+    let mut entries: Vec<String> = fs::read_dir(&decree)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        [
+            ".gitignore",
+            "config.yml",
+            "cron",
+            "graph",
+            "inbox",
+            "machines",
+            "migrations",
+            "processed.md",
+            "runs",
+            "scripts"
+        ]
+    );
+    for d in [
+        "cron",
+        "graph",
+        "inbox",
+        "machines",
+        "migrations",
+        "runs",
+        "scripts",
+    ] {
+        assert!(decree.join(d).is_dir(), "{d}");
+    }
+    for d in ["cron", "inbox", "migrations", "runs"] {
+        assert_eq!(fs::read_dir(decree.join(d)).unwrap().count(), 0, "{d}");
+    }
+    assert!(decree.join("graph/claude_router.md").is_file());
+    assert!(decree.join("graph/system.md").is_file());
 }
 
 #[test]
@@ -61,12 +78,16 @@ fn test_init_config_has_required_fields() {
     assert!(config.contains("max_attempts: 3"));
     assert!(config.contains("max_depth: 10"));
     assert!(config.contains("max_log_size: 2097152"));
-    assert!(config.contains("default_routine: develop"));
-    assert!(config.contains("hooks:"));
-    assert!(config.contains("beforeAll:"));
-    assert!(config.contains("afterAll:"));
-    assert!(config.contains("# beforeEach: \"git-baseline\""));
-    assert!(config.contains("# afterEach: \"git-stash-changes\""));
+    assert!(config.contains("default_machine: develop"));
+    for removed in [
+        "hooks",
+        "routines",
+        "shared_routines",
+        "default_routine",
+        "routine_source",
+    ] {
+        assert!(!config.contains(&format!("{removed}:")), "{removed}");
+    }
 }
 
 #[test]
@@ -369,141 +390,13 @@ fn test_init_permissions_keeps_existing_settings() {
 }
 
 #[test]
-fn test_init_routines_are_executable() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let develop = dir.path().join(".decree/routines/develop.sh");
-        let mode = fs::metadata(&develop).unwrap().permissions().mode();
-        assert!(mode & 0o111 != 0, "develop.sh should be executable");
-    }
-}
-
-#[test]
 fn test_init_gitignore_content() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir).arg("init").assert().success();
 
     let gitignore = fs::read_to_string(dir.path().join(".decree/.gitignore")).unwrap();
-    assert!(gitignore.contains("inbox/"));
-    assert!(gitignore.contains("outbox/"));
-    assert!(gitignore.contains("runs/"));
-}
-
-#[test]
-fn test_init_routines_use_ai_cmd_placeholder() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let develop = fs::read_to_string(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    let rust_develop =
-        fs::read_to_string(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    // {AI_CMD} should have been replaced with a real command name
-    assert!(
-        !develop.contains("{AI_CMD}"),
-        "develop.sh should not contain raw {{AI_CMD}} placeholder"
-    );
-    assert!(
-        !rust_develop.contains("{AI_CMD}"),
-        "rust-develop.sh should not contain raw {{AI_CMD}} placeholder"
-    );
-}
-
-#[test]
-fn test_init_routines_have_precheck() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let develop = fs::read_to_string(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    let rust_develop =
-        fs::read_to_string(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    assert!(
-        develop.contains("DECREE_PRE_CHECK"),
-        "develop.sh must have pre-check section"
-    );
-    assert!(
-        rust_develop.contains("DECREE_PRE_CHECK"),
-        "rust-develop.sh must have pre-check section"
-    );
-}
-
-#[test]
-fn test_init_precheck_prints_to_stderr() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let develop = fs::read_to_string(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    let rust_develop =
-        fs::read_to_string(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    assert!(
-        develop.contains(">&2"),
-        "develop.sh pre-check failures must print to stderr"
-    );
-    assert!(
-        rust_develop.contains(">&2"),
-        "rust-develop.sh pre-check failures must print to stderr"
-    );
-}
-
-#[test]
-fn test_init_router_md_placement_and_content() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    // router.md lives at .decree/router.md, NOT in prompts/
-    assert!(dir.path().join(".decree/router.md").is_file());
-    assert!(!dir.path().join(".decree/prompts/router.md").exists());
-
-    let router = fs::read_to_string(dir.path().join(".decree/router.md")).unwrap();
-    assert!(router.contains("{routines}"));
-    assert!(router.contains("{message}"));
-}
-
-#[test]
-fn test_init_routines_have_description_headers() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let develop = fs::read_to_string(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    let rust_develop =
-        fs::read_to_string(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    // Both must have description comment headers for `decree routine` extraction
-    assert!(develop.contains("# Develop\n"));
-    assert!(rust_develop.contains("# Rust Develop\n"));
-}
-
-#[test]
-fn test_init_routines_reference_message_dir() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let develop = fs::read_to_string(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    let rust_develop =
-        fs::read_to_string(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    assert!(
-        develop.contains("${message_dir}"),
-        "develop.sh must reference ${{message_dir}} for prior attempt context"
-    );
-    assert!(
-        rust_develop.contains("${message_dir}"),
-        "rust-develop.sh must reference ${{message_dir}} for prior attempt context"
-    );
+    assert_eq!(gitignore, "inbox/\nruns/\n");
 }
 
 // --- decree (bare) without .decree/ ---
@@ -525,157 +418,84 @@ fn test_status_empty_project() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
-    decree_cmd(&dir)
-        .arg("status")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Migrations:"))
-        .stdout(predicate::str::contains("Processed: 0 of 0"))
-        .stdout(predicate::str::contains("Inbox:"))
-        .stdout(predicate::str::contains("Pending: 0 messages"))
-        .stdout(predicate::str::contains("Recent Activity"));
+    decree_cmd(&dir).arg("status").assert().success().stdout(
+        "Runs: 0\n  active: 0\n  waiting: 0\n  pending: 0\n  interrupted: 0\n  finished: 0\n\
+         Queued:\n  inbox/: 0\n  migrations/: 0 pending\n",
+    );
 }
 
 #[test]
-fn test_status_with_migrations() {
+fn test_status_lists_queued_messages_and_pending_migrations() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
-    // Create some migration files
-    let migrations = dir.path().join(".decree/migrations");
-    fs::write(migrations.join("01-add-auth.md"), "# Add auth").unwrap();
-    fs::write(migrations.join("02-add-db.md"), "# Add DB").unwrap();
-    fs::write(migrations.join("03-add-api.md"), "# Add API").unwrap();
-
-    // Mark one as processed
-    fs::write(dir.path().join(".decree/processed.md"), "01-add-auth.md\n").unwrap();
+    let decree = dir.path().join(".decree");
+    for name in ["01-add-auth.md", "02-add-db.md", "03-add-api.md"] {
+        fs::write(decree.join("migrations").join(name), "# Migration\n").unwrap();
+    }
+    fs::write(decree.join("processed.md"), "01-add-auth.md\n").unwrap();
+    fs::write(decree.join("inbox/a.md"), "Do a.\n").unwrap();
+    fs::write(decree.join("inbox/.b.md.tmp"), "Being written.\n").unwrap();
 
     decree_cmd(&dir)
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Processed: 1 of 3"))
-        .stdout(predicate::str::contains("Next: 02-add-db.md"));
+        .stdout(predicate::str::contains(
+            "Queued:\n  inbox/: 1\n    a.md\n  migrations/: 2 pending\n    02-add-db.md\n    03-add-api.md\n",
+        ));
 }
 
-// --- decree status dead-letter timestamp ---
-
 #[test]
-fn test_status_dead_letter_no_timestamp_when_empty() {
+fn test_status_unknown_id_says_so_and_exits_0() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
     decree_cmd(&dir)
-        .arg("status")
+        .args(["status", "nope"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Dead-lettered: 0 messages"))
-        .stdout(predicate::str::contains("oldest").not());
+        .stderr(predicate::str::contains("no run nope"));
 }
 
 #[test]
-fn test_status_dead_letter_shows_oldest_timestamp() {
+fn test_status_cron_lists_files_and_next_fire_time() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
+    decree_cmd(&dir)
+        .args(["status", "--cron"])
+        .assert()
+        .success()
+        .stdout("No cron files.\n");
 
-    let dead_dir = dir.path().join(".decree/inbox/dead");
-    fs::write(dead_dir.join("D0001-1200-migration-one-0.md"), "dead msg 1").unwrap();
-    fs::write(dead_dir.join("D0001-1201-migration-two-0.md"), "dead msg 2").unwrap();
     fs::write(
-        dead_dir.join("D0001-1202-migration-three-0.md"),
-        "dead msg 3",
+        dir.path().join(".decree/cron/hourly.md"),
+        "---\ncron: \"0 * * * *\"\nmachine: hello\n---\nHourly task.\n",
     )
     .unwrap();
-
-    decree_cmd(&dir)
-        .arg("status")
+    let out = decree_cmd(&dir)
+        .args(["status", "--cron"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Dead-lettered: 3 messages"))
-        .stdout(predicate::str::contains("oldest:"));
-}
-
-// --- decree log ---
-
-#[test]
-fn test_log_no_runs() {
-    let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
-
-    decree_cmd(&dir)
-        .arg("log")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("No runs found"));
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert!(lines[0].starts_with("CRON FILE"), "{out}");
+    assert!(lines[0].contains("MACHINE") && lines[0].ends_with("NEXT RUN"));
+    assert!(lines[1].starts_with("hourly.md"), "{out}");
+    assert!(lines[1].contains("0 * * * *") && lines[1].contains("hello"));
+    assert!(lines[1].contains(":00 (in "), "{out}");
 }
 
 #[test]
-fn test_log_shows_most_recent_non_tty() {
+fn test_log_and_cron_list_are_removed() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
-
-    // Create a run directory with a log
-    let run_dir = dir.path().join(".decree/runs/D0001-1432-test-0");
-    fs::create_dir_all(&run_dir).unwrap();
-    fs::write(run_dir.join("routine.log"), "Hello from the log\n").unwrap();
-
-    decree_cmd(&dir)
-        .arg("log")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Hello from the log"));
-}
-
-#[test]
-fn test_log_with_specific_id() {
-    let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
-
-    // Create two run directories
-    let run1 = dir.path().join(".decree/runs/D0001-1432-alpha-0");
-    let run2 = dir.path().join(".decree/runs/D0001-1435-beta-0");
-    fs::create_dir_all(&run1).unwrap();
-    fs::create_dir_all(&run2).unwrap();
-    fs::write(run1.join("routine.log"), "Alpha log\n").unwrap();
-    fs::write(run2.join("routine.log"), "Beta log\n").unwrap();
-
-    decree_cmd(&dir)
-        .args(["log", "D0001-1435"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Beta log"));
-}
-
-#[test]
-fn test_log_not_found() {
-    let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
-
-    decree_cmd(&dir)
-        .args(["log", "nonexistent"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("message not found"));
-}
-
-#[test]
-fn test_log_multiple_attempts() {
-    let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let run_dir = dir.path().join(".decree/runs/D0001-1432-multi-0");
-    fs::create_dir_all(&run_dir).unwrap();
-    fs::write(run_dir.join("routine.log"), "Attempt 1\n").unwrap();
-    fs::write(run_dir.join("routine-2.log"), "Attempt 2\n").unwrap();
-
-    decree_cmd(&dir)
-        .args(["log", "D0001-1432-multi-0"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Attempt 1"))
-        .stdout(predicate::str::contains("Attempt 2"))
-        .stdout(predicate::str::contains("Attempt 1"))
-        .stdout(predicate::str::contains("Attempt 2"));
+    decree_cmd(&dir).arg("log").assert().code(2);
+    decree_cmd(&dir).args(["cron", "list"]).assert().code(2);
 }
 
 // --- decree --version ---
@@ -748,10 +568,29 @@ fn test_no_color_flag_overrides_forced_color() {
 
 // --- decree routine (non-TTY) ---
 
+/// A project with the 0.4 routines `routine` and `verify` read until M5.3 deletes them;
+/// `init` no longer writes them.
+fn init_routines(dir: &TempDir) {
+    decree_cmd(dir).arg("init").assert().success();
+    let decree = dir.path().join(".decree");
+    let routines = decree.join("routines");
+    fs::create_dir_all(&routines).unwrap();
+    let templates =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scripts/v0_4_2");
+    for name in ["develop.sh", "rust-develop.sh"] {
+        fs::copy(templates.join(name), routines.join(name)).unwrap();
+    }
+    let mut config = fs::read_to_string(decree.join("config.yml")).unwrap();
+    config.push_str(
+        "hooks:\n  beforeAll: \"\"\n  afterAll: \"\"\n  beforeEach: \"\"\n  afterEach: \"\"\n",
+    );
+    fs::write(decree.join("config.yml"), config).unwrap();
+}
+
 #[test]
 fn test_routine_no_args_non_tty_lists_routines() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     decree_cmd(&dir)
         .arg("routine")
@@ -764,7 +603,7 @@ fn test_routine_no_args_non_tty_lists_routines() {
 #[test]
 fn test_routine_named_non_tty_shows_detail() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     decree_cmd(&dir)
         .args(["routine", "develop"])
@@ -777,7 +616,7 @@ fn test_routine_named_non_tty_shows_detail() {
 #[test]
 fn test_routine_unknown_with_close_match() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     decree_cmd(&dir)
         .args(["routine", "devlop"])
@@ -790,7 +629,7 @@ fn test_routine_unknown_with_close_match() {
 #[test]
 fn test_routine_unknown_no_close_match() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     decree_cmd(&dir)
         .args(["routine", "xyznonexistent"])
@@ -803,7 +642,7 @@ fn test_routine_unknown_no_close_match() {
 #[test]
 fn test_routine_no_routines() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Remove all routine files
     let routines_dir = dir.path().join(".decree/routines");
@@ -822,7 +661,7 @@ fn test_routine_no_routines() {
 #[test]
 fn test_routine_detail_shows_description() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     decree_cmd(&dir)
         .args(["routine", "develop"])
@@ -836,7 +675,7 @@ fn test_routine_detail_shows_description() {
 #[test]
 fn test_routine_nested_directory() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Create a nested routine
     let nested_dir = dir.path().join(".decree/routines/deploy");
@@ -857,7 +696,7 @@ fn test_routine_nested_directory() {
 #[test]
 fn test_routine_custom_params_shown_in_detail() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Create a routine with custom params
     fs::write(
@@ -880,7 +719,7 @@ fn test_routine_custom_params_shown_in_detail() {
 #[test]
 fn test_verify_all_pass() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Create a simple routine that always passes pre-check
     fs::write(
@@ -905,7 +744,7 @@ fn test_verify_all_pass() {
 #[test]
 fn test_verify_some_fail() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Create a passing routine
     fs::write(
@@ -940,7 +779,7 @@ fn test_verify_some_fail() {
 #[test]
 fn test_verify_no_routines() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Remove all routines
     let routines_dir = dir.path().join(".decree/routines");
@@ -959,7 +798,7 @@ fn test_verify_no_routines() {
 #[test]
 fn test_verify_shows_fail_reason() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     fs::write(
         dir.path().join(".decree/routines/checker.sh"),
@@ -983,7 +822,7 @@ fn test_verify_shows_fail_reason() {
 #[test]
 fn test_verify_hooks_pass() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Remove default routines (they require AI tools)
     fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
@@ -1019,7 +858,7 @@ fn test_verify_hooks_pass() {
 #[test]
 fn test_verify_hooks_missing_routine() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Remove default routines
     fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
@@ -1049,7 +888,7 @@ fn test_verify_hooks_missing_routine() {
 #[test]
 fn test_verify_no_hooks_configured_no_hook_section() {
     let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
+    init_routines(&dir);
 
     // Remove default routines
     fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
@@ -1437,5 +1276,5 @@ fn test_init_config_is_valid_yaml() {
     assert_eq!(config["max_attempts"].as_u64(), Some(3));
     assert_eq!(config["max_depth"].as_u64(), Some(10));
     assert_eq!(config["max_log_size"].as_u64(), Some(2_097_152));
-    assert_eq!(config["default_routine"].as_str(), Some("develop"));
+    assert_eq!(config["default_machine"].as_str(), Some("develop"));
 }

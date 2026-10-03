@@ -50,3 +50,5 @@
 50-v05-messages.md
 51-v05-interrupts.md
 52-v05-emit.md
+53-v05-cli-wiring.md
+54-v05-port-routines.md

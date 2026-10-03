@@ -19,7 +19,7 @@ seq="${seq:-}"
 
 # Pre-check: verify AI tool and cargo are available
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-    command -v {ai_name} >/dev/null 2>&1 || { echo "{ai_name} not found" >&2; exit 1; }
+    command -v claude >/dev/null 2>&1 || { echo "claude not found" >&2; exit 1; }
     command -v cargo >/dev/null 2>&1 || { echo "cargo not found" >&2; exit 1; }
     exit 0
 fi
@@ -35,7 +35,7 @@ implement all requirements with proper error handling and tests.
 Previous attempt logs (if any) are in ${message_dir} for context."
 echo "=== AI prompt (implementation) ==="
 echo "${implement_prompt}"
-{ai_invoke} ${resume_flag} "${implement_prompt}"
+claude -p ${resume_flag} "${implement_prompt}"
 
 # Step 2: Build and test
 echo "=== Building (release) ==="
@@ -49,4 +49,4 @@ test output at ${message_dir}/test-output.log. Fix any failures. Run cargo
 build --release and cargo test again. Exit 0 only if everything passes."
 echo "=== AI prompt (QA) ==="
 echo "${qa_prompt}"
-{ai_invoke} "${qa_prompt}"
+claude -p "${qa_prompt}"

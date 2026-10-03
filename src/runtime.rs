@@ -473,6 +473,49 @@ pub struct InvokeOutcome {
     pub execution: Execution,
 }
 
+/// `runs/<id>/.running`: the script running now (section 6, Execution).
+pub const RUNNING_FILE: &str = ".running";
+
+/// The contents of `.running`. `decree status` and `decree tail` read it; it is not part
+/// of the record.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Running {
+    pub pid: u32,
+    pub state: String,
+    pub phase: String,
+    pub script: String,
+    /// RFC 3339 UTC with milliseconds.
+    pub started_at: String,
+    /// Log filename in the run folder.
+    pub log: String,
+}
+
+impl Running {
+    /// The `.running` in `run_dir`, or `None` if no script is running. A file that does
+    /// not parse (being replaced right now) also reads as `None`.
+    pub fn read(run_dir: &Path) -> io::Result<Option<Running>> {
+        match fs::read(run_dir.join(RUNNING_FILE)) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Write it to `run_dir` through a temp file and a rename.
+    fn write(&self, run_dir: &Path) -> io::Result<()> {
+        let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
+        crate::message::write_replace(&run_dir.join(RUNNING_FILE), &bytes).map_err(|(_, e)| e)
+    }
+
+    /// Delete `run_dir`'s `.running`; a missing one is fine.
+    pub fn remove(run_dir: &Path) -> io::Result<()> {
+        match fs::remove_file(run_dir.join(RUNNING_FILE)) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Runs the scripts of one run (section 6, Execution) and appends their `script` events.
 #[derive(Debug)]
 pub struct Executor {
@@ -643,6 +686,20 @@ impl Executor {
             path: path.clone(),
             source,
         })?;
+        let running = Running {
+            pid: child.id(),
+            state: run.state.to_string(),
+            phase: run.phase.as_str().to_string(),
+            script: run.script.to_string(),
+            started_at: timestamp(started_at),
+            log: log.clone(),
+        };
+        let running_path = self.info.run_dir.join(RUNNING_FILE);
+        if let Err(e) = running.write(&self.info.run_dir) {
+            // The script runs on without its `.running`; stop it rather than leak it.
+            stop_group(&mut child).map_err(io_err(&path))?;
+            return Err(io_err(&running_path)(e));
+        }
         let log_file = Arc::new(Mutex::new(log_file));
         let stdout = child
             .stdout
@@ -662,6 +719,8 @@ impl Executor {
         let duration = start.elapsed();
         truncate_log_if_needed(&log_path, self.info.max_log_size).map_err(io_err(&log_path))?;
         if stop == Stop::Signal {
+            // No `script` event; the script is no longer running.
+            Running::remove(&self.info.run_dir).map_err(io_err(&running_path))?;
             return Err(interrupted());
         }
 
@@ -687,6 +746,7 @@ impl Executor {
         }
         fields.insert("log".into(), json!(execution.log));
         self.append("script", fields)?;
+        Running::remove(&self.info.run_dir).map_err(io_err(&running_path))?;
         Ok(execution)
     }
 
@@ -1782,8 +1842,43 @@ mod executor_tests {
         assert!(signalled.elapsed() < Duration::from_secs(10));
         assert!(p.events_of("script").is_empty(), "{:?}", p.events());
         assert!(p.events().is_empty());
+        assert!(!p.run_dir().join(RUNNING_FILE).exists());
         // The log is kept, so the interrupted output can be read.
         assert!(p.run_dir().join("0001-s-sleep_long.log").exists());
+    }
+
+    /// `.running` names the script while it runs, and is gone once its `script` event is
+    /// written (section 6, Execution).
+    #[test]
+    fn running_file_exists_while_the_script_runs() {
+        let p = Project::new(&["copy_running"]);
+        let out = p
+            .executor()
+            .run_script(&ScriptRun::new("copy_running", "s", Phase::Invoke))
+            .unwrap();
+        assert!(out.succeeded());
+        let copy = fs::read(p.run_dir().join("running.copy")).unwrap();
+        let running: Running = serde_json::from_slice(&copy).unwrap();
+        let pid: u32 = fs::read_to_string(p.run_dir().join("self.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let script = &p.events_of("script")[0];
+        assert_eq!(
+            running,
+            Running {
+                pid,
+                state: "s".into(),
+                phase: "invoke".into(),
+                script: "copy_running".into(),
+                started_at: script["started_at"].as_str().unwrap().into(),
+                log: "0001-s-copy_running.log".into(),
+            }
+        );
+        assert!(!p.run_dir().join(RUNNING_FILE).exists());
+        assert!(!p.run_dir().join("..running.tmp").exists());
+        assert_eq!(Running::read(&p.run_dir()).unwrap(), None);
     }
 
     #[test]

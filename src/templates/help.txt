@@ -10,7 +10,7 @@ Core workflow:
   4. Optional git stash hooks isolate each routine's changes
 
 Commands:
-  decree process              Process all pending migrations + drain inbox
+  decree process [--dry-run]  Process all pending migrations + drain inbox
   decree check                Validate machines and pending messages
   decree graph                Write .decree/graph/: Mermaid diagrams in Markdown
   decree routine              List routines (interactive select + run)
@@ -18,10 +18,11 @@ Commands:
   decree verify               Run all routine pre-checks
   decree daemon [--interval]  Continuous inbox + cron monitoring
   decree routine-sync         Sync routine registry with filesystem
-  decree status               Show processing progress
-  decree cron list            List cron schedules with last/next run times
+  decree status [ID]          Runs by status and queued messages; one run's events
+  decree status --cron        List cron files and their next fire time
+  decree tail [ID]            Follow the live output of a run
+  decree retry ID [--state S] Make an interrupted or finished run pending again
   decree skill                Install AI assistant skill/instructions
-  decree log [ID]             Show routine execution output
   decree init                 Initialize a new decree project
   decree help                 This help text
 
@@ -48,12 +49,12 @@ Processing Pipeline:
   4. Lifecycle hooks run (beforeEach — e.g. git stash baseline)
   5. The selected routine executes with parameters as env vars. The bundled
      routines echo each AI prompt before invoking the assistant, so the literal
-     prompt/context is captured in the run's routine.log (decree log <ID>).
+     prompt/context is captured in the run's script logs (decree status <ID>).
   6. On success: afterEach hook runs, message deleted from inbox; run.json is
      written to the run directory with metadata about the completed run
   7. On failure: retry strategy applies (hooks handle state management).
-     If the run log contains "usage limit" + "reset", decree waits until the
-     reset time (SIGINT-aware, exits 130) then retries the migration from scratch.
+     The develop and rust_develop scripts that `decree init --ai claude` writes
+     wait out Claude's usage limit themselves, then resume the same session.
   8. After all retries: dead-letter the message. If the dead-lettered message
      was a migration, decree process stops immediately and exits non-zero —
      subsequent migrations are not started.
@@ -77,9 +78,6 @@ Environment Variables:
   DECREE_PRE_CHECK       Set to "true" during pre-check runs
   DECREE_FINAL_ATTEMPT   "true" on final attempt (afterEach only)
   DECREE_TRIGGER         How the run was initiated: inbox | cron:<stem> | chain
-
-  Retry env vars (set on token-exhaustion retry):
-  DECREE_PREVIOUS_SESSION_ID  Claude session ID from the prior attempt, if captured
 
   Custom frontmatter fields are also passed as env vars.
 
@@ -217,21 +215,7 @@ Cron Scheduling:
     */15 * * * *    Every 15 minutes
 
   Run `decree daemon` to start monitoring cron and inbox.
-  Run `decree cron list` to inspect live schedule status (last run, next fire).
-
-run.json:
-  After every completed run (success or dead-letter), decree writes run.json
-  to the run directory. Fields:
-
-    message_id    Full message ID
-    routine       Routine name used for processing
-    trigger       How the run was initiated (inbox, cron:<stem>, chain)
-    migration     Migration filename, if this was a migration run
-    attempts      Number of attempts made
-    exit_code     Exit code of the final attempt
-    start         ISO-8601 timestamp when the run started
-    end           ISO-8601 timestamp when the run ended
-    duration_s    Total elapsed seconds
+  Run `decree status --cron` to see when each cron file fires next.
 
 AI Skill Installation:
   Install Decree guidance for Claude or GitHub Copilot:

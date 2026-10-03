@@ -11,7 +11,6 @@ pub const INBOX_DIR: &str = "inbox";
 pub const OUTBOX_DIR: &str = "outbox";
 pub const RUNS_DIR: &str = "runs";
 pub const MIGRATIONS_DIR: &str = "migrations";
-pub const DEAD_DIR: &str = "dead";
 pub const PROCESSED_FILE: &str = "processed.md";
 pub const ROUTER_FILE: &str = "router.md";
 pub const CONFIG_FILE: &str = "config.yml";

@@ -20,7 +20,7 @@ seq="${seq:-}"
 
 # Pre-check: verify AI tool is available
 if [ "${DECREE_PRE_CHECK:-}" = "true" ]; then
-    command -v {ai_name} >/dev/null 2>&1 || { echo "{ai_name} not found" >&2; exit 1; }
+    command -v claude >/dev/null 2>&1 || { echo "claude not found" >&2; exit 1; }
     exit 0
 fi
 
@@ -36,7 +36,7 @@ Follow best practices: clean code, proper error handling, and tests
 where appropriate."
 echo "=== AI prompt (implementation) ==="
 echo "${implement_prompt}"
-{ai_invoke} ${resume_flag} "${implement_prompt}"
+claude -p ${resume_flag} "${implement_prompt}"
 
 # Verification
 verify_prompt="Read ${message_file}. Verify that all requirements and
@@ -44,4 +44,4 @@ acceptance criteria are met. Run any tests. Report what passes and what
 fails. Exit 0 if everything passes, exit 1 if anything fails."
 echo "=== AI prompt (verification) ==="
 echo "${verify_prompt}"
-{ai_invoke} "${verify_prompt}"
+claude -p "${verify_prompt}"

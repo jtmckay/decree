@@ -36,8 +36,8 @@ use crate::message::{
     create_run_dir, lock_state, LockState, Message, MessageError, RunLock, LOCK_FILE,
 };
 use crate::runtime::{
-    data_env, timestamp, EventLog, Executor, InvokeEvent, Phase, RouterFiles, RunInfo,
-    RuntimeError, ScriptRun, EVENTS_FILE, MESSAGE_FILE, RECEIVED_DIR, ROOT_STATE,
+    data_env, timestamp, EventLog, Executor, InvokeEvent, Phase, RouterFiles, RunInfo, Running,
+    RuntimeError, ScriptRun, EVENTS_FILE, MESSAGE_FILE, RECEIVED_DIR, ROOT_STATE, RUNNING_FILE,
 };
 
 /// The JSON file, in the run folder, mapping each option of the `choose: person` state the
@@ -1386,10 +1386,16 @@ pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
                 let path = run_dir.join(EVENTS_FILE);
                 let mut log = EventLog::open(&run_dir, &id, &machine.id, field("trigger"))
                     .map_err(io_err(&path))?;
-                let Value::Object(fields) = json!({ "state": state, "cause": "crash" }) else {
+                let Value::Object(mut fields) = json!({ "state": state, "cause": "crash" }) else {
                     unreachable!("event fields are a JSON object");
                 };
+                // A `.running` the crash left behind names the script (section 6).
+                let running_path = run_dir.join(RUNNING_FILE);
+                if let Some(running) = Running::read(&run_dir).map_err(io_err(&running_path))? {
+                    fields.insert("script".into(), json!(running.script));
+                }
                 log.append("interrupted", fields).map_err(io_err(&path))?;
+                Running::remove(&run_dir).map_err(io_err(&running_path))?;
                 found.crashed.push((id, state));
             }
             RunStatus::Pending => found.pending.push(id),

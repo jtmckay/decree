@@ -88,13 +88,31 @@ pub enum Command {
         interval: u64,
     },
 
-    /// Show progress
-    Status,
-
-    /// Show execution log
-    Log {
-        /// Message ID (full, chain, or prefix)
+    /// Runs by status and queued messages; with an id, one run's events
+    Status {
+        /// Run id
         id: Option<String>,
+
+        /// Cron files and when each fires next
+        #[arg(long)]
+        cron: bool,
+    },
+
+    /// Follow the live output of a run, by default the active one, until it stops
+    Tail {
+        /// Run id
+        id: Option<String>,
+    },
+
+    /// Make an interrupted or finished run pending again; the next `process` continues it
+    Retry {
+        /// Run id
+        id: String,
+
+        /// Atomic state to continue in [default: the interrupted run's state, or the state
+        /// a finished run last left]
+        #[arg(long = "state", value_name = "STATE")]
+        state: Option<String>,
     },
 
     /// Sync routine registry with filesystem
@@ -103,12 +121,6 @@ pub enum Command {
         /// Override shared routines directory
         #[arg(long)]
         source: Option<String>,
-    },
-
-    /// Manage cron schedules
-    Cron {
-        #[command(subcommand)]
-        subcommand: CronSubcommand,
     },
 
     /// Install AI assistant skill/instructions
@@ -165,10 +177,4 @@ pub enum SkillScope {
 pub enum SkillTarget {
     Claude,
     Copilot,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum CronSubcommand {
-    /// List all cron schedules with last/next run times
-    List,
 }

@@ -266,9 +266,10 @@ fn sigterm_stops_the_child_appends_interrupted_and_exits_130() {
     assert_eq!(last["cause"], "signal");
     assert_eq!(last["state"], "work");
     assert_eq!(last["script"], "work");
-    // No `onexit` script ran, and the lock is gone.
+    // No `onexit` script ran, and the lock and `.running` are gone.
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
     assert!(!exists(&p.run_dir("run-a").join(".lock")));
+    assert!(!exists(&p.run_dir("run-a").join(".running")));
 
     // A later pass leaves the interrupted run alone.
     p.process().assert().success();
@@ -282,8 +283,9 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     p.write("inbox/a.md", "---\nid: run-a\nmachine: slow\n---\n");
     p.crash_during_sleep("run-a");
     let before = p.events("run-a").len();
-    // A stale lock is left behind.
+    // A stale lock and `.running` are left behind.
     assert!(exists(&p.run_dir("run-a").join(".lock")));
+    assert!(p.read("runs/run-a/.running").contains(r#""script":"work""#));
 
     let out = p.process().output().unwrap();
     assert!(
@@ -297,6 +299,9 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     assert_eq!(last["type"], "interrupted");
     assert_eq!(last["cause"], "crash");
     assert_eq!(last["state"], "work");
+    // The leftover `.running` names the script, and is gone.
+    assert_eq!(last["script"], "work");
+    assert!(!exists(&p.run_dir("run-a").join(".running")));
     // Not continued: no script ran again.
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
 

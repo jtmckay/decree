@@ -17,7 +17,7 @@ pub(crate) mod routine;
 pub(crate) mod runtime;
 
 use clap::Parser;
-use cli::{Cli, Command, CronSubcommand};
+use cli::{Cli, Command};
 use colored::Colorize;
 use error::{DecreeError, EXIT_SUCCESS};
 
@@ -75,14 +75,12 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
                 Command::Routine { name } => commands::routine::run(&root, name.as_deref()),
                 Command::Verify => commands::routine::verify(&root),
                 Command::Daemon { interval } => commands::daemon::run(&root, interval),
-                Command::Status => commands::status::run(&root),
-                Command::Log { id } => commands::log::run(&root, id.as_deref()),
+                Command::Tail { id } => commands::tail::run(&root, id.as_deref()),
+                Command::Retry { id, state } => commands::retry::run(&root, &id, state.as_deref()),
+                Command::Status { id, cron } => commands::status::run(&root, id.as_deref(), cron),
                 Command::RoutineSync { source } => {
                     commands::routine_sync::run(&root, source.as_deref())
                 }
-                Command::Cron { subcommand } => match subcommand {
-                    CronSubcommand::List => commands::cron_list::run(&root),
-                },
                 Command::Init { .. } | Command::Help | Command::Skill { .. } => unreachable!(),
             }
         }

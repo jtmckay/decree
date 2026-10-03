@@ -162,7 +162,8 @@ mod tests {
         fire_due_cron_jobs(dir.path(), &mut tracker);
 
         // Should have created an inbox message
-        let inbox_files = message::list_inbox_messages(dir.path()).unwrap();
+        let inbox_files =
+            crate::commands::check::md_files(&dir.path().join(".decree/inbox")).unwrap();
         assert_eq!(inbox_files.len(), 1);
 
         // Verify the inbox message content
@@ -179,7 +180,8 @@ mod tests {
 
         // Second fire within same minute should not create duplicate
         fire_due_cron_jobs(dir.path(), &mut tracker);
-        let inbox_files2 = message::list_inbox_messages(dir.path()).unwrap();
+        let inbox_files2 =
+            crate::commands::check::md_files(&dir.path().join(".decree/inbox")).unwrap();
         assert_eq!(inbox_files2.len(), 1); // Still just one
     }
 }

@@ -98,16 +98,7 @@ impl<'a> Pipeline<'a> {
             )));
         }
         validate_migrations(project)?;
-        let ctx = Context {
-            project_root: project_root.to_path_buf(),
-            shared_source: project.shared_source.clone(),
-            machines: &project.machines,
-            default_router: project.config.default_router.clone(),
-            max_attempts: project.config.max_attempts,
-            max_depth: project.config.max_depth,
-            max_log_size: project.config.max_log_size,
-            shutdown,
-        };
+        let ctx = context(project_root, project, shutdown);
         Ok(Pipeline {
             ctx,
             project,
@@ -280,8 +271,45 @@ impl<'a> Pipeline<'a> {
     }
 }
 
+/// The context runs of `project` are stepped, or their status derived, in.
+pub(crate) fn context<'a>(
+    project_root: &Path,
+    project: &'a Project,
+    shutdown: Arc<AtomicBool>,
+) -> Context<'a> {
+    Context {
+        project_root: project_root.to_path_buf(),
+        shared_source: project.shared_source.clone(),
+        machines: &project.machines,
+        default_router: project.config.default_router.clone(),
+        max_attempts: project.config.max_attempts,
+        max_depth: project.config.max_depth,
+        max_log_size: project.config.max_log_size,
+        shutdown,
+    }
+}
+
+/// Run `id`'s status (section 4, Run status) and its events. A run whose machine is not
+/// loaded can never be stepped: it is `finished` in `failed` (an invalid message), else
+/// `active` while its lock is live, else `interrupted`.
+pub(crate) fn run_status(
+    ctx: &Context,
+    id: &str,
+) -> Result<(RunStatus, Vec<serde_json::Map<String, Value>>), DecreeError> {
+    let run_dir = ctx.runs_dir().join(id);
+    let events = read_events(&run_dir)?;
+    let alive = matches!(message::lock_state(&run_dir)?, LockState::Live(_));
+    let status = match run_machine(ctx, &events) {
+        Some(m) => ctx.status(m, &events, alive),
+        None if interpreter::current_state(&events) == Some(FAILED) => RunStatus::Finished,
+        None if alive => RunStatus::Active,
+        None => RunStatus::Interrupted,
+    };
+    Ok((status, events))
+}
+
 /// The run folders in `runs_dir`, in `id` order.
-fn run_ids(runs_dir: &Path) -> std::io::Result<Vec<String>> {
+pub(crate) fn run_ids(runs_dir: &Path) -> std::io::Result<Vec<String>> {
     let mut ids: Vec<String> = match std::fs::read_dir(runs_dir) {
         Ok(entries) => entries
             .filter_map(Result::ok)
@@ -525,8 +553,8 @@ fn blocked(file: &str, id: &str, what: &str) -> Stop {
     ))
 }
 
-/// Print every waiting run: its question (the state's `description`), and a
-/// `decree event` command for each accepted event (section 4, Replies).
+/// Print every waiting run: its question (the state's `description`), its wait id and
+/// options, and a `decree event` command for each option (section 4, Replies).
 fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
     let mut ids: Vec<String> = match std::fs::read_dir(ctx.runs_dir()) {
         Ok(entries) => entries
@@ -554,14 +582,16 @@ fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
             .and_then(|m| m.find(state).map(|s| &m.nodes[s]))
             .and_then(|node| node.description.as_deref())
             .unwrap_or(state);
-        println!("Waiting: run {id} in `{state}`: {question}");
-        for option in last
+        let options: Vec<&str> = last
             .get("options")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
-        {
+            .collect();
+        println!("Waiting: run {id} in `{state}`: {question}");
+        println!("  wait id {wait_id}, options: {}", options.join(", "));
+        for option in options {
             println!("  decree event {wait_id} {option}");
         }
     }
