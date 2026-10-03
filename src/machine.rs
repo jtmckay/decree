@@ -274,8 +274,6 @@ pub struct Node {
 pub struct LoadedMachine {
     /// The file stem, which V1 requires to equal `name`.
     pub id: String,
-    /// The file it was read from.
-    pub path: PathBuf,
     pub data: BTreeMap<String, DataSpec>,
     pub nodes: Vec<Node>,
 }
@@ -312,7 +310,7 @@ impl LoadedMachine {
 }
 
 /// Flatten a parsed machine into its arena.
-pub fn flatten(id: &str, path: PathBuf, machine: Machine) -> LoadedMachine {
+pub fn flatten(id: &str, machine: Machine) -> LoadedMachine {
     let root = Node {
         id: machine.name,
         parent: None,
@@ -333,7 +331,6 @@ pub fn flatten(id: &str, path: PathBuf, machine: Machine) -> LoadedMachine {
     push_children(&mut nodes, 0, machine.states);
     LoadedMachine {
         id: id.to_string(),
-        path,
         data: machine.data,
         nodes,
     }
@@ -420,14 +417,14 @@ fn machine_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, DecreeError> {
 /// Read and flatten one machine file. Errors read `machines/<id>.yml: <where>: <message>`.
 fn load_machine_file(id: &str, path: &Path) -> Result<LoadedMachine, DecreeError> {
     let text = std::fs::read_to_string(path)?;
-    load_machine_text(id, path, &text)
+    load_machine_text(id, &text)
 }
 
-/// Parse and flatten machine `id`, read from `path`, whose contents are `text`.
-pub fn load_machine_text(id: &str, path: &Path, text: &str) -> Result<LoadedMachine, DecreeError> {
+/// Parse and flatten machine `id`, whose file contents are `text`.
+pub fn load_machine_text(id: &str, text: &str) -> Result<LoadedMachine, DecreeError> {
     let machine = parse_machine(text)
         .map_err(|e| DecreeError::Other(format!("{MACHINES_DIR}/{id}.yml: {e}")))?;
-    Ok(flatten(id, path.to_path_buf(), machine))
+    Ok(flatten(id, machine))
 }
 
 /// Keys outside the SCXML subset that a state may be written with, and what to use instead
@@ -1730,11 +1727,7 @@ mod tests {
     }
 
     fn load(id: &str, text: &str) -> LoadedMachine {
-        flatten(
-            id,
-            PathBuf::from(format!("{id}.yml")),
-            parse_machine(text).unwrap(),
-        )
+        flatten(id, parse_machine(text).unwrap())
     }
 
     #[test]
@@ -2010,10 +2003,10 @@ mod tests {
         let machines = load_machines(&tmp.path().join(".decree"), Some(&shared)).unwrap();
         assert_eq!(machines.len(), 2);
         assert_eq!(machines["hello"].description(), "Run one script.");
-        assert!(machines["hello"]
-            .path
-            .starts_with(tmp.path().join(".decree")));
-        assert!(machines["deploy"].path.starts_with(&shared));
+        assert_eq!(
+            machines["deploy"].description(),
+            "Build, ask a person to approve, then ship."
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! `Executor` runs scripts for one run: environment, log, process group, timeout, attempts,
 //! event parsing, and one `script` event in `events.jsonl` per execution (section 7).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -178,9 +178,6 @@ pub const RECEIVED_DIR: &str = "received";
 
 /// `events.jsonl` schema version (section 7).
 const EVENTS_VERSION: u64 = 1;
-
-/// stdout lines of an invoke kept in memory.
-pub const STDOUT_TAIL_LINES: usize = 50;
 
 /// How long a stopped script's process group gets between SIGTERM and SIGKILL.
 pub const KILL_GRACE: Duration = Duration::from_secs(10);
@@ -413,8 +410,6 @@ pub struct Execution {
     /// `None` if the script was killed by a signal.
     pub exit_code: Option<i32>,
     pub timed_out: bool,
-    /// The last `STDOUT_TAIL_LINES` stdout lines, without line endings.
-    pub stdout_tail: Vec<String>,
     /// The last non-empty stdout line, trimmed.
     pub last_line: Option<String>,
     /// Log filename in the run folder.
@@ -452,23 +447,10 @@ pub enum InvokeEvent {
     Invalid(String),
 }
 
-impl InvokeEvent {
-    /// The event name.
-    pub fn event(&self) -> &str {
-        match self {
-            InvokeEvent::ExitCode(e) => e,
-            InvokeEvent::Stdout(e) => e,
-            InvokeEvent::Invalid(_) => "error",
-        }
-    }
-}
-
 /// The result of a state's invoke, after its attempts.
 #[derive(Debug, Clone)]
 pub struct InvokeOutcome {
     pub event: InvokeEvent,
-    /// Attempts made, from 1.
-    pub attempts: u32,
     /// The last attempt's execution.
     pub execution: Execution,
 }
@@ -602,11 +584,7 @@ impl Executor {
                 None => InvokeEvent::ExitCode("done"),
             }
         };
-        Ok(Some(InvokeOutcome {
-            event,
-            attempts: attempt,
-            execution,
-        }))
+        Ok(Some(InvokeOutcome { event, execution }))
     }
 
     /// A failed attempt that will be re-run: `error`, with `from` and `to` equal.
@@ -704,17 +682,17 @@ impl Executor {
         let stdout = child
             .stdout
             .take()
-            .map(|out| spawn_reader(out, Arc::clone(&log_file), b"", STDOUT_TAIL_LINES));
+            .map(|out| spawn_reader(out, Arc::clone(&log_file), b"", true));
         let stderr = child
             .stderr
             .take()
-            .map(|err| spawn_reader(err, Arc::clone(&log_file), STDERR_PREFIX, 0));
+            .map(|err| spawn_reader(err, Arc::clone(&log_file), STDERR_PREFIX, false));
 
         let deadline = run.timeout.map(|t| start + t);
         let (status, stop) =
             wait_child(&mut child, deadline, &self.shutdown).map_err(io_err(&path))?;
         // The readers end once every process holding the pipes has exited.
-        let tail = join_reader(stdout).map_err(io_err(&log_path))?;
+        let last_line = join_reader(stdout).map_err(io_err(&log_path))?;
         join_reader(stderr).map_err(io_err(&log_path))?;
         let duration = start.elapsed();
         truncate_log_if_needed(&log_path, self.info.max_log_size).map_err(io_err(&log_path))?;
@@ -727,8 +705,7 @@ impl Executor {
         let execution = Execution {
             exit_code: status.code(),
             timed_out: stop == Stop::Timeout,
-            stdout_tail: tail.lines.into(),
-            last_line: tail.last,
+            last_line,
             log,
             path,
         };
@@ -835,29 +812,22 @@ fn next_log_number(run_dir: &Path) -> io::Result<u32> {
     Ok(highest + 1)
 }
 
-/// What a stream reader keeps: the last lines and the last non-empty line.
-#[derive(Debug, Default)]
-struct Tail {
-    lines: VecDeque<String>,
-    last: Option<String>,
-}
-
-/// Copy `source` into `log` line by line, each line prefixed with `prefix`, keeping the
-/// last `keep` lines.
+/// Copy `source` into `log` line by line, each line prefixed with `prefix`. With
+/// `keep_last`, returns the last non-empty line, trimmed (section 6, Events from an invoke).
 fn spawn_reader<R: Read + Send + 'static>(
     source: R,
     log: Arc<Mutex<File>>,
     prefix: &'static [u8],
-    keep: usize,
-) -> thread::JoinHandle<io::Result<Tail>> {
+    keep_last: bool,
+) -> thread::JoinHandle<io::Result<Option<String>>> {
     thread::spawn(move || {
         let mut reader = BufReader::new(source);
-        let mut tail = Tail::default();
+        let mut last = None;
         let mut buf = Vec::new();
         loop {
             buf.clear();
             if reader.read_until(b'\n', &mut buf)? == 0 {
-                return Ok(tail);
+                return Ok(last);
             }
             let mut line = Vec::with_capacity(prefix.len() + buf.len() + 1);
             line.extend_from_slice(prefix);
@@ -868,28 +838,26 @@ fn spawn_reader<R: Read + Send + 'static>(
             log.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .write_all(&line)?;
-            if keep == 0 {
+            if !keep_last {
                 continue;
             }
             let text = String::from_utf8_lossy(&buf);
-            let text = text.trim_end_matches(['\n', '\r']);
-            if !text.trim().is_empty() {
-                tail.last = Some(text.trim().to_string());
+            let text = text.trim();
+            if !text.is_empty() {
+                last = Some(text.to_string());
             }
-            if tail.lines.len() == keep {
-                tail.lines.pop_front();
-            }
-            tail.lines.push_back(text.to_string());
         }
     })
 }
 
-fn join_reader(handle: Option<thread::JoinHandle<io::Result<Tail>>>) -> io::Result<Tail> {
+fn join_reader(
+    handle: Option<thread::JoinHandle<io::Result<Option<String>>>>,
+) -> io::Result<Option<String>> {
     match handle {
         Some(handle) => handle
             .join()
             .map_err(|_| io::Error::other("log reader panicked"))?,
-        None => Ok(Tail::default()),
+        None => Ok(None),
     }
 }
 
@@ -1313,7 +1281,7 @@ mod executor_tests {
             "name: m\ndescription: Test.\ninitial: s\nstates:\n  s: {state}\n  \
              done: {{ final: true }}\n  failed: {{ final: true }}\n"
         );
-        load_machine_text("m", Path::new("m.yml"), &text).unwrap()
+        load_machine_text("m", &text).unwrap()
     }
 
     fn run_dir_choices(project: &Project) -> PathBuf {
@@ -1353,7 +1321,6 @@ mod executor_tests {
         let p = Project::new(&["exit_zero"]);
         let out = invoke(&p, "{ invoke: exit_zero, transitions: { done: done } }");
         assert_eq!(out.event, InvokeEvent::ExitCode("done"));
-        assert_eq!(out.event.event(), "done");
         assert_eq!(out.execution.exit_code, Some(0));
         assert_eq!(p.events_of("script").len(), 1);
     }
@@ -1366,7 +1333,6 @@ mod executor_tests {
             "{ invoke: exit_three, max_attempts: 2, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("error"));
-        assert_eq!(out.attempts, 2);
         assert_eq!(out.execution.exit_code, Some(3));
         let scripts = p.events_of("script");
         assert_eq!(scripts.len(), 2);
@@ -1406,7 +1372,6 @@ mod executor_tests {
             "{ invoke: print_pass, transitions: { done: done, pass: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Stdout("pass".to_string()));
-        assert_eq!(out.event.event(), "pass");
     }
 
     #[test]
@@ -1428,7 +1393,6 @@ mod executor_tests {
             "{ invoke: print_undeclared, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Invalid("nope".to_string()));
-        assert_eq!(out.event.event(), "error");
     }
 
     #[test]
@@ -1454,7 +1418,7 @@ mod executor_tests {
                     transitions: { pass: done }\n    states:\n      \
                     s: { invoke: print_pass, transitions: { done: done } }\n  \
                     done: { final: true }\n  failed: { final: true }\n";
-        let m = load_machine_text("m", Path::new("m.yml"), text).unwrap();
+        let m = load_machine_text("m", text).unwrap();
         let out = p
             .executor()
             .run_invoke(&m, m.find("s").unwrap(), 1)
@@ -1471,7 +1435,6 @@ mod executor_tests {
             "{ invoke: print_unsure, transitions: { done: done, unsure: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Invalid("unsure".to_string()));
-        assert_eq!(out.event.event(), "error");
     }
 
     #[test]
@@ -1512,7 +1475,6 @@ mod executor_tests {
             "{ invoke: fail_until_final, max_attempts: 3, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("done"));
-        assert_eq!(out.attempts, 3);
         let scripts = p.events_of("script");
         let attempts: Vec<_> = scripts.iter().map(|e| e["attempt"].clone()).collect();
         assert_eq!(attempts, [json!(1), json!(2), json!(3)]);
@@ -1532,8 +1494,7 @@ mod executor_tests {
     #[test]
     fn config_max_attempts_applies_when_the_state_sets_none() {
         let p = Project::new(&["exit_three"]);
-        let out = invoke(&p, "{ invoke: exit_three, transitions: { done: done } }");
-        assert_eq!(out.attempts, 3);
+        invoke(&p, "{ invoke: exit_three, transitions: { done: done } }");
         assert_eq!(p.events_of("script").len(), 3);
     }
 
@@ -1548,7 +1509,7 @@ mod executor_tests {
         assert!(log.contains("to stdout\n"), "{log}");
         assert!(log.contains("[stderr] to stderr\n"), "{log}");
         assert!(!log.contains("[stderr] to stdout"), "{log}");
-        assert_eq!(out.stdout_tail, ["to stdout"]);
+        assert_eq!(out.last_line.as_deref(), Some("to stdout"));
     }
 
     #[test]
@@ -1557,7 +1518,6 @@ mod executor_tests {
         let mut info = p.info();
         let m = load_machine_text(
             "m",
-            Path::new("m.yml"),
             "name: m\ndescription: T.\ndata:\n  max_rounds: { type: int, default: 2 }\n  \
              strict: { type: bool, default: false }\n  label: { type: string, default: x }\n\
              initial: s\nstates:\n  s: { transitions: { done: done } }\n  done: { final: true }\n",
@@ -1894,16 +1854,12 @@ mod executor_tests {
     }
 
     #[test]
-    fn stdout_tail_keeps_the_last_50_lines() {
+    fn last_line_is_the_last_non_empty_stdout_line() {
         let p = Project::new(&["print_lines"]);
         let out = p
             .executor()
             .run_script(&ScriptRun::new("print_lines", "s", Phase::Invoke))
             .unwrap();
-        assert_eq!(out.stdout_tail.len(), STDOUT_TAIL_LINES);
-        assert_eq!(out.stdout_tail[0], "line 13");
-        assert_eq!(out.stdout_tail[47], "line 60");
-        assert_eq!(out.stdout_tail[49], "");
         assert_eq!(out.last_line.as_deref(), Some("line 60"));
         assert_eq!(out.printed_event(), None);
     }
@@ -1943,7 +1899,6 @@ mod executor_tests {
     fn data_env_formats_values() {
         let m = load_machine_text(
             "m",
-            Path::new("m.yml"),
             "name: m\ndescription: T.\ndata:\n  n: { type: int, default: 2 }\n  \
              b: { type: bool, default: true }\n  s: { type: string, default: hi }\n\
              initial: x\nstates:\n  x: { final: true }\n",

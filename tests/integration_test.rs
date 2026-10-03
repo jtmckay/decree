@@ -566,347 +566,25 @@ fn test_no_color_flag_overrides_forced_color() {
     assert!(!has_ansi(&out), "{}", String::from_utf8_lossy(&out));
 }
 
-// --- decree routine (non-TTY) ---
+// --- removed 0.4 routine commands ---
 
-/// A project with the 0.4 routines `routine` and `verify` read until M5.3 deletes them;
-/// `init` no longer writes them.
-fn init_routines(dir: &TempDir) {
-    decree_cmd(dir).arg("init").assert().success();
-    let decree = dir.path().join(".decree");
-    let routines = decree.join("routines");
-    fs::create_dir_all(&routines).unwrap();
-    let templates =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scripts/v0_4_2");
-    for name in ["develop.sh", "rust-develop.sh"] {
-        fs::copy(templates.join(name), routines.join(name)).unwrap();
+/// `routine`, `verify` and `routine-sync` are gone (spec section 10, item 3).
+#[test]
+fn test_removed_routine_commands_exit_2() {
+    let dir = TempDir::new().unwrap();
+    decree_cmd(&dir).arg("init").assert().success();
+    for args in [
+        &["routine"][..],
+        &["routine", "develop"],
+        &["verify"],
+        &["routine-sync"],
+    ] {
+        decree_cmd(&dir)
+            .args(args)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unrecognized subcommand"));
     }
-    let mut config = fs::read_to_string(decree.join("config.yml")).unwrap();
-    config.push_str(
-        "hooks:\n  beforeAll: \"\"\n  afterAll: \"\"\n  beforeEach: \"\"\n  afterEach: \"\"\n",
-    );
-    fs::write(decree.join("config.yml"), config).unwrap();
-}
-
-#[test]
-fn test_routine_no_args_non_tty_lists_routines() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    decree_cmd(&dir)
-        .arg("routine")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("develop"))
-        .stdout(predicate::str::contains("rust-develop"));
-}
-
-#[test]
-fn test_routine_named_non_tty_shows_detail() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    decree_cmd(&dir)
-        .args(["routine", "develop"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("develop"))
-        .stdout(predicate::str::contains(".decree/routines/develop.sh"));
-}
-
-#[test]
-fn test_routine_unknown_with_close_match() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    decree_cmd(&dir)
-        .args(["routine", "devlop"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unknown routine 'devlop'"))
-        .stderr(predicate::str::contains("Did you mean 'develop'?"));
-}
-
-#[test]
-fn test_routine_unknown_no_close_match() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    decree_cmd(&dir)
-        .args(["routine", "xyznonexistent"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unknown routine 'xyznonexistent'"))
-        .stderr(predicate::str::contains("Available routines:"));
-}
-
-#[test]
-fn test_routine_no_routines() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Remove all routine files
-    let routines_dir = dir.path().join(".decree/routines");
-    for entry in fs::read_dir(&routines_dir).unwrap() {
-        let entry = entry.unwrap();
-        fs::remove_file(entry.path()).unwrap();
-    }
-
-    decree_cmd(&dir)
-        .arg("routine")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("No routines found"));
-}
-
-#[test]
-fn test_routine_detail_shows_description() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    decree_cmd(&dir)
-        .args(["routine", "develop"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "Default routine that delegates work to an AI assistant",
-        ));
-}
-
-#[test]
-fn test_routine_nested_directory() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Create a nested routine
-    let nested_dir = dir.path().join(".decree/routines/deploy");
-    fs::create_dir_all(&nested_dir).unwrap();
-    fs::write(
-        nested_dir.join("staging.sh"),
-        "#!/usr/bin/env bash\n# Deploy Staging\n#\n# Deploy to staging environment.\nset -euo pipefail\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    exit 0\nfi\n\necho \"deploying\"\n",
-    )
-    .unwrap();
-
-    decree_cmd(&dir)
-        .arg("routine")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("deploy/staging"));
-}
-
-#[test]
-fn test_routine_custom_params_shown_in_detail() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Create a routine with custom params
-    fs::write(
-        dir.path().join(".decree/routines/transcribe.sh"),
-        "#!/usr/bin/env bash\n# Transcribe\n#\n# Transcribes audio using OpenAI Whisper.\nset -euo pipefail\n\nmessage_file=\"${message_file:-}\"\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    command -v whisper >/dev/null 2>&1 || { echo \"whisper not found\" >&2; exit 1; }\n    exit 0\nfi\n\noutput_file=\"${output_file:-}\"\nmodel=\"${model:-large}\"\n\necho \"transcribing\"\n",
-    )
-    .unwrap();
-
-    decree_cmd(&dir)
-        .args(["routine", "transcribe"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("output_file"))
-        .stdout(predicate::str::contains("model"))
-        .stdout(predicate::str::contains("[default: \"large\"]"));
-}
-
-// --- decree verify ---
-
-#[test]
-fn test_verify_all_pass() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Create a simple routine that always passes pre-check
-    fs::write(
-        dir.path().join(".decree/routines/simple.sh"),
-        "#!/usr/bin/env bash\n# Simple\n#\n# A simple routine.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    exit 0\nfi\n\necho done\n",
-    )
-    .unwrap();
-
-    // Remove routines that require AI commands (which won't exist in test env)
-    fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    fs::remove_file(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    decree_cmd(&dir)
-        .arg("verify")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("simple"))
-        .stdout(predicate::str::contains("PASS"))
-        .stdout(predicate::str::contains("1 of 1 routines ready"));
-}
-
-#[test]
-fn test_verify_some_fail() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Create a passing routine
-    fs::write(
-        dir.path().join(".decree/routines/good.sh"),
-        "#!/usr/bin/env bash\n# Good\n#\n# Always passes.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    exit 0\nfi\n\necho done\n",
-    )
-    .unwrap();
-
-    // Create a failing routine
-    fs::write(
-        dir.path().join(".decree/routines/bad.sh"),
-        "#!/usr/bin/env bash\n# Bad\n#\n# Always fails pre-check.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    echo \"missing-tool not found\" >&2; exit 1\nfi\n\necho done\n",
-    )
-    .unwrap();
-
-    // Remove default routines
-    fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    fs::remove_file(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    decree_cmd(&dir)
-        .arg("verify")
-        .assert()
-        .code(3)
-        .stdout(predicate::str::contains("good"))
-        .stdout(predicate::str::contains("PASS"))
-        .stdout(predicate::str::contains("bad"))
-        .stdout(predicate::str::contains("FAIL"))
-        .stdout(predicate::str::contains("missing-tool not found"))
-        .stdout(predicate::str::contains("1 of 2 routines ready"));
-}
-
-#[test]
-fn test_verify_no_routines() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Remove all routines
-    let routines_dir = dir.path().join(".decree/routines");
-    for entry in fs::read_dir(&routines_dir).unwrap() {
-        let entry = entry.unwrap();
-        fs::remove_file(entry.path()).unwrap();
-    }
-
-    decree_cmd(&dir)
-        .arg("verify")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("No routines found"));
-}
-
-#[test]
-fn test_verify_shows_fail_reason() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    fs::write(
-        dir.path().join(".decree/routines/checker.sh"),
-        "#!/usr/bin/env bash\n# Checker\n#\n# Checks deps.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    echo \"kubectl not found\" >&2; exit 1\nfi\n\necho done\n",
-    )
-    .unwrap();
-
-    // Remove defaults
-    fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    fs::remove_file(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    decree_cmd(&dir)
-        .arg("verify")
-        .assert()
-        .code(3)
-        .stdout(predicate::str::contains("FAIL: kubectl not found"));
-}
-
-// --- decree verify with hooks ---
-
-#[test]
-fn test_verify_hooks_pass() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Remove default routines (they require AI tools)
-    fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    fs::remove_file(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    // Create a simple routine and a hook routine
-    fs::write(
-        dir.path().join(".decree/routines/simple.sh"),
-        "#!/usr/bin/env bash\n# Simple\n#\n# A simple routine.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    exit 0\nfi\n\necho done\n",
-    )
-    .unwrap();
-
-    fs::write(
-        dir.path().join(".decree/routines/pre-flight.sh"),
-        "#!/usr/bin/env bash\n# Pre Flight\n#\n# Hook routine.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    exit 0\nfi\n\necho hook\n",
-    )
-    .unwrap();
-
-    // Configure the hook in config
-    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-    let config = config.replace("beforeEach: \"\"", "beforeEach: \"pre-flight\"");
-    fs::write(dir.path().join(".decree/config.yml"), config).unwrap();
-
-    decree_cmd(&dir)
-        .arg("verify")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Hook pre-checks:"))
-        .stdout(predicate::str::contains("pre-flight (beforeEach)"))
-        .stdout(predicate::str::contains("PASS"));
-}
-
-#[test]
-fn test_verify_hooks_missing_routine() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Remove default routines
-    fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    fs::remove_file(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    // Create a simple passing routine
-    fs::write(
-        dir.path().join(".decree/routines/simple.sh"),
-        "#!/usr/bin/env bash\n# Simple\n#\n# A simple routine.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    exit 0\nfi\n\necho done\n",
-    )
-    .unwrap();
-
-    // Configure a hook that references a non-existent routine
-    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-    let config = config.replace("beforeAll: \"\"", "beforeAll: \"nonexistent-hook\"");
-    fs::write(dir.path().join(".decree/config.yml"), config).unwrap();
-
-    decree_cmd(&dir)
-        .arg("verify")
-        .assert()
-        .code(3)
-        .stdout(predicate::str::contains("Hook pre-checks:"))
-        .stdout(predicate::str::contains("nonexistent-hook (beforeAll)"))
-        .stdout(predicate::str::contains("routine not found"));
-}
-
-#[test]
-fn test_verify_no_hooks_configured_no_hook_section() {
-    let dir = TempDir::new().unwrap();
-    init_routines(&dir);
-
-    // Remove default routines
-    fs::remove_file(dir.path().join(".decree/routines/develop.sh")).unwrap();
-    fs::remove_file(dir.path().join(".decree/routines/rust-develop.sh")).unwrap();
-
-    fs::write(
-        dir.path().join(".decree/routines/simple.sh"),
-        "#!/usr/bin/env bash\n# Simple\n#\n# A simple routine.\n\nif [ \"${DECREE_PRE_CHECK:-}\" = \"true\" ]; then\n    exit 0\nfi\n\necho done\n",
-    )
-    .unwrap();
-
-    // Default config has empty hooks — "Hook pre-checks:" should NOT appear
-    decree_cmd(&dir)
-        .arg("verify")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("1 of 1 routines ready"))
-        .stdout(predicate::str::contains("Hook pre-checks:").not());
 }
 
 // --- exit codes ---
@@ -920,346 +598,75 @@ fn test_unknown_subcommand_exit_code_2() {
         .code(2);
 }
 
-// --- decree skill ---
+// --- decree skill, written by init ---
 
 #[test]
-fn test_skill_claude_project_creates_file() {
-    let dir = TempDir::new().unwrap();
+fn test_init_writes_decree_skill_for_claude_and_copilot() {
+    for (ai, skill_dir) in [
+        ("claude", ".claude/skills/decree"),
+        ("copilot", ".github/skills/decree"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        decree_cmd(&dir)
+            .args(["init", "--ai", ai])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!(
+                "Decree skill: ./{skill_dir} (5 written, 0 existing kept)"
+            )));
+        let skill = dir.path().join(skill_dir);
+        assert!(skill.join("SKILL.md").is_file(), "{ai}");
+        assert!(skill.join("reference/migrations.md").is_file(), "{ai}");
+    }
+}
 
+#[test]
+fn test_init_opencode_writes_no_skill() {
+    let dir = TempDir::new().unwrap();
     decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
+        .args(["init", "--ai", "opencode"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Installed"))
-        .stdout(predicate::str::contains(".claude/skills/decree/SKILL.md"));
-
-    assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
+        .stdout(predicate::str::contains("Decree skill").not());
+    assert!(!dir.path().join(".claude").exists());
+    assert!(!dir.path().join(".github").exists());
 }
 
 #[test]
-fn test_skill_copilot_project_creates_file() {
+fn test_init_keeps_existing_skill_files() {
     let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Installed"))
-        .stdout(predicate::str::contains(".github/skills/decree/SKILL.md"));
-
-    assert!(dir.path().join(".github/skills/decree/SKILL.md").is_file());
-}
-
-#[test]
-fn test_skill_user_copilot_unsupported() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "user", "--target", "copilot", "--skill", "decree",
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("not supported"));
-}
-
-#[test]
-fn test_skill_claude_user_scope() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "user", "--target", "claude", "--skill", "decree",
-        ])
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Installed"));
-
-    assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
-}
-
-#[test]
-fn test_skill_already_up_to_date_claude() {
-    let dir = TempDir::new().unwrap();
-
-    // First install
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
-        .assert()
-        .success();
-
-    // Second install — same content
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Already up to date"));
-
-    // File should still exist and be unchanged
-    assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
-}
-
-#[test]
-fn test_skill_already_up_to_date_copilot() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
-        ])
-        .assert()
-        .success();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Already up to date"));
-}
-
-#[test]
-fn test_skill_conflict_no_force_exits_nonzero() {
-    let dir = TempDir::new().unwrap();
-
-    // Write a modified file
-    fs::create_dir_all(dir.path().join(".claude/skills/decree")).unwrap();
-    fs::write(
-        dir.path().join(".claude/skills/decree/SKILL.md"),
-        "custom content that differs from bundled template\n",
-    )
-    .unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("conflict"))
-        .stderr(predicate::str::contains("already exists"));
-
-    // File must NOT have been overwritten
-    let content = fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
-    assert_eq!(
-        content,
-        "custom content that differs from bundled template\n"
-    );
-}
-
-#[test]
-fn test_skill_conflict_with_force_overwrites() {
-    let dir = TempDir::new().unwrap();
-
-    fs::create_dir_all(dir.path().join(".claude/skills/decree")).unwrap();
-    fs::write(
-        dir.path().join(".claude/skills/decree/SKILL.md"),
-        "custom content\n",
-    )
-    .unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree", "--force",
-        ])
-        .assert()
-        .success();
-
-    let content = fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
-    assert_ne!(content, "custom content\n");
-    assert!(content.contains("Decree"));
-}
-
-#[test]
-fn test_skill_claude_content_has_required_sections() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
-        .assert()
-        .success();
-
-    let skill_dir = dir.path().join(".claude/skills/decree");
-    let content = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
-    let ref_migrations = fs::read_to_string(skill_dir.join("reference/migrations.md")).unwrap();
-
-    assert!(content.contains("mmutab"), "must cover immutability");
-    assert!(content.contains("Given"), "must cover Given/When/Then");
-    assert!(content.contains("When"), "must cover Given/When/Then");
-    assert!(content.contains("Then"), "must cover Given/When/Then");
-    assert!(
-        content.to_lowercase().contains("day-sized")
-            || ref_migrations.to_lowercase().contains("day-sized"),
-        "must mention day-sized"
-    );
-    assert!(
-        content.contains("smallest feasible") || ref_migrations.contains("smallest feasible"),
-        "must mention smallest feasible chunks"
-    );
-    assert!(
-        content.contains(".decree/migrations") || ref_migrations.contains(".decree/migrations"),
-        "must specify migration directory"
-    );
-}
-
-#[test]
-fn test_skill_copilot_content_has_required_sections() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
-        ])
-        .assert()
-        .success();
-
-    let skill_dir = dir.path().join(".github/skills/decree");
-    let content = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
-    let ref_migrations = fs::read_to_string(skill_dir.join("reference/migrations.md")).unwrap();
-
-    assert!(content.contains("mmutab"), "must cover immutability");
-    assert!(
-        content.to_lowercase().contains("migration")
-            || ref_migrations.to_lowercase().contains("migration"),
-        "must describe the migration contract"
-    );
-    assert!(
-        content.contains("smallest feasible") || ref_migrations.contains("smallest feasible"),
-        "must mention smallest feasible chunks"
-    );
-    assert!(
-        content.to_lowercase().contains("bypass")
-            || ref_migrations.to_lowercase().contains("bypass"),
-        "must warn against bypassing the workflow"
-    );
-}
-
-#[test]
-fn test_skill_installed_content_matches_bundled_template_claude() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
-        .assert()
-        .success();
-
-    let installed = fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
-
-    // The installed file should contain the same content as what the command embeds.
-    // We verify this by checking a stable unique phrase from the bundled template.
-    assert!(installed.contains("Decree is an AI orchestrator"));
-}
-
-#[test]
-fn test_skill_installed_content_matches_bundled_template_copilot() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "copilot", "--skill", "decree",
-        ])
-        .assert()
-        .success();
-
-    let installed = fs::read_to_string(dir.path().join(".github/skills/decree/SKILL.md")).unwrap();
-
-    assert!(installed.contains("Decree is an AI orchestrator"));
-}
-
-#[test]
-fn test_skill_no_prompts_when_flags_provided() {
-    let dir = TempDir::new().unwrap();
-
-    // In non-TTY mode (tests always are), providing flags must not require any input.
-    // The test succeeds if the process completes without hanging.
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
-        .assert()
-        .success();
-}
-
-#[test]
-fn test_skill_preserves_unrelated_files_in_claude_dir() {
-    let dir = TempDir::new().unwrap();
-
-    // Create an unrelated file in .claude/
-    fs::create_dir_all(dir.path().join(".claude")).unwrap();
+    let skill = dir.path().join(".claude/skills/decree");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "custom\n").unwrap();
     fs::write(dir.path().join(".claude/settings.json"), "{}").unwrap();
 
     decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "decree",
-        ])
+        .args(["init", "--ai", "claude"])
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("(4 written, 1 existing kept)"));
 
-    // Unrelated file must still exist
-    assert!(dir.path().join(".claude/settings.json").is_file());
+    assert_eq!(
+        fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+        "custom\n"
+    );
+    assert!(skill.join("reference/routines.md").is_file());
     assert_eq!(
         fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap(),
         "{}"
     );
 }
 
-// --- decree skill --all and --skill flags ---
-
+/// The `skill` command is gone (spec section 10, item 12).
 #[test]
-fn test_skill_all_installs_two_claude_skills() {
+fn test_skill_command_is_removed() {
     let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude", "--all"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("6 skill file(s) installed"));
-
-    assert!(dir.path().join(".claude/skills/decree/SKILL.md").is_file());
-    assert!(dir.path().join(".claude/skills/sow/SKILL.md").is_file());
-}
-
-#[test]
-fn test_skill_skill_flag_installs_specific_skill() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .args([
-            "skill", "--scope", "project", "--target", "claude", "--skill", "sow",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Installed"))
-        .stdout(predicate::str::contains(".claude/skills/sow/SKILL.md"));
-
-    assert!(dir.path().join(".claude/skills/sow/SKILL.md").is_file());
-    assert!(!dir.path().join(".claude/skills/decree/SKILL.md").exists());
-}
-
-#[test]
-fn test_skill_non_tty_without_skill_flag_errors() {
-    let dir = TempDir::new().unwrap();
-
-    // Tests run in non-TTY mode; without --skill or --all this should fail
     decree_cmd(&dir)
         .args(["skill", "--scope", "project", "--target", "claude"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("non-TTY"));
+        .code(2)
+        .stderr(predicate::str::contains("unrecognized subcommand 'skill'"));
+    assert!(!dir.path().join(".claude").exists());
 }
 
 // --- Config deserialization from init output ---

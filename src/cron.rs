@@ -11,8 +11,6 @@ use std::str::FromStr;
 pub struct CronFile {
     /// Filename (e.g., `hourly-maintenance.md`).
     pub filename: String,
-    /// The stem used for chain ID naming (e.g., `hourly-maintenance`).
-    pub name_stem: String,
     /// Raw cron expression as written in the frontmatter (e.g., `*/15 * * * *`).
     pub cron_expr: String,
     /// Parsed cron schedule.
@@ -85,11 +83,8 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
         .filter(|(k, _)| !strip_fields.contains(&k.as_str()))
         .collect();
 
-    let name_stem = filename.strip_suffix(".md").unwrap_or(filename).to_string();
-
     Ok(CronFile {
         filename: filename.to_string(),
-        name_stem,
         cron_expr,
         schedule,
         machine,
@@ -187,7 +182,6 @@ mod tests {
         let content = "---\ncron: \"0 * * * *\"\nroutine: develop\n---\nRun hourly task.\n";
         let cf = parse_cron_file("hourly-task.md", content).unwrap();
         assert_eq!(cf.filename, "hourly-task.md");
-        assert_eq!(cf.name_stem, "hourly-task");
         assert_eq!(cf.machine, Some("develop".to_string()));
         assert_eq!(cf.body, "Run hourly task.\n");
         assert!(cf.custom_fields.is_empty());

@@ -13,17 +13,13 @@ Commands:
   decree process [--dry-run]  Process all pending migrations + drain inbox
   decree check                Validate machines and pending messages
   decree graph                Write .decree/graph/: Mermaid diagrams in Markdown
-  decree routine              List routines (interactive select + run)
-  decree routine <name>       Show routine detail + run pre-checks
-  decree verify               Run all routine pre-checks
   decree daemon [--interval]  Continuous inbox + cron monitoring
-  decree routine-sync         Sync routine registry with filesystem
   decree status [ID]          Runs by status and queued messages; one run's events
   decree status --cron        List cron files and their next fire time
   decree tail [ID]            Follow the live output of a run
   decree retry ID [--state S] Make an interrupted or finished run pending again
-  decree skill                Install AI assistant skill/instructions
-  decree init                 Initialize a new decree project
+  decree init [--ai AI]       Initialize a new decree project (claude and copilot
+                              also get the decree skill)
   decree help                 This help text
 
 Message Format:
@@ -128,9 +124,6 @@ Defining Routines:
     - Call your AI tool directly (e.g., claude -p, copilot -p, opencode run)
     - Use --no-color flag or NO_COLOR env var to disable color output
 
-  Run `decree verify` to check all routines' pre-checks at once.
-  Run `decree skill` to install the decree-routine skill for AI-assisted authoring.
-
 Routine Registry & Shared Routines:
   Routines are registered in config.yml under `routines` (project-local) and
   `shared_routines` (shared library). A routine must be registered AND enabled
@@ -164,10 +157,6 @@ Routine Registry & Shared Routines:
   Discovery runs automatically at `decree process`, `decree daemon`, and
   `decree init`. New project routines are registered as enabled; new shared
   routines as disabled. Routines whose files disappear are marked deprecated.
-
-  Run `decree routine-sync` to trigger discovery manually:
-    decree routine-sync                    # use routine_source from config
-    decree routine-sync --source ~/other   # override shared directory
 
   Hooks bypass the registry — they only need the script to exist on disk.
 
@@ -217,42 +206,7 @@ Cron Scheduling:
   Run `decree daemon` to start monitoring cron and inbox.
   Run `decree status --cron` to see when each cron file fires next.
 
-AI Skill Installation:
-  Install Decree guidance for Claude or GitHub Copilot:
-
-    decree skill --scope project --target claude
-        Presents an interactive selection of Claude skills to install.
-        Skills are installed under .claude/skills/<name>/SKILL.md.
-
-    decree skill --scope project --target copilot
-        Installs skills under .github/skills/<name>/SKILL.md.
-
-    decree skill --scope user --target claude
-        Installs Claude skills under ~/.claude/skills/<name>/SKILL.md.
-
-    decree skill --scope user --target copilot
-        Not supported; exits non-zero.
-
-  Available Claude skills:
-    decree          Work within the Decree migration ecosystem safely and idiomatically
-                    (.claude/skills/decree/SKILL.md)
-    decree-routine  Authoring guide for Decree routine scripts
-                    (.claude/skills/decree-routine/SKILL.md)
-    sow             Guide for writing a Statement of Work document
-                    (.claude/skills/sow/SKILL.md)
-
-  Flags:
-    --skill <name>  Install a specific skill (repeatable; for scripting/non-TTY)
-    --all           Install all available skills for the selected target
-    --force         Overwrite an existing file that differs from the bundled
-                    template (default: no-op if already matching).
-
-  The command is idempotent — if the installed file already matches the
-  bundled template, it does nothing.
-
 Getting Started:
   1. decree init                            # Set up project
-  2. decree skill --target claude --all     # Install AI skills (decree, decree-routine, sow)
-  3. decree verify                          # Check routines are ready
-  4. decree process                         # Execute all migrations
-  5. decree routine                         # Run individual routines interactively
+  2. decree check                           # Validate machines and pending messages
+  3. decree process                         # Execute all migrations

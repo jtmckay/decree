@@ -1,6 +1,3 @@
-// Crate-private modules expose 0.4.2 items nothing calls; docs/0.5-inventory.md lists them.
-#![allow(dead_code)] // removed in M5.3
-
 pub(crate) mod cli;
 pub(crate) mod commands;
 pub(crate) mod cond;
@@ -8,12 +5,10 @@ pub(crate) mod config;
 pub(crate) mod cron;
 pub(crate) mod error;
 pub(crate) mod graph;
-pub(crate) mod hooks;
 pub(crate) mod interpreter;
 pub(crate) mod machine;
 pub(crate) mod message;
 pub(crate) mod reply;
-pub(crate) mod routine;
 pub(crate) mod runtime;
 
 use clap::Parser;
@@ -42,16 +37,9 @@ pub fn run() -> i32 {
 
 fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     match command {
-        // `decree init`, `decree help`, and `decree skill` don't require an existing project
+        // `decree init` and `decree help` don't require an existing project
         Some(Command::Init { ai, permissions }) => commands::init::run(ai, permissions),
         Some(Command::Help) => commands::help(),
-        Some(Command::Skill {
-            scope,
-            target,
-            force,
-            skills,
-            all,
-        }) => commands::skill::run(scope, target, force, skills, all),
 
         // Bare `decree` defaults to `decree process`
         None => {
@@ -72,16 +60,11 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
                     event,
                     note,
                 } => commands::event::run(&root, &target, &event, note.as_deref()),
-                Command::Routine { name } => commands::routine::run(&root, name.as_deref()),
-                Command::Verify => commands::routine::verify(&root),
                 Command::Daemon { interval } => commands::daemon::run(&root, interval),
                 Command::Tail { id } => commands::tail::run(&root, id.as_deref()),
                 Command::Retry { id, state } => commands::retry::run(&root, &id, state.as_deref()),
                 Command::Status { id, cron } => commands::status::run(&root, id.as_deref(), cron),
-                Command::RoutineSync { source } => {
-                    commands::routine_sync::run(&root, source.as_deref())
-                }
-                Command::Init { .. } | Command::Help | Command::Skill { .. } => unreachable!(),
+                Command::Init { .. } | Command::Help => unreachable!(),
             }
         }
     }

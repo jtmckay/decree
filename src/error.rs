@@ -4,38 +4,14 @@ use std::path::PathBuf;
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_FAILURE: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
-pub const EXIT_PRECHECK: i32 = 3;
 /// SIGINT or SIGTERM stopped the run (section 8).
 pub const EXIT_INTERRUPTED: i32 = 130;
 
 /// All error variants for the decree application.
 #[derive(Debug, thiserror::Error)]
 pub enum DecreeError {
-    #[error("routine not found: {0}")]
-    RoutineNotFound(String),
-
-    #[error("routine disabled: {0}")]
-    RoutineDisabled(String),
-
-    #[error("max retries exhausted for message {0}")]
-    MaxRetriesExhausted(String),
-
-    #[error("Claude token limit exhausted")]
-    TokenLimitExhausted {
-        reset_at: Option<chrono::DateTime<chrono::Local>>,
-    },
-
-    #[error("max depth exceeded (limit: {0})")]
-    MaxDepthExceeded(u32),
-
-    #[error("no migration files found")]
-    NoMigrations,
-
     #[error("message not found: {0}")]
     MessageNotFound(String),
-
-    #[error("pre-check failed: {0}")]
-    PreCheckFailed(String),
 
     #[error("config error: {0}")]
     Config(String),
@@ -61,7 +37,6 @@ impl DecreeError {
     /// Map error to the appropriate exit code.
     pub fn exit_code(&self) -> i32 {
         match self {
-            DecreeError::PreCheckFailed(_) => EXIT_PRECHECK,
             DecreeError::AlreadyInitialized => EXIT_USAGE,
             DecreeError::Interrupted => EXIT_INTERRUPTED,
             _ => EXIT_FAILURE,

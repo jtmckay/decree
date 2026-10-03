@@ -1,5 +1,5 @@
 use crate::cli::AiBackend;
-use crate::commands::{graph, skill};
+use crate::commands::graph;
 use crate::config;
 use crate::error::DecreeError;
 use crate::machine::MACHINES_DIR;
@@ -21,6 +21,9 @@ struct Backend {
     ask: &'static str,
     /// The bash function `ai <prompt>` that the develop machines' scripts call.
     ai_function: &'static str,
+    /// Where `init` writes the decree skill, relative to the project root; `None` if
+    /// the backend reads no skills.
+    skill_dir: Option<&'static str>,
 }
 
 /// AI backends in 0.4.2's detection order. The routers differ only in the CLI call.
@@ -31,6 +34,7 @@ const AI_BACKENDS: &[Backend] = &[
         invoke: "opencode run",
         ask: "opencode run \"$prompt\"",
         ai_function: AI_PLAIN_SH,
+        skill_dir: None,
     },
     Backend {
         name: "claude",
@@ -38,6 +42,7 @@ const AI_BACKENDS: &[Backend] = &[
         invoke: "claude -p",
         ask: "printf '%s' \"$prompt\" | claude -p",
         ai_function: AI_CLAUDE_SH,
+        skill_dir: Some(".claude/skills/decree"),
     },
     Backend {
         name: "copilot",
@@ -45,6 +50,7 @@ const AI_BACKENDS: &[Backend] = &[
         invoke: "copilot -p",
         ask: "copilot -p \"$prompt\"",
         ai_function: AI_PLAIN_SH,
+        skill_dir: Some(".github/skills/decree"),
     },
 ];
 
@@ -107,12 +113,48 @@ const DEVELOP_MACHINES: &[BuiltinMachine] = &[
     },
 ];
 
+/// Shared scripts `init` writes to the flat `scripts/` (spec section 6, Resolution):
+/// 0.4.2's git-stash hooks as per-visit scripts (M5.2). `git_baseline` is a root
+/// `onentry` that records `HEAD` once; `snapshot` is a working state's `onentry` that
+/// stashes a checkpoint on each visit. No built-in machine uses them; add them where wanted.
+const SHARED_SCRIPTS: &[(&str, &str)] = &[
+    (
+        "git_baseline",
+        include_str!("../templates/scripts/git_baseline.sh"),
+    ),
+    ("snapshot", include_str!("../templates/scripts/snapshot.sh")),
+];
+
 /// `ai <prompt>` for Claude: waits out its usage limit and resumes the session.
 const AI_CLAUDE_SH: &str = include_str!("../templates/ai/claude.sh");
 /// `ai <prompt>` for the other backends: one call.
 const AI_PLAIN_SH: &str = include_str!("../templates/ai/plain.sh");
 
 const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
+
+/// The decree skill `init` writes: path under the skill directory, and content.
+const DECREE_SKILL: &[(&str, &str)] = &[
+    (
+        "SKILL.md",
+        include_str!("../templates/skills/decree/SKILL.md"),
+    ),
+    (
+        "reference/hooks-and-cron.md",
+        include_str!("../templates/skills/decree/reference/hooks-and-cron.md"),
+    ),
+    (
+        "reference/migrations.md",
+        include_str!("../templates/skills/decree/reference/migrations.md"),
+    ),
+    (
+        "reference/pipeline-and-vars.md",
+        include_str!("../templates/skills/decree/reference/pipeline-and-vars.md"),
+    ),
+    (
+        "reference/routines.md",
+        include_str!("../templates/skills/decree/reference/routines.md"),
+    ),
+];
 
 /// Check if a command exists on PATH.
 fn command_exists(name: &str) -> bool {
@@ -262,6 +304,16 @@ fn write_develop_machines(decree_dir: &Path, backend: Backend) -> Result<(), Dec
     Ok(())
 }
 
+/// Write the `SHARED_SCRIPTS` as executable `scripts/<name>.sh` under `decree_dir`.
+fn write_shared_scripts(decree_dir: &Path) -> Result<(), DecreeError> {
+    let dir = decree_dir.join(SCRIPTS_DIR);
+    std::fs::create_dir_all(&dir)?;
+    for (name, script) in SHARED_SCRIPTS {
+        write_script(&dir.join(format!("{name}.sh")), script)?;
+    }
+    Ok(())
+}
+
 /// Write `machines/<ai>_router.yml` and its executable script
 /// `scripts/<ai>_router/ask_<ai>.sh` under `decree_dir`.
 fn write_router(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
@@ -297,7 +349,7 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     }
 
     write_layout(decree_dir, backend)?;
-    skill::install_for_init(ai_name)?;
+    write_skill(Path::new("."), backend)?;
     // Draw the machines, so `.decree/graph/` is current from the start.
     graph::write(Path::new("."))?;
 
@@ -306,8 +358,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 }
 
 /// Write the section 3 layout under `decree_dir`: `config.yml`, `.gitignore`,
-/// `processed.md`, the empty queues, the router machine with its script, and the
-/// `develop` and `rust_develop` machines with theirs.
+/// `processed.md`, the empty queues, the router machine with its script, the
+/// `develop` and `rust_develop` machines with theirs, and the shared scripts.
 /// `graph/` is written by `decree graph`.
 fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
     for dir in [
@@ -327,7 +379,34 @@ fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> 
     std::fs::write(decree_dir.join(config::GITIGNORE_FILE), DECREE_GITIGNORE)?;
     std::fs::write(decree_dir.join(config::PROCESSED_FILE), "")?;
     write_router(decree_dir, backend)?;
-    write_develop_machines(decree_dir, backend)
+    write_develop_machines(decree_dir, backend)?;
+    write_shared_scripts(decree_dir)
+}
+
+/// Write the decree skill under `root` for the backend. Never overwrites an existing file.
+fn write_skill(root: &Path, backend: Backend) -> Result<(), DecreeError> {
+    let Some(skill_dir) = backend.skill_dir else {
+        return Ok(());
+    };
+    let skill_dir = root.join(skill_dir);
+    let mut kept = 0;
+    for (name, content) in DECREE_SKILL {
+        let path = skill_dir.join(name);
+        if path.exists() {
+            kept += 1;
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, content)?;
+    }
+    println!(
+        "Decree skill: {} ({} written, {kept} existing kept)",
+        skill_dir.display(),
+        DECREE_SKILL.len() - kept
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -525,6 +604,27 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// `git_baseline` and `snapshot` are the mock's, byte for byte, and executable.
+    #[test]
+    fn test_write_shared_scripts_writes_the_mocks_git_scripts() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        write_shared_scripts(dir.path()).unwrap();
+        let mut names: Vec<String> = std::fs::read_dir(dir.path().join(SCRIPTS_DIR))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["git_baseline.sh", "snapshot.sh"]);
+        for name in names {
+            let path = dir.path().join(SCRIPTS_DIR).join(&name);
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(text, mock(&format!("scripts/{name}")), "{name}");
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "{name}");
         }
     }
 

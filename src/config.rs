@@ -1,77 +1,16 @@
 use crate::error::DecreeError;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Directory and file constants.
 pub const DECREE_DIR: &str = ".decree";
-pub const ROUTINES_DIR: &str = "routines";
 pub const CRON_DIR: &str = "cron";
 pub const INBOX_DIR: &str = "inbox";
-pub const OUTBOX_DIR: &str = "outbox";
 pub const RUNS_DIR: &str = "runs";
 pub const MIGRATIONS_DIR: &str = "migrations";
 pub const PROCESSED_FILE: &str = "processed.md";
-pub const ROUTER_FILE: &str = "router.md";
 pub const CONFIG_FILE: &str = "config.yml";
 pub const GITIGNORE_FILE: &str = ".gitignore";
-
-/// Lifecycle hooks configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct HooksConfig {
-    #[serde(default, rename = "beforeAll")]
-    pub before_all: String,
-    #[serde(default, rename = "afterAll")]
-    pub after_all: String,
-    #[serde(default, rename = "beforeEach")]
-    pub before_each: String,
-    #[serde(default, rename = "afterEach")]
-    pub after_each: String,
-    #[serde(default, rename = "onDeadLetter")]
-    pub on_dead_letter: String,
-}
-
-/// A routine entry in the registry (routines/shared_routines sections).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoutineEntry {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub deprecated: bool,
-    #[serde(
-        default,
-        alias = "max_retries",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_attempts: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_s: Option<u32>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn is_false(v: &bool) -> bool {
-    !v
-}
-
-impl RoutineEntry {
-    /// Create a new entry with the given enabled state.
-    pub fn new(enabled: bool) -> Self {
-        Self {
-            enabled,
-            deprecated: false,
-            max_attempts: None,
-            timeout_s: None,
-        }
-    }
-
-    /// A routine is active only if enabled AND not deprecated.
-    pub fn is_active(&self) -> bool {
-        self.enabled && !self.deprecated
-    }
-}
 
 /// Top-level application config (deserialized from config.yml).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,12 +33,6 @@ pub struct AppConfig {
         alias = "shared_source"
     )]
     pub routine_source: Option<String>,
-    #[serde(default)]
-    pub hooks: HooksConfig,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub routines: Option<BTreeMap<String, RoutineEntry>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shared_routines: Option<BTreeMap<String, RoutineEntry>>,
 }
 
 fn default_max_attempts() -> u32 {
@@ -124,9 +57,6 @@ impl Default for AppConfig {
             max_log_size: default_max_log_size(),
             default_routine: default_routine(),
             routine_source: None,
-            hooks: HooksConfig::default(),
-            routines: None,
-            shared_routines: None,
         }
     }
 }
@@ -153,14 +83,6 @@ impl AppConfig {
     /// Resolve `routine_source` with tilde expansion.
     pub fn resolved_routine_source(&self) -> Option<PathBuf> {
         self.routine_source.as_ref().map(|s| expand_tilde(s))
-    }
-
-    /// Save config to the project's `.decree/config.yml`.
-    pub fn save(&self, project_root: &Path) -> Result<(), DecreeError> {
-        let path = project_root.join(DECREE_DIR).join(CONFIG_FILE);
-        let yaml = serde_norway::to_string(self)?;
-        std::fs::write(&path, yaml)?;
-        Ok(())
     }
 }
 
@@ -191,8 +113,6 @@ mod tests {
         assert_eq!(config.max_log_size, 2_097_152);
         assert_eq!(config.default_routine, "develop");
         assert!(config.routine_source.is_none());
-        assert!(config.routines.is_none());
-        assert!(config.shared_routines.is_none());
     }
 
     #[test]
@@ -203,11 +123,6 @@ max_attempts: 5
 max_depth: 20
 max_log_size: 0
 default_routine: rust-develop
-hooks:
-  beforeAll: ""
-  afterAll: ""
-  beforeEach: "git-baseline"
-  afterEach: "git-stash-changes"
 "#;
         let config: AppConfig = serde_norway::from_str(yaml).unwrap();
         assert_eq!(config.default_router.as_deref(), Some("claude_router"));
@@ -215,8 +130,6 @@ hooks:
         assert_eq!(config.max_depth, 20);
         assert_eq!(config.max_log_size, 0);
         assert_eq!(config.default_routine, "rust-develop");
-        assert_eq!(config.hooks.before_each, "git-baseline");
-        assert_eq!(config.hooks.after_each, "git-stash-changes");
     }
 
     #[test]
@@ -226,78 +139,14 @@ hooks:
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.default_routine, "develop");
-        assert!(config.routines.is_none());
     }
 
     #[test]
     fn test_deserialize_legacy_max_retries_alias() {
         // Existing on-disk configs use the old `max_retries` key. The serde
         // alias keeps them working after the rename to `max_attempts`.
-        let yaml = r#"
-max_retries: 7
-routines:
-  develop:
-    enabled: true
-    max_retries: 4
-"#;
-        let config: AppConfig = serde_norway::from_str(yaml).unwrap();
+        let config: AppConfig = serde_norway::from_str("max_retries: 7\n").unwrap();
         assert_eq!(config.max_attempts, 7);
-        let routines = config.routines.as_ref().unwrap();
-        assert_eq!(routines["develop"].max_attempts, Some(4));
-    }
-
-    #[test]
-    fn test_deserialize_config_with_routines() {
-        let yaml = r#"
-routine_source: "~/.decree/routines"
-routines:
-  develop:
-    enabled: true
-  rust-develop:
-    enabled: true
-  old-routine:
-    enabled: true
-    deprecated: true
-shared_routines:
-  deploy:
-    enabled: true
-  notify:
-    enabled: false
-"#;
-        let config: AppConfig = serde_norway::from_str(yaml).unwrap();
-        assert_eq!(config.routine_source.as_deref(), Some("~/.decree/routines"));
-
-        let routines = config.routines.as_ref().unwrap();
-        assert_eq!(routines.len(), 3);
-        assert!(routines["develop"].is_active());
-        assert!(routines["rust-develop"].is_active());
-        assert!(!routines["old-routine"].is_active()); // deprecated
-
-        let shared = config.shared_routines.as_ref().unwrap();
-        assert_eq!(shared.len(), 2);
-        assert!(shared["deploy"].is_active());
-        assert!(!shared["notify"].is_active()); // disabled
-    }
-
-    #[test]
-    fn test_routine_entry_defaults() {
-        // enabled defaults to true, deprecated to false
-        let yaml = "{}";
-        let entry: RoutineEntry = serde_norway::from_str(yaml).unwrap();
-        assert!(entry.enabled);
-        assert!(!entry.deprecated);
-        assert!(entry.is_active());
-    }
-
-    #[test]
-    fn test_routine_entry_deprecated_overrides_enabled() {
-        let entry = RoutineEntry {
-            enabled: true,
-            deprecated: true,
-            max_attempts: None,
-            timeout_s: None,
-        };
-        assert!(!entry.is_active());
     }
 
     #[test]
@@ -334,13 +183,5 @@ shared_routines:
             config.resolved_routine_source().unwrap(),
             PathBuf::from(&home).join(".decree/routines")
         );
-    }
-
-    #[test]
-    fn test_routine_entry_serialization_skips_deprecated_false() {
-        let entry = RoutineEntry::new(true);
-        let yaml = serde_norway::to_string(&entry).unwrap();
-        assert!(yaml.contains("enabled: true"));
-        assert!(!yaml.contains("deprecated"));
     }
 }

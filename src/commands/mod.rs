@@ -6,9 +6,6 @@ pub mod graph;
 pub mod init;
 pub mod process;
 pub mod retry;
-pub mod routine;
-pub mod routine_sync;
-pub mod skill;
 pub mod status;
 pub mod tail;
 

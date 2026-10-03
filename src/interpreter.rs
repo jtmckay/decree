@@ -1812,7 +1812,7 @@ mod tests {
             let loaded: BTreeMap<String, LoadedMachine> = machines
                 .iter()
                 .map(|(name, text)| {
-                    let m = load_machine_text(name, Path::new("m.yml"), text).unwrap();
+                    let m = load_machine_text(name, text).unwrap();
                     (name.to_string(), m)
                 })
                 .collect();
@@ -3970,7 +3970,7 @@ machine: [
             }
             let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
             let text = fs::read_to_string(&path).unwrap();
-            let m = load_machine_text(&stem, &path, &text).unwrap();
+            let m = load_machine_text(&stem, &text).unwrap();
             let p = Project::new("step_normal", &[]);
             let params = serde_norway::Mapping::new();
             let input = RunInput {

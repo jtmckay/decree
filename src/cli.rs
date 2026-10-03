@@ -72,15 +72,6 @@ pub enum Command {
         note: Option<String>,
     },
 
-    /// List routines or show routine detail
-    Routine {
-        /// Routine name to show detail for
-        name: Option<String>,
-    },
-
-    /// Run all routine pre-checks
-    Verify,
-
     /// Daemon: monitor inbox + cron
     Daemon {
         /// Polling interval in seconds
@@ -115,37 +106,6 @@ pub enum Command {
         state: Option<String>,
     },
 
-    /// Sync routine registry with filesystem
-    #[command(name = "routine-sync")]
-    RoutineSync {
-        /// Override shared routines directory
-        #[arg(long)]
-        source: Option<String>,
-    },
-
-    /// Install AI assistant skill/instructions
-    Skill {
-        /// Installation scope: project (current repo) or user (home directory)
-        #[arg(long, value_enum)]
-        scope: Option<SkillScope>,
-
-        /// Target AI assistant: claude or copilot
-        #[arg(long, value_enum)]
-        target: Option<SkillTarget>,
-
-        /// Overwrite existing file even if it differs from the bundled template
-        #[arg(long)]
-        force: bool,
-
-        /// Skill name(s) to install (repeatable; for non-TTY / scripting)
-        #[arg(long = "skill", value_name = "NAME")]
-        skills: Vec<String>,
-
-        /// Install all available skills for the selected target
-        #[arg(long)]
-        all: bool,
-    },
-
     /// Verbose help
     Help,
 }
@@ -163,18 +123,6 @@ Viewing:
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AiBackend {
     Opencode,
-    Claude,
-    Copilot,
-}
-
-#[derive(Debug, Clone, ValueEnum)]
-pub enum SkillScope {
-    Project,
-    User,
-}
-
-#[derive(Debug, Clone, ValueEnum)]
-pub enum SkillTarget {
     Claude,
     Copilot,
 }

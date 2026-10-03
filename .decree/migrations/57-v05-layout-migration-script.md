@@ -26,10 +26,18 @@ Write `scripts/migrate-0.4-to-0.5.sh` as section 11 M5.4 describes. Leave `migra
 
 ## Acceptance Criteria
 
-- **Given** a 0.4.2 project fixture in a temp directory
+- **Given** a 0.4.2 project fixture in a temp directory whose pending migration, inbox message and cron file name `develop`
   **When** the script runs
-  **Then** `decree check` and `decree status` succeed
+  **Then** it exits 1 and lists `develop` with those three files
+
+- **Given** the same fixture after the script, with `machines/develop.yml` and its scripts added
+  **When** `decree check` and `decree status` run
+  **Then** both succeed
+
+- **Given** a pending migration with `routine: rust-develop`
+  **When** the script runs
+  **Then** it lists `rust-develop` as not a valid machine name
 
 - **Given** the same fixture
   **When** the script runs
-  **Then** `migrations/` and `processed.md` are byte-identical to before
+  **Then** `migrations/` and `processed.md` are byte-identical to before, 0.4 run folders are in `.decree/legacy-0.4/runs/`, and `.decree/.gitignore` is `inbox/` and `runs/`

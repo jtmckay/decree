@@ -317,10 +317,10 @@ fn cron_node(stem: &str) -> String {
 mod tests {
     use super::*;
     use crate::machine::{flatten, parse_machine};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     fn load(id: &str, yaml: &str) -> LoadedMachine {
-        flatten(id, PathBuf::from(id), parse_machine(yaml).unwrap())
+        flatten(id, parse_machine(yaml).unwrap())
     }
 
     fn fixture(rel: &str) -> String {

@@ -52,3 +52,5 @@
 52-v05-emit.md
 53-v05-cli-wiring.md
 54-v05-port-routines.md
+55-v05-port-hooks.md
+56-v05-delete-routine-system.md

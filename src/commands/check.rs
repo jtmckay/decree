@@ -86,7 +86,7 @@ impl Project {
         let mut texts = BTreeMap::new();
         for (id, path) in paths {
             let text = std::fs::read_to_string(&path)?;
-            match machine::load_machine_text(&id, &path, &text) {
+            match machine::load_machine_text(&id, &text) {
                 Ok(m) => {
                     machines.insert(id.clone(), m);
                     texts.insert(id, text);
