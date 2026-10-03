@@ -1,5 +1,5 @@
-name: step_root_entry_fail
-description: A root onentry script fails, and the state entered handles error.
+name: step_root_entry_fail_unhandled
+description: A root onentry script fails, and nothing handles error.
 onentry: [root_entry_fail, root_entry]
 onexit: [root_exit]
 initial: a
@@ -8,9 +8,6 @@ states:
     onentry: [a_entry]
     invoke: a_invoke
     onexit: [a_exit]
-    transitions: { done: done, error: cleanup }
-  cleanup:
-    onentry: [cleanup_entry]
     transitions: { done: done }
   done:   { final: true, onentry: [done_entry] }
   failed: { final: true, onentry: [failed_entry] }

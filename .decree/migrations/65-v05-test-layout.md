@@ -1,7 +1,7 @@
 ---
 routine: rust-develop
 ---
-# 64: v0.5 cleanup: tests read the mock, validation tests as a table
+# 65: v0.5 cleanup: tests read the mock, validation tests as a table
 
 ## Overview
 
@@ -16,7 +16,7 @@ Read `docs/reference/machines.md` (Validation), `docs/reference/messages.md`, `d
 3. Move every case in `blackbox_test/test_decree.sh` that `tests/` does not already cover into a Rust test that runs the built binary, then delete `blackbox_test/`. Say which cases were already covered.
 4. Write `tests/README.md`: one line per test file saying what it covers, and how to add a validation case.
 
-- Only this migration's scope; migrations 65–66 cover the rest of the cleanup.
+- Only this migration's scope; migrations 66–67 cover the rest of the cleanup.
 - Change no behaviour of the binary, and no expected output. If an existing test's expectation looks wrong, do not change it: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
 - Tests build their own `.decree/` in a temp directory and never touch this repository's `.decree/`. No test calls a real LLM or the network. No new dependencies.
 - Print the evidence for each acceptance criterion (test names or command output) at the end of your reply, so it lands in the run log.

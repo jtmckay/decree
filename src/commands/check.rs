@@ -1,4 +1,4 @@
-//! `decree check`: validate machines (V1–V20) and pending messages (M1–M3) before anything
+//! `decree check`: validate machines (V1–V21) and pending messages (M1–M3) before anything
 //! runs (spec section 5, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write.
@@ -55,7 +55,7 @@ pub fn check(project_root: &Path) -> Result<Vec<String>, DecreeError> {
     Ok(problems)
 }
 
-/// A project's config and machines, loaded and checked against V1–V20: where `check` and
+/// A project's config and machines, loaded and checked against V1–V21: where `check` and
 /// `process` start.
 pub(crate) struct Project {
     pub(crate) config: AppConfig,

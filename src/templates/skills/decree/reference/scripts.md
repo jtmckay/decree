@@ -46,9 +46,19 @@ fi
 exit 0
 ```
 
-`onentry` and `onexit` scripts never produce events. A failing `onentry` script skips the rest of
-the entry and the invoke, and the event is `error`; a failing `onexit` script is recorded and
-ignored. `$DECREE_EVENTS` lists the events the current state accepts.
+`onentry` and `onexit` scripts never produce events:
+
+- A failing `onentry` script skips the remaining `onentry` scripts of that state only (SCXML stops
+  the failing block, `error.execution`). The other states being entered still run theirs,
+  outermost first. Once entry is complete, the event is `error`, selected from the atomic state
+  entered like any other event, and the invoke does not run. This holds for root `onentry` too:
+  an `error` transition can handle it, and otherwise it goes to `failed`.
+- A failing `onentry` script on a root-level final state moves the run to `failed` instead of
+  ending in that state, so a failed `commit` is never reported as `done`.
+- A failing `onexit` script is recorded in the `transition` event under `exit_failures`; the event
+  and target do not change.
+
+`$DECREE_EVENTS` lists the events the current state accepts.
 
 ## Queueing follow-up work
 

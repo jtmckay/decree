@@ -564,7 +564,7 @@ fn locate_state_error(states: &serde_norway::Value, prefix: &str) -> Option<(Str
 }
 
 // =================================================================
-// Validation (section 5, Validation): rules V1–V20 on the arena
+// Validation (section 5, Validation): rules V1–V21 on the arena
 // =================================================================
 
 /// Everything outside the machine file that validation reads.
@@ -805,7 +805,7 @@ impl LoadedMachine {
         targets.into_iter().filter_map(|t| self.enter(t)).collect()
     }
 
-    /// Run V1–V20 on this machine. `text` is the machine file, for root-level line numbers.
+    /// Run V1–V21 on this machine. `text` is the machine file, for root-level line numbers.
     pub fn validate(&self, text: &str, env: &CheckEnv) -> Vec<Problem> {
         let mut v = Validator {
             m: self,
@@ -833,6 +833,7 @@ impl LoadedMachine {
         v.v18_events();
         v.v19_choose_keys();
         v.v20_cycles();
+        v.v21_overlapping_events();
         v.problems
     }
 }
@@ -1653,6 +1654,30 @@ impl Validator<'_> {
                         path.join(" -> ")
                     ),
                 );
+            }
+        }
+    }
+
+    /// V21: no transition's event extends another's in the same state, since SCXML picks
+    /// between them by document order, which a YAML map does not keep.
+    fn v21_overlapping_events(&mut self) {
+        for i in self.states() {
+            let events: Vec<&str> = self.m.nodes[i]
+                .transitions
+                .iter()
+                .map(|e| e.event.as_str())
+                .collect();
+            for &short in &events {
+                for &long in &events {
+                    if short != long && event_matches(short, long) {
+                        self.push(
+                            self.m.state_path(i),
+                            format!(
+                                "events `{short}` and `{long}` overlap: `{short}` also matches `{long}`, so at most one transition per state may match an event (V21)"
+                            ),
+                        );
+                    }
+                }
             }
         }
     }
@@ -2521,6 +2546,22 @@ mod tests {
         assert_eq!(
             problems_with(&text, &[("router", router)]),
             ["a: machine `m` invokes itself: m -> router -> m; a machine never invokes itself, directly or through others (V20)"]
+        );
+    }
+
+    // V21: overlapping events in one state.
+
+    #[test]
+    fn overlapping_events_in_one_state() {
+        let text = format!(
+            "{HEAD}  a:\n    initial: b\n    transitions: {{ done: done, done.state.a: done }}\n    states:\n      \
+             b: {{ invoke: x, transitions: {{ done: c, done_later: c }} }}\n      \
+             c: {{ final: true }}\n  \
+             done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        assert_eq!(
+            problems(&text),
+            ["a: events `done` and `done.state.a` overlap: `done` also matches `done.state.a`, so at most one transition per state may match an event (V21)"]
         );
     }
 

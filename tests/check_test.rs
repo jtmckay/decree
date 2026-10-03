@@ -178,6 +178,11 @@ fn check_v20_cycles() {
 }
 
 #[test]
+fn check_v21_overlapping_events() {
+    run_case("v21-overlapping-events");
+}
+
+#[test]
 fn check_m1_migrations() {
     run_case("m1-migrations");
 }

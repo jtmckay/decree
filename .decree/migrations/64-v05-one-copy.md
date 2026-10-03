@@ -1,7 +1,7 @@
 ---
 routine: rust-develop
 ---
-# 63: v0.5 cleanup: one copy of everything
+# 64: v0.5 cleanup: one copy of everything
 
 ## Overview
 
@@ -16,7 +16,7 @@ Read `docs/reference/README.md`, `docs/reference/cli.md` (`decree init`) and `mo
 3. Check `Dockerfile` and `.dockerignore` against the 0.5 layout and CLI: fix stale paths, commands or 0.4 terms. If the image builds a binary, `docker build` is not available in tests; check the file by reading it and say what you changed.
 4. Leave `SOW.md`, `promote.sh`, `examples/` and this repository's own `.decree/` alone.
 
-- Only this migration's scope; migrations 64–66 cover the rest of the cleanup.
+- Only this migration's scope; migrations 65–67 cover the rest of the cleanup.
 - Change no behaviour of the binary. If the reference docs and the code disagree, or the docs are ambiguous here, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
 - Tests build their own `.decree/` in a temp directory and never touch this repository's `.decree/`. No test calls a real LLM or the network. No new dependencies.
 - Print the evidence for each acceptance criterion (test names or command output) at the end of your reply, so it lands in the run log.

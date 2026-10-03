@@ -1,7 +1,7 @@
 ---
 routine: rust-develop
 ---
-# 62: v0.5 cleanup: reference docs and a decision log
+# 63: v0.5 cleanup: reference docs and a decision log
 
 ## Overview
 
@@ -30,7 +30,7 @@ Read `docs/0.5-spec.md` in full, `docs/0.5-inventory.md`, `docs/spikes/router.md
    - every machine example in `docs/reference/machines.md` (a `yaml` block whose first non-comment key is `name:`) is byte-identical to `mock/.decree/machines/<name>.yml`;
    - no file outside `.decree/migrations/` mentions `0.5-spec`.
 
-- Only this migration's scope; migrations 63–66 cover the rest of the cleanup.
+- Only this migration's scope; migrations 64–67 cover the rest of the cleanup.
 - Change no behaviour. If the spec and the code disagree, or the spec is ambiguous, do not guess: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end without further changes. The routine fails the run when `STOP` exists.
 - Tests build their own `.decree/` in a temp directory and never touch this repository's `.decree/`. No test calls a real LLM or the network. No new dependencies.
 - Print the evidence for each acceptance criterion (test names or command output) at the end of your reply, so it lands in the run log.

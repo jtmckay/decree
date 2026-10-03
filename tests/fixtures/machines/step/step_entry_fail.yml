@@ -1,13 +1,24 @@
 name: step_entry_fail
-description: The first onentry script of a state fails.
+description: The first onentry script of a compound state fails while entering it and its child.
 onentry: [root_entry]
 onexit: [root_exit]
-initial: a
+initial: start
 states:
-  a:
-    onentry: [a_entry_fail, a_entry]
-    invoke: a_invoke
-    onexit: [a_exit]
+  start:
+    transitions: { done: outer }
+  outer:
+    onentry: [outer_entry_fail, outer_entry]
+    onexit: [outer_exit]
+    initial: inner
+    transitions: { error: failed }
+    states:
+      inner:
+        onentry: [inner_entry]
+        invoke: work
+        onexit: [inner_exit]
+        transitions: { done: done, error: cleanup }
+  cleanup:
+    onentry: [cleanup_entry]
     transitions: { done: done }
   done:   { final: true, onentry: [done_entry] }
   failed: { final: true, onentry: [failed_entry] }

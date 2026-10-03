@@ -58,3 +58,4 @@
 58-v05-readme-release.md
 59-v05-skill.md
 60-v05-examples-blackbox.md
+61-v05-scxml-conformance.md

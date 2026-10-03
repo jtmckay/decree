@@ -179,8 +179,6 @@ struct Decision {
     invalid_event: Option<String>,
     /// Why a `machine` invoke started no child: the `transition` event's `error`.
     error: Option<String>,
-    /// A root `onentry` script failed: the target is `failed`, whatever the state handles.
-    to_failed: bool,
 }
 
 impl Decision {
@@ -191,16 +189,12 @@ impl Decision {
             exit_code,
             invalid_event: None,
             error: None,
-            to_failed: false,
         }
     }
 
     /// `error` from a failed `onentry` script: there was no invoke, so no exit code.
-    fn entry_error(root: bool) -> Self {
-        Decision {
-            to_failed: root,
-            ..Decision::new("error", "exit_code", None)
-        }
+    fn entry_error() -> Self {
+        Decision::new("error", "exit_code", None)
     }
 }
 
@@ -312,8 +306,8 @@ impl<'a> Interpreter<'a> {
 
         let mut entering = vec![0];
         entering.extend(path_below(m, 0, s));
-        let failed_at = self.run_entry(&entering)?;
-        match self.after_entry(s, failed_at)? {
+        let entry_failed = self.run_entry(&entering)?;
+        match self.after_entry(s, entry_failed)? {
             Next::Stop(outcome) => Ok(outcome),
             Next::Step(pending) => self.step_from(s, pending),
         }
@@ -348,8 +342,8 @@ impl<'a> Interpreter<'a> {
         {
             let mut entering = vec![0];
             entering.extend(path_below(m, 0, s));
-            let failed_at = self.run_entry(&entering)?;
-            return match self.after_entry(s, failed_at)? {
+            let entry_failed = self.run_entry(&entering)?;
+            return match self.after_entry(s, entry_failed)? {
                 Next::Stop(outcome) => Ok(outcome),
                 Next::Step(pending) => self.step_from(s, pending),
             };
@@ -467,9 +461,9 @@ impl<'a> Interpreter<'a> {
             if let Some(line) = self.ledger_line(t) {
                 self.ledger_add(&line)?;
             }
-            let failed_at = self.run_entry(&path_below(m, domain, t))?;
+            let entry_failed = self.run_entry(&path_below(m, domain, t))?;
             // 8. Finish or loop.
-            match self.after_entry(t, failed_at)? {
+            match self.after_entry(t, entry_failed)? {
                 Next::Stop(outcome) => return Ok(outcome),
                 Next::Step(next) => pending = next,
             }
@@ -477,23 +471,19 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    /// Step 8, once `t` and the states above it have been entered. `failed_at` is the state
-    /// whose `onentry` script failed, if one did.
-    fn after_entry(
-        &mut self,
-        t: usize,
-        failed_at: Option<usize>,
-    ) -> Result<Next, InterpreterError> {
+    /// Step 8, once `t` and the states above it have been entered. `entry_failed` is true
+    /// if an `onentry` script of any of them (the root included) exited non-zero.
+    fn after_entry(&mut self, t: usize, entry_failed: bool) -> Result<Next, InterpreterError> {
         let m = self.machine;
         let node = &m.nodes[t];
         // A root-level final state ends the run.
         if is_root_final(m, t) {
-            return self.finish(t, failed_at.is_some()).map(Next::Stop);
+            return self.finish(t, entry_failed).map(Next::Stop);
         }
-        // An `onentry` failure is `error`, resolved on the state being entered, before
-        // `done.state.<id>` or the invoke.
-        if let Some(n) = failed_at {
-            return Ok(Next::Step(Some(Decision::entry_error(n == 0))));
+        // An `onentry` failure is `error`, selected from the atomic state entered like any
+        // other event (SCXML `error.execution`), before `done.state.<id>` or the invoke.
+        if entry_failed {
+            return Ok(Next::Step(Some(Decision::entry_error())));
         }
         // A nested final state raises `done.state.<parent>`, handled before anything else.
         if let Some(p) = node.parent.filter(|_| node.is_final) {
@@ -964,27 +954,25 @@ impl<'a> Interpreter<'a> {
         decision: &mut Decision,
     ) -> Result<(usize, usize, bool), InterpreterError> {
         let m = self.machine;
-        if !decision.to_failed {
-            for n in m.chain(s) {
-                let edge = m.nodes[n]
-                    .transitions
-                    .iter()
-                    .find(|e| event_matches(&e.event, &decision.event));
-                if let Some(edge) = edge {
-                    let target = m.find(&edge.target).ok_or_else(|| {
-                        self.invalid(format!(
-                            "{}: target `{}` does not exist",
-                            m.state_path(n),
-                            edge.target
-                        ))
-                    })?;
-                    return Ok((n, target, edge.internal));
-                }
+        for n in m.chain(s) {
+            let edge = m.nodes[n]
+                .transitions
+                .iter()
+                .find(|e| event_matches(&e.event, &decision.event));
+            if let Some(edge) = edge {
+                let target = m.find(&edge.target).ok_or_else(|| {
+                    self.invalid(format!(
+                        "{}: target `{}` does not exist",
+                        m.state_path(n),
+                        edge.target
+                    ))
+                })?;
+                return Ok((n, target, edge.internal));
             }
-            if decision.event != "error" {
-                decision.event = "error".to_string();
-                return self.select(s, decision);
-            }
+        }
+        if decision.event != "error" {
+            decision.event = "error".to_string();
+            return self.select(s, decision);
         }
         let failed = m
             .failed_state()
@@ -1031,10 +1019,13 @@ impl<'a> Interpreter<'a> {
         Ok(Outcome::Finished(m.nodes[last].id.clone()))
     }
 
-    /// Run the `onentry` scripts of `states`, in order (index 0 is the root). Stops at the
-    /// first that exits non-zero and returns the state it belongs to.
-    fn run_entry(&mut self, states: &[usize]) -> Result<Option<usize>, InterpreterError> {
+    /// Run the `onentry` scripts of `states`, outermost first (index 0 is the root). A
+    /// script that exits non-zero skips the rest of its own state's scripts only, as SCXML
+    /// stops the failing `<onentry>` block; the other states still run theirs. Returns
+    /// whether any script failed.
+    fn run_entry(&mut self, states: &[usize]) -> Result<bool, InterpreterError> {
         let m = self.machine;
+        let mut failed = false;
         for &n in states {
             let (name, visits) = self.script_state(n)?;
             let max_attempts = self.executor.max_attempts(m, n);
@@ -1047,11 +1038,12 @@ impl<'a> Interpreter<'a> {
                     ..ScriptRun::new(script, name, Phase::OnEntry)
                 })?;
                 if !execution.succeeded() {
-                    return Ok(Some(n));
+                    failed = true;
+                    break;
                 }
             }
         }
-        Ok(None)
+        Ok(failed)
     }
 
     /// Step 5: the `onexit` scripts of `s` and its ancestors, innermost first, stopping
@@ -2126,14 +2118,75 @@ mod tests {
     }
 
     #[test]
-    fn order_onentry_failure_skips_the_rest_and_the_invoke() {
+    fn order_onentry_failure_stops_its_own_block_and_error_is_selected_from_the_atomic_state() {
         let p = Project::new("step_entry_fail", &[]);
-        assert_eq!(p.run(), Outcome::Finished("failed".into()));
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
+        // `outer_entry_fail` skips `outer_entry` only: `inner` is still entered, then
+        // `error` is selected from `inner` (not `outer`'s `error: failed`), and `work`
+        // never runs.
         assert_eq!(
             p.order(),
             [
                 "root_entry",
-                "a_entry_fail",
+                "outer_entry_fail",
+                "inner_entry",
+                "inner_exit",
+                "outer_exit",
+                "cleanup_entry",
+                "done_entry",
+                "root_exit"
+            ]
+        );
+        assert_eq!(
+            p.transitions(),
+            [
+                "- claimed start claim",
+                "start done inner exit_code",
+                "inner error cleanup exit_code",
+                "cleanup done done exit_code"
+            ]
+        );
+        // No invoke ran, so no exit code.
+        assert_eq!(p.events_of("transition")[2]["exit_code"], Value::Null);
+    }
+
+    #[test]
+    fn order_root_onentry_failure_is_error_selected_from_the_atomic_state() {
+        let p = Project::new("step_root_entry_fail", &[]);
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
+        // The root block stops; `a` is still entered, and its `error` transition is taken
+        // without running its invoke.
+        assert_eq!(
+            p.order(),
+            [
+                "root_entry_fail",
+                "a_entry",
+                "a_exit",
+                "cleanup_entry",
+                "done_entry",
+                "root_exit"
+            ]
+        );
+        assert_eq!(
+            p.transitions(),
+            [
+                "- claimed a claim",
+                "a error cleanup exit_code",
+                "cleanup done done exit_code"
+            ]
+        );
+        assert_eq!(p.events_of("transition")[1]["exit_code"], Value::Null);
+    }
+
+    #[test]
+    fn order_root_onentry_failure_unhandled_goes_to_failed() {
+        let p = Project::new("step_root_entry_fail_unhandled", &[]);
+        assert_eq!(p.run(), Outcome::Finished("failed".into()));
+        assert_eq!(
+            p.order(),
+            [
+                "root_entry_fail",
+                "a_entry",
                 "a_exit",
                 "failed_entry",
                 "root_exit"
@@ -2143,23 +2196,7 @@ mod tests {
             p.transitions(),
             ["- claimed a claim", "a error failed exit_code"]
         );
-        // No invoke ran, so no exit code.
-        assert_eq!(p.events_of("transition")[1]["exit_code"], Value::Null);
-    }
-
-    #[test]
-    fn order_root_onentry_failure_targets_failed() {
-        let p = Project::new("step_root_entry_fail", &[]);
-        assert_eq!(p.run(), Outcome::Finished("failed".into()));
-        // `a` handles `error`, but a root `onentry` failure always targets `failed`.
-        assert_eq!(
-            p.order(),
-            ["root_entry_fail", "a_exit", "failed_entry", "root_exit"]
-        );
-        assert_eq!(
-            p.transitions(),
-            ["- claimed a claim", "a error failed exit_code"]
-        );
+        assert_eq!(mirrored_state(&p), "failed");
     }
 
     #[test]

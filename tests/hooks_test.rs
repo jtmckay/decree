@@ -231,22 +231,22 @@ fn failed_onentry_runs_once_after_a_failing_onentry() {
     assert_eq!(last_state(&p.events()), "failed");
 }
 
-/// A failing root `onentry` (0.4.2's `beforeAll`) targets `failed` directly: no
-/// `onentry` or invoke of `work` runs.
+/// A failing root `onentry` (0.4.2's `beforeAll`) is `error` from `work`, which does not
+/// handle it: `work`'s own `onentry` still runs, its invoke does not, and the run fails.
 #[test]
 fn failed_onentry_runs_once_after_a_failing_root_onentry() {
     let p = Project::new();
     assert_eq!(p.run("fail: before_all"), 1);
-    let order = p.order();
-    assert_eq!(dead_letters(&order), 1, "{order:?}");
-    assert!(
-        !order
-            .iter()
-            .any(|l| l.starts_with("work onentry") || l.starts_with("work invoke")),
-        "{order:?}"
+    assert_eq!(
+        p.order(),
+        [
+            "_root onentry before_all 1",
+            "work onentry before_each 1",
+            "work onexit after_each 1",
+            ON_DEAD_LETTER,
+            "_root onexit after_all 1",
+        ]
     );
-    assert_eq!(order.first().unwrap(), "_root onentry before_all 1");
-    assert_eq!(order.last().unwrap(), "_root onexit after_all 1");
     assert_eq!(last_state(&p.events()), "failed");
 }
 

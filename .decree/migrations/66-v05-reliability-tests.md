@@ -1,11 +1,11 @@
 ---
 routine: rust-develop
 ---
-# 65: v0.5 cleanup: reliability tests
+# 66: v0.5 cleanup: reliability tests
 
 ## Overview
 
-Make the tests prove that decree behaves as documented end to end, through the binary, so they survive any refactor of `src/` (migration 66). Three kinds: the mock's runs replayed as acceptance tests, failure scenarios, and property tests of the interpreter's invariants.
+Make the tests prove that decree behaves as documented end to end, through the binary, so they survive any refactor of `src/` (migration 67). Three kinds: the mock's runs replayed as acceptance tests, failure scenarios, and property tests of the interpreter's invariants.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ Read `docs/reference/runs.md` (step loop, `events.jsonl`), `docs/reference/scrip
 3. **Property tests** (`tests/interpreter_props.rs`, with `proptest` as a dev-dependency). Generate small valid machines (up to 6 states, at most one level of compound states, script and `check` invokes, finals at both levels) and random script outcomes (exit codes, printed events, declared or not). For every case: `decree check` passes on the machine; the run ends in a root-level final state; `seq` in `events.jsonl` is 1, 2, 3, … with no gaps; every `transition`'s `to` is a state of the machine and its `from` is the previous transition's `to`; `visits` derived from the events equals the number of transitions into each state; the `state:` mirror in `message.md` equals the last transition's `to`; and `onentry`/`onexit` scripts run in the documented order. Keep the default case count so `cargo test` stays under a minute.
 4. Update `tests/README.md` with the new files.
 
-- Only this migration's scope; migration 66 covers the refactor.
+- Only this migration's scope; migration 67 covers the refactor.
 - Change no behaviour. If a test shows the binary disagreeing with the reference docs, do not change the binary or weaken the test: write the explanation to a file named `STOP` in the run directory (the directory that holds the message file you were given) and end. The routine fails the run when `STOP` exists.
 - Tests build their own `.decree/` in a temp directory and never touch this repository's `.decree/`. No test calls a real LLM or the network. The only new dependency is `proptest`, as a dev-dependency.
 - Print the evidence for each acceptance criterion (test names or command output) at the end of your reply, so it lands in the run log.
