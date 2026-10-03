@@ -65,6 +65,14 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
                 Command::Process { dry_run } => commands::process::run(&root, dry_run),
                 Command::Check => commands::check::run(&root),
                 Command::Graph => commands::graph::run(&root),
+                Command::Emit { machine, params } => {
+                    commands::emit::run(&root, &machine, &params)
+                }
+                Command::Event {
+                    target,
+                    event,
+                    note,
+                } => commands::event::run(&root, &target, &event, note.as_deref()),
                 Command::Routine { name } => commands::routine::run(&root, name.as_deref()),
                 Command::Verify => commands::routine::verify(&root),
                 Command::Daemon { interval } => commands::daemon::run(&root, interval),

@@ -113,32 +113,16 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker) {
             continue;
         }
 
-        match cron::cron_to_inbox_message(project_root, cf) {
-            Ok(msg) => {
-                // Ensure inbox directory exists
-                let inbox_dir = project_root
-                    .join(config::DECREE_DIR)
-                    .join(config::INBOX_DIR);
-                if let Err(e) = std::fs::create_dir_all(&inbox_dir) {
-                    eprintln!("decree daemon: failed to create inbox dir: {e}");
-                    continue;
-                }
-                if let Err(e) = msg.write_to_inbox(project_root) {
-                    eprintln!(
-                        "decree daemon: failed to write cron message for {}: {e}",
-                        cf.filename
-                    );
-                    continue;
-                }
-                println!(
-                    "decree daemon: cron fired: {} -> {}",
-                    cf.filename, msg.filename
-                );
+        let mut msg = cron::cron_to_inbox_message(cf);
+        let decree_dir = project_root.join(config::DECREE_DIR);
+        match message::queue(&decree_dir, &mut msg) {
+            Ok(id) => {
+                println!("decree daemon: cron fired: {} -> {id}.md", cf.filename);
                 tracker.mark_fired(cf);
             }
             Err(e) => {
                 eprintln!(
-                    "decree daemon: failed to create message for {}: {e}",
+                    "decree daemon: failed to write cron message for {}: {e}",
                     cf.filename
                 );
             }
@@ -1240,9 +1224,11 @@ mod tests {
         let content =
             std::fs::read_to_string(dir.path().join(".decree/inbox").join(&inbox_files[0]))
                 .unwrap();
-        assert!(content.contains("routine: develop"));
-        assert!(content.contains("Minutely task."));
-        assert!(content.contains("trigger: cron:every-minute"));
+        let id = inbox_files[0].strip_suffix(".md").unwrap();
+        assert_eq!(
+            content,
+            format!("---\nid: {id}\nmachine: develop\ntrigger: cron\n---\nMinutely task.\n")
+        );
         // cron field should NOT be present as a standalone YAML key
         assert!(!content.lines().any(|l| l.starts_with("cron:")));
 

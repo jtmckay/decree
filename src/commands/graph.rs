@@ -8,11 +8,12 @@ use std::path::Path;
 
 use serde_norway::Value;
 
-use crate::commands::check::{md_files, parse_frontmatter};
+use crate::commands::check::md_files;
 use crate::config::{self, AppConfig, DECREE_DIR};
 use crate::error::DecreeError;
 use crate::graph;
 use crate::machine;
+use crate::message::Message;
 
 /// Directory under `.decree/` that `decree graph` writes.
 pub const GRAPH_DIR: &str = "graph";
@@ -98,9 +99,13 @@ fn cron_machines(
     for name in md_files(&dir)? {
         let rel = format!("{}/{name}", config::CRON_DIR);
         let text = std::fs::read_to_string(dir.join(&name))?;
-        let fm = parse_frontmatter(&text)
+        let fm = Message::parse(&text)
             .map_err(|(line, msg)| DecreeError::Other(format!("{rel}: line {line}: {msg}")))?;
-        let machine = match fm.map.get("machine").or_else(|| fm.map.get("routine")) {
+        let machine = match fm
+            .frontmatter
+            .get("machine")
+            .or_else(|| fm.frontmatter.get("routine"))
+        {
             None => default_machine.to_string(),
             Some(Value::String(m)) => m.clone(),
             Some(_) => {

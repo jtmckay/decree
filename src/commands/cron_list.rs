@@ -28,7 +28,7 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
     );
 
     for cf in &cron_files {
-        let routine = cf.routine.as_deref().unwrap_or(&config.default_routine);
+        let routine = cf.machine.as_deref().unwrap_or(&config.default_routine);
         let last_run = find_last_run(&runs_dir, &cf.name_stem);
         let next_run = cf
             .schedule

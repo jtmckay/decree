@@ -8,8 +8,12 @@
 //! level, a nested one raising `done.state.<parent>`; `choose: person`, which runs its
 //! `ask` script, appends `waiting` and stops until a `received` event continues the run;
 //! and child runs (section 7, Sub-machines): a `machine` invoke, and the router machine of
-//! a `choose: model` invoke. Delivering replies is ticket M4.3; `decree retry` and the run
-//! lock are ticket M4.2.
+//! a `choose: model` invoke. Delivering replies is ticket M4.3.
+//!
+//! Each run is stepped under its run lock (section 4, Run lock). `recover` is what
+//! `process` and `daemon` do first: it marks runs a crash left behind `interrupted` and
+//! lists the `pending` runs to continue. Only `decree retry` makes an interrupted run
+//! `pending` again; `continue_run` then re-runs its `onentry` scripts (section 7, step 1).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -23,10 +27,13 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
 use crate::cond::{self, CondError};
-use crate::config::{DECREE_DIR, INBOX_DIR, PROCESSED_FILE, RUNS_DIR};
+use crate::config::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
 use crate::machine::{
     event_matches, CheckInvoke, ChooseInvoke, ChooseKind, Invoke, LoadedMachine, MachineInvoke,
     FAILED,
+};
+use crate::message::{
+    create_run_dir, lock_state, LockState, Message, MessageError, RunLock, LOCK_FILE,
 };
 use crate::runtime::{
     data_env, timestamp, EventLog, Executor, InvokeEvent, Phase, RouterFiles, RunInfo,
@@ -52,6 +59,10 @@ pub enum InterpreterError {
     Io { path: PathBuf, source: io::Error },
 
     /// `message.md` could not be read or written back with the mirrored `state`.
+    #[error(transparent)]
+    MessageFile(#[from] MessageError),
+
+    /// `message.md` parses but cannot start or continue a run.
     #[error("{}: {message}", path.display())]
     Message { path: PathBuf, message: String },
 
@@ -59,9 +70,13 @@ pub enum InterpreterError {
     #[error("machine `{machine}`: {message}")]
     Invalid { machine: String, message: String },
 
-    /// `resume` was called on a run that is not waiting for its `received` event.
+    /// `resume` was called on a run that is not `pending`.
     #[error("cannot continue the run: {0}")]
     NotReceived(String),
+
+    /// Another live process holds the run's lock: the run is `active` (section 4, Run lock).
+    #[error("run `{0}` is active: another process holds its lock")]
+    Active(String),
 
     /// A `check` could not be evaluated.
     #[error("machine `{machine}`: {at}: check: {source}")]
@@ -225,19 +240,34 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Start a new run (step 1) and step it until it finishes, waits or is interrupted.
+    /// The run lock is held throughout.
     pub fn start(&mut self) -> Result<Outcome, InterpreterError> {
+        let _lock = self.lock()?;
         let result = self.claim_and_run();
         self.interrupt_on_signal(result)
     }
 
-    /// Continue a `pending` run (step 1): its last event is `received`, or `waiting` for a
-    /// child run that has finished. Take the event's transition at step 4: with
-    /// `source: "person"` after a `decision` event for a reply, `source: "timeout"`, or
-    /// `source: "machine"` for a child's final state; a finished router run is validated as
-    /// section 7, Choose: model says. Nothing is re-run, because the run only paused.
+    /// Continue a `pending` run (step 1), under its run lock. After `decree retry` (the
+    /// last event is a `transition` with `source: "retry"`), root `onentry` and the
+    /// `onentry` of every ancestor of the state and of the state itself run again, then
+    /// its invoke. Otherwise the last event is `received`, or `waiting` for a child run
+    /// that has finished: take the event's transition at step 4, with `source: "person"`
+    /// after a `decision` event for a reply, `source: "timeout"`, or `source: "machine"` for
+    /// a child's final state; a finished router run is validated as section 7, Choose:
+    /// model says. Nothing is re-run then, because the run only paused.
     pub fn resume(&mut self) -> Result<Outcome, InterpreterError> {
-        let result = self.continue_received();
+        let _lock = self.lock()?;
+        let result = self.continue_pending();
         self.interrupt_on_signal(result)
+    }
+
+    /// Take the run lock, which is deleted when the returned guard drops: when the run
+    /// finishes, waits, is interrupted by a signal, or stepping fails.
+    fn lock(&self) -> Result<RunLock, InterpreterError> {
+        let info = self.executor.info();
+        RunLock::acquire(&info.run_dir)
+            .map_err(io_err(&info.run_dir.join(LOCK_FILE)))?
+            .ok_or_else(|| InterpreterError::Active(info.run_id.clone()))
     }
 
     /// Turns a script stopped by SIGINT or SIGTERM into an `interrupted` event.
@@ -289,7 +319,7 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn continue_received(&mut self) -> Result<Outcome, InterpreterError> {
+    fn continue_pending(&mut self) -> Result<Outcome, InterpreterError> {
         let m = self.machine;
         let events = self.read_events()?;
         let not_received = |message: &str| InterpreterError::NotReceived(message.to_string());
@@ -310,6 +340,20 @@ impl<'a> Interpreter<'a> {
             .and_then(Value::as_u64)
             .unwrap_or(0);
         self.current = s;
+        repair_mirror(&self.executor.info().run_dir, &events)?;
+
+        // After `decree retry`: enter the state again, from the root.
+        if last_type == Some("transition")
+            && last.get("source").and_then(Value::as_str) == Some("retry")
+        {
+            let mut entering = vec![0];
+            entering.extend(path_below(m, 0, s));
+            let failed_at = self.run_entry(&entering)?;
+            return match self.after_entry(s, failed_at)? {
+                Next::Stop(outcome) => Ok(outcome),
+                Next::Step(pending) => self.step_from(s, pending),
+            };
+        }
 
         // Waiting for a child run that has finished: take its result now.
         if last_type == Some("waiting") {
@@ -787,23 +831,16 @@ impl<'a> Interpreter<'a> {
         }
         let (id, run_dir) = create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
         let parent = self.executor.info().run_id.clone();
-        let mut frontmatter = serde_norway::Mapping::new();
-        frontmatter.insert("machine".into(), name.into());
-        frontmatter.insert("id".into(), id.as_str().into());
-        frontmatter.insert("parent".into(), parent.as_str().into());
-        frontmatter.insert("depth".into(), depth.into());
-        frontmatter.insert("trigger".into(), "invoke".into());
+        let mut message = Message::new(self.message_body.as_str());
+        message.set("machine", name);
+        message.set("id", id.as_str());
+        message.set("parent", parent.as_str());
+        message.set("depth", depth);
+        message.set("trigger", "invoke");
         if !params.is_empty() {
-            frontmatter.insert("params".into(), params.clone().into());
+            message.set("params", params.clone());
         }
-        let message_path = run_dir.join(MESSAGE_FILE);
-        let yaml =
-            serde_norway::to_string(&frontmatter).map_err(|e| InterpreterError::Message {
-                path: message_path.clone(),
-                message: e.to_string(),
-            })?;
-        let message = format!("---\n{yaml}---\n{}", self.message_body);
-        write_replace(&message_path, message.as_bytes())?;
+        message.write(&run_dir.join(MESSAGE_FILE))?;
         if let Some(request) = request {
             write_replace(&run_dir.join(REQUEST_FILE), request.as_bytes())?;
         }
@@ -1223,8 +1260,9 @@ impl Context<'_> {
 pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterError> {
     let run_dir = ctx.runs_dir().join(run_id);
     let message_path = run_dir.join(MESSAGE_FILE);
-    let bytes = fs::read(&message_path).map_err(io_err(&message_path))?;
-    let (frontmatter, body) = split_message(&message_path, &bytes)?;
+    let Message {
+        frontmatter, body, ..
+    } = Message::read(&message_path)?;
     let text = |key: &str| {
         frontmatter
             .get(key)
@@ -1290,31 +1328,100 @@ pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterE
     }
 }
 
-/// Create `runs/<id>/` for a new run (section 4, Frontmatter keys): `id` is the UTC time,
-/// `YYYYMMDDTHHMMSSZ`, then `-` and 6 lowercase hex chars, the low 24 bits of (sub-second
-/// nanoseconds XOR process id). While that id exists in `inbox/` or `runs/`, add 1.
-pub fn create_run_dir(decree_dir: &Path) -> Result<(String, PathBuf), InterpreterError> {
-    let now = Utc::now();
-    let stamp = now.format("%Y%m%dT%H%M%SZ");
-    let mut low = (now.timestamp_subsec_nanos() ^ std::process::id()) & 0xff_ffff;
-    let runs = decree_dir.join(RUNS_DIR);
-    fs::create_dir_all(&runs).map_err(io_err(&runs))?;
-    for _ in 0..=0xff_ffff {
-        let id = format!("{stamp}-{low:06x}");
-        let dir = runs.join(&id);
-        let queued = decree_dir.join(INBOX_DIR).join(format!("{id}.md")).exists();
-        if !queued {
-            match fs::create_dir(&dir) {
-                Ok(()) => return Ok((id, dir)),
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(io_err(&dir)(e)),
-            }
+/// What `recover` found (section 4, Run status).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Recovery {
+    /// Runs that just got an `interrupted` event with `cause: "crash"`, with the state each
+    /// was in, in `id` order.
+    pub crashed: Vec<(String, String)>,
+    /// `pending` runs, in `id` order: `process` and `daemon` continue them.
+    pub pending: Vec<String>,
+}
+
+/// What `process` and `daemon` do when they start (section 4, Run status). Every run that
+/// is `interrupted` but whose last event is not already `interrupted` gets one with
+/// `cause: "crash"`, so the stop is visible in the log; it is never continued. `active`
+/// runs (a live pid in `.lock`) are left alone. Every other run's `message.md` mirror is
+/// rewritten if it disagrees with `events.jsonl` (section 4, Source of truth). Runs with
+/// no events yet (never claimed past the folder), or of a machine that no longer exists,
+/// are skipped: there is no state to record or continue.
+pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
+    let runs = ctx.runs_dir();
+    let mut ids: Vec<String> = match fs::read_dir(&runs) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Recovery::default()),
+        Err(e) => return Err(io_err(&runs)(e)),
+    };
+    ids.sort();
+    let mut found = Recovery::default();
+    for id in ids {
+        let run_dir = runs.join(&id);
+        let events = read_events(&run_dir).map_err(io_err(&run_dir.join(EVENTS_FILE)))?;
+        let field = |key: &str| {
+            events
+                .first()
+                .and_then(|e| e.get(key))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        };
+        let Some(machine) = ctx.machines.get(field("machine")) else {
+            continue;
+        };
+        let lock = lock_state(&run_dir).map_err(io_err(&run_dir.join(LOCK_FILE)))?;
+        if matches!(lock, LockState::Live(_)) {
+            continue;
         }
-        low = (low + 1) & 0xff_ffff;
+        repair_mirror(&run_dir, &events)?;
+        let last_type = events
+            .last()
+            .and_then(|e| e.get("type"))
+            .and_then(Value::as_str);
+        match ctx.status(machine, &events, false) {
+            RunStatus::Interrupted if last_type != Some("interrupted") => {
+                let state = current_state(&events).unwrap_or_default().to_string();
+                let path = run_dir.join(EVENTS_FILE);
+                let mut log = EventLog::open(&run_dir, &id, &machine.id, field("trigger"))
+                    .map_err(io_err(&path))?;
+                let Value::Object(fields) = json!({ "state": state, "cause": "crash" }) else {
+                    unreachable!("event fields are a JSON object");
+                };
+                log.append("interrupted", fields).map_err(io_err(&path))?;
+                found.crashed.push((id, state));
+            }
+            RunStatus::Pending => found.pending.push(id),
+            _ => {}
+        }
     }
-    Err(io_err(&runs)(io::Error::other(format!(
-        "every id for {stamp} is taken"
-    ))))
+    Ok(found)
+}
+
+/// Rewrite the `state` mirror in `run_dir`'s `message.md` if it disagrees with the run's
+/// state, the `to` of the last `transition` event (section 4, Source of truth). A message
+/// whose frontmatter does not parse is left unchanged, as Lifecycle step 3 leaves it.
+/// Returns whether it was rewritten.
+pub fn repair_mirror(
+    run_dir: &Path,
+    events: &[Map<String, Value>],
+) -> Result<bool, InterpreterError> {
+    let Some(state) = current_state(events) else {
+        return Ok(false);
+    };
+    let path = run_dir.join(MESSAGE_FILE);
+    let mut message = match Message::read(&path) {
+        Ok(message) => message,
+        Err(MessageError::Parse { .. }) => return Ok(false),
+        Err(e) => return Err(e.into()),
+    };
+    if message.text("state") == Some(state) {
+        return Ok(false);
+    }
+    message.set("state", state);
+    message.write(&path)?;
+    Ok(true)
 }
 
 /// `request.json` (section 7, Choose: model, step 1). Field order is the spec's.
@@ -1613,60 +1720,9 @@ pub fn reject(
 /// Set frontmatter `state` in the message at `path`, keeping every other key, the key
 /// order and the body bytes (section 4, Parsing and writing).
 pub fn mirror_state(path: &Path, state: &str) -> Result<(), InterpreterError> {
-    let bytes = fs::read(path).map_err(io_err(path))?;
-    let (mut mapping, body) = split_message(path, &bytes)?;
-    mapping.insert("state".into(), state.into());
-    let yaml = serde_norway::to_string(&mapping).map_err(|e| InterpreterError::Message {
-        path: path.to_path_buf(),
-        message: e.to_string(),
-    })?;
-    let mut out = format!("---\n{yaml}---\n").into_bytes();
-    out.extend_from_slice(body.as_bytes());
-    write_replace(path, &out)
-}
-
-/// A message's frontmatter and its body, exactly as written (section 4, Parsing and
-/// writing). `path` names the message in errors.
-fn split_message(
-    path: &Path,
-    bytes: &[u8],
-) -> Result<(serde_norway::Mapping, String), InterpreterError> {
-    let message_err = |message: String| InterpreterError::Message {
-        path: path.to_path_buf(),
-        message,
-    };
-    let text = std::str::from_utf8(bytes).map_err(|e| message_err(e.to_string()))?;
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-
-    let mut lines = text.split_inclusive('\n');
-    match lines.next() {
-        Some(first) if first.trim_end() == "---" => {
-            let mut yaml = String::new();
-            let mut offset = first.len();
-            let mut closed = false;
-            for line in lines {
-                offset += line.len();
-                if line.trim_end() == "---" {
-                    closed = true;
-                    break;
-                }
-                yaml.push_str(line);
-            }
-            if !closed {
-                return Err(message_err(
-                    "line 1: frontmatter has no closing `---`".to_string(),
-                ));
-            }
-            let mapping = if yaml.trim().is_empty() {
-                serde_norway::Mapping::new()
-            } else {
-                serde_norway::from_str(&yaml)
-                    .map_err(|e| message_err(format!("frontmatter: {e}")))?
-            };
-            Ok((mapping, text[offset..].to_string()))
-        }
-        _ => Ok((serde_norway::Mapping::new(), text.to_string())),
-    }
+    let mut message = Message::read(path)?;
+    message.set("state", state);
+    Ok(message.write(path)?)
 }
 
 fn read_or_empty(path: &Path) -> Result<String, InterpreterError> {
@@ -1679,18 +1735,14 @@ fn read_or_empty(path: &Path) -> Result<String, InterpreterError> {
 
 /// Write `.<name>.tmp` in the same directory, then rename it over `path`.
 fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), InterpreterError> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = path.with_file_name(format!(".{name}.tmp"));
-    fs::write(&tmp, bytes).map_err(io_err(&tmp))?;
-    fs::rename(&tmp, path).map_err(io_err(path))
+    crate::message::write_replace(path, bytes)
+        .map_err(|(path, source)| InterpreterError::Io { path, source })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::INBOX_DIR;
     use crate::machine::{load_machine_text, CheckEnv};
     use std::collections::{BTreeSet, HashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -2568,6 +2620,226 @@ mod tests {
             run_status(p.machine(), &events, false),
             RunStatus::Interrupted
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Interrupts, run status and the run lock (M4.2)
+    // ---------------------------------------------------------------
+
+    fn append(p: &Project, kind: &str, fields: Value) {
+        let mut log = EventLog::open(&p.run_dir(), RUN_ID, &p.name, "inbox").unwrap();
+        log.append(kind, fields.as_object().unwrap().clone())
+            .unwrap();
+    }
+
+    /// The `transition` event `decree retry` writes (section 8) back into `state`.
+    fn retry(p: &Project, state: &str) {
+        let fields = json!({
+            "from": state, "event": "retry", "to": state, "source": "retry", "exit_code": null
+        });
+        append(p, "transition", fields);
+    }
+
+    fn status_of(p: &Project) -> RunStatus {
+        let alive = matches!(lock_state(&p.run_dir()).unwrap(), LockState::Live(_));
+        p.ctx().status(p.machine(), &p.events(), alive)
+    }
+
+    /// A run of `step_compound` interrupted by a signal in `inner`, below `outer`.
+    fn interrupted_compound() -> Project {
+        let p = Project::new("step_compound", &[]);
+        p.shutdown.store(true, Ordering::SeqCst);
+        assert_eq!(p.run(), Outcome::Interrupted("inner".into()));
+        p.shutdown.store(false, Ordering::SeqCst);
+        p
+    }
+
+    #[test]
+    fn lock_is_deleted_when_the_run_finishes_or_is_interrupted() {
+        let p = Project::new("step_normal", &[]);
+        assert_eq!(p.run(), Outcome::Finished("done".into()));
+        assert!(!p.run_dir().join(LOCK_FILE).exists());
+        // Interrupted by a signal: deleted too.
+        let p = interrupted_compound();
+        assert!(!p.run_dir().join(LOCK_FILE).exists());
+    }
+
+    #[test]
+    fn lock_of_a_waiting_run_is_released() {
+        let (p, _) = person_project(&[]);
+        assert!(matches!(p.run(), Outcome::Waiting { .. }));
+        assert!(!p.run_dir().join(LOCK_FILE).exists());
+        assert_eq!(status_of(&p), RunStatus::Waiting);
+    }
+
+    #[test]
+    fn retry_reruns_root_and_state_onentry_then_continues_at_the_recorded_state() {
+        let p = interrupted_compound();
+        assert_eq!(status_of(&p), RunStatus::Interrupted);
+        retry(&p, "inner");
+        assert_eq!(status_of(&p), RunStatus::Pending);
+        let outcome = continue_run(&p.ctx(), RUN_ID).unwrap();
+        assert_eq!(outcome, Outcome::Finished("done".into()));
+        assert_eq!(
+            p.order(),
+            [
+                "root_entry",
+                "outer_entry",
+                "inner_entry",
+                "inner_invoke",
+                "inner_exit",
+                "outer_exit",
+                "after_entry",
+                "after_invoke",
+                "after_exit",
+                "done_entry",
+                "root_exit"
+            ]
+        );
+        assert_eq!(
+            p.transitions(),
+            [
+                "- claimed inner claim",
+                "inner retry inner retry",
+                "inner done after exit_code",
+                "after done done exit_code"
+            ]
+        );
+        assert!(!p.run_dir().join(LOCK_FILE).exists());
+    }
+
+    #[test]
+    fn retried_run_whose_onentry_fails_takes_error() {
+        let p = interrupted_compound();
+        retry(&p, "inner");
+        fs::copy(
+            repo().join("tests/fixtures/scripts/exit_three.sh"),
+            p.root().join(".decree/scripts/inner_entry.sh"),
+        )
+        .unwrap();
+        let outcome = continue_run(&p.ctx(), RUN_ID).unwrap();
+        assert_eq!(outcome, Outcome::Finished("failed".into()));
+        assert_eq!(
+            p.transitions().last().unwrap(),
+            "inner error failed exit_code"
+        );
+    }
+
+    #[test]
+    fn recover_marks_a_crashed_run_once_and_never_continues_it() {
+        let p = Project::new("step_normal", &[]);
+        // A crash after the claim event: a stale lock, or none.
+        append(
+            &p,
+            "transition",
+            json!({"from": null, "event": "claimed", "to": "a", "source": "claim", "exit_code": null}),
+        );
+        fs::write(p.run_dir().join(LOCK_FILE), "999999999").unwrap();
+        let found = recover(&p.ctx()).unwrap();
+        assert_eq!(found.crashed, [(RUN_ID.to_string(), "a".to_string())]);
+        assert!(found.pending.is_empty());
+        let events = p.events();
+        let last = events.last().unwrap();
+        assert_eq!(last["type"], "interrupted");
+        assert_eq!(last["cause"], "crash");
+        assert_eq!(last["state"], "a");
+        assert_eq!(last["seq"], 2);
+        assert!(p.order().is_empty());
+
+        // Already marked: nothing more is appended.
+        assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+        assert_eq!(p.events().len(), 2);
+
+        // `decree retry` makes it pending; the stale lock does not stop it continuing.
+        retry(&p, "a");
+        let found = recover(&p.ctx()).unwrap();
+        assert_eq!(found.pending, [RUN_ID]);
+        assert_eq!(
+            continue_run(&p.ctx(), RUN_ID).unwrap(),
+            Outcome::Finished("done".into())
+        );
+        assert_eq!(p.order()[..2], ["root_entry", "a_entry"]);
+    }
+
+    #[test]
+    fn recover_leaves_an_active_run_alone_and_resume_refuses_it() {
+        let p = Project::new("step_normal", &[]);
+        append(
+            &p,
+            "transition",
+            json!({"from": null, "event": "claimed", "to": "a", "source": "claim", "exit_code": null}),
+        );
+        let mut holder = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        fs::write(p.run_dir().join(LOCK_FILE), holder.id().to_string()).unwrap();
+        assert_eq!(status_of(&p), RunStatus::Active);
+        assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+        assert_eq!(p.events().len(), 1);
+
+        retry(&p, "a");
+        assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+        let err = continue_run(&p.ctx(), RUN_ID).unwrap_err();
+        assert!(
+            matches!(&err, InterpreterError::Active(id) if id == RUN_ID),
+            "{err}"
+        );
+        assert!(p.order().is_empty());
+        assert_eq!(
+            fs::read_to_string(p.run_dir().join(LOCK_FILE)).unwrap(),
+            holder.id().to_string()
+        );
+        holder.kill().unwrap();
+        holder.wait().unwrap();
+    }
+
+    #[test]
+    fn recover_does_not_mark_a_waiting_run_without_a_lock() {
+        let (p, _) = person_project(&[]);
+        assert!(matches!(p.run(), Outcome::Waiting { .. }));
+        let before = p.events().len();
+        assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+        assert_eq!(p.events().len(), before);
+        assert_eq!(status_of(&p), RunStatus::Waiting);
+    }
+
+    #[test]
+    fn recover_and_continue_rewrite_a_mirror_that_disagrees_with_the_events() {
+        let p = interrupted_compound();
+        let path = p.run_dir().join(MESSAGE_FILE);
+        mirror_state(&path, "after").unwrap();
+        recover(&p.ctx()).unwrap();
+        assert_eq!(mirrored_state(&p), "inner");
+        assert!(p.message().ends_with(BODY));
+
+        // A crash between the `transition` event and the mirror write.
+        retry(&p, "inner");
+        mirror_state(&path, "after").unwrap();
+        let ctx = Context {
+            shutdown: Arc::new(AtomicBool::new(true)),
+            ..p.ctx()
+        };
+        assert_eq!(
+            continue_run(&ctx, RUN_ID).unwrap(),
+            Outcome::Interrupted("inner".into())
+        );
+        assert_eq!(mirrored_state(&p), "inner");
+    }
+
+    #[test]
+    fn repair_mirror_leaves_an_unparsable_message_unchanged() {
+        let p = interrupted_compound();
+        let path = p.run_dir().join(MESSAGE_FILE);
+        fs::write(
+            &path,
+            "---
+machine: [
+",
+        )
+        .unwrap();
+        assert!(!repair_mirror(&p.run_dir(), &p.events()).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "---\nmachine: [\n");
     }
 
     // ---------------------------------------------------------------
@@ -3913,10 +4185,10 @@ mod tests {
     fn mirror_rejects_an_unclosed_fence_and_duplicate_keys() {
         let err = mirror(b"---\nid: x\nbody\n").unwrap_err().to_string();
         assert!(
-            err.contains("line 1: frontmatter has no closing `---`"),
+            err.contains("message.md: line 1: frontmatter has an opening `---` but no closing"),
             "{err}"
         );
         let err = mirror(b"---\nid: x\nid: y\n---\n").unwrap_err().to_string();
-        assert!(err.contains("frontmatter"), "{err}");
+        assert!(err.contains("message.md: line 3: duplicate"), "{err}");
     }
 }

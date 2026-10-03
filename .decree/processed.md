@@ -47,3 +47,5 @@
 47-v05-decision-invokes.md
 48-v05-escalation-conditions.md
 49-v05-sub-machines-routers.md
+50-v05-messages.md
+51-v05-interrupts.md

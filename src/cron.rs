@@ -1,7 +1,7 @@
 use crate::config;
 use crate::error::DecreeError;
-use crate::message::{build_chain_id, next_day_counter, parse_frontmatter, InboxMessage};
-use chrono::{Local, Utc};
+use crate::message::{parse_frontmatter, Message};
+use chrono::Utc;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::str::FromStr;
@@ -17,8 +17,8 @@ pub struct CronFile {
     pub cron_expr: String,
     /// Parsed cron schedule.
     pub schedule: cron::Schedule,
-    /// Optional routine override.
-    pub routine: Option<String>,
+    /// The machine its messages name: frontmatter `machine`, or its alias `routine`.
+    pub machine: Option<String>,
     /// Custom frontmatter fields (cron field stripped).
     pub custom_fields: BTreeMap<String, serde_norway::Value>,
     /// Markdown body.
@@ -72,13 +72,14 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
     let schedule = parse_schedule(&cron_expr)
         .map_err(|e| DecreeError::Other(format!("invalid cron expression in {filename}: {e}")))?;
 
-    let routine = fields.get("routine").and_then(|v| match v {
-        serde_norway::Value::String(s) => Some(s.clone()),
+    let as_string = |key: &str| match fields.get(key) {
+        Some(serde_norway::Value::String(s)) => Some(s.clone()),
         _ => None,
-    });
+    };
+    let machine = as_string("machine").or_else(|| as_string("routine"));
 
-    // Collect custom fields, stripping "cron" and known message fields
-    let strip_fields: &[&str] = &["cron", "routine"];
+    // Collect custom fields, stripping "cron" and the machine keys
+    let strip_fields: &[&str] = &["cron", "machine", "routine"];
     let custom_fields: BTreeMap<String, serde_norway::Value> = fields
         .into_iter()
         .filter(|(k, _)| !strip_fields.contains(&k.as_str()))
@@ -91,7 +92,7 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
         name_stem,
         cron_expr,
         schedule,
-        routine,
+        machine,
         custom_fields,
         body,
     })
@@ -153,29 +154,20 @@ impl CronTracker {
     }
 }
 
-/// Create an inbox message from a fired cron job.
-pub fn cron_to_inbox_message(
-    project_root: &Path,
-    cron_file: &CronFile,
-) -> Result<InboxMessage, DecreeError> {
-    let now = Local::now();
-    let hhmm = now.format("%H%M").to_string();
-    let day = next_day_counter(project_root, &hhmm)?;
-    let chain = build_chain_id(&day, &hhmm, &cron_file.name_stem);
-    let filename = format!("{chain}-0.md");
-    let id = format!("{chain}-0");
-
-    Ok(InboxMessage {
-        id: Some(id),
-        chain: Some(chain),
-        seq: Some(0),
-        routine: cron_file.routine.clone(),
-        migration: None,
-        trigger: Some(format!("cron:{}", cron_file.name_stem)),
-        body: cron_file.body.clone(),
-        custom_fields: cron_file.custom_fields.clone(),
-        filename,
-    })
+/// The message a fired cron job queues: `machine`, `trigger: cron`, the cron file's other
+/// keys and its body. `message::queue` writes it to `inbox/` and gives it its `id`.
+pub fn cron_to_inbox_message(cron_file: &CronFile) -> Message {
+    let mut message = Message::new(cron_file.body.as_str());
+    if let Some(machine) = &cron_file.machine {
+        message.set("machine", machine.as_str());
+    }
+    message.set("trigger", "cron");
+    for (key, value) in &cron_file.custom_fields {
+        if key != "trigger" {
+            message.set(key, value.clone());
+        }
+    }
+    message
 }
 
 #[cfg(test)]
@@ -196,7 +188,7 @@ mod tests {
         let cf = parse_cron_file("hourly-task.md", content).unwrap();
         assert_eq!(cf.filename, "hourly-task.md");
         assert_eq!(cf.name_stem, "hourly-task");
-        assert_eq!(cf.routine, Some("develop".to_string()));
+        assert_eq!(cf.machine, Some("develop".to_string()));
         assert_eq!(cf.body, "Run hourly task.\n");
         assert!(cf.custom_fields.is_empty());
     }
@@ -205,7 +197,7 @@ mod tests {
     fn test_parse_cron_file_no_routine() {
         let content = "---\ncron: \"*/15 * * * *\"\n---\nEvery 15 minutes.\n";
         let cf = parse_cron_file("frequent.md", content).unwrap();
-        assert!(cf.routine.is_none());
+        assert!(cf.machine.is_none());
     }
 
     #[test]
@@ -225,7 +217,7 @@ mod tests {
         let cf = parse_cron_file("test.md", content).unwrap();
         // "cron" should NOT be in custom_fields
         assert!(!cf.custom_fields.contains_key("cron"));
-        // "routine" is extracted separately, also not in custom_fields
+        // "routine" is read as `machine`, also not in custom_fields
         assert!(!cf.custom_fields.contains_key("routine"));
     }
 
@@ -336,48 +328,23 @@ mod tests {
 
     #[test]
     fn test_cron_to_inbox_message() {
-        let dir = TempDir::new().unwrap();
-        setup_decree_dir(&dir);
-
-        let content = "---\ncron: \"0 * * * *\"\nroutine: develop\npriority: high\n---\nHourly maintenance.\n";
+        let content = "---\ncron: \"0 * * * *\"\nmachine: develop\npriority: high\ntrigger: x\n---\nHourly maintenance.\n";
         let cf = parse_cron_file("hourly-maintenance.md", content).unwrap();
-
-        let msg = cron_to_inbox_message(dir.path(), &cf).unwrap();
-
-        // Check chain contains the cron file stem
-        let chain = msg.chain.as_ref().unwrap();
-        assert!(chain.contains("hourly-maintenance"));
-
-        // Check seq is 0
-        assert_eq!(msg.seq, Some(0));
-
-        // Check routine preserved
-        assert_eq!(msg.routine.as_deref(), Some("develop"));
-
-        // Check custom fields preserved (cron stripped)
-        assert!(!msg.custom_fields.contains_key("cron"));
+        let msg = cron_to_inbox_message(&cf);
         assert_eq!(
-            msg.custom_fields.get("priority"),
-            Some(&serde_norway::Value::String("high".into()))
+            String::from_utf8(msg.to_bytes()).unwrap(),
+            "---\nmachine: develop\ntrigger: cron\npriority: high\n---\nHourly maintenance.\n"
         );
-
-        // Check body preserved
-        assert_eq!(msg.body, "Hourly maintenance.\n");
-
-        // Check filename format
-        assert!(msg.filename.ends_with("-0.md"));
     }
 
     #[test]
-    fn test_cron_to_inbox_message_no_routine() {
-        let dir = TempDir::new().unwrap();
-        setup_decree_dir(&dir);
-
-        let content = "---\ncron: \"0 * * * *\"\n---\nTask.\n";
-        let cf = parse_cron_file("task.md", content).unwrap();
-
-        let msg = cron_to_inbox_message(dir.path(), &cf).unwrap();
-        assert!(msg.routine.is_none());
+    fn test_cron_to_inbox_message_routine_alias_and_no_machine() {
+        let cf = parse_cron_file("t.md", "---\ncron: \"0 * * * *\"\nroutine: dev\n---\nT.\n").unwrap();
+        assert_eq!(cron_to_inbox_message(&cf).text("machine"), Some("dev"));
+        let cf = parse_cron_file("task.md", "---\ncron: \"0 * * * *\"\n---\nTask.\n").unwrap();
+        let msg = cron_to_inbox_message(&cf);
+        assert_eq!(msg.text("machine"), None);
+        assert_eq!(msg.text("trigger"), Some("cron"));
     }
 
     #[test]

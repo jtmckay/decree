@@ -48,6 +48,30 @@ pub enum Command {
     #[command(after_help = GRAPH_VIEWING)]
     Graph,
 
+    /// Queue a message for a machine in inbox/; the body is read from stdin. Prints its id
+    Emit {
+        /// Machine the message names
+        #[arg(long)]
+        machine: String,
+
+        /// Sets the machine's data for this run (repeatable)
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+    },
+
+    /// Reply to a run waiting in a `choose: person` state
+    Event {
+        /// Wait id (<run id>.w<seq>), or run id meaning its current wait
+        target: String,
+
+        /// Event to deliver: one of the waiting state's options
+        event: String,
+
+        /// Note, written as the reply's body
+        #[arg(short = 'm', value_name = "NOTE")]
+        note: Option<String>,
+    },
+
     /// List routines or show routine detail
     Routine {
         /// Routine name to show detail for

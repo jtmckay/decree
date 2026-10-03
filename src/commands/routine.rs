@@ -1,13 +1,9 @@
-use crate::config::{self, AppConfig};
+use crate::config::AppConfig;
 use crate::error::{DecreeError, EXIT_PRECHECK};
 use crate::hooks;
-use crate::message::{self, InboxMessage, RoutineInfo};
-use crate::routine::{self, CustomParam, RoutineDetail};
-use chrono::Local;
+use crate::message::{self, RoutineInfo};
+use crate::routine::{self, RoutineDetail};
 use colored::Colorize;
-use std::collections::BTreeMap;
-use std::io::IsTerminal;
-use std::io::{self, BufRead};
 use std::path::Path;
 
 /// Run the `decree routine [name]` command.
@@ -28,7 +24,10 @@ pub fn run(project_root: &Path, name: Option<&str>) -> Result<(), DecreeError> {
 
     match name {
         Some(name) => run_named(project_root, &config, &routines, name),
-        None => run_select(project_root, &config, &routines),
+        None => {
+            print_list_view(&routines);
+            Ok(())
+        }
     }
 }
 
@@ -46,61 +45,11 @@ fn run_named(
     };
 
     let detail = routine::routine_detail(project_root, config, info)?;
-
-    if !std::io::stdout().is_terminal() {
-        print_detail_view(&detail);
-        return Ok(());
-    }
-
-    guided_flow(project_root, config, &detail)
+    print_detail_view(&detail);
+    Ok(())
 }
 
-/// Run with interactive selection (no name given).
-fn run_select(
-    project_root: &Path,
-    config: &AppConfig,
-    routines: &[RoutineInfo],
-) -> Result<(), DecreeError> {
-    if !std::io::stdout().is_terminal() {
-        print_list_view(routines);
-        return Ok(());
-    }
-
-    // Interactive: arrow-key selector
-    let options: Vec<String> = routines
-        .iter()
-        .map(|r| {
-            if r.description.is_empty() {
-                r.name.clone()
-            } else {
-                format!("{:<16} {}", r.name, r.description)
-            }
-        })
-        .collect();
-
-    // Pre-highlight the default routine
-    let default_idx = routines
-        .iter()
-        .position(|r| r.name == config.default_routine)
-        .unwrap_or(0);
-
-    let selection = inquire::Select::new("Select a routine:", options)
-        .with_starting_cursor(default_idx)
-        .prompt()
-        .map_err(|e| DecreeError::Other(format!("selection cancelled: {e}")))?;
-
-    // Extract routine name from selection string
-    let selected_name = selection.split_whitespace().next().unwrap_or(&selection);
-    let info = routines
-        .iter()
-        .find(|r| r.name == selected_name)
-        .ok_or_else(|| DecreeError::Other("selected routine not found".into()))?;
-
-    let detail = routine::routine_detail(project_root, config, info)?;
-    guided_flow(project_root, config, &detail)
-}
-
-/// Print the routine list for non-TTY output.
+/// Print the routine list.
 fn print_list_view(routines: &[RoutineInfo]) {
     for r in routines {
         if r.description.is_empty() {
@@ -111,7 +60,7 @@ fn print_list_view(routines: &[RoutineInfo]) {
     }
 }
 
-/// Print the detail view for non-TTY output.
+/// Print one routine's detail.
 fn print_detail_view(detail: &RoutineDetail) {
     let rel_path = if let Some(pos) = detail.script_path.find(".decree/") {
         &detail.script_path[pos..]
@@ -133,153 +82,6 @@ fn print_detail_view(detail: &RoutineDetail) {
             println!("    {}: [default: \"{}\"]", p.name, p.default);
         }
     }
-}
-
-/// The interactive guided flow: description → pre-check → params → body → execute.
-fn guided_flow(
-    project_root: &Path,
-    config: &AppConfig,
-    detail: &RoutineDetail,
-) -> Result<(), DecreeError> {
-    // Step 2: Show description and pre-check
-    print_detail_view(detail);
-    println!();
-
-    let precheck_result = routine::run_precheck(project_root, config, &detail.info.name)?;
-    match &precheck_result {
-        None => {
-            println!("  Pre-check: {}", "PASS".green());
-        }
-        Some(reason) => {
-            println!("  Pre-check: {}: {}", "FAIL".red(), reason);
-            println!();
-            let cont = inquire::Confirm::new("Continue anyway?")
-                .with_default(false)
-                .prompt()
-                .map_err(|e| DecreeError::Other(format!("prompt cancelled: {e}")))?;
-            if !cont {
-                return Ok(());
-            }
-        }
-    }
-    println!();
-
-    // Step 3: Prompt for custom parameters
-    let mut param_values: Vec<(String, String)> = Vec::new();
-    for p in &detail.custom_params {
-        let value = prompt_param(p)?;
-        param_values.push((p.name.clone(), value));
-    }
-
-    // Step 4: Message body
-    let body = prompt_body()?;
-
-    // Step 5: Summary and execute
-    println!();
-    println!("Running {}:", detail.info.name.bold());
-    for (name, value) in &param_values {
-        println!("  {name}: {value}");
-    }
-    if !body.is_empty() {
-        let display_body = if body.len() > 60 {
-            format!("\"{}...\"", &body[..57])
-        } else {
-            format!("\"{body}\"")
-        };
-        println!("  body: {display_body}");
-    }
-    println!();
-    println!("Press Enter to run, Ctrl-C to cancel.");
-
-    // Wait for Enter
-    let mut buf = String::new();
-    io::stdin().read_line(&mut buf).map_err(DecreeError::Io)?;
-
-    // Create and process the message
-    execute_routine(project_root, config, detail, &param_values, &body)
-}
-
-/// Prompt for a single custom parameter value.
-fn prompt_param(param: &CustomParam) -> Result<String, DecreeError> {
-    let prompt_text = format!("{} [default: \"{}\"]", param.name, param.default);
-    let input = inquire::Text::new(&prompt_text)
-        .with_default(&param.default)
-        .prompt()
-        .map_err(|e| DecreeError::Other(format!("prompt cancelled: {e}")))?;
-
-    Ok(input)
-}
-
-/// Prompt for multi-line message body. Empty line submits.
-fn prompt_body() -> Result<String, DecreeError> {
-    println!("Message body [recommended, empty line to submit]:");
-
-    let stdin = io::stdin();
-    let mut lines = Vec::new();
-
-    for line in stdin.lock().lines() {
-        let line = line.map_err(DecreeError::Io)?;
-        if line.is_empty() {
-            break;
-        }
-        lines.push(line);
-    }
-
-    Ok(lines.join("\n"))
-}
-
-/// Create an inbox message and process only that single message.
-///
-/// Unlike `process::run()`, this does NOT:
-/// - Run beforeAll/afterAll hooks
-/// - Scan for pending migrations
-/// - Drain other inbox messages
-///
-/// It DOES run beforeEach/afterEach hooks, retry logic, and dead-lettering.
-fn execute_routine(
-    project_root: &Path,
-    config: &AppConfig,
-    detail: &RoutineDetail,
-    param_values: &[(String, String)],
-    body: &str,
-) -> Result<(), DecreeError> {
-    let now = Local::now();
-    let hhmm = now.format("%H%M").to_string();
-    let day = message::next_day_counter(project_root, &hhmm)?;
-    let chain = message::build_chain_id(&day, &hhmm, &detail.info.name);
-    let seq = 0u32;
-    let full_id = format!("{chain}-{seq}");
-    let filename = format!("{full_id}.md");
-
-    let mut custom_fields = BTreeMap::new();
-    for (name, value) in param_values {
-        custom_fields.insert(name.clone(), serde_norway::Value::String(value.clone()));
-    }
-
-    let msg = InboxMessage {
-        id: Some(full_id),
-        chain: Some(chain),
-        seq: Some(seq),
-        routine: Some(detail.info.name.clone()),
-        migration: None,
-        trigger: None,
-        body: body.to_string(),
-        custom_fields,
-        filename: filename.clone(),
-    };
-
-    // Write to inbox
-    let inbox_dir = project_root
-        .join(config::DECREE_DIR)
-        .join(config::INBOX_DIR);
-    std::fs::create_dir_all(&inbox_dir)?;
-    msg.write_to_inbox(project_root)?;
-
-    println!("Message created: {}", msg.filename);
-
-    // Process only this single message (no beforeAll/afterAll, no inbox drain)
-    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    super::process::process_single_message(project_root, config, &filename, &shutdown)
 }
 
 /// Handle unknown routine: fuzzy match or list available.

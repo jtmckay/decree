@@ -5,6 +5,8 @@ pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_FAILURE: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_PRECHECK: i32 = 3;
+/// SIGINT or SIGTERM stopped the run (section 8).
+pub const EXIT_INTERRUPTED: i32 = 130;
 
 /// All error variants for the decree application.
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +49,10 @@ pub enum DecreeError {
     #[error(".decree/ already exists; decree init does not touch an existing project")]
     AlreadyInitialized,
 
+    /// SIGINT or SIGTERM stopped `process`; the current run is `interrupted`.
+    #[error("interrupted")]
+    Interrupted,
+
     #[error("{0}")]
     Other(String),
 }
@@ -57,6 +63,7 @@ impl DecreeError {
         match self {
             DecreeError::PreCheckFailed(_) => EXIT_PRECHECK,
             DecreeError::AlreadyInitialized => EXIT_USAGE,
+            DecreeError::Interrupted => EXIT_INTERRUPTED,
             _ => EXIT_FAILURE,
         }
     }
