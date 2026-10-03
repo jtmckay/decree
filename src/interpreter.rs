@@ -8,7 +8,7 @@
 //! level, a nested one raising `done.state.<parent>`; `choose: person`, which runs its
 //! `ask` script, appends `waiting` and stops until a `received` event continues the run;
 //! and child runs (section 7, Sub-machines): a `machine` invoke, and the router machine of
-//! a `choose: model` invoke. Delivering replies is ticket M4.3.
+//! a `choose: model` invoke. Replies and timeouts are delivered by `reply`.
 //!
 //! Each run is stepped under its run lock (section 4, Run lock). `recover` is what
 //! `process` and `daemon` do first: it marks runs a crash left behind `interrupted` and

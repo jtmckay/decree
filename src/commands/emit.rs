@@ -55,7 +55,12 @@ pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), 
 }
 
 /// `machine` must be in the `emits` of state `state` of machine `from` (section 2).
-fn check_emits(project: &Project, from: &str, state: &str, machine: &str) -> Result<(), DecreeError> {
+fn check_emits(
+    project: &Project,
+    from: &str,
+    state: &str,
+    machine: &str,
+) -> Result<(), DecreeError> {
     let m = project
         .machines
         .get(from)
@@ -86,7 +91,9 @@ fn check_emits(project: &Project, from: &str, state: &str, machine: &str) -> Res
 /// Frontmatter `depth` of run `parent` (absent means 0).
 fn parent_depth(project: &Project, parent: &str) -> Result<u32, DecreeError> {
     if !message::is_valid_id(parent) {
-        return Err(fail(format!("DECREE_MESSAGE_ID `{parent}` is not a run id")));
+        return Err(fail(format!(
+            "DECREE_MESSAGE_ID `{parent}` is not a run id"
+        )));
     }
     let path = project
         .decree_dir
@@ -100,12 +107,15 @@ fn parent_depth(project: &Project, parent: &str) -> Result<u32, DecreeError> {
     })?;
     match parent_message.frontmatter.get("depth") {
         None => Ok(0),
-        Some(v) => v.as_u64().and_then(|d| u32::try_from(d).ok()).ok_or_else(|| {
-            fail(format!(
-                "{}: `depth` is not a non-negative integer",
-                path.display()
-            ))
-        }),
+        Some(v) => v
+            .as_u64()
+            .and_then(|d| u32::try_from(d).ok())
+            .ok_or_else(|| {
+                fail(format!(
+                    "{}: `depth` is not a non-negative integer",
+                    path.display()
+                ))
+            }),
     }
 }
 

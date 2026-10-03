@@ -339,7 +339,8 @@ mod tests {
 
     #[test]
     fn test_cron_to_inbox_message_routine_alias_and_no_machine() {
-        let cf = parse_cron_file("t.md", "---\ncron: \"0 * * * *\"\nroutine: dev\n---\nT.\n").unwrap();
+        let cf =
+            parse_cron_file("t.md", "---\ncron: \"0 * * * *\"\nroutine: dev\n---\nT.\n").unwrap();
         assert_eq!(cron_to_inbox_message(&cf).text("machine"), Some("dev"));
         let cf = parse_cron_file("task.md", "---\ncron: \"0 * * * *\"\n---\nTask.\n").unwrap();
         let msg = cron_to_inbox_message(&cf);

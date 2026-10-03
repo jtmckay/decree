@@ -5,7 +5,9 @@
 //! run. Stops at the first run that ends in `failed`, and before a `failed`, `interrupted`
 //! or `waiting` migration. Ends by printing every waiting run.
 //!
-//! Replies (`to:`) are delivered from ticket M4.3 on.
+//! A queued message with `to:` is a reply: it is delivered to its waiting run instead,
+//! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
+//! `timeout_s` deadlines that have passed (section 4, Replies).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -23,6 +25,7 @@ use crate::interpreter::{
 };
 use crate::machine::FAILED;
 use crate::message::{self, Claim, LockState, Message};
+use crate::reply::{self, Delivery};
 use crate::runtime::{self, EventLog, MESSAGE_FILE};
 
 /// Run `decree process [--dry-run]`.
@@ -31,72 +34,277 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
     if dry_run {
         return run_dry(&project);
     }
-    if !project.problems.is_empty() {
-        for problem in &project.problems {
-            eprintln!("{problem}");
-        }
-        return Err(DecreeError::Other(format!(
-            "{} machine error(s); nothing was processed. Run `decree check`.",
-            project.problems.len()
-        )));
-    }
-    validate_migrations(&project)?;
-
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
-    let ctx = Context {
-        project_root: project_root.to_path_buf(),
-        shared_source: project.shared_source.clone(),
-        machines: &project.machines,
-        default_router: project.config.default_router.clone(),
-        max_attempts: project.config.max_attempts,
-        max_depth: project.config.max_depth,
-        max_log_size: project.config.max_log_size,
-        shutdown,
-    };
-    let recovery = interpreter::recover(&ctx).map_err(other)?;
-    for (id, state) in &recovery.crashed {
-        eprintln!(
-            "run {id} was interrupted in `{state}` (crash); \
-             continue it with `decree retry {id}`"
-        );
-    }
-    let result = continue_pending(&ctx, &recovery.pending).and_then(|()| drain(&ctx, &project));
-    print_waiting(&ctx)?;
-    result
+    let mut pipeline = Pipeline::new(project_root, &project, shutdown)?;
+    let result = pipeline.recover().and_then(|()| pipeline.drain());
+    pipeline.print_waiting()?;
+    result.map_err(Stop::into_error)
 }
 
-/// Continue the `pending` runs, in `id` order, before reading `inbox/` (section 4, Run
-/// status). A run another process holds now is skipped.
-fn continue_pending(ctx: &Context, ids: &[String]) -> Result<(), DecreeError> {
-    for id in ids {
-        if ctx.shutdown.load(Ordering::Relaxed) {
-            return Err(DecreeError::Interrupted);
+/// Why a pass of the pipeline stopped short.
+#[derive(Debug)]
+pub(crate) enum Stop {
+    /// A run ended in `failed`. `process` stops; `daemon` reports it and goes on.
+    Failed(String),
+    /// A migration is `failed` or `interrupted`: later migrations wait for `decree retry`.
+    Blocked(String),
+    /// SIGINT or SIGTERM: the current run is `interrupted`.
+    Interrupted,
+    /// Anything else: an I/O error, or a run that cannot be stepped.
+    Error(DecreeError),
+}
+
+impl Stop {
+    pub(crate) fn into_error(self) -> DecreeError {
+        match self {
+            Stop::Failed(message) | Stop::Blocked(message) => DecreeError::Other(message),
+            Stop::Interrupted => DecreeError::Interrupted,
+            Stop::Error(e) => e,
         }
-        let outcome = match continue_run(ctx, id) {
+    }
+}
+
+impl<E: Into<DecreeError>> From<E> for Stop {
+    fn from(e: E) -> Self {
+        Stop::Error(e.into())
+    }
+}
+
+/// The steps `process` and `daemon` share (section 8): one pipeline, so the daemon has
+/// no copy of its own. Each step runs to the end of one run before it returns.
+pub(crate) struct Pipeline<'a> {
+    ctx: Context<'a>,
+    project: &'a Project,
+    /// Inbox files another process claimed first, or is claiming now.
+    lost: HashSet<String>,
+}
+
+impl<'a> Pipeline<'a> {
+    /// Validate every machine and pending migration (section 4, Migrations, rule 6), and
+    /// set up the context runs are stepped in. Nothing runs if anything is invalid.
+    pub(crate) fn new(
+        project_root: &Path,
+        project: &'a Project,
+        shutdown: Arc<AtomicBool>,
+    ) -> Result<Self, DecreeError> {
+        if !project.problems.is_empty() {
+            for problem in &project.problems {
+                eprintln!("{problem}");
+            }
+            return Err(DecreeError::Other(format!(
+                "{} machine error(s); nothing was processed. Run `decree check`.",
+                project.problems.len()
+            )));
+        }
+        validate_migrations(project)?;
+        let ctx = Context {
+            project_root: project_root.to_path_buf(),
+            shared_source: project.shared_source.clone(),
+            machines: &project.machines,
+            default_router: project.config.default_router.clone(),
+            max_attempts: project.config.max_attempts,
+            max_depth: project.config.max_depth,
+            max_log_size: project.config.max_log_size,
+            shutdown,
+        };
+        Ok(Pipeline {
+            ctx,
+            project,
+            lost: HashSet::new(),
+        })
+    }
+
+    fn shutdown(&self) -> bool {
+        self.ctx.shutdown.load(Ordering::Relaxed)
+    }
+
+    /// At start: mark runs a crash left behind `interrupted` (never continued), then
+    /// continue `pending` runs in `id` order (section 4, Run status).
+    pub(crate) fn recover(&mut self) -> Result<(), Stop> {
+        let recovery = interpreter::recover(&self.ctx).map_err(other)?;
+        for (id, state) in &recovery.crashed {
+            eprintln!(
+                "run {id} was interrupted in `{state}` (crash); \
+                 continue it with `decree retry {id}`"
+            );
+        }
+        self.continue_runs(&recovery.pending)
+    }
+
+    /// `process`: repeat until nothing is left: deliver timeouts, continue `pending` runs
+    /// (`decree retry` may have made more), claim the next inbox message, and start the
+    /// next migration once the inbox is empty. Stops at the first run that ends in `failed`.
+    pub(crate) fn drain(&mut self) -> Result<(), Stop> {
+        loop {
+            self.deliver_timeouts()?;
+            let pending = self.pending()?;
+            self.continue_runs(&pending)?;
+            if self.next_inbox()? {
+                continue;
+            }
+            if !self.next_migration()? {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Continue `ids` in order; stops at the first that ends in `failed`.
+    fn continue_runs(&self, ids: &[String]) -> Result<(), Stop> {
+        for id in ids {
+            self.continue_one(id)?;
+        }
+        Ok(())
+    }
+
+    /// Every `pending` run, in `id` order: after `decree retry`, or a delivery another
+    /// process made. A run another process holds is `active`, not `pending`.
+    pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
+        let mut pending = Vec::new();
+        for id in run_ids(&self.ctx.runs_dir())? {
+            let run_dir = self.ctx.runs_dir().join(&id);
+            let events = read_events(&run_dir)?;
+            let Some(machine) = run_machine(&self.ctx, &events) else {
+                continue;
+            };
+            let alive = matches!(message::lock_state(&run_dir)?, LockState::Live(_));
+            if self.ctx.status(machine, &events, alive) == RunStatus::Pending {
+                pending.push(id);
+            }
+        }
+        Ok(pending)
+    }
+
+    /// Continue `pending` run `id`. A run another process holds now is skipped.
+    pub(crate) fn continue_one(&self, id: &str) -> Result<(), Stop> {
+        if self.shutdown() {
+            return Err(Stop::Interrupted);
+        }
+        let outcome = match continue_run(&self.ctx, id) {
             Ok(outcome) => outcome,
-            Err(InterpreterError::Active(_)) => continue,
-            Err(e) => return Err(other(e)),
+            Err(InterpreterError::Active(_)) => return Ok(()),
+            Err(e) => return Err(other(e).into()),
         };
         match outcome {
             Outcome::Finished(state) if state == FAILED => {
-                let run_dir = ctx.runs_dir().join(id);
+                let run_dir = self.ctx.runs_dir().join(id);
                 let migration = read_events(&run_dir)?
                     .first()
                     .is_some_and(|e| e.get("trigger").and_then(Value::as_str) == Some("migration"));
-                return Err(if migration {
+                Err(if migration {
                     blocked(&format!("{id}.md"), id, &format!("ended in `{FAILED}`"))
                 } else {
-                    DecreeError::Other(format!(
+                    Stop::Failed(format!(
                         "run {id} ended in `{FAILED}`; see .decree/runs/{id}/"
                     ))
-                });
+                })
             }
-            Outcome::Interrupted(_) => return Err(DecreeError::Interrupted),
-            _ => {}
+            Outcome::Interrupted(_) => Err(Stop::Interrupted),
+            _ => Ok(()),
         }
     }
-    Ok(())
+
+    /// Deliver every `timeout_s` deadline that has passed, and continue those runs.
+    pub(crate) fn deliver_timeouts(&self) -> Result<(), Stop> {
+        let timed_out =
+            reply::deliver_timeouts(&self.ctx.runs_dir(), self.ctx.machines, chrono::Utc::now())
+                .map_err(other)?;
+        self.continue_runs(&timed_out)
+    }
+
+    /// Take the next `inbox/` file in filename order: deliver a reply and continue its
+    /// run, or claim a message and run it (section 4, Lifecycle). Returns `false` when the
+    /// inbox is empty.
+    pub(crate) fn next_inbox(&mut self) -> Result<bool, Stop> {
+        if self.shutdown() {
+            return Err(Stop::Interrupted);
+        }
+        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
+        let inbox = decree_dir.join(INBOX_DIR);
+        let next = md_files(&inbox)?
+            .into_iter()
+            .find(|f| !self.lost.contains(f));
+        let Some(file) = next else {
+            return Ok(false);
+        };
+        let mut problem = None;
+        if let Ok(m) = Message::read(&inbox.join(&file)) {
+            if m.frontmatter.contains_key("to") {
+                let (to, event) = (m.text("to"), m.text("event"));
+                let runs = self.ctx.runs_dir();
+                match reply::deliver(&runs, self.ctx.machines, &inbox, &file, to, event)
+                    .map_err(other)?
+                {
+                    Delivery::Delivered(run_id) => {
+                        self.continue_one(&run_id)?;
+                        return Ok(true);
+                    }
+                    Delivery::Lost => {
+                        self.lost.insert(file);
+                        return Ok(true);
+                    }
+                    Delivery::Rejected(reason) => problem = Some(reason),
+                }
+            }
+        }
+        let Some(claim) = message::claim(&decree_dir, &file).map_err(other)? else {
+            self.lost.insert(file);
+            return Ok(true);
+        };
+        let id = claim.id.clone();
+        match run_claim(&self.ctx, self.project, claim, problem)? {
+            Outcome::Finished(state) if state == FAILED => Err(Stop::Failed(format!(
+                "run {id} ({file}) ended in `{FAILED}`; see .decree/runs/{id}/"
+            ))),
+            Outcome::Interrupted(_) => Err(Stop::Interrupted),
+            _ => Ok(true),
+        }
+    }
+
+    /// Start or continue the first pending migration (section 4, Migrations). Returns
+    /// whether it finished, so the next may start; `false` when there is none, or it
+    /// waits.
+    pub(crate) fn next_migration(&self) -> Result<bool, Stop> {
+        if self.shutdown() {
+            return Err(Stop::Interrupted);
+        }
+        match self.project.pending_migrations()?.into_iter().next() {
+            Some(migration) => step_migration(&self.ctx, self.project, &migration),
+            None => Ok(false),
+        }
+    }
+
+    /// Print every waiting run (section 4, Replies).
+    pub(crate) fn print_waiting(&self) -> Result<(), DecreeError> {
+        print_waiting(&self.ctx)
+    }
+}
+
+/// The run folders in `runs_dir`, in `id` order.
+fn run_ids(runs_dir: &Path) -> std::io::Result<Vec<String>> {
+    let mut ids: Vec<String> = match std::fs::read_dir(runs_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    ids.sort();
+    Ok(ids)
+}
+
+/// The machine a run's first event names, if it is loaded.
+fn run_machine<'m>(
+    ctx: &Context<'m>,
+    events: &[serde_json::Map<String, Value>],
+) -> Option<&'m crate::machine::LoadedMachine> {
+    events
+        .first()
+        .and_then(|e| e.get("machine"))
+        .and_then(Value::as_str)
+        .and_then(|name| ctx.machines.get(name))
 }
 
 /// Section 4, Migrations, rule 6: parse every pending migration (frontmatter, machine,
@@ -121,51 +329,15 @@ fn validate_migrations(project: &Project) -> Result<(), DecreeError> {
     }
 }
 
-/// Run inbox messages in filename order, and the next migration whenever the inbox is
-/// empty (section 4, Lifecycle and Migrations).
-fn drain(ctx: &Context, project: &Project) -> Result<(), DecreeError> {
-    let decree_dir = ctx.project_root.join(DECREE_DIR);
-    // Files another process claimed first, or is claiming now.
-    let mut lost = HashSet::new();
-    loop {
-        if ctx.shutdown.load(Ordering::Relaxed) {
-            return Err(DecreeError::Interrupted);
-        }
-        let next = md_files(&decree_dir.join(INBOX_DIR))?
-            .into_iter()
-            .find(|f| !lost.contains(f));
-        if let Some(file) = next {
-            match message::claim(&decree_dir, &file).map_err(other)? {
-                None => {
-                    lost.insert(file);
-                }
-                Some(claim) => {
-                    let id = claim.id.clone();
-                    match run_claim(ctx, project, claim)? {
-                        Outcome::Finished(state) if state == FAILED => {
-                            return Err(DecreeError::Other(format!(
-                                "run {id} ({file}) ended in `{FAILED}`; see .decree/runs/{id}/"
-                            )))
-                        }
-                        Outcome::Interrupted(_) => return Err(DecreeError::Interrupted),
-                        _ => {}
-                    }
-                }
-            }
-            continue;
-        }
-        let Some(migration) = project.pending_migrations()?.into_iter().next() else {
-            return Ok(());
-        };
-        if !step_migration(ctx, project, &migration)? {
-            return Ok(());
-        }
-    }
-}
-
 /// Lifecycle steps 2 to 4 for a claimed inbox message: set `id` and `trigger` if missing,
-/// validate, and start the run, or fail it with `invalid_message`.
-fn run_claim(ctx: &Context, project: &Project, claim: Claim) -> Result<Outcome, DecreeError> {
+/// validate, and start the run, or fail it with `invalid_message`. A reply (`to:`) never
+/// starts a run: it was not delivered, for `reply_problem`.
+fn run_claim(
+    ctx: &Context,
+    project: &Project,
+    claim: Claim,
+    reply_problem: Option<String>,
+) -> Result<Outcome, DecreeError> {
     let Claim {
         id,
         run_dir,
@@ -196,9 +368,11 @@ fn run_claim(ctx: &Context, project: &Project, claim: Claim) -> Result<Outcome, 
         return reject(&run_dir, &id, &name, &trigger, &file, &problem, true);
     }
     if message.frontmatter.contains_key("to") {
-        let reason =
-            "a reply (`to:`) cannot start a run, and reply delivery is not implemented yet";
-        return reject(&run_dir, &id, &name, &trigger, &file, reason, true);
+        let reason = reply_problem.map_or_else(
+            || "a reply (`to:`) was not delivered".to_string(),
+            |p| format!("reply not delivered: {p}"),
+        );
+        return reject(&run_dir, &id, &name, &trigger, &file, &reason, true);
     }
     start(ctx, project, &id, &trigger, &file, &message)
 }
@@ -278,25 +452,21 @@ fn reject(
 /// Section 4, Migrations: start migration `file`, or continue or report the run it has.
 /// Returns whether later migrations may start once this one is in `processed.md`; `false`
 /// means it waits.
-fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, DecreeError> {
+fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, Stop> {
     let id = file.strip_suffix(".md").unwrap_or(file);
     let run_dir = ctx.runs_dir().join(id);
     let outcome = if run_dir.exists() {
         // Rule 4: the migration has a run already.
         let events = read_events(&run_dir)?;
-        let machine = events
-            .first()
-            .and_then(|e| e.get("machine"))
-            .and_then(Value::as_str)
-            .and_then(|name| project.machines.get(name));
         let lock = message::lock_state(&run_dir)?;
         let alive = matches!(lock, LockState::Live(_));
-        let status = machine.map_or(RunStatus::Interrupted, |m| ctx.status(m, &events, alive));
+        let status = run_machine(ctx, &events)
+            .map_or(RunStatus::Interrupted, |m| ctx.status(m, &events, alive));
         match status {
             RunStatus::Pending => match continue_run(ctx, id) {
                 Ok(outcome) => outcome,
                 Err(InterpreterError::Active(_)) => return Ok(false),
-                Err(e) => return Err(other(e)),
+                Err(e) => return Err(other(e).into()),
             },
             RunStatus::Waiting | RunStatus::Active => return Ok(false),
             RunStatus::Finished | RunStatus::Interrupted => {
@@ -317,7 +487,7 @@ fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, 
         }
         // Rule 5 wrote the ledger line; the loop moves on to the next migration.
         Outcome::Finished(_) => Ok(true),
-        Outcome::Interrupted(_) => Err(DecreeError::Interrupted),
+        Outcome::Interrupted(_) => Err(Stop::Interrupted),
         Outcome::Waiting { .. } | Outcome::Child { .. } => Ok(false),
     }
 }
@@ -348,8 +518,8 @@ fn start_migration(
 }
 
 /// Rule 4: a migration that blocks every later one, and the command that continues it.
-fn blocked(file: &str, id: &str, what: &str) -> DecreeError {
-    DecreeError::Other(format!(
+fn blocked(file: &str, id: &str, what: &str) -> Stop {
+    Stop::Blocked(format!(
         "migration {file} {what}; later migrations are blocked. \
          Fix the cause, then run `decree retry {id}`."
     ))

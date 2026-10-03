@@ -49,3 +49,4 @@
 49-v05-sub-machines-routers.md
 50-v05-messages.md
 51-v05-interrupts.md
+52-v05-emit.md

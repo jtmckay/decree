@@ -1519,7 +1519,9 @@ mod tests {
         let mut message = Message::parse("---\nmachine: x\nid: old\n---\nbody\r\n").unwrap();
         let id = queue(&decree, &mut message).unwrap();
         assert!(id.len() == 23 && id.as_bytes()[8] == b'T' && id.as_bytes()[15] == b'Z');
-        assert!(id[17..].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+        assert!(id[17..]
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
         let names: Vec<_> = std::fs::read_dir(decree.join("inbox"))
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -1580,7 +1582,13 @@ mod tests {
         assert!(seen >= 20);
         let left = std::fs::read_dir(decree.join("inbox"))
             .unwrap()
-            .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp"))
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")
+            })
             .count();
         assert_eq!(left, 0);
     }

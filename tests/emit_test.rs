@@ -11,6 +11,7 @@ use tempfile::TempDir;
 /// `work` may emit `other`; `done` may emit nothing.
 const FLOW: &str = "\
 name: flow
+description: Works, emitting a follow-up for other.
 initial: work
 states:
   work:
@@ -23,6 +24,7 @@ states:
 
 const OTHER: &str = "\
 name: other
+description: Finishes at once.
 data:
   n: { type: int, default: 0 }
   ok: { type: bool, default: false }
@@ -165,7 +167,11 @@ fn emit_of_a_machine_not_in_the_states_emits_exits_1() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(1), "{state} -> {target}");
-        assert!(stderr(&output).contains("may not emit"), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains("may not emit"),
+            "{}",
+            stderr(&output)
+        );
     }
     assert!(p.inbox().is_empty());
 }
@@ -208,16 +214,32 @@ fn emit_from_a_run_at_max_depth_exits_1() {
 fn emit_with_bad_params_or_machine_exits_1() {
     let p = Project::new("");
     let cases: [(&[&str], &str); 5] = [
-        (&["--machine", "other", "--param", "nope=1"], "unknown param `nope`"),
-        (&["--machine", "other", "--param", "n=x"], "param `n` must be of type `int`"),
-        (&["--machine", "other", "--param", "ok=yes"], "param `ok` must be of type `bool`"),
-        (&["--machine", "other", "--param", "n"], "is not `name=value`"),
+        (
+            &["--machine", "other", "--param", "nope=1"],
+            "unknown param `nope`",
+        ),
+        (
+            &["--machine", "other", "--param", "n=x"],
+            "param `n` must be of type `int`",
+        ),
+        (
+            &["--machine", "other", "--param", "ok=yes"],
+            "param `ok` must be of type `bool`",
+        ),
+        (
+            &["--machine", "other", "--param", "n"],
+            "is not `name=value`",
+        ),
         (&["--machine", "ghost"], "unknown machine `ghost`"),
     ];
     for (args, want) in cases {
         let output = p.emit(&[], args).write_stdin("x\n").output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{args:?}");
-        assert!(stderr(&output).contains(want), "{args:?}: {}", stderr(&output));
+        assert!(
+            stderr(&output).contains(want),
+            "{args:?}: {}",
+            stderr(&output)
+        );
     }
     assert!(p.inbox().is_empty());
 }
