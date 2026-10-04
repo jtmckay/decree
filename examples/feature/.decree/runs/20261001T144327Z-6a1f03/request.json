@@ -23,5 +23,41 @@
     "verify: fail",
     "rounds_left: true"
   ],
-  "min_confidence": 0.8
+  "min_confidence": 0.8,
+  "reply_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+      },
+      "event": {
+        "enum": [
+          "retry",
+          "split"
+        ]
+      },
+      "probabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "retry": {
+            "type": "number"
+          },
+          "split": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "event"
+    ],
+    "type": "object"
+  }
 }

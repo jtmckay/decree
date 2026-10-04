@@ -5,7 +5,8 @@
 //! router's script also writes the recorded `reply.json`). The run's message is queued,
 //! `decree process` runs, and the events it writes must equal the recorded ones once
 //! timestamps, durations, deadlines and generated ids are normalised. The same holds for
-//! every child run, its `message.md` and its `request.json`.
+//! every child run, its `message.md` and its `request.json`, and every recorded `reply.json`
+//! validates against its request's `reply_schema`.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
@@ -431,4 +432,44 @@ fn every_recorded_run_that_is_not_a_child_run_is_replayed() {
     for call in top {
         assert!(source.contains(&call), "no test calls {call}");
     }
+}
+
+/// Every recorded `request.json` has a `reply_schema` whose `event` enum is the request's
+/// options, and the router's recorded `reply.json` validates against it.
+#[test]
+fn every_recorded_reply_validates_against_its_request_reply_schema() {
+    let mut checked = 0;
+    for example in fs::read_dir(examples()).unwrap() {
+        let runs = example.unwrap().path().join(".decree/runs");
+        if !runs.is_dir() {
+            continue;
+        }
+        for request in files(&runs)
+            .into_iter()
+            .filter(|p| p.ends_with("request.json"))
+        {
+            let read = |p: &Path| -> Value {
+                serde_json::from_str(&fs::read_to_string(p).unwrap()).unwrap()
+            };
+            let req = read(&request);
+            let options: Vec<&Value> = req["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| &o["event"])
+                .collect();
+            let schema = &req["reply_schema"];
+            let events: Vec<&Value> = schema["properties"]["event"]["enum"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{}: no reply_schema", request.display()))
+                .iter()
+                .collect();
+            assert_eq!(events, options, "{}", request.display());
+            let validator = jsonschema::draft202012::new(schema).unwrap();
+            let reply = read(&request.with_file_name("reply.json"));
+            assert!(validator.is_valid(&reply), "{}: {reply}", request.display());
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 5);
 }

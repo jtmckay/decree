@@ -27,5 +27,45 @@
     "by_text: false",
     "local_model: unsure"
   ],
-  "min_confidence": 0.7
+  "min_confidence": 0.7,
+  "reply_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+      },
+      "event": {
+        "enum": [
+          "invoice",
+          "other",
+          "receipt"
+        ]
+      },
+      "probabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "invoice": {
+            "type": "number"
+          },
+          "other": {
+            "type": "number"
+          },
+          "receipt": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "event"
+    ],
+    "type": "object"
+  }
 }

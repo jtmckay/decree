@@ -102,6 +102,7 @@ fn every_example_passes_check_without_a_warning() {
             "business-eval",
             "docker",
             "feature",
+            "route-by-complexity",
             "sort-documents",
             "text-to-media",
             "text-to-speech",
@@ -504,4 +505,9 @@ fn feature_readme_commands_run() {
 #[test]
 fn sort_documents_readme_commands_run() {
     assert_readme_reads_only("sort-documents");
+}
+
+#[test]
+fn route_by_complexity_readme_commands_run() {
+    assert_readme_reads_only("route-by-complexity");
 }

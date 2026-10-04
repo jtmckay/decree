@@ -64,7 +64,9 @@ Restart=on-failure
 Description=GLiNER2.5-Decide on CPU, for model routers
 
 [Service]
-ExecStart=%h/bin/serve-decide         # loads the model once, serves decisions over HTTP
+# examples/route-by-complexity/gliner/decide_server.py, copied to ~/gliner/: loads the
+# model once and serves POST /classify on 127.0.0.1:8090 (docs/routers.md)
+ExecStart=%h/.local/bin/uv run --with gliner2[local] python %h/gliner/decide_server.py
 Restart=on-failure
 ```
 

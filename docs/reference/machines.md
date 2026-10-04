@@ -152,7 +152,7 @@ There are two retry mechanisms, and they mean different things. `max_attempts`, 
 
 A state with no `invoke` and a `done` transition passes straight through (SCXML's eventless transition).
 
-**Choices.** For `model` and `person`, `question` is what is being decided, and the options are the state's transitions, except `unsure` and `error`. Each option must have a `description`. The question and the options with their descriptions are exactly what the model or the person sees, so write them to stand alone. They map directly onto decision models: TypeSafe Jev's `instructions` and `criteria`, GLiNER2's instructions and described labels, and the question-and-answers of OpenAI's Decisions API. Write prose (`question`, `description`) in block style, one key per line, so no character in it can end a YAML flow map.
+**Choices.** For `model` and `person`, `question` is what is being decided, and the options are the state's transitions, except `unsure` and `error`. Each option must have a `description`. The question and the options with their descriptions are exactly what the model or the person sees, so write them to stand alone. They map directly onto decision models: TypeSafe Jev's `instructions` and `criteria`, GLiNER2's described labels, and the question-and-answers of OpenAI's Decisions API. Write prose (`question`, `description`) in block style, one key per line, so no character in it can end a YAML flow map.
 
 **Output.** `output` names a state with a script invoke; a `matches` condition and a model read that state's latest script output, as logged (stdout, and stderr lines with their `[stderr] ` prefix). A model sees only what it is given: that output, if `output` is named, and the message body. Without `output`, the request's `input` is empty.
 

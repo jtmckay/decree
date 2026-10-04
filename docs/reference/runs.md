@@ -42,11 +42,23 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
      "min_confidence": 0.8,
      "input": "<the output state's output>",
      "message_body": "<the parent message's body>",
-     "history": ["precheck: done", "implement: done", "verify: fail", "rounds_left: true"]
+     "history": ["precheck: done", "implement: done", "verify: fail", "rounds_left: true"],
+     "reply_schema": {
+       "$schema": "https://json-schema.org/draft/2020-12/schema",
+       "type": "object",
+       "properties": {
+         "event": {"enum": ["retry", "split"]},
+         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+         "reason": {"type": "string"},
+         "probabilities": {"type": "object", "properties": {"retry": {"type": "number"}, "split": {"type": "number"}}, "additionalProperties": false}
+       },
+       "required": ["event"],
+       "additionalProperties": false
+     }
    }
    ```
 
-   Options are the state's transitions except `unsure` and `error`, in name order. `input` and `message_body` are kept apart, so a router can pass them on as structured context (Jev's `state` accepts any JSON). `input` is the latest script output of the invoke's `output` state, as logged (stdout, and stderr lines with their `[stderr] ` prefix), and empty when the invoke names no `output`: a model sees only what it is given, a script decides what that is by what it prints, and that is also how to keep secrets out of a prompt. `history` has one `"<from>: <event>"` entry for each `transition` event of this run so far, in order, except the claim.
+   Options are the state's transitions except `unsure` and `error`, in name order. `input` and `message_body` are kept apart, so a router can pass them on as structured context (Jev's `state` accepts any JSON). `input` is the latest script output of the invoke's `output` state, as logged (stdout, and stderr lines with their `[stderr] ` prefix), and empty when the invoke names no `output`: a model sees only what it is given, a script decides what that is by what it prints, and that is also how to keep secrets out of a prompt. `history` has one `"<from>: <event>"` entry for each `transition` event of this run so far, in order, except the claim. `reply_schema` is a JSON Schema (draft 2020-12) for `reply.json` (step 3): `event` is one of the options, `confidence` a number from 0 to 1, `reason` a string and `probabilities` a number per option; only `event` is required, and no other key is allowed. A typed router hands it unchanged to a constrained decoder (Ollama's `format`, an OpenAI-style `response_format`), so the model cannot answer outside the options ([Router machines](../routers.md)); an untyped one may ignore it, since decree validates the reply either way.
 2. **Route.** decree starts the router machine (the invoke's `router:`, else the machine named `router`) as a child run (Sub-machines, below), with `DECREE_REQUEST` and `DECREE_REPLY` set for its scripts.
 3. **Reply.** The router writes `reply.json`: `{"event": "<one option>", "reason": "…", "confidence": 0.86, "probabilities": {…}}`. Only `event` is required.
 4. **Validate.** If the child run ends in `failed`, or `reply.json` is missing or its `event` is not one of the options, the event is `error` with `router_error`. With `min_confidence` set, a missing or lower `confidence` produces `unsure` instead of the pick. decree appends a `decision` event with the pick, the reason, the confidence and the child run's id. Never fuzzy-match an option.
@@ -97,7 +109,7 @@ Options:
 
 `{history}` is one `- <entry>` line per `history` entry; `{input}` and `{message_body}` are inserted as they are.
 
-**Confidence is the router's number.** Jev derives it from its probability distribution; GLiNER2 scores each label; chat models report their own, which is the least reliable. A `min_confidence` is therefore calibrated for one router: when a `model` invoke switches router, or the `router` machine changes, revisit the threshold. Every `decision` event records the router, so thresholds can be checked against outcomes in Grafana. Other routers are other machines: TypeSafe Jev (hosted), Fastino's GLiNER2.5-Decide (a 1B classifier that runs locally on CPU, Apache-2.0), OpenAI's Decisions API (in preview; its schema is not public yet), a self-hosted LLM (SGLang, vLLM, Ollama), or a machine that asks a cheap model first and a stronger one only when the first is unsure. [Router machines](../routers.md) shows them; running a model server is outside decree.
+**Confidence is the router's number.** Jev derives it from its probability distribution; GLiNER2.5-Decide reports the classifier's score for the label it picks; chat models report their own, which is the least reliable. A `min_confidence` is therefore calibrated for one router: when a `model` invoke switches router, or the `router` machine changes, revisit the threshold. Every `decision` event records the router, so thresholds can be checked against outcomes in Grafana. Other routers are other machines: TypeSafe Jev (hosted), Fastino's GLiNER2.5-Decide (a 1B classifier that runs locally on CPU, Apache-2.0), OpenAI's Decisions API (in preview; its schema is not public yet), a self-hosted LLM (SGLang, vLLM, Ollama), or a machine that asks a cheap model first and a stronger one only when the first is unsure. [Router machines](../routers.md) shows them; running a model server is outside decree.
 
 ## Sub-machines
 

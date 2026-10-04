@@ -9,7 +9,7 @@
 | `develop_test.rs` | The `develop` and `rust_develop` machines `init` writes: their outcomes, QA, `STOP`, sessions and usage limits. |
 | `docs_test.rs` | The docs hold together: links resolve, the machine examples are the `examples/feature/` files. |
 | `emit_test.rs` | `decree emit`: parent, depth, trigger, `emits`, `max_depth` and `--param`. |
-| `examples_test.rs` | Every project in `examples/` checks and ships its graph and schema, and its README commands run; no word from the previous major version (listed in the test) remains in `src/`, `docs/reference/`, `README.md`, `tests/` or `examples/`. |
+| `examples_test.rs` | Every project in `examples/` checks and ships its graph and schema, and its README's `bash` blocks run (other fences, such as the GLiNER quick start's `sh`, are for a real machine); no word from the previous major version (listed in the test) remains in `src/`, `docs/reference/`, `README.md`, `tests/` or `examples/`. |
 | `failure_test.rs` | Failure scenarios not covered elsewhere: SIGTERM then `decree retry`, two `process` at once, router replies rejected or below `min_confidence`, `max_depth`, `onexit` failures and the 2 MiB log cap. |
 | `graph_test.rs` | `decree graph`: one file per machine, `system.md`, stale files, and every example's graph byte for byte. |
 | `hooks_test.rs` | `onentry`/`onexit` order, attempts, and `failed`'s `onentry`. |
@@ -20,9 +20,10 @@
 | `prune_test.rs` | `decree prune`: only finished runs older than the age, `--dry-run`, the runs it keeps (not finished, failed migration, child of an unfinished parent, locked), bad ages, and a pruned migration not run again. |
 | `schema_test.rs` | The JSON Schemas: valid draft 2020-12, a description on every key, every machine in `examples/`, the templates, this repository and a fresh `init` validates, every message in `examples/` validates, and `decree schema` and the `check` warning. |
 | `readme_test.rs` | `README.md` and `--help` cover every command and name no removed concept; every README command runs. |
-| `replay_test.rs` | Each recorded run in `examples/` that is not a router's child run, replayed through the binary with stub scripts: its events, child runs, `message.md` and `request.json` equal the recorded ones. Every such run must have a test. |
+| `replay_test.rs` | Each recorded run in `examples/` that is not a router's child run, replayed through the binary with stub scripts: its events, child runs, `message.md` and `request.json` (with its `reply_schema`) equal the recorded ones. Every such run must have a test. Every recorded `reply.json` validates against its request's `reply_schema`, whose `event` enum is the options. |
+| `route_by_complexity_test.rs` | `examples/route-by-complexity/`'s `develop_by_size` through the binary, with a stub `ask_gliner.sh` and stub `opencode`, `claude` and test commands: `small`, `large`, `unsure`, a local attempt that fails verification and escalates to Claude, and both failing. The classifier's input holds the named files' line counts, the request's `reply_schema` allows exactly the options, the GLiNER quick starts are at most five commands, the server code is in one file, and `decide_server.py` byte-compiles (skipped without `python3`). |
 | `reply_test.rs` | Replies to waiting runs, `timeout_s`, and `decree event`. |
-| `templates_test.rs` | Every example file that `init` also writes (the git scripts, and the `router` copy in each recorded example) is byte-identical to it. |
+| `templates_test.rs` | Every example file that `init` also writes (the git scripts, and the `router` copy in each recorded example) is byte-identical to it, and the two `gliner_router` copies are identical. |
 | `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, plus a failing case for each machine shape that migration 71 replaced (V19), as a table. The same cases hold the JSON Schemas to `decree check`: `CHECK_ONLY` lists, with the reason, each failing file only `decree check` can catch. |
 
 `fixtures/` holds only what is not in `examples/`: the graph `system` project, the `step_*` machines and the scripts that unit tests in `src/` run, and the SCXML IRP notes.

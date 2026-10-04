@@ -44,6 +44,10 @@ appear only where a machine invokes `model` or `person`.
   too. Run `decree schema` if `.decree/schema/` is missing.
 - **Machines decide, scripts work.** A script makes no routing decision beyond printing one
   event; a decision is a state of its own (`check`, `model` or `person`), never logic hidden in a script.
+- **Route with a typed router.** For a `model` decision that routes work (which model, which
+  path), point `router:` at a typed router (a classifier such as GLiNER2.5-Decide, or a model
+  constrained by `reply_schema`): it cannot answer outside the options and costs little. Keep
+  untyped models (`claude -p`) for the work itself.
 - **Queue follow-up work with `decree emit`**, never by writing into `.decree/inbox/` by hand
   from a script. The emitting state must list the target in `emits:`.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and

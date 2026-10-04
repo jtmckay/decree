@@ -42,6 +42,7 @@ pub(super) struct Request<'r> {
     input: String,
     message_body: &'r str,
     history: Vec<String>,
+    reply_schema: Value,
 }
 
 #[derive(serde::Serialize)]
@@ -115,6 +116,32 @@ impl Reply {
             probabilities,
         })
     }
+}
+
+/// `reply_schema` in `request.json` (docs/reference/runs.md, Model, step 1): a JSON Schema
+/// (draft 2020-12) for `reply.json` over `options`, which a typed router passes unchanged
+/// to a constrained decoder (Ollama's `format`, OpenAI-style `response_format`).
+pub(super) fn reply_schema(options: &[String]) -> Value {
+    let probabilities: Map<String, Value> = options
+        .iter()
+        .map(|o| (o.clone(), json!({ "type": "number" })))
+        .collect();
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "event": { "enum": options },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "reason": { "type": "string" },
+            "probabilities": {
+                "type": "object",
+                "properties": probabilities,
+                "additionalProperties": false,
+            },
+        },
+        "required": ["event"],
+        "additionalProperties": false,
+    })
 }
 
 /// The options of `model` or `person` state `n`, in name order (docs/reference/machines.md, Choices).
@@ -269,6 +296,7 @@ impl Interpreter<'_> {
             },
             message_body: &self.message_body,
             history,
+            reply_schema: reply_schema(&option_names(m, s)),
         };
         Ok(serde_json::to_string_pretty(&request).unwrap_or_default() + "\n")
     }

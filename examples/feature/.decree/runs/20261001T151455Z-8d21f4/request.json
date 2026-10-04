@@ -21,5 +21,45 @@
   ],
   "input": "",
   "message_body": "Add a dark mode toggle to the settings page. Remember the choice per user.\n",
-  "history": []
+  "history": [],
+  "reply_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+      },
+      "event": {
+        "enum": [
+          "feature",
+          "reject",
+          "small_change"
+        ]
+      },
+      "probabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "feature": {
+            "type": "number"
+          },
+          "reject": {
+            "type": "number"
+          },
+          "small_change": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "event"
+    ],
+    "type": "object"
+  }
 }

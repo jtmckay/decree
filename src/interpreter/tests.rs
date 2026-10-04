@@ -1994,6 +1994,22 @@ fn model_router_reply_is_the_event_and_the_request_matches_the_reference() {
         "input": input,
         "message_body": BODY,
         "history": ["work: done"],
+        "reply_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "event": {"enum": ["retry", "split"]},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "reason": {"type": "string"},
+                "probabilities": {
+                    "type": "object",
+                    "properties": {"retry": {"type": "number"}, "split": {"type": "number"}},
+                    "additionalProperties": false,
+                },
+            },
+            "required": ["event"],
+            "additionalProperties": false,
+        },
     });
     assert_eq!(serde_json::from_str::<Value>(&copied).unwrap(), want);
     // Keys in docs/reference/runs.md's order.
@@ -2009,6 +2025,7 @@ fn model_router_reply_is_the_event_and_the_request_matches_the_reference() {
         "\"input\"",
         "\"message_body\"",
         "\"history\"",
+        "\"reply_schema\"",
     ]
     .iter()
     .map(|k| copied.find(k).unwrap())

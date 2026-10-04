@@ -79,13 +79,23 @@ sees by what it prints, which is also how to keep secrets out of a prompt.
 ### Routers
 
 A `model` state never calls a model itself. decree writes `request.json` (question,
-options, the `output` state's output as `input`, message body, the run's history) and runs a
+options, the `output` state's output as `input`, message body, the run's history, and
+`reply_schema`, a JSON Schema for the reply) and runs a
 **router**: an ordinary machine (`router:` on the invoke, else the machine named `router`, which
 `decree init` writes).
 Its script reads `$DECREE_REQUEST`, asks a model, and writes
 `{"event": "...", "reason": "...", "confidence": 0.86}` to `$DECREE_REPLY`. decree checks the
 event is an option and applies `min_confidence`. To use another model, write another router
 machine and point `router:` at it, or replace `machines/router.yml`; recalibrate `min_confidence` when you do.
+
+Routers are **typed** or **untyped**. A typed router cannot answer outside the options: a
+classifier such as GLiNER2.5-Decide picks one of the labels it is given, and a constrained
+decoder (Ollama's `format`) is handed `reply_schema` unchanged. An untyped router asks a chat
+model or coding agent (`claude -p`, Copilot, OpenCode) for free text, and its script must find
+and check the JSON; its confidence is self-reported. Use a typed router for routing decisions
+(cheap, frequent, bounded: which model, which path), and an untyped model for the work itself
+and for judgments that need reasoning over a lot of context. `docs/routers.md` in the decree
+repository shows both.
 
 ### Conditions
 

@@ -151,3 +151,20 @@ fn missing_example_or_template_file_names_the_pair() {
     assert_eq!(found.len(), ROUTER.len());
     assert!(found.iter().all(|line| line.ends_with("template missing")));
 }
+
+/// `gliner_router` has no template: `init` does not write it. Its copies in
+/// `sort-documents` and `route-by-complexity` are byte-identical to each other.
+#[test]
+fn gliner_router_copies_are_identical() {
+    let examples = repo().join("examples");
+    for path in [
+        "machines/gliner_router.yml",
+        "scripts/gliner_router/ask_gliner.sh",
+    ] {
+        let read = |name: &str| fs::read(examples.join(name).join(".decree").join(path)).unwrap();
+        assert!(
+            read("sort-documents") == read("route-by-complexity"),
+            "{path} differs between sort-documents and route-by-complexity"
+        );
+    }
+}
