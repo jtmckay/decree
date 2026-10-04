@@ -4,7 +4,7 @@ initial: work
 states:
   work:
     invoke:
-      script: { name: sleep_long, timeout_s: 1 }
+      script: { name: sleep_long, timeout: 1s }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

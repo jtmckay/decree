@@ -43,7 +43,7 @@ states:
           person:
             question: Tests still fail. What next?
             ask: ask_person
-            timeout_s: 172800
+            timeout: 2d
         transitions:
           approve: { target: verified, description: Good enough; commit it. }
           retry:   { target: implement, description: Try again; see my note. }

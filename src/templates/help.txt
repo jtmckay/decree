@@ -22,8 +22,8 @@ Commands:
                               and messages, for editors and models
   decree process [--dry-run]  Deliver replies, continue pending runs, drain
                               inbox/, then run pending migrations in order
-  decree daemon [--interval S]
-                              The same passes plus cron, every S seconds
+  decree daemon [--interval D]
+                              The same passes plus cron, every D (default 2s)
   decree emit --machine M [--param K=V]...
                               Queue a message for M; the body is read from
                               stdin. Prints its id
@@ -35,7 +35,7 @@ Commands:
   decree retry ID [--state S] Make an interrupted or finished run pending again
   decree prune --older-than AGE [--dry-run]
                               Delete finished runs older than AGE (30d, 12h,
-                              90m); --dry-run lists them
+                              90m, 90s); --dry-run lists them
   decree help                 This help text
   decree --version            Print the version
 
@@ -93,7 +93,7 @@ Machines:
 
   A machine is an SCXML statechart written in YAML. `invoke` has one key,
   which names the kind:
-    <script>, or script: { name: <script>, max_attempts: 2, timeout_s: 600 }
+    <script>, or script: { name: <script>, max_attempts: 2, timeout: 10m }
                                               a script
     check: { visits: S, less_than: 3 }        a condition: true or false
     model: { question: ..., output: <state> } a router machine asks a model

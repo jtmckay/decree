@@ -1428,7 +1428,7 @@ fn person_ask_script_sees_the_wait_id_and_choices_then_the_run_waits() {
 fn person_without_timeout_has_null_timeout_at() {
     let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_person.yml"))
         .unwrap()
-        .replace("            timeout_s: 60\n", "");
+        .replace("            timeout: 60s\n", "");
     let p = Project::from_text("step_person", &text, &[]);
     assert!(matches!(p.run(), Outcome::Waiting { .. }));
     assert_eq!(p.events_of("waiting")[0]["timeout_at"], Value::Null);

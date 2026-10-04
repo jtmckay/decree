@@ -198,7 +198,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `wait_id` | string | `<run id>.w<seq>`; a reply must name it (or the run id). Absent when waiting for a child. |
 | `child` | string | The child run waited for, when waiting on a sub-machine or a router. |
 | `options` | list of strings | The options, in name order (a `person` wait). |
-| `timeout_at` | string or null | RFC 3339 deadline from `timeout_s`, or `null`. |
+| `timeout_at` | string or null | RFC 3339 deadline from the `person` invoke's `timeout`, or `null`. |
 
 **`received`**: an external event arrived for a waiting run.
 

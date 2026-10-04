@@ -1,5 +1,5 @@
 //! Replies to waiting runs (docs/reference/messages.md, Replies): delivery and rejection when `process`
-//! claims a reply, `timeout_s` deadlines, and `decree event`. Each test builds its own
+//! claims a reply, `timeout` deadlines, and `decree event`. Each test builds its own
 //! `.decree/` in a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -24,7 +24,7 @@ states:
       person:
         question: Ship this build?
         ask: ask_person
-        timeout_s: TIMEOUT
+        timeout: TIMEOUT
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
@@ -51,14 +51,14 @@ struct Project {
 
 impl Project {
     /// A project with one `deploy` message queued as run `run-a`.
-    fn new(timeout_s: u64) -> Project {
+    fn new(timeout: &str) -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
         for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        let machine = DEPLOY.replace("TIMEOUT", &timeout_s.to_string());
+        let machine = DEPLOY.replace("TIMEOUT", timeout);
         fs::write(decree.join("machines/deploy.yml"), machine).unwrap();
         for (name, text) in [("ask_person", "#!/usr/bin/env bash\n"), ("ship", SHIP)] {
             write_script(&decree.join("scripts").join(name), text);
@@ -174,7 +174,7 @@ fn invalid_message(events: &[Value]) -> String {
 
 #[test]
 fn reply_with_wait_id_and_option_continues_with_source_person() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     let wait_id = p.wait();
     p.write(
         "inbox/reply.md",
@@ -212,7 +212,7 @@ fn reply_with_wait_id_and_option_continues_with_source_person() {
 
 #[test]
 fn reply_naming_the_run_id_answers_its_current_wait() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     let wait_id = p.wait();
     p.write(
         "inbox/reply.md",
@@ -251,7 +251,7 @@ fn assert_rejected(p: &Project, reply: &str, expected: &str) {
 
 #[test]
 fn reply_with_stale_wait_id_is_rejected_and_the_run_stays_waiting() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     let wait_id = p.wait();
     let reply = format!("---\nto: {RUN}.w999\nevent: approve\n---\n");
     assert_rejected(&p, &reply, &format!("now waits as {wait_id}"));
@@ -259,7 +259,7 @@ fn reply_with_stale_wait_id_is_rejected_and_the_run_stays_waiting() {
 
 #[test]
 fn reply_with_an_event_that_is_not_an_option_is_rejected() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     p.wait();
     let reply = format!("---\nto: {RUN}\nevent: maybe\n---\n");
     assert_rejected(&p, &reply, "`maybe` is not an option");
@@ -267,7 +267,7 @@ fn reply_with_an_event_that_is_not_an_option_is_rejected() {
 
 #[test]
 fn reply_to_an_unknown_run_is_rejected() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     p.wait();
     assert_rejected(
         &p,
@@ -278,7 +278,7 @@ fn reply_to_an_unknown_run_is_rejected() {
 
 #[test]
 fn reply_to_a_finished_run_is_rejected() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     p.wait();
     p.write(
         "inbox/reply.md",
@@ -296,7 +296,7 @@ fn reply_to_a_finished_run_is_rejected() {
 
 #[test]
 fn reply_never_replaces_an_earlier_reply_of_the_same_name() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     p.wait();
     let received = p.decree().join("runs").join(RUN).join("received");
     fs::create_dir_all(&received).unwrap();
@@ -327,7 +327,7 @@ fn assert_rejected_keeping(p: &Project, expected: &str) {
 
 #[test]
 fn timeout_after_the_deadline_continues_with_received_error_timed_out() {
-    let p = Project::new(1);
+    let p = Project::new("1s");
     let wait_id = p.wait();
     let waiting = p.events(RUN);
     std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -349,7 +349,7 @@ fn timeout_after_the_deadline_continues_with_received_error_timed_out() {
 
 #[test]
 fn no_timeout_before_the_deadline() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     p.wait();
     let before = p.events(RUN);
     p.process().assert().code(0);
@@ -362,7 +362,7 @@ fn no_timeout_before_the_deadline() {
 
 #[test]
 fn event_queues_a_reply_that_process_delivers() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     let wait_id = p.wait();
     let out = p
         .event(&[&wait_id, "approve", "-m", "Ship it."])
@@ -386,7 +386,7 @@ fn event_queues_a_reply_that_process_delivers() {
 
 #[test]
 fn event_for_a_run_that_is_not_waiting_exits_1() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     p.wait();
     p.event(&[RUN, "reject"]).assert().code(0);
     p.process().assert().code(0);
@@ -402,7 +402,7 @@ fn event_for_a_run_that_is_not_waiting_exits_1() {
 
 #[test]
 fn event_with_an_unaccepted_event_or_stale_or_unknown_target_exits_1() {
-    let p = Project::new(3600);
+    let p = Project::new("1h");
     let wait_id = p.wait();
     for (args, expected) in [
         (vec![wait_id.as_str(), "maybe"], "is not an option"),

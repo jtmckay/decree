@@ -6,7 +6,7 @@ initial: implement
 states:
   implement:
     invoke:
-      script: { name: implement, timeout_s: 3600 }
+      script: { name: implement, timeout: 1h }
     transitions: { done: test }
   test:
     invoke: test

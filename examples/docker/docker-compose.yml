@@ -6,5 +6,5 @@ services:
     environment:
       - DECREE_AI=opencode
       - DECREE_DAEMON=true
-      - DECREE_INTERVAL=2
+      - DECREE_INTERVAL=2s
     restart: unless-stopped

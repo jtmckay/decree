@@ -278,7 +278,7 @@ states:
     transitions: { done: long }
   long:
     invoke:
-      script: { name: work, max_attempts: 2, timeout_s: 60 }
+      script: { name: work, max_attempts: 2, timeout: 60s }
     transitions: { done: named }
   named:
     invoke:
@@ -316,7 +316,7 @@ states:
       person:
         question: Ship it?
         ask: ask_person
-        timeout_s: 86400
+        timeout: 1d
     transitions:
       approve: { target: child, description: Ship it. }
       reject:  { target: done, description: Do not ship. }

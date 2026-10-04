@@ -274,7 +274,7 @@ base=$(basename "$input"); echo "stub transcript" > "$dir/${base%.*}.txt""#,
 /// Runs `decree daemon` until every queued message has a finished run, then
 /// stops it with SIGTERM, which is a clean exit (0).
 const RUN_DAEMON: &str = r#"run_daemon() {
-  decree daemon --interval 1 & local pid=$!
+  decree daemon --interval 1s & local pid=$!
   for _ in $(seq 100); do
     if [ -z "$(ls .decree/inbox)" ] && ! grep -L '^state: \(done\|failed\)' .decree/runs/*/message.md | grep -q .; then
       break

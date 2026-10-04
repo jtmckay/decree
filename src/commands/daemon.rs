@@ -1,4 +1,4 @@
-//! `decree daemon [--interval <s>]` (docs/reference/cli.md): validate, mark crashed runs
+//! `decree daemon [--interval <duration>]` (docs/reference/cli.md): validate, mark crashed runs
 //! `interrupted`, then loop: deliver replies and timeouts, continue `pending` runs, cron
 //! tick, drain the inbox, next migration, sleep. Every step is `process`'s own
 //! (`commands::process::Pipeline`); there is no second pipeline. A failed or interrupted
@@ -16,15 +16,15 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Run the daemon polling loop.
-pub fn run(project_root: &Path, interval: u64) -> Result<(), DecreeError> {
+pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
     let mut pipeline = Pipeline::new(project_root, &project, Arc::clone(&shutdown))?;
-    println!("decree daemon: polling every {interval}s");
+    println!("decree daemon: polling every {}s", interval.as_secs());
 
     let mut cron_tracker = CronTracker::new();
     // The last message a blocked migration printed, so each block is reported once.
@@ -42,12 +42,17 @@ pub fn run(project_root: &Path, interval: u64) -> Result<(), DecreeError> {
             Err(stop) => return Err(stop.into_error()),
             Ok(()) => {}
         }
-        // Sleep, checking for a signal every 100 ms.
-        for _ in 0..interval.saturating_mul(10) {
-            if shutdown.load(Ordering::Relaxed) {
+        // Sleep, checking for a signal every 100 ms. An interval past what `Instant` holds
+        // sleeps until a signal.
+        let wake = Instant::now().checked_add(interval);
+        while !shutdown.load(Ordering::Relaxed) {
+            let left = wake.map_or(Duration::MAX, |w| {
+                w.saturating_duration_since(Instant::now())
+            });
+            if left.is_zero() {
                 break;
             }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(left.min(Duration::from_millis(100)));
         }
         if shutdown.load(Ordering::Relaxed) {
             result = Err(Stop::Interrupted);

@@ -27,7 +27,7 @@ every state is reachable. `decree schema` rewrites `.decree/schema/` if it is mi
 | Root | `data` | `name: { type: string\|int\|bool, default: ... }`. Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
 | Root | `onentry`, `onexit` | Scripts run once when the run starts, and once after a root final state is entered. |
 | Root | `initial`, `states` | Required. `initial` is a direct child. |
-| State | `invoke` | The state's function (below). `max_attempts` and `timeout_s` go inside it. |
+| State | `invoke` | The state's function (below). `max_attempts` and `timeout` go inside it. |
 | State | `transitions` | `event: target`, or `event: { target, description, type: internal }`. |
 | State | `onentry`, `onexit` | Scripts run every time the state is entered or exited. They produce no event. |
 | State | `initial`, `states` | Make the state compound (no `invoke`). |
@@ -49,11 +49,15 @@ name is short for `{ name: <name> }`, and `invoke: implement` is short for
 
 | `invoke` | What runs | Events |
 | --- | --- | --- |
-| `script: { name: <script>, max_attempts?: <n>, timeout_s?: <s> }` | The script (see `scripts.md`), re-run in place up to `max_attempts` times (default 1), each stopped after `timeout_s`. | `done` (exit 0), `error` (non-zero), or the event it prints. |
+| `script: { name: <script>, max_attempts?: <n>, timeout?: <duration> }` | The script (see `scripts.md`), re-run in place up to `max_attempts` times (default 1), each stopped after `timeout`. | `done` (exit 0), `error` (non-zero), or the event it prints. |
 | `check: <condition>` | decree evaluates the condition. No AI. | `true` or `false`. |
 | `model: { question: ..., router?: <machine>, min_confidence?: 0.8, output?: <state> }` | A router machine asks a model to pick one of the state's transitions. | An option; `unsure` below `min_confidence`; `error` if the router fails. |
-| `person: { question: ..., ask: <script>, timeout_s?: <s> }` | The `ask` script tells someone; the run pauses for a reply. | An option; `error` on timeout. |
+| `person: { question: ..., ask: <script>, timeout?: <duration> }` | The `ask` script tells someone; the run pauses for a reply. | An option; `error` on timeout. |
 | `machine: { name: <machine>, params?: {...} }` | The machine runs as a child run. | The child's root final state (`failed` becomes `error`). |
+
+A duration (`timeout`, and `decree prune --older-than` and `decree daemon --interval`) is a whole
+number followed by one unit, `s`, `m`, `h` or `d`: `90s`, `10m`, `12h`, `7d`. No fractions, no
+combinations (`1h30m`) and no bare numbers.
 
 A state with no `invoke` and a `done` transition passes straight through. Write decision invokes
 in block style:
@@ -141,7 +145,7 @@ literal or `{ data: <name> }`. For example `{ output: read_text, matches: '(?i)i
 (use `decree emit`), `<raise>` (a script names its event), `<assign>` (`data` is read-only),
 targetless transitions, XML. `decree check` names the alternative when it rejects one, and names
 the new shape for an old one (`choose`, `input`, a bare `matches`, `max_attempts` or `timeout_s` on
-a state, `{ machine: x, params: ... }`).
+a state, `timeout_s` in an invoke, `{ machine: x, params: ... }`).
 
 ## Example: everything at once
 
@@ -191,7 +195,7 @@ states:
           person:
             question: Tests still fail. What next?
             ask: ask_person
-            timeout_s: 172800
+            timeout: 2d
         transitions:
           approve: { target: verified, description: Good enough; commit it. }
           retry:   { target: implement, description: Try again; see my note. }

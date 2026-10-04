@@ -71,7 +71,7 @@ fi
 # Default behavior: daemon or interactive shell
 DECREE_DAEMON="${DECREE_DAEMON:-true}"
 if [[ "$DECREE_DAEMON" == "true" ]]; then
-  exec decree daemon --no-color --interval "${DECREE_INTERVAL:-2}"
+  exec decree daemon --no-color --interval "${DECREE_INTERVAL:-2s}"
 else
   exec bash
 fi

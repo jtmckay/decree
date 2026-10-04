@@ -77,7 +77,7 @@ states:
       person:
         question: Which kind of document is this?
         ask: ask_person
-        timeout_s: 604800
+        timeout: 7d
     transitions:
       invoice:
         target: file_invoice

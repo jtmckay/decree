@@ -65,7 +65,7 @@ fn reference_examples_load() {
     };
     assert_eq!(c.question.as_deref(), Some("Ship this build?"));
     assert_eq!(c.ask.as_deref(), Some("ask_person"));
-    assert_eq!(c.timeout_s, Some(86400));
+    assert_eq!(c.timeout, Some(Duration::from_secs(86400)));
 
     let ship = &machines["ship"];
     let build = &ship.nodes[ship.find("build").unwrap()];
@@ -125,7 +125,7 @@ fn feature_arena_has_eleven_states_plus_root() {
         Some(Invoke::Script(ScriptInvoke {
             name: "verify".into(),
             max_attempts: None,
-            timeout_s: None,
+            timeout: None,
         }))
     );
 
@@ -826,7 +826,7 @@ fn state_level_script_settings_name_the_script_invoke() {
     );
     assert_eq!(
         old_shape("    invoke: s\n    timeout_s: 60\n    transitions: { done: done }\n"),
-        "a: timeout_s on a state is not supported: write it inside the invoke, invoke: { script: { name: <script>, timeout_s: <n> } } (or person: { ..., timeout_s: <n> }) (V19)"
+        "a: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d }) (V19)"
     );
 }
 
@@ -841,7 +841,7 @@ fn machine_with_params_beside_it_names_the_long_form() {
 #[test]
 fn script_and_machine_take_a_bare_name_or_the_long_form() {
     let text = format!(
-        "{HEAD}  a:\n    invoke:\n      script: {{ name: s, max_attempts: 3, timeout_s: 9 }}\n    \
+        "{HEAD}  a:\n    invoke:\n      script: {{ name: s, max_attempts: 3, timeout: 9s }}\n    \
          transitions: {{ done: b }}\n  \
          b: {{ invoke: {{ script: s }}, transitions: {{ done: c }} }}\n  \
          c: {{ invoke: {{ machine: {{ name: child, params: {{ n: 1 }} }} }}, transitions: {{ done: done }} }}\n  \
@@ -853,8 +853,8 @@ fn script_and_machine_take_a_bare_name_or_the_long_form() {
         panic!("{:?}", m.nodes[a].invoke);
     };
     assert_eq!(
-        (script.name.as_str(), script.max_attempts, script.timeout_s),
-        ("s", Some(3), Some(9))
+        (script.name.as_str(), script.max_attempts, script.timeout),
+        ("s", Some(3), Some(Duration::from_secs(9)))
     );
     assert_eq!(m.max_attempts(a), 3);
     let b = m.find("b").unwrap();
@@ -863,7 +863,7 @@ fn script_and_machine_take_a_bare_name_or_the_long_form() {
         Some(Invoke::Script(ScriptInvoke {
             name: "s".into(),
             max_attempts: None,
-            timeout_s: None,
+            timeout: None,
         }))
     );
     assert_eq!(m.max_attempts(b), 1);

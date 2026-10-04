@@ -332,7 +332,7 @@ impl Executor {
                 attempt,
                 max_attempts,
                 events: &events,
-                timeout: script.timeout_s.map(Duration::from_secs),
+                timeout: script.timeout,
                 names_event: true,
                 ..ScriptRun::new(&script.name, &node.id, Phase::Invoke)
             })?;
@@ -1318,12 +1318,12 @@ pub(crate) mod executor_tests {
     }
 
     #[test]
-    fn timeout_stops_the_invoke_with_error_and_timed_out() {
+    fn timeout_kills_the_invoke_with_error_and_timed_out() {
         let p = Project::new(&["sleep_long"]);
         let start = Instant::now();
         let out = invoke(
             &p,
-            "{ invoke: { script: { name: sleep_long, timeout_s: 1 } }, transitions: { done: done } }",
+            "{ invoke: { script: { name: sleep_long, timeout: 1s } }, transitions: { done: done } }",
         );
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_secs(12), "took {elapsed:?}");

@@ -2,7 +2,7 @@
 //! signals and `decree retry`, two `decree process` at once, router replies decree
 //! rejects or doubts, `max_depth`, `onexit` failures and the log cap. Scenarios other files
 //! already cover: SIGKILL and the stale lock (`interrupt_test.rs`), stale or wrong replies
-//! and `timeout_s` (`reply_test.rs`), a failed migration (`process_test.rs`, rule 4). Each
+//! and `timeout` (`reply_test.rs`), a failed migration (`process_test.rs`, rule 4). Each
 //! test builds its own `.decree/` in a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;

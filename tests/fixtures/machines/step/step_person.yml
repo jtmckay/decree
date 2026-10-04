@@ -17,7 +17,7 @@ states:
           person:
             question: Ship this build?
             ask: ask_person
-            timeout_s: 60
+            timeout: 60s
         onentry: [approval_entry]
         onexit: [approval_exit]
         transitions:

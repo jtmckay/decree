@@ -58,6 +58,12 @@
     }
   },
   "$defs": {
+    "duration": {
+      "type": "string",
+      "pattern": "^[0-9]{1,9}[smhd]$",
+      "description": "A whole number of at most 9 digits followed by one unit: s (seconds), m (minutes), h (hours) or d (days). No fractions, no combinations such as 1h30m, and no bare numbers (docs/reference/machines.md, Durations).",
+      "examples": ["90s", "10m", "12h", "7d"]
+    },
     "ident": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
@@ -260,7 +266,7 @@
         { "script": { "name": "implement", "max_attempts": 2 } },
         { "check": { "visits": "implement", "less_than": { "data": "max_rounds" } } },
         { "model": { "question": "Should we implement again or split the work?", "min_confidence": 0.8, "output": "verify" } },
-        { "person": { "question": "Ship this build?", "ask": "ask_person", "timeout_s": 86400 } },
+        { "person": { "question": "Ship this build?", "ask": "ask_person", "timeout": "1d" } },
         { "machine": "deploy" }
       ]
     },
@@ -280,16 +286,14 @@
               "maximum": 4294967295,
               "description": "How many times to run a script that fails, in place: same state, no onexit or onentry between attempts. Default 1 (no retry). A transition back to an earlier state is a different thing: a new round the machine chooses."
             },
-            "timeout_s": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 18446744073709551615,
-              "description": "Seconds each attempt may run before decree stops it; a timed-out attempt fails. Default: no limit."
+            "timeout": {
+              "$ref": "#/$defs/duration",
+              "description": "How long each attempt may run before decree stops it; a timed-out attempt fails. A duration (V16). Default: no limit."
             }
           }
         }
       ],
-      "examples": ["implement", { "name": "implement", "max_attempts": 2, "timeout_s": 3600 }]
+      "examples": ["implement", { "name": "implement", "max_attempts": 2, "timeout": "1h" }]
     },
     "modelInvoke": {
       "type": "object",
@@ -326,14 +330,12 @@
           "$ref": "#/$defs/scriptName",
           "description": "The script that tells someone a decision is waiting and how to reply. It gets the wait id and the options in its environment (V12)."
         },
-        "timeout_s": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 18446744073709551615,
-          "description": "Seconds to wait for a reply; after that the event is `error`. Default: wait forever."
+        "timeout": {
+          "$ref": "#/$defs/duration",
+          "description": "How long to wait for a reply; after that the event is `error`. A duration (V16). Default: wait forever."
         }
       },
-      "examples": [{ "question": "Tests still fail. What next?", "ask": "ask_person", "timeout_s": 172800 }]
+      "examples": [{ "question": "Tests still fail. What next?", "ask": "ask_person", "timeout": "2d" }]
     },
     "machineInvoke": {
       "description": "SCXML's own invoke type: run another machine as a child run. Its event is the id of the root-level final state the child reached (`done`, `rejected`, ...), and `failed` becomes `error`; this state must handle each of them (V8). A bare name is short for `{ name: <name> }`. A machine never invokes itself, directly or through others (V20).",

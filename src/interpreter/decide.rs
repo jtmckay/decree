@@ -196,9 +196,9 @@ impl Interpreter<'_> {
             )));
         }
 
-        let timeout_at = person.timeout_s.map(|secs| {
-            let secs = i64::try_from(secs).unwrap_or(i64::MAX);
-            let deadline = chrono::TimeDelta::try_seconds(secs)
+        let timeout_at = person.timeout.map(|timeout| {
+            let deadline = chrono::TimeDelta::from_std(timeout)
+                .ok()
                 .and_then(|d| Utc::now().checked_add_signed(d))
                 .unwrap_or(DateTime::<Utc>::MAX_UTC);
             timestamp(deadline)

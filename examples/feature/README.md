@@ -79,7 +79,7 @@ states:
       person:
         question: Ship this build?
         ask: ask_person
-        timeout_s: 86400
+        timeout: 1d
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
@@ -91,7 +91,7 @@ states:
   failed:   { final: true }
 ```
 
-`approval` invokes a `person`: its `ask` script, [`ask_person.sh`](.decree/scripts/ask_person.sh), tells someone the options, and the run pauses until a reply picks one (see Asking a person, below). decree only knows the run is waiting for `approve` or `reject`. No reply in a day (`timeout_s`) is an `error`.
+`approval` invokes a `person`: its `ask` script, [`ask_person.sh`](.decree/scripts/ask_person.sh), tells someone the options, and the run pauses until a reply picks one (see Asking a person, below). decree only knows the run is waiting for `approve` or `reject`. No reply in a day (`timeout: 1d`) is an `error`.
 
 [`machines/feature.yml`](.decree/machines/feature.yml) uses everything, drawn by `decree graph feature` ([`.decree/graph/feature.md`](.decree/graph/feature.md)):
 
@@ -171,7 +171,7 @@ A machine is an SCXML statechart written in YAML. The keys are SCXML's names; if
 | `type: internal` (not used here) | `type="internal"` | A compound state's transition to its own child without leaving the compound. |
 | `data` (in the machine), `params` (in a message) | `<datamodel><data>`, `<invoke><param>` | Typed, read-only values; a message's `params` set them for its run. Scripts see `DECREE_DATA_MAX_ROUNDS`. |
 | `emits: [feature]` | extension | Which machines this state's scripts may queue messages for, via `decree emit`. |
-| `invoke: { script: { name: implement, max_attempts: 2 } }`, `timeout_s` | extension (as AWS Step Functions `Retry`, `TimeoutSeconds`) | Mechanical retry and time limit for a script (inside its invoke), or for a reply (inside `person`). |
+| `invoke: { script: { name: implement, max_attempts: 2 } }`, `timeout` | extension (as AWS Step Functions `Retry`, `TimeoutSeconds`) | Mechanical retry and time limit for a script (inside its invoke), or for a reply (inside `person`). |
 
 ## Composing machines
 
@@ -238,7 +238,7 @@ Migration 02 is in [`runs/02-upload-quota-per-plan/`](.decree/runs/02-upload-quo
 
 1. `verify` named `fail`; `rounds_left` said `true` (1 < 3); the model picked `retry` but with confidence 0.55, below 0.8, so `triage` produced `unsure` (event 14; the router's own run is [`20261001T150122Z-c03b7e`](.decree/runs/20261001T150122Z-c03b7e/reply.json)). The run went to `review` (event 15).
 2. `review` invokes `person`. Its `ask` script, `ask_person.sh`, ran with `DECREE_WAIT_ID=02-upload-quota-per-plan.w15` and `DECREE_CHOICES` pointing at the options and their descriptions, and printed how to reply ([`0007-review-ask_person.log`](.decree/runs/02-upload-quota-per-plan/0007-review-ask_person.log)). A real one would post this to chat or open an issue.
-3. decree appended a `waiting` event (event 17) with the wait id, the options and the deadline (`timeout_s`: two days). `decree status` lists the run as `waiting`; `decree process` prints the same commands and exits 0. Migrations after 02 wait too.
+3. decree appended a `waiting` event (event 17) with the wait id, the options and the deadline (`timeout: 2d`). `decree status` lists the run as `waiting`; `decree process` prints the same commands and exits 0. Migrations after 02 wait too.
 4. A person replied with `decree event 02-upload-quota-per-plan.w15 retry -m "..."`, which wrote [`inbox/20261001T160301Z-9be210.md`](.decree/inbox/20261001T160301Z-9be210.md):
 
    ```markdown

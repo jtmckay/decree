@@ -1,5 +1,6 @@
 //! `decree prune --older-than <age> [--dry-run]` (docs/reference/cli.md): delete the folder
-//! of every finished run whose `run_finished` event is older than `<age>`. Nothing else ever
+//! of every finished run whose `run_finished` event is older than `<age>`, a duration
+//! (`crate::duration`). Nothing else ever
 //! deletes a run (docs/decisions.md, D43); its history lives on in the log store
 //! (docs/reference/observability.md).
 //!
@@ -12,6 +13,7 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use colored::Colorize;
@@ -26,26 +28,6 @@ use crate::message::{
     is_valid_id, lock_state, run_ids, LockState, Message, MessageError, RunLock, LOCK_FILE,
 };
 
-/// Parse `<age>`: a whole number followed by `d`, `h` or `m` (`30d`, `12h`, `90m`).
-pub fn parse_age(age: &str) -> Result<TimeDelta, String> {
-    let bad = || {
-        format!(
-            "`{age}` is not an age: a whole number followed by d, h or m, such as 30d, 12h or 90m"
-        )
-    };
-    let digits = age.strip_suffix(['d', 'h', 'm']).ok_or_else(bad)?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(bad());
-    }
-    let n: i64 = digits.parse().map_err(|_| bad())?;
-    match age.as_bytes()[age.len() - 1] {
-        b'd' => TimeDelta::try_days(n),
-        b'h' => TimeDelta::try_hours(n),
-        _ => TimeDelta::try_minutes(n),
-    }
-    .ok_or_else(bad)
-}
-
 /// A finished run old enough to prune, as its `run_finished` event names it.
 struct Finished {
     machine: String,
@@ -54,7 +36,9 @@ struct Finished {
 }
 
 /// Run `decree prune`.
-pub fn run(project_root: &Path, older_than: TimeDelta, dry_run: bool) -> Result<(), DecreeError> {
+pub fn run(project_root: &Path, older_than: Duration, dry_run: bool) -> Result<(), DecreeError> {
+    // `crate::duration::parse` keeps every duration within what `TimeDelta` holds.
+    let older_than = TimeDelta::from_std(older_than).unwrap_or(TimeDelta::MAX);
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
     let processed = read_processed(&project.decree_dir)?;
@@ -239,29 +223,6 @@ fn human_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_age_takes_a_whole_number_and_a_unit() {
-        assert_eq!(parse_age("30d"), Ok(TimeDelta::days(30)));
-        assert_eq!(parse_age("12h"), Ok(TimeDelta::hours(12)));
-        assert_eq!(parse_age("90m"), Ok(TimeDelta::minutes(90)));
-        assert_eq!(parse_age("0m"), Ok(TimeDelta::zero()));
-        for bad in [
-            "",
-            "30",
-            "d",
-            "-1d",
-            "+1d",
-            "1w",
-            "1.5d",
-            "1 d",
-            "1D",
-            "é",
-            "99999999999999d",
-        ] {
-            assert!(parse_age(bad).is_err(), "{bad}");
-        }
-    }
 
     #[test]
     fn test_human_size_uses_kb_mb_and_gb() {

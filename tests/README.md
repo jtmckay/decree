@@ -5,7 +5,7 @@
 | File | Covers |
 | --- | --- |
 | `check_test.rs` | `decree check` on copies of `examples/feature/` and `examples/sort-documents/`: passes without a warning, graph warnings, and example machines broken to hit a rule. |
-| `cli_test.rs` | The CLI end to end: `init`, `emit`, `process`, `status`, `tail`, `retry`, `event` and `daemon`. |
+| `cli_test.rs` | The CLI end to end: `init`, `emit`, `process`, `status`, `tail`, `retry`, `event` and `daemon`, and one duration format for a machine's `timeout`, `prune` and `daemon`. |
 | `develop_test.rs` | The `develop` and `rust_develop` machines `init` writes: their outcomes, QA, `STOP`, sessions and usage limits. |
 | `docs_test.rs` | The docs hold together: links resolve, the machine examples are the `examples/feature/` files. |
 | `emit_test.rs` | `decree emit`: parent, depth, trigger, `emits`, `max_depth` and `--param`. |
@@ -22,7 +22,7 @@
 | `readme_test.rs` | `README.md` and `--help` cover every command and name no removed concept; every README command runs. |
 | `replay_test.rs` | Each recorded run in `examples/` that is not a router's child run, replayed through the binary with stub scripts that replay each recorded log, exit code and named event: its events, child runs, `message.md` and `request.json` (with its `reply_schema`) equal the recorded ones. Every such run must have a test. Every recorded `reply.json` validates against its request's `reply_schema`, whose `event` enum is the options. |
 | `route_by_complexity_test.rs` | `examples/route-by-complexity/`'s `develop_by_size` through the binary, with a stub `ask_gliner.sh` and stub `opencode`, `claude` and test commands: `small`, `large`, `unsure`, a local attempt that fails verification and escalates to Claude, and both failing. The classifier's input holds the named files' line counts, the request's `reply_schema` allows exactly the options, the GLiNER quick starts are at most five commands, the server code is in one file, and `decide_server.py` byte-compiles (skipped without `python3`). |
-| `reply_test.rs` | Replies to waiting runs, `timeout_s`, and `decree event`. |
+| `reply_test.rs` | Replies to waiting runs, `timeout`, and `decree event`. |
 | `templates_test.rs` | Every example file that `init` also writes (the git scripts, and the `router` copy in each recorded example) is byte-identical to it, and the three `gliner_router` copies are identical. |
 | `tmux_services_test.rs` | `examples/tmux-services/`'s `illustrated_post` through the binary, with stub `tmux` (sessions as files, calls logged), `curl` (health URLs answer while the stub session exists; requests logged; loaded models as files that ComfyUI's `/prompt` and `/free` and Ollama's `/api/generate` set and clear, reported by `/system_stats` and `/api/ps`) and `ask_gliner.sh`: `with_picture` starts each session once and kills none, and unloads ComfyUI through `/free` before Ollama's request, `without_ollama` unloads a loaded model with `keep_alive: 0`, a service that already answers starts no session, an unload that never takes effect or a failed or lost prompt fails the state, and `without_comfy_no_wait` clears and interrupts before `/free`. |
 | `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, plus a failing case for each machine shape that migration 71 replaced (V19), as a table. The same cases hold the JSON Schemas to `decree check`: `CHECK_ONLY` lists, with the reason, each failing file only `decree check` can catch. |

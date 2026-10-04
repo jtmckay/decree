@@ -37,7 +37,7 @@ states:
       person:
         question: Ship this build?
         ask: ask_person
-        timeout_s: 86400
+        timeout: 1d
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
@@ -120,7 +120,7 @@ states:
           person:
             question: Tests still fail. What next?
             ask: ask_person
-            timeout_s: 172800
+            timeout: 2d
         transitions:
           approve: { target: verified, description: Good enough; commit it. }
           retry:   { target: implement, description: Try again; see my note. }
@@ -144,10 +144,10 @@ There are two retry mechanisms, and they mean different things. `max_attempts`, 
 
 | `invoke` | SCXML `type` | What runs | Events it produces |
 | --- | --- | --- | --- |
-| `script: { name: <script>, max_attempts?: <int>, timeout_s?: <int> }` | `decree:script` | The script ([scripts.md](scripts.md)), up to `max_attempts` times (default 1), each stopped after `timeout_s` seconds ([Execution](scripts.md#execution)). | `done` (exit 0), `error` (non-zero), or an event the script prints. |
+| `script: { name: <script>, max_attempts?: <int>, timeout?: <duration> }` | `decree:script` | The script ([scripts.md](scripts.md)), up to `max_attempts` times (default 1), each stopped after `timeout` ([Durations](#durations), [Execution](scripts.md#execution)). | `done` (exit 0), `error` (non-zero), or an event the script prints. |
 | `check: <condition>` | `decree:check` | decree evaluates the condition. Deterministic, no AI. | `true` or `false`. |
 | `model: { question: <text>, router?: <machine>, min_confidence?: <0..1>, output?: <state> }` | `decree:model` | A router machine (default: the machine named `router`) asks a model to pick one of the state's transitions ([Model](runs.md#model)). | One of the state's events; `unsure` if its confidence is below `min_confidence`; `error` if the router fails or replies with something that is not an option. |
-| `person: { question: <text>, ask: <script>, timeout_s?: <int> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions ([Replies](messages.md#replies)). | One of the state's events; `error` on timeout. |
+| `person: { question: <text>, ask: <script>, timeout?: <duration> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions, or until `timeout` passes ([Durations](#durations), [Replies](messages.md#replies)). | One of the state's events; `error` on timeout. |
 | `machine: { name: <machine>, params?: {…} }` | `http://www.w3.org/TR/scxml/` (SCXML's own: a child state machine) | The machine runs as a child run ([Sub-machines](runs.md#sub-machines)). | The id of the root final state the child reached; `failed` becomes `error`. |
 
 A state with no `invoke` and a `done` transition passes straight through (SCXML's eventless transition).
@@ -169,6 +169,10 @@ For example `{ output: read_text, matches: '(?i)invoice' }`, `{ data: file, matc
 
 **Escalation** is a chain of states, cheapest first, each passing what it cannot decide to the next: `false` from a `check`, `unsure` from a `model` below its `min_confidence`. A `confidence` check after `unsure` splits the rest into bands (worth asking a person, or not). The `sort_document` machine in [`examples/sort-documents/`](../../examples/sort-documents/README.md) goes the whole way: file name, document text, a local classifier, a large model, a person.
 
+## Durations
+
+A duration is a whole number of at most 9 digits followed by one unit: `s` (seconds), `m` (minutes), `h` (hours) or `d` (days), such as `90s`, `10m`, `12h` or `7d`. There are no fractions (`1.5h`), no combinations (`1h30m`), no other units (`1w`), no sign (`-1m`) and no bare numbers (`10`); write `90m` or `5400s` instead. It is the format of Kubernetes and Go durations (`time.ParseDuration`), restricted to one whole-number term. A machine's `timeout` and the `decree prune --older-than` and `decree daemon --interval` flags ([cli.md](cli.md)) all take it, through one parser.
+
 ## Keys
 
 "SCXML" gives the element or attribute a key stands for; "extension" marks keys SCXML does not have.
@@ -183,7 +187,7 @@ For example `{ output: read_text, matches: '(?i)invoice' }`, `{ data: file, matc
 | Root | `states` | map of id to state | child `<state>` and `<final>` | Required. The map key is the state's `id`. |
 | State | `final` | `true` | `<final>` | Marks a final state. Final states may only have `description`, `onentry` and `emits`. |
 | State | `description` | string | extension | Optional. |
-| State | `invoke` | script name, or a map with one key: `script`, `check`, `model`, `person` or `machine` | `<invoke type>` | Optional on atomic states (above). `max_attempts` and `timeout_s` go inside it. |
+| State | `invoke` | script name, or a map with one key: `script`, `check`, `model`, `person` or `machine` | `<invoke type>` | Optional on atomic states (above). `max_attempts` and `timeout` go inside it. |
 | State | `onentry`, `onexit` | list of script names | `<onentry>`, `<onexit>` | Optional. Run every time this state is entered or exited. |
 | State | `initial`, `states` | as root | `<state initial>`, child states | Present together on compound states, absent on all others. |
 | State | `transitions` | map of event to target | `<transition event target type>` | Short form `event: target`, or long form `{target, description, type}`. Not allowed on final states. |
@@ -276,10 +280,10 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 | V13 | Every `emits` entry is an existing machine name. |
 | V14 | Every `data` default matches its `type`. |
 | V15 | Every compound state with a final child handles `done.state.<id>`, itself or through an ancestor, so the run cannot stall. |
-| V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; `max_attempts` and `timeout_s` appear only inside a `script` invoke (and `timeout_s` inside a `person`), which the parser enforces with V19. |
+| V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `max_attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19. |
 | V17 | `type: internal` appears only on a compound state's transition whose target is one of its descendants. |
 | V18 | Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-named event or a `model` or `person` option. |
-| V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `person:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` or `timeout_s` on a state (inside `invoke: { script: … }`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`). |
+| V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `person:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` or `timeout_s` on a state (inside `invoke: { script: … }`), `timeout_s` in an invoke (`timeout: <n>s\|m\|h\|d`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`). |
 | V20 | No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others. |
 | V21 | Within one state, no transition's event equals another's followed by `.` and more (`done` and `done.state.work`), so at most one of a state's transitions matches any event. |
 | M1 | Every pending migration (not in `processed.md`) parses, names a known machine in `machine:`, and has valid `params` for that machine's `data`. |

@@ -7,7 +7,7 @@
 //!
 //! A queued message with `to:` is a reply: it is delivered to its waiting run instead,
 //! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
-//! `timeout_s` deadlines that have passed (docs/reference/messages.md, Replies).
+//! `timeout` deadlines that have passed (docs/reference/messages.md, Replies).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -188,7 +188,7 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    /// Deliver every `timeout_s` deadline that has passed, and continue those runs.
+    /// Deliver every `timeout` deadline that has passed, and continue those runs.
     pub(crate) fn deliver_timeouts(&self) -> Result<(), Stop> {
         let timed_out = reply::deliver_timeouts(&self.ctx, chrono::Utc::now())?;
         self.continue_runs(&timed_out)

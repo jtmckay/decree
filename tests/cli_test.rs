@@ -641,7 +641,7 @@ fn tail_follows_into_child_runs() {
     );
 }
 
-/// `decree daemon --interval 1` runs the same pipeline as `process`: a failed inbox run
+/// `decree daemon --interval 1s` runs the same pipeline as `process`: a failed inbox run
 /// does not stop it, a later message still runs, and SIGTERM stops it with exit 0.
 #[test]
 fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
@@ -655,7 +655,7 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let failing = p.emit("flaky", "Fails.\n");
 
-    let mut daemon = p.spawn(&["daemon", "--interval", "1"]);
+    let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
     let finished = |id: &str| {
         p.run_dir(id).join("events.jsonl").exists()
             && p.events(id).last().unwrap()["type"] == "run_finished"
@@ -683,6 +683,68 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
         status.contains("  finished: 2\n    done: 1\n") && status.contains("    failed: 1\n"),
         "{status}"
     );
+}
+
+/// One duration format (docs/reference/machines.md, Durations): a machine's `timeout`,
+/// `prune --older-than` and `daemon --interval` accept and reject the same strings. A bad
+/// one fails V16 in a machine and exits 2 on the command line.
+#[test]
+fn machine_prune_and_daemon_take_the_same_durations() {
+    let p = Project::init();
+    let machine = |timeout: &str| {
+        format!(
+            "name: t\ndescription: A script with a time limit.\ninitial: work\nstates:\n  \
+             work:\n    invoke: {{ script: {{ name: git_baseline, timeout: '{timeout}' }} }}\n    \
+             transitions: {{ done: done }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        )
+    };
+    for good in ["90s", "10m", "12h", "7d"] {
+        p.machine("t", &machine(good));
+        p.decree(&["check"]).assert().code(0);
+        p.decree(&["prune", "--older-than", good, "--dry-run"])
+            .assert()
+            .code(0);
+        let mut daemon = p.spawn(&["daemon", "--interval", good]);
+        // Kept open until the daemon exits: it prints again on the way out.
+        let mut stdout = BufReader::new(daemon.stdout.take().unwrap());
+        let mut first = String::new();
+        stdout.read_line(&mut first).unwrap();
+        assert!(
+            first.starts_with("decree daemon: polling every "),
+            "{good}: {first}"
+        );
+        // SAFETY: sends SIGTERM to the daemon.
+        unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+        assert_eq!(
+            wait_exit(&mut daemon, Duration::from_secs(15)).code(),
+            Some(0),
+            "{good}"
+        );
+    }
+    for bad in ["1.5h", "1h30m", "10", "-1m", "1w", ""] {
+        p.machine("t", &machine(bad));
+        let out = p.stdout(&["check"], 1);
+        assert!(
+            out.contains(&format!("timeout: `{bad}` is not a duration")) && out.contains("(V16)"),
+            "{bad}: {out}"
+        );
+        let flag = |name: &str| format!("--{name}={bad}");
+        for args in [
+            vec!["prune".to_string(), flag("older-than")],
+            vec!["daemon".to_string(), flag("interval")],
+        ] {
+            let out = p
+                .decree(&args.iter().map(String::as_str).collect::<Vec<_>>())
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(2), "{args:?}");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                stderr.contains(&format!("`{bad}` is not a duration")),
+                "{args:?}: {stderr}"
+            );
+        }
+    }
 }
 
 /// Project commands outside a project exit non-zero.

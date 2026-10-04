@@ -182,10 +182,10 @@ Every state does one thing: it invokes a function, and the function's result is 
 
 | `invoke:` | What happens | Events |
 | --- | --- | --- |
-| `<script>`, or `script: { name: <script>, max_attempts: 2, timeout_s: 600 }` | Runs the script, re-running it up to `max_attempts` times and stopping it after `timeout_s`. | `done`, `error`, or the event it writes to `$DECREE_EVENT_FILE` |
+| `<script>`, or `script: { name: <script>, max_attempts: 2, timeout: 10m }` | Runs the script, re-running it up to `max_attempts` times and stopping it after `timeout` (a [duration](docs/reference/machines.md#durations): `90s`, `10m`, `12h`, `7d`). | `done`, `error`, or the event it writes to `$DECREE_EVENT_FILE` |
 | `check: <condition>` | A deterministic condition over a state's output, `data`, `visits` or a model's confidence, such as `check: { visits: fix, less_than: 3 }`. | `true`, `false` |
 | `model: { question: ..., output: <state> }` | A router machine asks a model to pick one of the state's transitions, with a confidence, given the `output` state's output and the message body. Below `min_confidence` the event is `unsure`. | the transition names, `unsure` |
-| `person: { question: ..., ask: <script> }` | The `ask` script tells someone; the run pauses until a reply arrives. | the transition names, `error` on `timeout_s` |
+| `person: { question: ..., ask: <script> }` | The `ask` script tells someone; the run pauses until a reply arrives. | the transition names, `error` on `timeout` |
 | `machine: <name>`, or `machine: { name: <name>, params: {...} }` | Runs another machine as a child run. | the child's final state (`failed` as `error`) |
 
 Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, or the whole run at the root), `data` (typed values set from a message's `params`), `emits` (machines a state's scripts may `decree emit` to), compound states (`initial` plus `states`, with transitions that bubble up) and `final`.
@@ -230,14 +230,14 @@ Model servers and other long-running processes are not scripts and decree does n
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
 | `decree schema` | Write JSON Schemas for machines and messages to `.decree/schema/` |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
-| `decree daemon [--interval S]` | The same passes plus cron, every `S` seconds |
+| `decree daemon [--interval D]` | The same passes plus cron, every `D` (default `2s`) |
 | `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
 | `decree event ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
 | `decree status [ID]` | Runs by status and queued messages; one run's events |
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
 | `decree retry ID [--state S]` | Make an interrupted or finished run pending again |
-| `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`); ship them to Loki first if you keep history |
+| `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`, `90s`); ship them to Loki first if you keep history |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree --version` | Print the version |
 

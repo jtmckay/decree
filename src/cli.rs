@@ -78,9 +78,9 @@ pub enum Command {
 
     /// Daemon: monitor inbox + cron
     Daemon {
-        /// Polling interval in seconds
-        #[arg(long, default_value = "2")]
-        interval: u64,
+        /// Polling interval: a whole number and s, m, h or d (2s, 1m)
+        #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]
+        interval: std::time::Duration,
     },
 
     /// Runs by status and queued messages; with an id, one run's events
@@ -112,10 +112,10 @@ pub enum Command {
 
     /// Delete the folders of finished runs older than an age; only this command deletes runs
     Prune {
-        /// Age of the run's `run_finished` event: a whole number and d, h or m (30d, 12h, 90m);
-        /// 0m means every finished run
-        #[arg(long, value_name = "AGE", value_parser = crate::commands::prune::parse_age)]
-        older_than: chrono::TimeDelta,
+        /// Age of the run's `run_finished` event: a whole number and s, m, h or d (30d, 12h,
+        /// 90m); 0s means every finished run
+        #[arg(long, value_name = "AGE", value_parser = crate::duration::parse)]
+        older_than: std::time::Duration,
 
         /// List the runs it would delete, and delete nothing
         #[arg(long)]

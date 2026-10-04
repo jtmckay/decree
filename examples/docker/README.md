@@ -54,7 +54,7 @@ services:
     environment:
       - DECREE_AI=opencode
       - DECREE_DAEMON=true
-      - DECREE_INTERVAL=2
+      - DECREE_INTERVAL=2s
     restart: unless-stopped
 ```
 
@@ -64,7 +64,7 @@ services:
 |----------|---------|-------------|
 | `DECREE_AI` | (none) | AI tool to install: `opencode`, `claude`, or `copilot` |
 | `DECREE_DAEMON` | `true` | `true` runs daemon; `false` drops to bash shell |
-| `DECREE_INTERVAL` | `2` | Daemon polling interval in seconds |
+| `DECREE_INTERVAL` | `2s` | Daemon polling interval, a [duration](../../docs/reference/machines.md#durations) |
 
 ## Shared Machines
 

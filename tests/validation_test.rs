@@ -768,6 +768,129 @@ machines/m.yml: triage: `model` names no `router`, and there is no machine named
 machines/m.yml: triage: min_confidence 80 is not between 0 and 1 (V16)
 ",
     },
+    Case {
+        rule: "V16",
+        name: "a timeout in each unit",
+        files: &[
+            ("machines/a.yml", "\
+name: a
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: 90s } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/b.yml", "\
+name: b
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: 10m } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/c.yml", "\
+name: c
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: 12h } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/d.yml", TIMEOUT_PERSON),
+        ],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "V16",
+        name: "a timeout that is not a duration",
+        files: &[
+            ("machines/a.yml", "\
+name: a
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: 1.5h } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/b.yml", "\
+name: b
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: 1h30m } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/c.yml", "\
+name: c
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: 10 } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/d.yml", "\
+name: d
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: -1m } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/e.yml", "\
+name: e
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: 1w } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/f.yml", "\
+name: f
+description: A script with a time limit.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout: '' } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+        ],
+        scripts: &[],
+        expected: "\
+machines/a.yml: work: timeout: `1.5h` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/b.yml: work: timeout: `1h30m` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/c.yml: work: timeout: `10` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/d.yml: work: timeout: `-1m` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/e.yml: work: timeout: `1w` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/f.yml: work: timeout: `` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+",
+    },
     // V17
     Case {
         rule: "V17",
@@ -923,7 +1046,20 @@ machines/b.yml: work.step: router on a state is not supported: make the decision
         scripts: &[],
         expected: "\
 machines/a.yml: work: max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } } (V19)
-machines/b.yml: work: timeout_s on a state is not supported: write it inside the invoke, invoke: { script: { name: <script>, timeout_s: <n> } } (or person: { ..., timeout_s: <n> }) (V19)
+machines/b.yml: work: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d }) (V19)
+",
+    },
+    Case {
+        rule: "V19",
+        name: "timeout_s in a script and a person invoke",
+        files: &[
+            ("machines/a.yml", OLD_TIMEOUT_S_SCRIPT),
+            ("machines/d.yml", OLD_TIMEOUT_S_PERSON),
+        ],
+        scripts: &[],
+        expected: "\
+machines/a.yml: work: timeout_s is not supported: write timeout: <n>s|m|h|d (V19)
+machines/d.yml: approval: timeout_s is not supported: write timeout: <n>s|m|h|d (V19)
 ",
     },
     Case {
@@ -1298,6 +1434,57 @@ states:
     invoke: work
     timeout_s: 60
     transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// `timeout_s` inside a script invoke, which `timeout: <duration>` replaced (V19).
+const OLD_TIMEOUT_S_SCRIPT: &str = "\
+name: a
+description: A time limit in seconds, written the old way.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, timeout_s: 60 } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// `timeout_s` inside a person invoke, which `timeout: <duration>` replaced (V19).
+const OLD_TIMEOUT_S_PERSON: &str = "\
+name: d
+description: Ask a person, for a week at most.
+initial: approval
+states:
+  approval:
+    invoke:
+      person:
+        question: Ship this build?
+        ask: ask_person
+        timeout_s: 604800
+    transitions:
+      approve: { target: done, description: Ship this build. }
+      reject: { target: done, description: Do not ship. }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// A person invoke with a `timeout` in days (V16).
+const TIMEOUT_PERSON: &str = "\
+name: d
+description: Ask a person, for a week at most.
+initial: approval
+states:
+  approval:
+    invoke:
+      person:
+        question: Ship this build?
+        ask: ask_person
+        timeout: 7d
+    transitions:
+      approve: { target: done, description: Ship this build. }
+      reject: { target: done, description: Do not ship. }
   done: { final: true }
   failed: { final: true }
 ";

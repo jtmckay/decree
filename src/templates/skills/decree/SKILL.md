@@ -64,12 +64,12 @@ appear only where a machine invokes `model` or `person`.
 | `decree schema` | Write the JSON Schemas for machines and message frontmatter to `.decree/schema/`. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
-| `decree daemon [--interval <s>]` | The same, in a loop, with cron. |
+| `decree daemon [--interval <duration>]` | The same, in a loop, with cron, every `2s` by default. |
 | `decree status [<id>] [--cron]` | Runs by status; one run's events; cron schedule. |
 | `decree tail [<id>]` | Follow the output of the script running now. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree retry <id> [--state <s>]` | Continue an interrupted (or finished) run. |
-| `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`; keeps failed migrations and children of unfinished runs. |
+| `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 
 ## Worked example
 

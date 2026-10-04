@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
@@ -93,13 +94,15 @@ pub enum Invoke {
     Machine(MachineInvoke),
 }
 
-/// `{ script: { name, max_attempts?, timeout_s? } }`, or `{ script: <name> }`.
+/// `{ script: { name, max_attempts?, timeout? } }`, or `{ script: <name> }`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScriptInvoke {
     pub name: String,
     pub max_attempts: Option<u32>,
-    pub timeout_s: Option<u64>,
+    /// A duration (`crate::duration`).
+    #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
+    pub timeout: Option<Duration>,
 }
 
 /// `{ model: { question, router?, min_confidence?, output? } }`. `question` is optional
@@ -113,14 +116,16 @@ pub struct ModelInvoke {
     pub output: Option<String>,
 }
 
-/// `{ person: { question, ask, timeout_s? } }`. `question` and `ask` are optional here so
+/// `{ person: { question, ask, timeout? } }`. `question` and `ask` are optional here so
 /// that V8 and V12, not the parser, report them missing.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PersonInvoke {
     pub question: Option<String>,
     pub ask: Option<String>,
-    pub timeout_s: Option<u64>,
+    /// A duration (`crate::duration`).
+    #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
+    pub timeout: Option<Duration>,
 }
 
 /// `{ machine: { name, params? } }`, or `{ machine: <name> }`.
@@ -156,7 +161,7 @@ impl<'de> Deserialize<'de> for Invoke {
                 return Ok(Invoke::Script(ScriptInvoke {
                     name,
                     max_attempts: None,
-                    timeout_s: None,
+                    timeout: None,
                 }))
             }
             serde_norway::Value::Mapping(map) if map.len() == 1 => map,
@@ -456,7 +461,7 @@ const UNSUPPORTED_STATE_KEYS: [(&str, &str); 15] = [
     ("router", "router on a state is not supported: make the decision a state with invoke: { model: { question: ... } }"),
     ("default", "default on a state is not supported: a model state takes unsure, or error, instead"),
     ("max_attempts", "max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } }"),
-    ("timeout_s", "timeout_s on a state is not supported: write it inside the invoke, invoke: { script: { name: <script>, timeout_s: <n> } } (or person: { ..., timeout_s: <n> })"),
+    ("timeout_s", "timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d })"),
     ("cond", "cond is not supported: make the decision a state with invoke: { check: ... }"),
     ("parallel", "SCXML <parallel> is not supported: a run is always in exactly one atomic state"),
     ("history", "SCXML <history> is not supported: a run is always in exactly one atomic state"),
@@ -470,13 +475,14 @@ const UNSUPPORTED_STATE_KEYS: [(&str, &str); 15] = [
     ("donedata", "SCXML <donedata> is not supported: data is read-only"),
 ];
 
-/// Old `invoke` shapes and their replacements (V19): `choose`, `input`, `{ machine, params }`
-/// and a bare `matches`. Nothing old is read: each fails with the shape to write instead.
+/// Old `invoke` shapes and their replacements (V19): `choose`, `input`, `{ machine, params }`,
+/// a bare `matches` and `timeout_s`. Nothing old is read: each fails with the shape to write instead.
 const CHOOSE: &str = "choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { person: { question: ..., ask: <script> } } for a person";
 const INPUT: &str = "input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } })";
 const MACHINE_PARAMS: &str = "{ machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } }";
 const BARE_MATCHES: &str =
     "a bare matches is not supported: name the state it reads, { output: <state>, matches: ... }";
+const TIMEOUT_S: &str = "timeout_s is not supported: write timeout: <n>s|m|h|d";
 
 /// The first old shape in a state's `invoke`, if any (V19).
 fn old_invoke_shape(invoke: &serde_norway::Value) -> Option<&'static str> {
@@ -493,6 +499,14 @@ fn old_invoke_shape(invoke: &serde_norway::Value) -> Option<&'static str> {
     }
     if has("machine") && map.len() > 1 {
         return Some(MACHINE_PARAMS);
+    }
+    let old_timeout = ["script", "person"].iter().any(|kind| {
+        invoke
+            .get(kind)
+            .is_some_and(|k| k.get("timeout_s").is_some())
+    });
+    if old_timeout {
+        return Some(TIMEOUT_S);
     }
     let bare_matches = invoke.get("check").is_some_and(|c| {
         c.get("matches").is_some()

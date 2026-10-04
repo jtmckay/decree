@@ -12,7 +12,7 @@ states:
       person:
         question: Ship this build?
         ask: ask_person
-        timeout_s: 86400
+        timeout: 1d
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
