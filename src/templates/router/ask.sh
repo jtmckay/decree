@@ -31,5 +31,5 @@ event=$(jq -r '.event | strings' <<<"$json")
 jq -e --arg e "$event" '.options | map(.event) | index($e)' "$req" > /dev/null \
   || { echo "not an option: $event" >&2; exit 1; }
 printf '%s\n' "$json" > "$DECREE_REPLY"
-# a plain last line: a reply on its own would be read as this script's event
+# for the log only: decree takes the event from the reply
 echo "picked $event"

@@ -75,7 +75,7 @@ stop="${DECREE_RUN_DIR}/STOP"
 stopped() {
   [ -f "${stop}" ] || return 1
   cat "${stop}" >&2
-  echo '{"event": "stop"}'
+  echo stop > "${DECREE_EVENT_FILE}"
 }
 stopped && exit 0
 

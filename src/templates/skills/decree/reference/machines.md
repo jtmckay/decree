@@ -114,8 +114,8 @@ literal or `{ data: <name> }`. For example `{ output: read_text, matches: '(?i)i
 
 ## Events and transitions
 
-- A script's event: `done`, `error`, or a printed name. A printed event that is reserved or
-  matches no transition becomes `error`.
+- A script's event: `done`, `error`, or a name it writes to `$DECREE_EVENT_FILE`. A named event
+  that is reserved or matches no transition becomes `error`.
 - Selecting a transition: the current state's `transitions`, then each ancestor's, innermost
   first. An `error` nobody handles goes to `failed`; any other unhandled event becomes `error`.
 - Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Scripts and options may not use `done`,
@@ -138,7 +138,7 @@ literal or `{ data: <name> }`. For example `{ output: read_text, matches: '(?i)i
 ## Not supported (and the alternative)
 
 `cond` on transitions (make the decision a `check` state), `<parallel>`, `<history>`, `<send>`
-(use `decree emit`), `<raise>` (a script prints its event), `<assign>` (`data` is read-only),
+(use `decree emit`), `<raise>` (a script names its event), `<assign>` (`data` is read-only),
 targetless transitions, XML. `decree check` names the alternative when it rejects one, and names
 the new shape for an old one (`choose`, `input`, a bare `matches`, `max_attempts` or `timeout_s` on
 a state, `{ machine: x, params: ... }`).

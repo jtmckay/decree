@@ -23,15 +23,21 @@ directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commi
 - Directly (no shell wrapper), from the project root, with stdin `/dev/null`, in its own process
   group.
 - stdout and stderr go to `runs/<id>/NNNN-<state>-<script>.log` (stderr lines prefixed
-  `[stderr] `). What an invoke prints is what a later `matches` check or model reads.
+  `[stderr] `). What an invoke prints is what a later `matches` check or model reads. Output
+  is only a log: decree never reads an event from it.
 - On stop or timeout, decree sends SIGTERM to the group, then SIGKILL after 10 s.
 - Scripts must be safe to re-run: an interrupted step runs again after `decree retry`.
 
 ## Reporting an event (invoke only)
 
-1. Exit non-zero: `error`.
-2. Exit 0, last non-empty stdout line is a JSON object with a string `event`: that event.
-3. Exit 0 otherwise: `done`.
+Write the event's name to `$DECREE_EVENT_FILE`, a fresh empty file for each attempt
+(`echo pass > "$DECREE_EVENT_FILE"`; in Python,
+`open(os.environ["DECREE_EVENT_FILE"], "w").write("pass")`).
+
+1. Exit non-zero: `error`. The file is not read.
+2. Exit 0 and the file holds a name (whitespace trimmed): that event.
+3. Exit 0 and the file is empty: `done`.
+4. A name that is reserved or matches no transition of the state or its ancestors: `error`.
 
 ```bash
 #!/usr/bin/env bash
@@ -39,11 +45,10 @@ directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commi
 set -uo pipefail
 cargo test 2>&1 | tail -n 40
 if [ "${PIPESTATUS[0]}" -eq 0 ]; then
-  echo '{"event":"pass"}'
+  echo pass > "$DECREE_EVENT_FILE"
 else
-  echo '{"event":"fail"}'
+  echo fail > "$DECREE_EVENT_FILE"
 fi
-exit 0
 ```
 
 `onentry` and `onexit` scripts never produce events:
@@ -86,6 +91,7 @@ EOF
 | `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS`, `DECREE_FINAL_ATTEMPT` | Attempt number, the limit, and `true` on the last one. |
 | `DECREE_TRIGGER` | `migration`, `cron`, `emit`, `inbox` or `invoke`. |
 | `DECREE_EVENTS` | Events the current state accepts, space-separated. |
+| `DECREE_EVENT_FILE` | For an invoke: the file to write its event to. Empty for other scripts. |
 | `DECREE_PARENT` | In a child run, the parent run's id. |
 | `DECREE_REQUEST`, `DECREE_REPLY` | In a router run: the request JSON to read and the reply JSON to write. |
 | `DECREE_WAIT_ID`, `DECREE_QUESTION`, `DECREE_CHOICES` | For a `person` `ask` script: the wait id, the question, and a JSON file of options and descriptions. |

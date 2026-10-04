@@ -10,7 +10,7 @@ stop="${DECREE_RUN_DIR}/STOP"
 stopped() {
   [ -f "${stop}" ] || return 1
   cat "${stop}" >&2
-  echo '{"event": "stop"}'
+  echo stop > "${DECREE_EVENT_FILE}"
 }
 stopped && exit 0
 
@@ -26,5 +26,4 @@ echo "=== claude -p ==="
 echo "${prompt}"
 claude -p "${prompt}"
 stopped && exit 0
-# a plain last line: Claude's last line must not be read as an event
 echo "implemented with claude"

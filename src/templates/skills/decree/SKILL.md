@@ -21,7 +21,7 @@ decree runs work through three building blocks:
   code, no paths.
 - A **script** (`.decree/scripts/<name>.sh`, or `.decree/scripts/<machine>/<name>.sh` for one
   machine's own) does one piece of work and reports one outcome: exit 0 is `done`, non-zero is
-  `error`, or a JSON last stdout line names a richer event (`{"event":"pass"}`).
+  `error`, or the script names a richer event in a file (`echo pass > "$DECREE_EVENT_FILE"`).
 
 Every state invokes one function, and its result is an event. The function is a script, a child
 machine (`machine: deploy`), or a built-in decision: `check` (deterministic: `true` or `false`),

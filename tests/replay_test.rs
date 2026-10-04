@@ -24,7 +24,8 @@ use common::write_script;
 
 /// Every script in the replay project. Execution `n` of script `<name>` replays
 /// `.replay/<name>/<n>/`: `log` (stdout lines, and `[stderr] ` lines to stderr), `exit`,
-/// and `reply.json` to write to `$DECREE_REPLY`; `sleep` makes it wait to be stopped.
+/// `event` to write to `$DECREE_EVENT_FILE`, and `reply.json` to write to `$DECREE_REPLY`;
+/// `sleep` makes it wait to be stopped.
 const STUB: &str = r#"#!/usr/bin/env bash
 name=$(basename "$0")
 dir="$DECREE_PROJECT_ROOT/.replay/${name%%.*}"
@@ -37,6 +38,7 @@ if [ -e "$step/sleep" ]; then
   exec sleep 100
 fi
 [ -e "$step/reply.json" ] && cp "$step/reply.json" "$DECREE_REPLY"
+[ -e "$step/event" ] && cp "$step/event" "$DECREE_EVENT_FILE"
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     '[stderr] '*) printf '%s\n' "${line#'[stderr] '}" >&2 ;;
@@ -173,10 +175,14 @@ impl Replay {
         };
         for id in run_tree(&self.recorded.join("runs"), &self.run) {
             let run_dir = self.recorded_run(&id);
-            for e in read_events(&run_dir) {
+            let events = read_events(&run_dir);
+            for (i, e) in events.iter().enumerate() {
                 let script = e["script"].as_str().unwrap_or_default();
                 if e["type"] == "script" {
                     let dir = step(script);
+                    if let Some(event) = named_event(e, &events[i + 1..]) {
+                        fs::write(dir.join("event"), event).unwrap();
+                    }
                     let log = run_dir.join(e["log"].as_str().unwrap());
                     fs::copy(log, dir.join("log")).unwrap();
                     fs::write(dir.join("exit"), e["exit_code"].to_string()).unwrap();
@@ -326,6 +332,20 @@ impl Replay {
             }
         }
     }
+}
+
+/// The event an invoke `script` event's execution named in `$DECREE_EVENT_FILE`, from the
+/// `transition` that follows it (after any `onexit` scripts): one with `source: "script"`,
+/// whose `invalid_event` is the name when it has one.
+fn named_event<'a>(script: &Value, rest: &'a [Value]) -> Option<&'a str> {
+    if script["phase"] != "invoke" {
+        return None;
+    }
+    let t = rest.iter().find(|e| e["type"] == "transition")?;
+    if t["source"] != "script" || t["from"] != script["state"] {
+        return None;
+    }
+    t.get("invalid_event").unwrap_or(&t["event"]).as_str()
 }
 
 /// One event as a JSON line, with timestamps, durations and deadlines replaced by their

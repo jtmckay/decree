@@ -2,7 +2,7 @@
 //! Step loop, Visits and events.jsonl; machines.md, Rules; scripts.md, Events from an invoke).
 //! proptest generates small valid machines (up to 6 states, at most one compound state,
 //! script and `check` invokes, `onentry`/`onexit` hooks, finals at both levels) and what
-//! each script execution does (exit code, a printed event that is declared or not). For
+//! each script execution does (exit code, an event it names, declared or not). For
 //! each case, `decree check` passes, `decree process` runs one message, and the run's
 //! events, hooks and mirror must hold the invariants listed on `check_case`.
 //!
@@ -26,8 +26,8 @@ echo "$DECREE_PHASE $DECREE_STATE" >> "$DECREE_PROJECT_ROOT/trace.log"
 "#;
 
 /// Every script invoke: appends `invoke <state> <visits> <attempt>` to `trace.log`, then
-/// replays execution `n` of its state from `plan/<state>/<n>` (`code`, `print`); with no
-/// plan left it exits 0 and prints nothing.
+/// replays execution `n` of its state from `plan/<state>/<n>` (`code`, `name`); with no
+/// plan left it exits 0 and names no event.
 const WORK: &str = r#"#!/bin/sh
 d="$DECREE_PROJECT_ROOT/plan/$DECREE_STATE"
 mkdir -p "$d"
@@ -35,13 +35,13 @@ n=$(( $(cat "$d/count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$d/count"
 echo "invoke $DECREE_STATE $DECREE_VISITS $DECREE_ATTEMPT" >> "$DECREE_PROJECT_ROOT/trace.log"
 code=0
-print=
+name=
 [ -f "$d/$n" ] && . "$d/$n"
-[ -n "$print" ] && echo "{\"event\":\"$print\"}"
+[ -n "$name" ] && echo "$name" > "$DECREE_EVENT_FILE"
 exit "$code"
 "#;
 
-const PRINTS: [Option<&str>; 4] = [None, Some("ev_a"), Some("ev_b"), Some("ev_z")];
+const NAMES: [Option<&str>; 4] = [None, Some("ev_a"), Some("ev_b"), Some("ev_z")];
 const OPS: [&str; 6] = [
     "equals",
     "not_equals",
@@ -107,7 +107,7 @@ struct Spec {
     root_onexit: bool,
     /// `onentry` hooks on `done`, `alt` and `failed`.
     final_onentry: [bool; 3],
-    /// Per atom: what each script execution does, `(exit code, printed event)`.
+    /// Per atom: what each script execution does, `(exit code, named event)`.
     plans: Vec<Vec<(i64, Option<&'static str>)>>,
 }
 
@@ -226,7 +226,7 @@ impl Spec {
             let runs = d.below(4);
             plans.push(
                 (0..runs)
-                    .map(|_| (d.pick(&[0, 0, 1, 2]), d.pick(&PRINTS)))
+                    .map(|_| (d.pick(&[0, 0, 1, 2]), d.pick(&NAMES)))
                     .collect(),
             );
         }
@@ -464,8 +464,8 @@ fn run_case(spec: &Spec) -> Outcome {
     for (i, plan) in spec.plans.iter().enumerate() {
         let dir = tmp.path().join("plan").join(format!("s{i}"));
         fs::create_dir_all(&dir).unwrap();
-        for (n, (code, print)) in plan.iter().enumerate() {
-            let text = format!("code={code}\nprint={}\n", print.unwrap_or_default());
+        for (n, (code, name)) in plan.iter().enumerate() {
+            let text = format!("code={code}\nname={}\n", name.unwrap_or_default());
             fs::write(dir.join((n + 1).to_string()), text).unwrap();
         }
     }
@@ -587,7 +587,7 @@ fn check_case(spec: &Spec, out: &Outcome) -> Result<(), TestCaseError> {
                     Some(from) => {
                         prop_assert_eq!(e["from"].as_str(), Some(from.as_str()), "{}", e);
                         let source = e["source"].as_str().unwrap();
-                        if let Some((code, print, attempt)) = invoked.take() {
+                        if let Some((code, name, attempt)) = invoked.take() {
                             prop_assert_eq!(&e["exit_code"], &Value::from(code));
                             let Invoke::Script { attempts, .. } =
                                 spec.atoms[spec.atom_of(from).unwrap()].invoke
@@ -601,15 +601,15 @@ fn check_case(spec: &Spec, out: &Outcome) -> Result<(), TestCaseError> {
                                 prev = Some(to);
                                 continue;
                             }
-                            let declared = print.filter(|p| spec.select(from, p).is_some());
-                            let want = match (code, print) {
+                            let declared = name.filter(|p| spec.select(from, p).is_some());
+                            let want = match (code, name) {
                                 (0, Some(_)) => declared.unwrap_or("error"),
                                 (0, None) => "done",
                                 _ => "error",
                             };
                             prop_assert_eq!(event, want, "{}", e);
                             let invalid =
-                                (code == 0 && declared.is_none()).then_some(print).flatten();
+                                (code == 0 && declared.is_none()).then_some(name).flatten();
                             prop_assert_eq!(e["invalid_event"].as_str(), invalid, "{}", e);
                         } else if let Some(d) = decided.take() {
                             prop_assert_eq!(event, d.as_str());
@@ -660,11 +660,11 @@ fn check_case(spec: &Spec, out: &Outcome) -> Result<(), TestCaseError> {
                 let i = spec.atom_of(state).unwrap();
                 let n = execs.entry(state.to_string()).or_default();
                 *n += 1;
-                let (code, print) = spec.plans[i].get(*n - 1).copied().unwrap_or((0, None));
+                let (code, name) = spec.plans[i].get(*n - 1).copied().unwrap_or((0, None));
                 prop_assert_eq!(&e["exit_code"], &Value::from(code), "{}", e);
                 let attempt = e["attempt"].as_u64().unwrap();
                 trace.push(format!("invoke {state} {} {attempt}", visits[state]));
-                invoked = Some((code, print, attempt));
+                invoked = Some((code, name, attempt));
             }
             "script" => {}
             "decision" => {

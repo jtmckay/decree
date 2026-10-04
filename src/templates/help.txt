@@ -105,16 +105,17 @@ Machines:
 
 Scripts:
   An invoked script's event is `done` on exit 0 and `error` otherwise, unless
-  its last stdout line is a JSON object such as {"event":"pass"}. Output goes
-  to runs/<id>/<NNNN>-<state>-<script>.log. A script queues more work with
-  `decree emit`, for the machines listed in its state's `emits`.
+  it writes an event name to the file $DECREE_EVENT_FILE, as in
+  echo pass > "$DECREE_EVENT_FILE". Output goes to
+  runs/<id>/<NNNN>-<state>-<script>.log and is never parsed. A script queues
+  more work with `decree emit`, for the machines listed in its state's `emits`.
 
   Environment: DECREE_PROJECT_ROOT, DECREE_MESSAGE, DECREE_MESSAGE_ID,
   DECREE_MACHINE, DECREE_STATE, DECREE_PHASE, DECREE_VISITS, DECREE_RUN_DIR,
   DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS, DECREE_FINAL_ATTEMPT, DECREE_TRIGGER,
-  DECREE_EVENTS, DECREE_PARENT, DECREE_RECEIVED, DECREE_DATA_<NAME>; in a
-  router run DECREE_REQUEST and DECREE_REPLY; for an ask script
-  DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES.
+  DECREE_EVENTS, DECREE_EVENT_FILE, DECREE_PARENT, DECREE_RECEIVED,
+  DECREE_DATA_<NAME>; in a router run DECREE_REQUEST and DECREE_REPLY; for an
+  ask script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES.
 
 No configuration file; conventions and fixed limits instead:
   machines/router.yml             # answers every model invoke that names no router:

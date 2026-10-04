@@ -467,10 +467,10 @@ impl<'a> Interpreter<'a> {
                 let exit_code = out.execution.exit_code;
                 Ok(Invoked::Event(match out.event {
                     InvokeEvent::ExitCode(e) => Decision::new(e, "exit_code", exit_code),
-                    InvokeEvent::Stdout(e) => Decision::new(&e, "stdout", exit_code),
+                    InvokeEvent::Script(e) => Decision::new(&e, "script", exit_code),
                     InvokeEvent::Invalid(e) => Decision {
                         invalid_event: Some(e),
-                        ..Decision::new("error", "stdout", exit_code)
+                        ..Decision::new("error", "script", exit_code)
                     },
                 }))
             }

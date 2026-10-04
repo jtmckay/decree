@@ -238,7 +238,7 @@
         {
           "$ref": "#/$defs/scriptName",
           "title": "script name",
-          "description": "Short for `{ script: <name> }`: run this script. Exit 0 is `done`, non-zero is `error`, or the script prints an event as a JSON last line ({\"event\":\"pass\"})."
+          "description": "Short for `{ script: <name> }`: run this script. Exit 0 is `done`, non-zero is `error`, or the event the script writes to $DECREE_EVENT_FILE (`echo pass > \"$DECREE_EVENT_FILE\"`)."
         },
         {
           "type": "object",
@@ -265,7 +265,7 @@
       ]
     },
     "scriptInvoke": {
-      "description": "SCXML type decree:script. Run a script (docs/reference/scripts.md). Events: `done` (exit 0), `error` (non-zero), or an event the script prints as a JSON last stdout line. A bare name is short for `{ name: <name> }`.",
+      "description": "SCXML type decree:script. Run a script (docs/reference/scripts.md). Events: `done` (exit 0), `error` (non-zero), or the event the script writes to `$DECREE_EVENT_FILE`. A bare name is short for `{ name: <name> }`.",
       "anyOf": [
         { "$ref": "#/$defs/scriptName" },
         {

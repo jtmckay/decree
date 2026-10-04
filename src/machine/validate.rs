@@ -65,7 +65,7 @@ impl LoadedMachine {
             can_error = self.chain(i).any(|n| !self.nodes[n].onentry.is_empty());
             match &node.invoke {
                 None => events.push("done".into()),
-                // A script may print, and a child machine may end in, any event.
+                // A script may name, and a child machine may end in, any event.
                 Some(Invoke::Script(_) | Invoke::Machine(_)) => {
                     any_event = true;
                     can_error = true;

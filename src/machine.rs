@@ -461,7 +461,7 @@ const UNSUPPORTED_STATE_KEYS: [(&str, &str); 15] = [
     ("parallel", "SCXML <parallel> is not supported: a run is always in exactly one atomic state"),
     ("history", "SCXML <history> is not supported: a run is always in exactly one atomic state"),
     ("send", "SCXML <send> is not supported: a script runs decree emit"),
-    ("raise", "SCXML <raise> is not supported: a script prints its event as a JSON line"),
+    ("raise", "SCXML <raise> is not supported: a script writes its event to $DECREE_EVENT_FILE"),
     ("assign", "SCXML <assign> is not supported: data is read-only"),
     ("script", "SCXML <script> is not supported: name a script in invoke, onentry or onexit"),
     ("if", "SCXML <if> is not supported: make the decision a state with invoke: { check: ... }"),
@@ -669,7 +669,7 @@ pub(crate) fn is_event_name(s: &str) -> bool {
         })
 }
 
-/// Events an invoke may not print and a `model` or `person` option may not be (docs/reference/machines.md, Rules).
+/// Events an invoke may not name and a `model` or `person` option may not be (docs/reference/machines.md, Rules).
 pub fn is_reserved_event(event: &str) -> bool {
     matches!(event, "done" | "error" | "unsure")
         || event.starts_with("done.")
@@ -769,7 +769,7 @@ impl LoadedMachine {
     }
 
     /// `DECREE_EVENTS` for scripts of state `i` (docs/reference/scripts.md): the events of its own and its
-    /// ancestors' transitions that a script may print, in name order. Empty for the root.
+    /// ancestors' transitions that a script may name, in name order. Empty for the root.
     pub fn accepted_events(&self, i: usize) -> Vec<String> {
         if i == 0 {
             return Vec::new();

@@ -76,3 +76,4 @@
 76-comfyui-wait-for-empty.md
 77-use-and-without-scripts.md
 78-unload-instead-of-kill.md
+79-event-file.md

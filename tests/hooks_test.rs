@@ -312,7 +312,7 @@ set -euo pipefail
 if [ "$DECREE_VISITS" = 1 ]; then
   git -c commit.gpgsign=false commit -qam "round 1"
   echo "round 2" >> notes.txt
-  echo '{"event": "again"}'
+  echo again > "$DECREE_EVENT_FILE"
 fi
 "#;
 

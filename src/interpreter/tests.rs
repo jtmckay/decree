@@ -895,12 +895,12 @@ fn check_appends_a_decision_before_its_transition() {
 // ---------------------------------------------------------------
 
 #[test]
-fn undeclared_printed_event_becomes_error_with_invalid_event() {
-    let p = Project::new("step_normal", &[("a_invoke", "print_undeclared")]);
+fn undeclared_named_event_becomes_error_with_invalid_event() {
+    let p = Project::new("step_normal", &[("a_invoke", "name_undeclared")]);
     assert_eq!(p.run(), Outcome::Finished("failed".into()));
     let t = &p.events_of("transition")[1];
     assert_eq!(t["event"], "error");
-    assert_eq!(t["source"], "stdout");
+    assert_eq!(t["source"], "script");
     assert_eq!(t["invalid_event"], "nope");
     assert_eq!(t["to"], "failed");
 }
@@ -1160,7 +1160,7 @@ machine: [
 
 #[test]
 fn composition_unhandled_event_is_taken_by_the_nearest_ancestor() {
-    let p = Project::new("step_bubble", &[("a_invoke", "print_pass")]);
+    let p = Project::new("step_bubble", &[("a_invoke", "name_pass")]);
     assert_eq!(p.run(), Outcome::Finished("done".into()));
     // `a` does not handle `pass`; `work` does, before `outer`. The domain is the root,
     // so `a`, `work` and `outer` are all exited, innermost first.
@@ -1168,7 +1168,7 @@ fn composition_unhandled_event_is_taken_by_the_nearest_ancestor() {
         p.transitions(),
         [
             "- claimed a claim",
-            "a pass after stdout",
+            "a pass after script",
             "after done done exit_code"
         ]
     );
@@ -1191,13 +1191,13 @@ fn composition_unhandled_event_is_taken_by_the_nearest_ancestor() {
 
 #[test]
 fn internal_transition_on_a_compound_state_runs_none_of_its_scripts() {
-    let p = Project::new("step_internal", &[("a_invoke", "print_pass")]);
+    let p = Project::new("step_internal", &[("a_invoke", "name_pass")]);
     assert_eq!(p.run(), Outcome::Finished("done".into()));
     assert_eq!(
         p.transitions(),
         [
             "- claimed a claim",
-            "a pass b stdout",
+            "a pass b script",
             "b done done exit_code"
         ]
     );
@@ -1221,7 +1221,7 @@ fn internal_transition_on_a_compound_state_runs_none_of_its_scripts() {
 
 #[test]
 fn external_transition_on_a_compound_state_exits_and_reenters_it() {
-    let p = Project::new("step_external", &[("a_invoke", "print_pass")]);
+    let p = Project::new("step_external", &[("a_invoke", "name_pass")]);
     assert_eq!(p.run(), Outcome::Finished("done".into()));
     assert_eq!(
         p.order(),
@@ -1391,6 +1391,8 @@ fn person_ask_script_sees_the_wait_id_and_choices_then_the_run_waits() {
         "DECREE_EVENTS=approve reject".to_string(),
         "DECREE_STATE=approval".to_string(),
         "DECREE_PHASE=invoke".to_string(),
+        // An `ask` script produces no event, so it has no event file.
+        "DECREE_EVENT_FILE=".to_string(),
     ] {
         assert!(log.lines().any(|l| l == line), "{line}\n{log}");
     }
@@ -1719,7 +1721,7 @@ fn machine_invoke_runs_a_child_run_in_its_own_folder() {
 
 #[test]
 fn machine_invoke_takes_the_childs_final_state_and_failed_as_error() {
-    let p = parent_project("print_reject");
+    let p = parent_project("name_reject");
     assert_eq!(p.run(), Outcome::Finished("rejected".into()));
     assert_eq!(p.events_of("received")[0]["event"], "rejected");
     assert_eq!(p.transitions()[1], "build rejected rejected machine");
@@ -2337,7 +2339,7 @@ fn every_transition_script_and_run_finished_field_appears() {
     let p = Project::new("step_exit_fail", &[]);
     p.run();
     collect(&p);
-    let p = Project::new("step_normal", &[("a_invoke", "print_undeclared")]);
+    let p = Project::new("step_normal", &[("a_invoke", "name_undeclared")]);
     p.run();
     collect(&p);
     let p = Project::new("step_timeout", &[("sleep_long", "sleep_long")]);

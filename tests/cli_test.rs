@@ -729,25 +729,25 @@ fn emit_params_and_the_trigger_reach_the_script() {
     );
 }
 
-/// The event a script prints as its last line picks the transition.
+/// The event a script writes to `$DECREE_EVENT_FILE` picks the transition.
 #[test]
-fn a_printed_event_picks_the_transition() {
+fn a_named_event_picks_the_transition() {
     let p = Project::init();
     p.machine(
         "verify",
-        "name: verify\ndescription: A script that prints its event.\ninitial: verify\nstates:\n  \
+        "name: verify\ndescription: A script that names its event.\ninitial: verify\nstates:\n  \
          verify:\n    invoke: verify\n    transitions: { pass: passed, fail: failed }\n  \
          passed: { final: true }\n  failed: { final: true }\n",
     );
     fs::create_dir(p.decree_dir().join("scripts/verify")).unwrap();
     p.script(
         "verify/verify.sh",
-        "#!/usr/bin/env bash\necho checking\necho '{\"event\":\"pass\"}'\n",
+        "#!/usr/bin/env bash\necho checking\necho pass > \"$DECREE_EVENT_FILE\"\n",
     );
     let id = p.emit("verify", "# Verify\n");
     p.decree(&["process"]).assert().success();
     assert_eq!(
         transitions(&p.events(&id)),
-        ["- -> verify (claim)", "verify -> passed (stdout)"]
+        ["- -> verify (claim)", "verify -> passed (script)"]
     );
 }

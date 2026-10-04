@@ -147,14 +147,14 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `from` | string or null | Always | Atomic state left. `null` on the claim and `invalid_message` events. |
 | `event` | string | Always | Event taken. `claimed` on the claim event. |
 | `to` | string | Always | Atomic state entered (`T`). |
-| `source` | string | Always | `claim`, `exit_code`, `stdout`, `attempt`, `check`, `model`, `person`, `machine`, `timeout`, `internal`, `invalid_message` or `retry`. |
+| `source` | string | Always | `claim`, `exit_code`, `script`, `attempt`, `check`, `model`, `person`, `machine`, `timeout`, `internal`, `invalid_message` or `retry`. |
 | `exit_code` | int or null | Always | The invoke's exit code. `null` if there was no invoke. |
-| `invalid_event` | string | [Events from an invoke](scripts.md#events-from-an-invoke), step 4 | The undeclared event the invoke printed. |
+| `invalid_event` | string | [Events from an invoke](scripts.md#events-from-an-invoke), step 4 | The undeclared event the invoke named. |
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
 | `file` | string | Claim event | Original inbox or migration filename. |
 | `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
 
-`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `stdout` is an event the script printed; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.
+`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.
 
 **`script`**: one script execution finished. Written after the script exits, before any `transition` it causes.
 

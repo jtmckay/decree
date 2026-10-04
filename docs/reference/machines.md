@@ -206,7 +206,7 @@ decree implements SCXML's semantics (the algorithm in Appendix D, "Algorithm for
 | Data model | A custom data model (SCXML allows these through the `datamodel` attribute): read-only typed `data`, plus `visits`. Conditions are evaluated by `check` invokes, not on transitions. |
 | `cond` on transitions | No. A decision is a state of its own (a `check`, `model` or `person` invoke), so every transition is unconditional. |
 | `<parallel>`, `<history>` | No. A run is always in exactly one atomic state, which is what `events.jsonl` records. |
-| `<send>`, `<raise>`, `<assign>`, `<script>`, `<if>`, `<foreach>`, `<log>`, `<cancel>`, `<donedata>` | No. A script's printed event replaces `<raise>`; `decree emit` replaces `<send>` to other sessions; `data` is read-only. |
+| `<send>`, `<raise>`, `<assign>`, `<script>`, `<if>`, `<foreach>`, `<log>`, `<cancel>`, `<donedata>` | No. A script's named event replaces `<raise>`; `decree emit` replaces `<send>` to other sessions; `data` is read-only. |
 | Targetless transitions | No. |
 | `<onentry>`, `<onexit>` on `<scxml>` | Not in SCXML. decree's root `onentry`/`onexit` (Keys) are an extension that behaves like a top-level compound state around all others. |
 | `<onexit>` on `<final>` | No (V7). A final state has `onentry` only. |
@@ -278,7 +278,7 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 | V15 | Every compound state with a final child handles `done.state.<id>`, itself or through an ancestor, so the run cannot stall. |
 | V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; `max_attempts` and `timeout_s` appear only inside a `script` invoke (and `timeout_s` inside a `person`), which the parser enforces with V19. |
 | V17 | `type: internal` appears only on a compound state's transition whose target is one of its descendants. |
-| V18 | Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-printed event or a `model` or `person` option. |
+| V18 | Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-named event or a `model` or `person` option. |
 | V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `person:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` or `timeout_s` on a state (inside `invoke: { script: … }`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`). |
 | V20 | No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others. |
 | V21 | Within one state, no transition's event equals another's followed by `.` and more (`done` and `done.state.work`), so at most one of a state's transitions matches any event. |

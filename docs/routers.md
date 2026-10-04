@@ -125,7 +125,7 @@ body=$(jq '{instructions: .question,
             text: ([.input, .message_body] | map(select(. != "")) | join("\n\n"))}' "$DECREE_REQUEST")
 reply=$(curl -fsS --max-time 30 -H 'content-type: application/json' -d "$body" "$url")
 printf '%s\n' "$reply" > "$DECREE_REPLY"
-jq -r '"picked \(.event)"' "$DECREE_REPLY"   # a plain last line, as in ask_claude
+jq -r '"picked \(.event)"' "$DECREE_REPLY"   # for the log only, as in ask_claude
 ```
 
 `classify_text` takes the labels with their descriptions, and no separate instructions, so the server puts the question in front of the text. The pages document a score for the picked label only, so the reply has no `probabilities`. If the server is down, `curl` fails, the router run ends in `failed`, and the state's event is `error`: give the state an `error` transition (to a bigger model, or to a person) if a missing classifier should not fail the run, as `develop_by_size` does.
@@ -257,7 +257,7 @@ name: escalating_router
 description: Ask a small model first, and a large one only when the small one is unsure.
 initial: cheap
 states:
-  cheap:                           # writes $DECREE_REPLY; prints {"event":"sure"} when its confidence is at least 0.85
+  cheap:                           # writes $DECREE_REPLY; names the event sure when its confidence is at least 0.85
     invoke: ask_cheap
     transitions: { sure: done, done: strong }
   strong:                          # overwrites $DECREE_REPLY
@@ -270,7 +270,7 @@ states:
 `ask_cheap` is `ask_gliner` (or `ask_claude` with a small model) plus one line at the end:
 
 ```bash
-jq -e '(.confidence // 0) >= 0.85' "$DECREE_REPLY" > /dev/null && echo '{"event":"sure"}'
+jq -e '(.confidence // 0) >= 0.85' "$DECREE_REPLY" > /dev/null && echo sure > "$DECREE_EVENT_FILE"
 exit 0
 ```
 

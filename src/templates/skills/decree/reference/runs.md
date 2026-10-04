@@ -19,7 +19,7 @@ carries `v`, `seq`, `ts`, `type`, `run_id`, `machine` and `trigger`. Types:
 
 | `type` | Meaning |
 | --- | --- |
-| `transition` | `from`, `event`, `to`, `source` (`claim`, `exit_code`, `stdout`, `attempt`, `check`, `model`, `person`, `machine`, `timeout`, `internal`, `invalid_message`, `retry`). |
+| `transition` | `from`, `event`, `to`, `source` (`claim`, `exit_code`, `script`, `attempt`, `check`, `model`, `person`, `machine`, `timeout`, `internal`, `invalid_message`, `retry`). |
 | `script` | One script finished: `state`, `phase`, `script`, `path`, `attempt`, `duration_ms`, `exit_code`, `log`. |
 | `decision` | A `check`, `model` or `person` produced its event: `kind`, `event`, and for models `pick`, `reason`, `confidence`, `router`, `child_run`. |
 | `waiting` | Paused for a person (`wait_id`, `options`, `timeout_at`) or a child run (`child`). |

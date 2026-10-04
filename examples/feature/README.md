@@ -40,7 +40,7 @@ examples/feature/.decree/
 
 - A **message** says *what* to do (markdown body) and *which machine* does it (`machine:` in the frontmatter).
 - A **machine** says *in what order*: states, what each state invokes, and which event leads to which state. It names functions but never contains code or paths.
-- A **script** does one piece of work and reports one outcome: exit 0 (`done`), non-zero (`error`), or a JSON line naming a richer event (`{"event":"pass"}`). Generic scripts (`commit`, `notify`, `snapshot`, `test`) live once in `scripts/` and serve every machine; `scripts/feature/implement.sh` and `scripts/develop/implement.sh` are each machine's own `implement`, found first because `scripts/<machine>/` is checked before `scripts/`.
+- A **script** does one piece of work and reports one outcome: exit 0 (`done`), non-zero (`error`), or a richer event it names in a file (`echo pass > "$DECREE_EVENT_FILE"`). Generic scripts (`commit`, `notify`, `snapshot`, `test`) live once in `scripts/` and serve every machine; `scripts/feature/implement.sh` and `scripts/develop/implement.sh` are each machine's own `implement`, found first because `scripts/<machine>/` is checked before `scripts/`.
 
 There is no configuration file. A `model` with no `router:` uses the machine named `router`, every message names its machine, and retries are set per script with `max_attempts` inside its invoke.
 
@@ -160,7 +160,7 @@ A machine is an SCXML statechart written in YAML. The keys are SCXML's names; if
 | Key | SCXML | What decree does with it |
 | --- | --- | --- |
 | `name`, `initial`, `states` | `<scxml name initial>`, child `<state>` | Where a run starts; nesting. |
-| `invoke: implement` | `<invoke type="decree:script">` | Runs the `implement` script (here `scripts/feature/implement.sh`). Its result is the event: `done`, `error` or a printed name. |
+| `invoke: implement` | `<invoke type="decree:script">` | Runs the `implement` script (here `scripts/feature/implement.sh`). Its result is the event: `done`, `error` or the name it writes to `$DECREE_EVENT_FILE`. |
 | `invoke: { check: … }` | `<invoke type="decree:check">` | A typed condition: one subject (`output`, `data`, `visits` or `confidence`) and one operator. Produces `true` or `false`. |
 | `invoke: { model: { question: …, output: … } }` | `<invoke type="decree:model">` | A router machine asks a model the `question`, given the `output` state's output; the state's transitions, with their descriptions, are the answers. `unsure` below `min_confidence`. |
 | `invoke: { machine: deploy }` | `<invoke type="http://www.w3.org/TR/scxml/">` (a child state machine) | Runs the machine as a child run; the final state it reaches is the event. |
@@ -208,8 +208,8 @@ Each `invoke: { machine: … }` starts a **child run** in its own folder under `
 | 6 `script` implement, invoke | `0004` | The agent implemented the spec: 11 min 44 s (`duration_ms: 704512`). `path` shows `scripts/feature/implement.sh` ran. | |
 | 7 `script` collect_logs, onexit | `0005` | `onexit` of `implement`, on the way to `verify`. | `onexit` runs on every exit from the state. |
 | 8 `transition` `implement → verify` (`done`) | | | |
-| 9 `script` verify, invoke | `0006` | `cargo test` failed; `verify.sh` printed `{"event":"fail"}`. | A script names its own result. |
-| 10 `transition` `verify → rounds_left` (`fail`, `source: stdout`) | | | |
+| 9 `script` verify, invoke | `0006` | `cargo test` failed; `verify.sh` wrote `fail` to `$DECREE_EVENT_FILE`. | A script names its own result. |
+| 10 `transition` `verify → rounds_left` (`fail`, `source: script`) | | | |
 | 11 `decision` rounds_left, `check` | | `visits implement` (1) `less_than data.max_rounds` (2): `true`. | Deterministic; no log, no AI. |
 | 12 `transition` `rounds_left → triage` (`true`, `source: check`) | | | |
 | 13 `waiting` triage, child `20261001T144327Z-6a1f03` | | `triage` handed the question to the router machine `router`, as a child run with its own folder. | Routers are machines: replaceable, visible, logged separately. |
@@ -221,8 +221,8 @@ Each `invoke: { machine: … }` starts a **child run** in its own folder under `
 | 19 `script` implement, invoke, attempt 2 | `0009` | `DECREE_FINAL_ATTEMPT=true`. Succeeded. | |
 | 20 `script` collect_logs, onexit | `0010` | | |
 | 21 `transition` `implement → verify` (`done`) | | | |
-| 22 `script` verify, invoke | `0011` | Tests passed; the script printed `{"event":"pass"}`. | Nobody else was asked. |
-| 23 `transition` `verify → verified` (`pass`, `source: stdout`) | | `verified` is `work`'s own final state. | |
+| 22 `script` verify, invoke | `0011` | Tests passed; the script wrote `pass` to `$DECREE_EVENT_FILE`. | Nobody else was asked. |
+| 23 `transition` `verify → verified` (`pass`, `source: script`) | | `verified` is `work`'s own final state. | |
 | 24 `transition` `verified → done` (`done.state.work`, `source: internal`) | | decree raised `done.state.work` at once; `work` handles it. decree appended `01-rate-limit-upload.md` to `processed.md`, *then* ran `done`'s `onentry`. | So the commit includes the ledger line. |
 | 25 `script` commit, `onentry` of `done` | `0012` | One commit with the code and the ledger line. | decree never runs git itself. |
 | 26 `script` notify, root `onexit` | `0013` | Last script of the run. | |
@@ -236,7 +236,7 @@ Had the second round failed too, `rounds_left` would have said `false` (`visits 
 
 Migration 02 is in [`runs/02-upload-quota-per-plan/`](.decree/runs/02-upload-quota-per-plan/events.jsonl), paused. Nobody needs to run `decree retry`: the run continues by itself when the reply arrives.
 
-1. `verify` printed `fail`; `rounds_left` said `true` (1 < 3); the model picked `retry` but with confidence 0.55, below 0.8, so `triage` produced `unsure` (event 14; the router's own run is [`20261001T150122Z-c03b7e`](.decree/runs/20261001T150122Z-c03b7e/reply.json)). The run went to `review` (event 15).
+1. `verify` named `fail`; `rounds_left` said `true` (1 < 3); the model picked `retry` but with confidence 0.55, below 0.8, so `triage` produced `unsure` (event 14; the router's own run is [`20261001T150122Z-c03b7e`](.decree/runs/20261001T150122Z-c03b7e/reply.json)). The run went to `review` (event 15).
 2. `review` invokes `person`. Its `ask` script, `ask_person.sh`, ran with `DECREE_WAIT_ID=02-upload-quota-per-plan.w15` and `DECREE_CHOICES` pointing at the options and their descriptions, and printed how to reply ([`0007-review-ask_person.log`](.decree/runs/02-upload-quota-per-plan/0007-review-ask_person.log)). A real one would post this to chat or open an issue.
 3. decree appended a `waiting` event (event 17) with the wait id, the options and the deadline (`timeout_s`: two days). `decree status` lists the run as `waiting`; `decree process` prints the same commands and exits 0. Migrations after 02 wait too.
 4. A person replied with `decree event 02-upload-quota-per-plan.w15 retry -m "..."`, which wrote [`inbox/20261001T160301Z-9be210.md`](.decree/inbox/20261001T160301Z-9be210.md):

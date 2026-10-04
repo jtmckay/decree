@@ -13,5 +13,4 @@ change only what it asks for, and keep the tests passing."
 echo "=== opencode run --model ollama/${MODEL} ==="
 echo "${prompt}"
 opencode run --model "ollama/${MODEL}" "${prompt}"
-# a plain last line: the model's last line must not be read as an event
 echo "implemented with ollama/${MODEL}"

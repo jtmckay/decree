@@ -16,5 +16,5 @@ echo "--- reply"
 reply=$(curl -fsS --max-time 30 -H 'content-type: application/json' -d "$body" "$url")
 echo "$reply"
 printf '%s\n' "$reply" > "$DECREE_REPLY"
-# a plain last line: a reply on its own would be read as this script's event
+# for the log only: decree takes the event from the reply
 jq -r '"picked \(.event)"' "$DECREE_REPLY"

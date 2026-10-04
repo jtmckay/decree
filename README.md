@@ -182,7 +182,7 @@ Every state does one thing: it invokes a function, and the function's result is 
 
 | `invoke:` | What happens | Events |
 | --- | --- | --- |
-| `<script>`, or `script: { name: <script>, max_attempts: 2, timeout_s: 600 }` | Runs the script, re-running it up to `max_attempts` times and stopping it after `timeout_s`. | `done`, `error`, or the `event` of a JSON object on its last stdout line |
+| `<script>`, or `script: { name: <script>, max_attempts: 2, timeout_s: 600 }` | Runs the script, re-running it up to `max_attempts` times and stopping it after `timeout_s`. | `done`, `error`, or the event it writes to `$DECREE_EVENT_FILE` |
 | `check: <condition>` | A deterministic condition over a state's output, `data`, `visits` or a model's confidence, such as `check: { visits: fix, less_than: 3 }`. | `true`, `false` |
 | `model: { question: ..., output: <state> }` | A router machine asks a model to pick one of the state's transitions, with a confidence, given the `output` state's output and the message body. Below `min_confidence` the event is `unsure`. | the transition names, `unsure` |
 | `person: { question: ..., ask: <script> }` | The `ask` script tells someone; the run pauses until a reply arrives. | the transition names, `error` on `timeout_s` |
@@ -217,7 +217,7 @@ Script `X` used by machine `M` is the first match of `X` or `X.<ext>` in:
 1. `.decree/scripts/M/`
 2. `.decree/scripts/`
 
-An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the last stdout line is a JSON object such as `{"event":"pass"}`. Output goes to `runs/<id>/<NNNN>-<state>-<script>.log`. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all).
+An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the script writes an event name to the file `$DECREE_EVENT_FILE` (`echo pass > "$DECREE_EVENT_FILE"`). Output goes to `runs/<id>/<NNNN>-<state>-<script>.log` and is only a log: decree never reads an event from it. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all).
 
 Model servers and other long-running processes are not scripts and decree does not manage them: an `onentry` script starts what a state needs. [docs/services.md](docs/services.md) shows systemd units, llama-swap and a tmux layout for that.
 

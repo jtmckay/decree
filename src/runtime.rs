@@ -1,6 +1,6 @@
 //! Runtime: running scripts (docs/reference/scripts.md, Execution). `resolve` finds the file
 //! a script name stands for; `Executor` runs scripts for one run: environment, log, process
-//! group, timeout, attempts, event parsing, and one `script` event in `events.jsonl` per
+//! group, timeout, attempts, the event file, and one `script` event in `events.jsonl` per
 //! execution (docs/reference/runs.md).
 
 pub(crate) mod resolve;
@@ -162,6 +162,9 @@ pub struct ScriptRun<'a> {
     pub question: &'a str,
     pub choices: &'a Path,
     pub timeout: Option<Duration>,
+    /// A script invoke, whose event decree reads: it gets a fresh `.event` file as
+    /// `DECREE_EVENT_FILE`. Other scripts get an empty `DECREE_EVENT_FILE`.
+    pub names_event: bool,
 }
 
 impl<'a> ScriptRun<'a> {
@@ -179,6 +182,7 @@ impl<'a> ScriptRun<'a> {
             question: "",
             choices: Path::new(""),
             timeout: None,
+            names_event: false,
         }
     }
 }
@@ -189,8 +193,9 @@ pub struct Execution {
     /// `None` if the script was killed by a signal.
     pub exit_code: Option<i32>,
     pub timed_out: bool,
-    /// The last non-empty stdout line, trimmed.
-    pub last_line: Option<String>,
+    /// The trimmed contents of `DECREE_EVENT_FILE`, if the script names its event, exited
+    /// 0 and wrote a name to it.
+    pub event: Option<String>,
     /// Log filename in the run folder.
     pub log: String,
     /// The file that ran.
@@ -202,26 +207,16 @@ impl Execution {
     pub fn succeeded(&self) -> bool {
         self.exit_code == Some(0) && !self.timed_out
     }
-
-    /// The `event` string of a JSON object on the last non-empty stdout line.
-    fn printed_event(&self) -> Option<String> {
-        let value: Value = serde_json::from_str(self.last_line.as_deref()?).ok()?;
-        value
-            .as_object()?
-            .get("event")?
-            .as_str()
-            .map(str::to_string)
-    }
 }
 
 /// The event an invoke raises (docs/reference/scripts.md, Events from an invoke).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvokeEvent {
-    /// From the exit code: `done` (exit 0, no printed event) or `error`.
+    /// From the exit code: `done` (exit 0, no event named) or `error`.
     ExitCode(&'static str),
-    /// Printed on the last stdout line of an invoke that exited 0.
-    Stdout(String),
-    /// Printed, but reserved or matching no transition of the state or its ancestors:
+    /// Named in `DECREE_EVENT_FILE` by an invoke that exited 0.
+    Script(String),
+    /// Named, but reserved or matching no transition of the state or its ancestors:
     /// the event is `error`, and the `transition` event records `invalid_event`.
     Invalid(String),
 }
@@ -233,6 +228,10 @@ pub struct InvokeOutcome {
     /// The last attempt's execution.
     pub execution: Execution,
 }
+
+/// `runs/<id>/.event`: where a script invoke names its event, `DECREE_EVENT_FILE`
+/// (docs/reference/scripts.md, Events from an invoke).
+pub const EVENT_FILE: &str = ".event";
 
 /// `runs/<id>/.running`: the script running now (docs/reference/scripts.md, Execution).
 pub const RUNNING_FILE: &str = ".running";
@@ -334,6 +333,7 @@ impl Executor {
                 max_attempts,
                 events: &events,
                 timeout: script.timeout_s.map(Duration::from_secs),
+                names_event: true,
                 ..ScriptRun::new(&script.name, &node.id, Phase::Invoke)
             })?;
             if execution.succeeded() || attempt >= max_attempts {
@@ -345,11 +345,11 @@ impl Executor {
         let event = if !execution.succeeded() {
             InvokeEvent::ExitCode("error")
         } else {
-            match execution.printed_event() {
+            match execution.event.clone() {
                 Some(e) if is_reserved_event(&e) || !machine.handles(state, &e) => {
                     InvokeEvent::Invalid(e)
                 }
-                Some(e) => InvokeEvent::Stdout(e),
+                Some(e) => InvokeEvent::Script(e),
                 None => InvokeEvent::ExitCode("done"),
             }
         };
@@ -399,13 +399,19 @@ impl Executor {
         let log = self.reserve_log(run.state, run.script);
         let log_path = self.info.run_dir.join(&log);
         let log_file = File::create(&log_path).map_err(io_err(&log_path))?;
+        // A fresh, empty event file for every execution, so an earlier attempt's event
+        // never carries over.
+        let event_path = run.names_event.then(|| self.info.run_dir.join(EVENT_FILE));
+        if let Some(event_path) = &event_path {
+            File::create(event_path).map_err(io_err(event_path))?;
+        }
 
         let mut cmd = Command::new(&path);
         cmd.current_dir(&self.info.project_root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .envs(self.env(run))
+            .envs(self.env(run, event_path.as_deref()))
             // Its own process group, so a stop reaches the whole tree.
             .process_group(0);
         // The background group must not be stopped for touching the TTY.
@@ -420,11 +426,17 @@ impl Executor {
 
         let started_at = Utc::now();
         let start = Instant::now();
-        let mut child = cmd.spawn().map_err(|source| RuntimeError::Spawn {
-            script: run.script.to_string(),
-            path: path.clone(),
-            source,
-        })?;
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(source) => {
+                remove_event_file(event_path.as_deref())?;
+                return Err(RuntimeError::Spawn {
+                    script: run.script.to_string(),
+                    path: path.clone(),
+                    source,
+                });
+            }
+        };
         let running = Running {
             pid: child.id(),
             state: run.state.to_string(),
@@ -437,25 +449,33 @@ impl Executor {
         if let Err(e) = running.write(&self.info.run_dir) {
             // The script runs on without its `.running`; stop it rather than leak it.
             stop_group(&mut child, KILL_GRACE).map_err(io_err(&path))?;
+            remove_event_file(event_path.as_deref())?;
             return Err(io_err(&running_path)(e));
         }
         let log_file = Arc::new(Mutex::new(log_file));
         let stdout = child
             .stdout
             .take()
-            .map(|out| spawn_reader(out, Arc::clone(&log_file), b"", true));
+            .map(|out| spawn_reader(out, Arc::clone(&log_file), b""));
         let stderr = child
             .stderr
             .take()
-            .map(|err| spawn_reader(err, Arc::clone(&log_file), STDERR_PREFIX, false));
+            .map(|err| spawn_reader(err, Arc::clone(&log_file), STDERR_PREFIX));
 
         let deadline = run.timeout.map(|t| start + t);
         let (status, stop) =
             wait_child(&mut child, deadline, &self.shutdown).map_err(io_err(&path))?;
         // The readers end once every process holding the pipes has exited.
-        let last_line = join_reader(stdout).map_err(io_err(&log_path))?;
+        join_reader(stdout).map_err(io_err(&log_path))?;
         join_reader(stderr).map_err(io_err(&log_path))?;
         let duration = start.elapsed();
+        let exited_zero = stop == Stop::Exited && status.code() == Some(0);
+        // Read only after exit 0; deleted either way.
+        let event = match &event_path {
+            Some(p) if exited_zero => read_event_file(p)?,
+            _ => None,
+        };
+        remove_event_file(event_path.as_deref())?;
         truncate_log_if_needed(&log_path, MAX_LOG_SIZE).map_err(io_err(&log_path))?;
         if stop == Stop::Signal {
             // No `script` event; the script is no longer running.
@@ -466,7 +486,7 @@ impl Executor {
         let execution = Execution {
             exit_code: status.code(),
             timed_out: stop == Stop::Timeout,
-            last_line,
+            event,
             log,
             path,
         };
@@ -489,7 +509,8 @@ impl Executor {
     }
 
     /// The environment for `run` (docs/reference/scripts.md, Environment), added to the inherited one.
-    fn env(&self, run: &ScriptRun) -> Vec<(String, std::ffi::OsString)> {
+    /// `event_file` is `DECREE_EVENT_FILE`, if the script names its event.
+    fn env(&self, run: &ScriptRun, event_file: Option<&Path>) -> Vec<(String, std::ffi::OsString)> {
         let info = &self.info;
         let mut events = run.events.to_vec();
         events.sort();
@@ -515,6 +536,10 @@ impl Executor {
             ),
             ("TRIGGER", info.trigger.clone().into()),
             ("EVENTS", events.join(" ").into()),
+            (
+                "EVENT_FILE",
+                event_file.unwrap_or(Path::new("")).as_os_str().into(),
+            ),
             ("PARENT", info.parent.clone().unwrap_or_default().into()),
             ("REQUEST", request.as_os_str().into()),
             ("REPLY", reply.as_os_str().into()),
@@ -564,22 +589,44 @@ fn next_log_number(run_dir: &Path) -> io::Result<u32> {
     Ok(highest + 1)
 }
 
-/// Copy `source` into `log` line by line, each line prefixed with `prefix`. With
-/// `keep_last`, returns the last non-empty line, trimmed (docs/reference/scripts.md, Events from an invoke).
+/// The event a script named in `path` (docs/reference/scripts.md, Events from an invoke):
+/// the contents with surrounding whitespace trimmed, or `None` if that leaves nothing or
+/// the file is gone.
+fn read_event_file(path: &Path) -> Result<Option<String>, RuntimeError> {
+    match fs::read(path) {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes);
+            let name = text.trim();
+            Ok((!name.is_empty()).then(|| name.to_string()))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(io_err(path)(e)),
+    }
+}
+
+/// Delete the event file at `path`, if any; a missing one is fine.
+fn remove_event_file(path: Option<&Path>) -> Result<(), RuntimeError> {
+    let Some(path) = path else { return Ok(()) };
+    match fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(io_err(path)(e)),
+        _ => Ok(()),
+    }
+}
+
+/// Copy `source` into `log` line by line, each line prefixed with `prefix`. stdout and
+/// stderr are only logs: nothing in them is parsed.
 fn spawn_reader<R: Read + Send + 'static>(
     source: R,
     log: Arc<Mutex<File>>,
     prefix: &'static [u8],
-    keep_last: bool,
-) -> thread::JoinHandle<io::Result<Option<String>>> {
+) -> thread::JoinHandle<io::Result<()>> {
     thread::spawn(move || {
         let mut reader = BufReader::new(source);
-        let mut last = None;
         let mut buf = Vec::new();
         loop {
             buf.clear();
             if reader.read_until(b'\n', &mut buf)? == 0 {
-                return Ok(last);
+                return Ok(());
             }
             let mut line = Vec::with_capacity(prefix.len() + buf.len() + 1);
             line.extend_from_slice(prefix);
@@ -590,26 +637,16 @@ fn spawn_reader<R: Read + Send + 'static>(
             log.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .write_all(&line)?;
-            if !keep_last {
-                continue;
-            }
-            let text = String::from_utf8_lossy(&buf);
-            let text = text.trim();
-            if !text.is_empty() {
-                last = Some(text.to_string());
-            }
         }
     })
 }
 
-fn join_reader(
-    handle: Option<thread::JoinHandle<io::Result<Option<String>>>>,
-) -> io::Result<Option<String>> {
+fn join_reader(handle: Option<thread::JoinHandle<io::Result<()>>>) -> io::Result<()> {
     match handle {
         Some(handle) => handle
             .join()
             .map_err(|_| io::Error::other("log reader panicked"))?,
-        None => Ok(None),
+        None => Ok(()),
     }
 }
 
@@ -902,42 +939,85 @@ pub(crate) mod executor_tests {
     }
 
     #[test]
-    fn json_last_line_gives_its_event() {
-        let p = Project::new(&["print_pass"]);
+    fn event_file_gives_its_event() {
+        let p = Project::new(&["name_pass"]);
         let out = invoke(
             &p,
-            "{ invoke: print_pass, transitions: { done: done, pass: done } }",
+            "{ invoke: name_pass, transitions: { done: done, pass: done } }",
         );
-        assert_eq!(out.event, InvokeEvent::Stdout("pass".to_string()));
+        assert_eq!(out.event, InvokeEvent::Script("pass".to_string()));
+        // Read, then deleted.
+        assert!(!p.run_dir().join(EVENT_FILE).exists());
     }
 
     #[test]
-    fn json_last_line_then_exit_one_gives_error() {
-        let p = Project::new(&["print_pass_exit_one"]);
+    fn event_on_stdout_is_only_a_log_line() {
+        let p = Project::new(&["print_event_json"]);
         let out = invoke(
             &p,
-            "{ invoke: print_pass_exit_one, transitions: { done: done, pass: done } }",
+            "{ invoke: print_event_json, transitions: { done: done, pass: done } }",
+        );
+        assert_eq!(out.event, InvokeEvent::ExitCode("done"));
+        assert!(p
+            .log(&out.execution.log)
+            .ends_with("{\"event\":\"pass\"}\n"));
+    }
+
+    #[test]
+    fn event_file_whitespace_is_trimmed() {
+        let p = Project::new(&["name_pass_padded"]);
+        let out = invoke(
+            &p,
+            "{ invoke: name_pass_padded, transitions: { done: done, pass: done } }",
+        );
+        assert_eq!(out.event, InvokeEvent::Script("pass".to_string()));
+    }
+
+    #[test]
+    fn each_attempt_gets_a_fresh_empty_event_file() {
+        let p = Project::new(&["name_pass_until_final"]);
+        let out = invoke(
+            &p,
+            "{ invoke: { script: { name: name_pass_until_final, max_attempts: 3 } }, \
+             transitions: { done: done, pass: done } }",
+        );
+        assert_eq!(out.event, InvokeEvent::Script("pass".to_string()));
+        for n in 1..=3 {
+            let log = p.log(&format!("{n:04}-s-name_pass_until_final.log"));
+            assert_eq!(log, format!("attempt {n}, event file holds []\n"));
+        }
+        assert!(!p.run_dir().join(EVENT_FILE).exists());
+    }
+
+    #[test]
+    fn event_file_then_exit_one_gives_error() {
+        let p = Project::new(&["name_pass_exit_one"]);
+        let out = invoke(
+            &p,
+            "{ invoke: name_pass_exit_one, transitions: { done: done, pass: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("error"));
         assert_eq!(out.execution.exit_code, Some(1));
+        assert_eq!(out.execution.event, None);
+        assert!(!p.run_dir().join(EVENT_FILE).exists());
     }
 
     #[test]
-    fn undeclared_printed_event_becomes_error() {
-        let p = Project::new(&["print_undeclared"]);
+    fn undeclared_named_event_becomes_error() {
+        let p = Project::new(&["name_undeclared"]);
         let out = invoke(
             &p,
-            "{ invoke: print_undeclared, transitions: { done: done } }",
+            "{ invoke: name_undeclared, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Invalid("nope".to_string()));
     }
 
     #[test]
-    fn reserved_printed_event_becomes_error() {
-        let p = Project::new(&["print_reserved"]);
+    fn reserved_named_event_becomes_error() {
+        let p = Project::new(&["name_reserved"]);
         let out = invoke(
             &p,
-            "{ invoke: print_reserved, transitions: { done: done, error.custom: failed } }",
+            "{ invoke: name_reserved, transitions: { done: done, error.custom: failed } }",
         );
         assert_eq!(out.event, InvokeEvent::Invalid("error.custom".to_string()));
         for event in ["done", "error", "done.state.x", "error.custom"] {
@@ -949,26 +1029,26 @@ pub(crate) mod executor_tests {
     }
 
     #[test]
-    fn printed_event_handled_by_an_ancestor_is_valid() {
-        let p = Project::new(&["print_pass"]);
+    fn named_event_handled_by_an_ancestor_is_valid() {
+        let p = Project::new(&["name_pass"]);
         let text = "name: m\ndescription: Test.\ninitial: w\nstates:\n  w:\n    initial: s\n    \
                     transitions: { pass: done }\n    states:\n      \
-                    s: { invoke: print_pass, transitions: { done: done } }\n  \
+                    s: { invoke: name_pass, transitions: { done: done } }\n  \
                     done: { final: true }\n  failed: { final: true }\n";
         let m = load_machine_text("m", text).unwrap();
         let out = p
             .executor()
             .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 1)
             .unwrap();
-        assert_eq!(out.event, InvokeEvent::Stdout("pass".to_string()));
+        assert_eq!(out.event, InvokeEvent::Script("pass".to_string()));
     }
 
     #[test]
-    fn printed_unsure_is_reserved() {
-        let p = Project::new(&["print_unsure"]);
+    fn named_unsure_is_reserved() {
+        let p = Project::new(&["name_unsure"]);
         let out = invoke(
             &p,
-            "{ invoke: print_unsure, transitions: { done: done, unsure: done } }",
+            "{ invoke: name_unsure, transitions: { done: done, unsure: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Invalid("unsure".to_string()));
     }
@@ -1015,7 +1095,6 @@ pub(crate) mod executor_tests {
         assert!(log.contains("to stdout\n"), "{log}");
         assert!(log.contains("[stderr] to stderr\n"), "{log}");
         assert!(!log.contains("[stderr] to stdout"), "{log}");
-        assert_eq!(out.last_line.as_deref(), Some("to stdout"));
     }
 
     #[test]
@@ -1082,6 +1161,7 @@ pub(crate) mod executor_tests {
             ("DECREE_FINAL_ATTEMPT", "true".to_string()),
             ("DECREE_TRIGGER", "inbox".to_string()),
             ("DECREE_EVENTS", "approve retry".to_string()),
+            ("DECREE_EVENT_FILE", String::new()),
             ("DECREE_PARENT", "20261001T120000Z-0b12aa".to_string()),
             ("DECREE_REQUEST", request.to_str().unwrap().to_string()),
             ("DECREE_REPLY", reply.to_str().unwrap().to_string()),
@@ -1139,6 +1219,9 @@ pub(crate) mod executor_tests {
         ] {
             assert!(log.lines().any(|l| l == line), "{line}\n{log}");
         }
+        let event_file = p.run_dir().join(EVENT_FILE);
+        let line = format!("DECREE_EVENT_FILE={}", event_file.display());
+        assert!(log.lines().any(|l| l == line), "{line}\n{log}");
         let out = exec
             .run_script(&ScriptRun::new("print_env", ROOT_STATE, Phase::OnExit))
             .unwrap();
@@ -1146,6 +1229,22 @@ pub(crate) mod executor_tests {
         let log = p.log(&out.log);
         assert!(log.lines().any(|l| l == "DECREE_STATE=_root"), "{log}");
         assert!(log.lines().any(|l| l == "DECREE_VISITS=0"), "{log}");
+        assert!(log.lines().any(|l| l == "DECREE_EVENT_FILE="), "{log}");
+    }
+
+    /// `onentry` and `onexit` scripts produce no events, so they get no event file.
+    #[test]
+    fn entry_and_exit_scripts_see_an_empty_event_file() {
+        let p = Project::new(&["print_env"]);
+        let mut exec = p.executor();
+        for phase in [Phase::OnEntry, Phase::OnExit] {
+            let out = exec
+                .run_script(&ScriptRun::new("print_env", "s", phase))
+                .unwrap();
+            let log = p.log(&out.log);
+            assert!(log.lines().any(|l| l == "DECREE_EVENT_FILE="), "{log}");
+        }
+        assert!(!p.run_dir().join(EVENT_FILE).exists());
     }
 
     #[test]
@@ -1343,17 +1442,6 @@ pub(crate) mod executor_tests {
             .unwrap_err();
         assert!(matches!(err, RuntimeError::Interrupted { .. }));
         assert!(p.events().is_empty());
-    }
-
-    #[test]
-    fn last_line_is_the_last_non_empty_stdout_line() {
-        let p = Project::new(&["print_lines"]);
-        let out = p
-            .executor()
-            .run_script(&ScriptRun::new("print_lines", "s", Phase::Invoke))
-            .unwrap();
-        assert_eq!(out.last_line.as_deref(), Some("line 60"));
-        assert_eq!(out.printed_event(), None);
     }
 
     #[test]

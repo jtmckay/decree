@@ -48,7 +48,7 @@ decree splits structured from unstructured data across three blocks. Messages ca
   |      | names machine; decree mirrors state
   |      v
   |   Machine   (states, invokes, transitions)            <-- options / one event -->  model or person
-  |      | script name + DECREE_* env       ^ event: exit code or JSON line
+  |      | script name + DECREE_* env       ^ event: exit code or event file
   |      v                                  |
   +-- Scripts   (scripts/<name>, bash by default)
 ```
@@ -59,7 +59,7 @@ Everything that crosses a boundary is listed below. Nothing else crosses.
 | --- | --- | --- |
 | Message → machine | Frontmatter `machine` and `params`. The body is passed through untouched. | [messages.md](messages.md) |
 | Machine → script | A script name, plus the `DECREE_*` environment variables. | [scripts.md](scripts.md) |
-| Script → machine | One event, from an invoke only: from the exit code, or a JSON object on the last stdout line. | [scripts.md](scripts.md#events-from-an-invoke) |
+| Script → machine | One event, from an invoke only: from the exit code, or the name it writes to `$DECREE_EVENT_FILE`. | [scripts.md](scripts.md#events-from-an-invoke) |
 | Machine → model → machine | A `model` state's options with their descriptions, its `output` state's output and the message body. One event back, validated against the options. | [runs.md](runs.md#model) |
 | Person → machine | A reply message naming the wait id and one of the options of a `person` state. | [messages.md](messages.md#replies) |
 | Script → message | `decree emit` writes a new message to `inbox/`. Allowed only for machines in the state's `emits`. | [cli.md](cli.md) |
@@ -67,7 +67,7 @@ Everything that crosses a boundary is listed below. Nothing else crosses.
 Three guardrails keep the blocks apart:
 
 - Machines contain no code and no file paths.
-- Scripts make no routing decisions beyond an invoke printing one event.
+- Scripts make no routing decisions beyond an invoke naming one event.
 - Messages hold no graph data. decree mirrors the current `state` into the run's copy for humans; the run's `events.jsonl` is the record.
 
 ## File layout
@@ -86,6 +86,7 @@ Each building block has its own directory in `.decree/`:
     0001-<state>-<script>.log       # stdout+stderr of each script execution, numbered in run order
     .lock                           # pid of the process stepping this run (messages.md, Run lock)
     .running                        # the script running now: pid, state, phase, script, started_at, log (scripts.md)
+    .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
   cron/                             # *.md cron templates (messages.md, Cron files)
   machines/<machine name>.yml         # statecharts (machines.md)
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)

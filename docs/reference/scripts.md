@@ -47,7 +47,8 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 | `DECREE_MAX_ATTEMPTS` | Attempts allowed for this state. |
 | `DECREE_FINAL_ATTEMPT` | `true` if `DECREE_ATTEMPT` equals `DECREE_MAX_ATTEMPTS`, else `false`. |
 | `DECREE_TRIGGER` | The message's `trigger`. |
-| `DECREE_EVENTS` | The events the current state accepts, space-separated, in name order. Lets a script check what it may print. |
+| `DECREE_EVENTS` | The events the current state accepts, space-separated, in name order. Lets a script check what it may name. |
+| `DECREE_EVENT_FILE` | For a script invoke: absolute path of `runs/<id>/.event`, created empty before each attempt, where the script names its event ([Events from an invoke](#events-from-an-invoke)). Empty for `onentry` and `onexit` scripts and the `ask` script of a `person` state, which produce no events. |
 | `DECREE_PARENT` | In a child run: the parent run's id. Empty otherwise. |
 | `DECREE_REQUEST` | In a router run: absolute path of the request JSON ([Model](runs.md#model)). Empty otherwise. |
 | `DECREE_REPLY` | In a router run: absolute path where the reply JSON must be written. Empty otherwise. |
@@ -59,10 +60,24 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 
 ## Events from an invoke
 
-1. It exits non-zero: the event is `error`. Nothing else is read.
-2. It exits 0 and the last non-empty stdout line parses as a JSON object with a string field `event`: that is the event.
-3. It exits 0 with no such line: the event is `done`.
-4. An event from step 2 that is reserved ([Rules](machines.md#rules)), or that matches no transition of the state or its ancestors: the event becomes `error`, and the `transition` event records `"invalid_event": "<name>"`.
+A script names its event by writing the name to the file `$DECREE_EVENT_FILE`:
+
+```bash
+echo pass > "$DECREE_EVENT_FILE"
+```
+
+```python
+open(os.environ["DECREE_EVENT_FILE"], "w").write("pass")
+```
+
+Before each attempt, decree creates `runs/<id>/.event` empty and sets `DECREE_EVENT_FILE` to its absolute path. After the script exits, decree reads the file and deletes it. Then:
+
+1. It exits non-zero: the event is `error`. The file is not read.
+2. It exits 0 and the file holds a name (surrounding whitespace, a trailing newline included, is trimmed): that is the event.
+3. It exits 0 and the file is empty or missing: the event is `done`.
+4. A name from step 2 that is reserved ([Rules](machines.md#rules)), invalid, or that matches no transition of the state or its ancestors: the event becomes `error`, and the `transition` event records `"invalid_event": "<name>"`.
+
+stdout and stderr are only the script's log; decree never parses them. A log can end with anything, a model's JSON reply or a test runner's summary, so an event read from it could be one the script never meant to raise. GitHub Actions retired `::set-output` on stdout for `$GITHUB_OUTPUT` for the same reason ([decisions.md](../decisions.md#d48-scripts-name-their-event-in-decree_event_file)).
 
 `onentry` and `onexit` scripts never produce events:
 
@@ -79,9 +94,10 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 set -uo pipefail
 cargo test 2>&1 | tail -n 40
 if [ "${PIPESTATUS[0]}" -eq 0 ]; then
-  echo '{"event":"pass"}'
+  echo pass > "$DECREE_EVENT_FILE"
+else
+  echo fail > "$DECREE_EVENT_FILE"
 fi
-exit 0
 ```
 
 `scripts/feature/spawn.sh` (also `feature`-only): follow-ups go through `decree emit`, never by writing files.
