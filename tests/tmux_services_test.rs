@@ -289,7 +289,7 @@ fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
     assert_eq!(ollama, "ollama serve\n");
 
     // The workflow carries the message as its prompt; render only queued it, and
-    // wait_for_empty drained the queue before use_ollama ended ComfyUI.
+    // without_comfy_wait drained the queue before it ended ComfyUI.
     let payload: Value =
         serde_json::from_str(&fs::read_to_string(p.stub().join("comfy-payload.json")).unwrap())
             .unwrap();
@@ -389,7 +389,7 @@ fn a_service_that_never_answers_fails_its_onentry_and_the_run() {
         ["needs_picture with_picture render", "render error failed"]
     );
     assert_eq!(final_state(&run), "failed");
-    let log = log(&run, "-render-use_comfyui.log");
+    let log = log(&run, "-render-use_comfy.log");
     for want in [
         "[stderr] http://127.0.0.1:8188/system_stats did not answer within 2 s",
         "[stderr] comfyui did not start; see why with: tmux attach -t comfyui",
@@ -408,8 +408,9 @@ fn a_service_still_answering_after_its_session_ended_runs_outside_tmux() {
     p.mark("outside", "ollama");
     let run = p.run(PICTURE_POST, &[("TMUX_END_TIMEOUT_S", "2")]);
     assert_eq!(final_state(&run), "failed");
+    // without_ollama failed, so use_comfy never ran.
     assert_eq!(p.switches(), ["new-session gliner"]);
-    let log = log(&run, "-render-use_comfyui.log");
+    let log = log(&run, "-render-without_ollama.log");
     for want in [
         "ollama still answers at http://127.0.0.1:11434/api/version 2 s after its tmux session ended",
         "so it is running outside tmux",
@@ -419,10 +420,10 @@ fn a_service_still_answering_after_its_session_ended_runs_outside_tmux() {
     }
 }
 
-/// `wait_for_empty` fails `write`'s onentry, before `use_ollama` ends ComfyUI, when this run's
+/// `without_comfy_wait` fails `write`'s onentry, and leaves ComfyUI running, when this run's
 /// prompt failed or ComfyUI lost it.
 #[test]
-fn a_failed_or_lost_prompt_fails_wait_for_empty_before_comfyui_ends() {
+fn a_failed_or_lost_prompt_fails_without_comfy_wait_and_leaves_comfyui_running() {
     if !has_jq() {
         return;
     }
@@ -442,14 +443,37 @@ fn a_failed_or_lost_prompt_fails_wait_for_empty_before_comfyui_ends() {
         assert_eq!(final_state(&run), "failed");
         assert_eq!(path(&run).last().unwrap(), "write error failed");
         assert!(
-            log(&run, "-write-wait_for_empty.log").contains(expected),
+            log(&run, "-write-without_comfy_wait.log").contains(expected),
             "{history}"
         );
-        // use_ollama never ran, so ComfyUI was not ended.
+        // ComfyUI was not ended, and use_ollama never ran.
         assert_eq!(
             p.switches(),
             ["new-session gliner", "new-session comfyui"],
             "{history}"
         );
     }
+}
+
+/// `without_comfy_no_wait` ends ComfyUI at once: it never asks for the queue.
+#[test]
+fn without_comfy_no_wait_ends_comfyui_without_asking_for_the_queue() {
+    let p = Project::new(TEXT_ONLY);
+    p.session("comfyui");
+    let script = p.root().join(".decree/scripts/without_comfy_no_wait.sh");
+    let out = Command::new(&script)
+        .env(
+            "PATH",
+            format!("{}:{}", p.bin().display(), std::env::var("PATH").unwrap()),
+        )
+        .env("STUB", p.stub())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(p.switches(), ["kill-session comfyui"]);
+    assert!(!p.stub().join("queue-asked").exists());
 }

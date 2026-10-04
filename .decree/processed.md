@@ -74,3 +74,4 @@
 74-typed-routers-and-gliner.md
 75-tmux-services-example.md
 76-comfyui-wait-for-empty.md
+77-use-and-without-scripts.md

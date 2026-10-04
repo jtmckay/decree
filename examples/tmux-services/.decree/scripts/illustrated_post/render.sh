@@ -2,7 +2,7 @@
 # illustrated_post's render: queue a FLUX2 text-to-image workflow with the
 # message body as its prompt, and return at once. ComfyUI renders in the
 # background; the prompt id goes to comfy-prompts.txt in the run directory, and
-# wait_for_empty collects the image before anything ends ComfyUI.
+# without_comfy_wait collects the image before ComfyUI ends.
 set -euo pipefail
 COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
 # Reused by path from examples/text-to-media/; set this when the example is copied elsewhere.
@@ -20,4 +20,4 @@ queued=$(curl -fsS --max-time 30 -H 'content-type: application/json' -d "@$paylo
 echo "$queued"
 id=$(jq -r .prompt_id <<<"$queued")
 echo "$id" >> "$DECREE_RUN_DIR/comfy-prompts.txt"
-echo "queued prompt $id; wait_for_empty collects its image"
+echo "queued prompt $id; without_comfy_wait collects its image"

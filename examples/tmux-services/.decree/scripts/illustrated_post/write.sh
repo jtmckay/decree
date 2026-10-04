@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # illustrated_post's write: ask Ollama for a short post from the message body,
-# and write post.md to the run directory, linking the images wait_for_empty collected.
+# and write post.md to the run directory, linking the images without_comfy_wait collected.
 set -euo pipefail
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:e4b}"

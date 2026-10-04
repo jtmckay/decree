@@ -24,9 +24,9 @@ stateDiagram-v2
         model: gliner_router, min_confidence 0.7
     end note
     note right of render
-        onentry: use_comfyui
+        onentry: without_ollama, use_comfy
     end note
     note right of write
-        onentry: wait_for_empty, use_ollama
+        onentry: without_comfy_wait, use_ollama
     end note
 ```

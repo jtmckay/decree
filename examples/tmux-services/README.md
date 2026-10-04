@@ -2,11 +2,14 @@
 
 This example runs long-running services in tmux sessions, so you can attach to them and watch them, and switches the GPU between two of them. [`docs/services.md`](../../docs/services.md) shows the same switch with systemd units.
 
-The pattern, one `onentry` script per service:
+The pattern: `onentry` scripts named for what they do, listed in the order they run.
 
-1. **On entry**, use the service's tmux session if it is running, or start the service in a new detached session named after it.
-2. **Wait** until the service answers its health URL, and fail with a clear message if it does not.
-3. **Share the GPU** by ending the other service's session first: ComfyUI and Ollama never run together. GLiNER2.5-Decide runs on CPU, so it starts first and stays up.
+- **`use_<service>`** uses the service's tmux session if it is running, or starts the service in a new detached session named after it, then waits until it answers its health URL, and fails with a clear message if it does not.
+- **`without_<service>`** ends the service's session and waits until it stops answering, freeing the GPU. ComfyUI and Ollama never run together, so a state that needs one lists `without_<the other>` first.
+  - **`without_ollama`** ends Ollama at once. decree calls Ollama synchronously (a script waits for its answer), so when a state that needs ComfyUI starts, nothing from decree is using Ollama.
+  - **`without_comfy_wait`** first waits until ComfyUI's queue is empty, because its API is fire and forget: jobs queued earlier may still be rendering. It collects this run's images while ComfyUI still holds them, then ends it.
+  - **`without_comfy_no_wait`** ends ComfyUI at once, losing what is still queued: for when those jobs no longer matter.
+- GLiNER2.5-Decide runs on CPU, so `use_gliner` starts it first and it stays up.
 
 "Attach" means "use the running session": a script cannot take over your terminal. You attach with `tmux attach -t <session>`. decree still runs every script directly, never inside tmux ([Scripts](../../docs/reference/scripts.md)); only the services live in tmux.
 
@@ -34,17 +37,17 @@ stateDiagram-v2
         model: gliner_router, min_confidence 0.7
     end note
     note right of render
-        onentry: use_comfyui
+        onentry: without_ollama, use_comfy
     end note
     note right of write
-        onentry: wait_for_empty, use_ollama
+        onentry: without_comfy_wait, use_ollama
     end note
 ```
 
 1. The root `onentry`, `use_gliner`, uses or starts the `gliner` session, running the one copy of [`decide_server.py`](../route-by-complexity/gliner/decide_server.py), and waits for its `GET /health`.
 2. `needs_picture` asks [`gliner_router`](.decree/machines/gliner_router.yml) (the same file as in `route-by-complexity`) "Does this post need a picture?". `with_picture` goes to `render`; `text_only`, and `unsure` below `min_confidence: 0.7`, go straight to `write`.
-3. `render`'s `onentry`, `use_comfyui`, ends the `ollama` session and uses or starts `comfyui`. `render` queues the FLUX2 text-to-image workflow from [`text-to-media`](../text-to-media/README.md) with the message as its prompt and returns at once: ComfyUI renders in the background, and the prompt id goes to `comfy-prompts.txt` in the run directory. Queue as many jobs as you like this way; nothing waits until something is about to end ComfyUI.
-4. `write`'s `onentry` runs two scripts, in order. [`wait_for_empty`](.decree/scripts/wait_for_empty.sh) polls ComfyUI's `GET /queue` until nothing is running or pending, so ending ComfyUI cuts no job short; then, while ComfyUI still holds its history, it writes the images this run's prompts made to `images.txt`, and fails if one of them failed or ComfyUI lost it (a restart forgets the queue and the history). If ComfyUI is not running it returns at once, unless this run queued prompts. Only then does `use_ollama` end the `comfyui` session and use or start `ollama serve`. `write` asks Ollama's `/api/generate` for the post and writes `post.md` in the run directory, linking the images.
+3. `render`'s `onentry` is `[without_ollama, use_comfy]`: it ends the `ollama` session, then uses or starts `comfyui`. `render` queues the FLUX2 text-to-image workflow from [`text-to-media`](../text-to-media/README.md) with the message as its prompt and returns at once: ComfyUI renders in the background, and the prompt id goes to `comfy-prompts.txt` in the run directory. Queue as many jobs as you like this way; nothing waits until something is about to end ComfyUI.
+4. `write`'s `onentry` is `[without_comfy_wait, use_ollama]`. [`without_comfy_wait`](.decree/scripts/without_comfy_wait.sh) polls ComfyUI's `GET /queue` until nothing is running or pending, so ending ComfyUI cuts no job short; then, while ComfyUI still holds its history, it writes the images this run's prompts made to `images.txt`, and fails if one of them failed or ComfyUI lost it (a restart forgets the queue and the history), leaving ComfyUI running; otherwise it ends the `comfyui` session. If ComfyUI is not running it has nothing to wait for, unless this run queued prompts. Then `use_ollama` uses or starts `ollama serve`, and `write` asks Ollama's `/api/generate` for the post and writes `post.md` in the run directory, linking the images.
 
 An `onentry` failure is the state's `error` event, and these states have no `error` transition, so a service that does not start ends the run in `failed`, with the reason in that script's log.
 
@@ -63,9 +66,11 @@ Every name, command, URL and timeout is a variable with a default at the top of 
 | Script | Variables (defaults) |
 | --- | --- |
 | [`use_gliner`](.decree/scripts/use_gliner.sh) | `GLINER_SESSION` (`gliner`), `GLINER_SERVER` (`../route-by-complexity/gliner/decide_server.py` from this example), `GLINER_PYTHON` (`python3`), `GLINER_HEALTH` (`http://127.0.0.1:8090/health`), `GLINER_START_TIMEOUT_S` (600: the first start downloads the model) |
-| [`use_ollama`](.decree/scripts/use_ollama.sh) | `OLLAMA_SESSION` (`ollama`), `OLLAMA_COMMAND` (`ollama serve`), `OLLAMA_HEALTH` (`http://127.0.0.1:11434/api/version`), `OLLAMA_START_TIMEOUT_S` (60), and ComfyUI's session and health URL |
-| [`use_comfyui`](.decree/scripts/use_comfyui.sh) | `COMFYUI_SESSION` (`comfyui`), `COMFYUI_DIR` (`$HOME/ComfyUI`), `COMFYUI_PYTHON` (`python3`), `COMFYUI_HOST` (`127.0.0.1`), `COMFYUI_PORT` (8188), `COMFYUI_COMMAND` (`main.py` in `COMFYUI_DIR`), `COMFYUI_HEALTH` (`/system_stats`), `COMFYUI_START_TIMEOUT_S` (180), and Ollama's session and health URL |
-| [`wait_for_empty`](.decree/scripts/wait_for_empty.sh) | `COMFY_URL` (`http://127.0.0.1:8188`), `COMFYUI_DIR` (its `output/` holds the images), `COMFY_DRAIN_TIMEOUT_S` (1800) |
+| [`use_ollama`](.decree/scripts/use_ollama.sh) | `OLLAMA_SESSION` (`ollama`), `OLLAMA_COMMAND` (`ollama serve`), `OLLAMA_HEALTH` (`http://127.0.0.1:11434/api/version`), `OLLAMA_START_TIMEOUT_S` (60) |
+| [`use_comfy`](.decree/scripts/use_comfy.sh) | `COMFYUI_SESSION` (`comfyui`), `COMFYUI_DIR` (`$HOME/ComfyUI`), `COMFYUI_PYTHON` (`python3`), `COMFYUI_HOST` (`127.0.0.1`), `COMFYUI_PORT` (8188), `COMFYUI_COMMAND` (`main.py` in `COMFYUI_DIR`), `COMFYUI_HEALTH` (`/system_stats`), `COMFYUI_START_TIMEOUT_S` (180) |
+| [`without_ollama`](.decree/scripts/without_ollama.sh) | `OLLAMA_SESSION`, `OLLAMA_HEALTH` |
+| [`without_comfy_no_wait`](.decree/scripts/without_comfy_no_wait.sh) | `COMFYUI_SESSION`, `COMFYUI_HEALTH` |
+| [`without_comfy_wait`](.decree/scripts/without_comfy_wait.sh) | `COMFY_URL` (`http://127.0.0.1:8188`), `COMFYUI_DIR` (its `output/` holds the images), `COMFY_DRAIN_TIMEOUT_S` (1800), `COMFYUI_SESSION`, `COMFYUI_HEALTH` |
 | [`illustrated_post/render`](.decree/scripts/illustrated_post/render.sh) | `COMFY_URL`, `COMFY_WORKFLOW` (`../text-to-media/workflows/image_flux2_text_landscape.json` from this example) |
 | [`illustrated_post/write`](.decree/scripts/illustrated_post/write.sh) | `OLLAMA_URL`, `OLLAMA_MODEL` (`gemma4:e4b`), `OLLAMA_TIMEOUT_S` (300) |
 
@@ -109,7 +114,7 @@ Detach, do not exit: ending a session ends its service, and the next state start
 
 ## When Ollama is also a system service
 
-If Ollama also runs as the `ollama` systemd service that [its Linux docs](https://docs.ollama.com/linux) set up, then `ollama serve` in tmux cannot bind its port, and ending the tmux session leaves the GPU in use: `use_comfyui` waits `TMUX_END_TIMEOUT_S` for Ollama to stop answering, then fails with "ollama still answers … so it is running outside tmux". Pick one supervisor. To use tmux, stop the service and keep it stopped:
+If Ollama also runs as the `ollama` systemd service that [its Linux docs](https://docs.ollama.com/linux) set up, then `ollama serve` in tmux cannot bind its port, and ending the tmux session leaves the GPU in use: `without_ollama` waits `TMUX_END_TIMEOUT_S` for Ollama to stop answering, then fails with "ollama still answers … so it is running outside tmux". Pick one supervisor. To use tmux, stop the service and keep it stopped:
 
 ```sh
 sudo systemctl disable --now ollama
@@ -132,9 +137,11 @@ examples/tmux-services/
     scripts/
       tmux_service.sh                  ensure_session, end_session, wait_until_up; sourced, not run
       use_gliner.sh                    root onentry: the gliner session
-      use_comfyui.sh                   onentry: ends ollama, then the comfyui session
-      use_ollama.sh                    onentry: ends comfyui, then the ollama session
-      wait_for_empty.sh                onentry: waits until ComfyUI's queue is empty, writes images.txt
+      use_comfy.sh                     onentry: uses or starts the comfyui session
+      use_ollama.sh                    onentry: uses or starts the ollama session
+      without_ollama.sh                onentry: ends the ollama session (nothing waits on Ollama by then)
+      without_comfy_wait.sh            onentry: waits until ComfyUI's queue is empty, writes images.txt, ends it
+      without_comfy_no_wait.sh         onentry: ends the comfyui session at once
       illustrated_post/render.sh       queues the workflow and returns; ComfyUI renders in the background
       illustrated_post/write.sh        asks Ollama for the post, writes post.md
       gliner_router/ask_gliner.sh      posts the request to the classifier server, writes the reply
