@@ -182,7 +182,7 @@ A duration is a whole number of at most 9 digits followed by one unit: `s` (seco
 | Root | `name` | string | `<scxml name>` | Must equal the file stem. `^[a-z][a-z0-9_]*$`. |
 | Root | `description` | string | extension | Required. Used in prompts, `decree status` and graphs. |
 | Root | `data` | map of name to `{type, default}` | `<datamodel><data id>` | Optional. `type` is `string`, `int` or `bool`. `default` is required and must match `type`. A message's `params` override the defaults; nothing else changes them. |
-| Root | `onentry`, `onexit` | list of script names | extension (`<scxml>` has neither; they act like a top-level compound state around all others) | Optional. Root `onentry` runs once when the run starts (and again when `decree retry` continues it); root `onexit` runs once after a root final state is entered. |
+| Root | `onentry`, `onexit` | list of script names | extension (`<scxml>` has neither; they act like a top-level compound state around all others) | Optional. Root `onentry` runs once when the run starts (and again when `decree process --retry` continues it); root `onexit` runs once after a root final state is entered. |
 | Root | `initial` | state id | `<scxml initial>` | Required. Must be a direct child in `states`. |
 | Root | `states` | map of id to state | child `<state>` and `<final>` | Required. The map key is the state's `id`. |
 | State | `final` | `true` | `<final>` | Marks a final state. Final states may only have `description`, `onentry` and `emits`. |

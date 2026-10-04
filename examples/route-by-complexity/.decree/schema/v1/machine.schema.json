@@ -24,7 +24,7 @@
     },
     "onentry": {
       "$ref": "#/$defs/scriptList",
-      "description": "Extension (SCXML's <scxml> has none): scripts run once when the run starts, in order, and again when `decree retry` continues it. They produce no event; a failure raises `error`."
+      "description": "Extension (SCXML's <scxml> has none): scripts run once when the run starts, in order, and again when `decree process --retry` continues it. They produce no event; a failure raises `error`."
     },
     "onexit": {
       "$ref": "#/$defs/scriptList",

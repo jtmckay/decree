@@ -292,13 +292,17 @@ fn rust_develop_stops_when_the_agent_writes_stop() {
     let log = fs::read_to_string(p.run_dir(&id).join("0002-implement-implement.log")).unwrap();
     assert!(log.contains("[stderr] Which greeting?\n"), "{log}");
 
-    // `decree retry` with STOP still there stops again, without asking the AI.
-    p.decree(&["retry", &id, "--state", "implement"])
-        .assert()
-        .success();
-    let mut cmd = p.decree(&["process"]);
+    // `decree process --retry` with STOP still there stops again, without asking the AI.
+    let mut cmd = p.decree(&["process", "--retry", &id, "--state", "implement"]);
     cmd.env("PATH", p.path());
-    cmd.output().unwrap();
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let retry = p
+        .events(&id)
+        .into_iter()
+        .filter(|e| e["source"] == "retry")
+        .count();
+    assert_eq!(retry, 1);
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(p.calls().len(), 1);
 }
@@ -393,7 +397,7 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
                 assert_ne!(next, first);
             }
 
-            // One implement attempt: the wait is inside the script, not a decree retry.
+            // One implement attempt: the wait is inside the script, not a retry of the run.
             let log =
                 fs::read_to_string(p.run_dir(&id).join("0002-implement-implement.log")).unwrap();
             assert!(

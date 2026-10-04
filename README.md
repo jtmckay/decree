@@ -138,7 +138,7 @@ Messages come from four places, and all of them run the same way:
 
 | Source | Where | `trigger` |
 | --- | --- | --- |
-| Migrations | `.decree/migrations/*.md`, committed, never edited. Run once, in filename order; the ledger is `processed.md`. A failed one blocks the ones after it until `decree retry`. | `migration` |
+| Migrations | `.decree/migrations/*.md`, committed, never edited. Run once, in filename order; the ledger is `processed.md`. A failed one blocks the ones after it until `decree process --retry`. | `migration` |
 | Inbox | `.decree/inbox/*.md`, run first-in, first-out by filename. Write a file directly, or use `decree emit`. | `inbox`, `emit` |
 | Cron | `.decree/cron/*.md` templates with a `cron:` expression, queued by `decree daemon`. | `cron` |
 | Sub-machines | A state with `invoke: { machine: <name> }` starts a child run. | `invoke` |
@@ -230,20 +230,20 @@ Model servers and other long-running processes are not scripts and decree does n
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
 | `decree schema` | Write JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
+| `decree process --retry [ID] [--state S]` | First continue a failed or interrupted run: `ID`, or the migration blocking the queue |
 | `decree daemon [--interval D]` | The same passes plus cron, every `D` (default `2s`) |
 | `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
 | `decree event ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
 | `decree status [ID]` | Runs by status and queued messages; one run's events |
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
-| `decree retry ID [--state S]` | Make an interrupted or finished run pending again |
 | `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`, `90s`); ship them to Loki first if you keep history |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree --version` | Print the version |
 
-`--format json` on `check`, `status`, `emit`, `event`, `retry`, `prune`, `graph`, `schema` and `process --dry-run` prints one JSON document, described by `.decree/schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
+`--format json` on `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema` and `process --dry-run` prints one JSON document, described by `.decree/schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
-decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree retry`, because a kill may be deliberate.
+decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree process --retry`, because a kill may be deliberate. A failed migration blocks the ones after it the same way, and `decree process` prints the exact command that continues it.
 
 ## Files
 

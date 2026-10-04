@@ -3,7 +3,7 @@
 //! parent spans; a message's `traceparent` honoured, and an invalid one ignored; the
 //! `TRACEPARENT` a script sees; and `traces.jsonl`, whose every line is an OTLP/JSON
 //! `ExportTraceServiceRequest` agreeing with `events.jsonl`, including the run span of an
-//! interrupted run written on recovery and the linked run span after `decree retry`. Each
+//! interrupted run written on recovery and the linked run span after `decree process --retry`. Each
 //! test builds its own `.decree/` in a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -416,9 +416,9 @@ fn a_crashed_runs_span_is_written_on_recovery_with_error_and_retry_links_a_new_o
     assert!(is_error(&first), "{first}");
     assert_eq!(first["spanId"], events[0]["span_id"]);
 
-    // `decree retry` starts a new run span in the same trace, linked to the previous one.
-    p.cmd(&["retry", "crash"]).assert().success();
-    p.process();
+    // `decree process --retry` starts a new run span in the same trace, linked to the
+    // previous one.
+    p.cmd(&["process", "--retry", "crash"]).assert().success();
     let events = p.events("crash");
     let retry = events.iter().find(|e| e["source"] == "retry").unwrap();
     let spans = agree_with_events(&p.run_dir("crash"));

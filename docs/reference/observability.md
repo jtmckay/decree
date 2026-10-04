@@ -18,7 +18,7 @@ quantile_over_time(0.95, {job="decree", type="script"} | json | unwrap duration_
 # runs that ended in failed, per machine, per day
 sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | state="failed" [1d]))
 
-# interrupted runs waiting for `decree retry`
+# interrupted runs waiting for `decree process --retry`
 {job="decree", type="interrupted"} | json
 
 # model decisions below a confidence floor
@@ -53,7 +53,7 @@ Standards:
 | A decision (`check`, `model`, `person`) | `decision <kind> <state>` | The run span | Its `decision` event; for a router run, the `waiting` event for it | Its `decision` event |
 | A wait (a `person` reply, or a `machine` invoke's child run) | `wait <state>` | The run span | The `waiting` event | The `received` event |
 
-A router run's run span is a child of its `model` decision's span, and a `machine` invoke's child run's run span is a child of its wait span. A run continued by `decree retry` gets a new run span in the same trace, from the `retry` event, linked to the previous run span. Every span has the attributes `decree.run_id`, `decree.machine` and `decree.state`; script spans add `decree.attempt` and `process.exit.code` (from [OpenTelemetry's semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/process/), when the script exited rather than being killed), and decision and wait spans add `decree.event`. A script that exits non-zero, times out or is killed, a `model` decision with a `router_error`, a run ending in `failed`, and an interrupted run have status `ERROR`. All spans are of kind `INTERNAL`.
+A router run's run span is a child of its `model` decision's span, and a `machine` invoke's child run's run span is a child of its wait span. A run continued by `decree process --retry` gets a new run span in the same trace, from the `retry` event, linked to the previous run span. Every span has the attributes `decree.run_id`, `decree.machine` and `decree.state`; script spans add `decree.attempt` and `process.exit.code` (from [OpenTelemetry's semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/process/), when the script exited rather than being killed), and decision and wait spans add `decree.event`. A script that exits non-zero, times out or is killed, a `model` decision with a `router_error`, a run ending in `failed`, and an interrupted run have status `ERROR`. All spans are of kind `INTERNAL`.
 
 **The file.** `runs/<id>/traces.jsonl` holds the run's spans, each appended when it ends as one OTLP/JSON `ExportTraceServiceRequest` line, with a single write on a file opened with `O_APPEND`, as `events.jsonl` is written. Each line has one resource (`service.name: decree` and `service.version`, from the [semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/service/)), one scope (`decree`) and one span. A script span of the recorded `feature` migration, its keys in `trace.proto` order (decree writes them in alphabetical order, which a JSON reader ignores):
 

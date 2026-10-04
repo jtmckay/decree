@@ -55,12 +55,12 @@ appear only where a machine invokes `model` or `person`.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and
   `decree graph` after changing a machine. Commit `.decree/graph/`.
 - **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,
-  `decree status [<id>] --format json`, and `--format json` on `emit`, `event`, `retry`,
-  `prune`, `graph`, `schema` and `process --dry-run` print one JSON document, described by
+  `decree status [<id>] --format json`, and `--format json` on `emit`, `event`, `prune`,
+  `graph`, `schema` and `process --dry-run` print one JSON document, described by
   `.decree/schema/v1/cli/<command>.schema.json`. Exit codes are the same as in text.
   `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
   `message`.
-- **Scripts must be safe to re-run**: `decree retry` re-runs a step that was interrupted.
+- **Scripts must be safe to re-run**: `decree process --retry` re-runs a step that was interrupted.
 - Do not commit `.decree/inbox/` or `.decree/runs/`.
 
 ## Commands
@@ -72,11 +72,11 @@ appear only where a machine invokes `model` or `person`.
 | `decree schema` | Write the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/`. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
+| `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>]` | The same, in a loop, with cron, every `2s` by default. |
 | `decree status [<id>] [--cron] [--format json]` | Runs by status; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow the output of the script running now. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
-| `decree retry <id> [--state <s>]` | Continue an interrupted (or finished) run. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 
 ## Worked example
@@ -127,6 +127,6 @@ Read the one you need; don't load them all upfront:
 - **`reference/scripts.md`**: where scripts live, how they run, how they report an event,
   every `DECREE_*` variable.
 - **`reference/runs.md`**: run folders, `events.jsonl`, run status, waiting and interrupted
-  runs, `decree retry`, graphs.
+  runs, `decree process --retry`, graphs.
 
 The reference files sit next to this file, in `reference/`.

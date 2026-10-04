@@ -318,15 +318,20 @@ fn emit_event_retry_status_process_and_prune() {
         serde_json::json!([{ "file": format!("{reply}.md"), "valid": true, "to": deploy }])
     );
 
-    // retry: the run and its state; a waiting run cannot be retried.
-    let (code, _) = p.json(&["retry", &deploy], "", schema::CLI_RETRY_SCHEMA, true);
-    assert_eq!(code, 1);
-    let (code, doc) = p.json(&["retry", &flaky], "", schema::CLI_RETRY_SCHEMA, false);
-    assert_eq!(code, 0);
-    assert_eq!(doc, serde_json::json!({ "id": flaky, "state": "work" }));
-
+    // process --retry: a stream, so no --format (2); a waiting run cannot be retried (1);
+    // a failed one continues in its state, and the pipeline runs on.
+    let retry = ["process", "--retry", flaky.as_str()];
+    let (code, stdout, _) = run(p.root(), &[&retry[..], &["--format", "json"]].concat(), "");
+    assert_eq!((code, stdout.as_str()), (2, ""));
+    let (code, stdout, _) = run(p.root(), &["process", "--retry", &deploy], "");
+    assert_eq!((code, stdout.as_str()), (1, ""));
     p.touch("ok.flag");
-    assert_eq!(run(p.root(), &["process"], "").0, 0);
+    let (code, stdout, stderr) = run(p.root(), &retry, "");
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains(&format!("run {flaky} continues in `work`")),
+        "{stdout}"
+    );
 
     // prune: what it would delete, then what it deleted.
     let prune = ["prune", "--older-than", "0s"];

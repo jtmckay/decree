@@ -124,7 +124,7 @@ Every file decree reads or writes, and every document a command prints with `--f
 | `events.schema.json` | One line of `runs/<id>/events.jsonl`: the common fields, then one branch per `type`. | [runs.md](runs.md#eventsjsonl) |
 | `request.schema.json` | A router run's `request.json`, including `reply_schema`. | [runs.md](runs.md#model) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
-| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `retry`, `prune`, `graph`, `schema` and `process` (`--dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
+| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema` and `process` (`--dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 
 The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
 

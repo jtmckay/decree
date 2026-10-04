@@ -50,10 +50,6 @@ pub const CLI_PROCESS_SCHEMA: &str =
 pub const CLI_PRUNE_SCHEMA: &str =
     include_str!("../../src/templates/schema/v1/cli/prune.schema.json");
 
-/// The schema of `decree retry --format json`.
-pub const CLI_RETRY_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/retry.schema.json");
-
 /// The schema of `decree schema --format json`.
 pub const CLI_SCHEMA_SCHEMA: &str =
     include_str!("../../src/templates/schema/v1/cli/schema.schema.json");
@@ -64,14 +60,13 @@ pub const CLI_STATUS_SCHEMA: &str =
 
 /// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
 /// `.schema.json`.
-pub const ALL: [(&str, &str); 14] = [
+pub const ALL: [(&str, &str); 13] = [
     ("cli/check", CLI_CHECK_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
     ("cli/event", CLI_EVENT_SCHEMA),
     ("cli/graph", CLI_GRAPH_SCHEMA),
     ("cli/process", CLI_PROCESS_SCHEMA),
     ("cli/prune", CLI_PRUNE_SCHEMA),
-    ("cli/retry", CLI_RETRY_SCHEMA),
     ("cli/schema", CLI_SCHEMA_SCHEMA),
     ("cli/status", CLI_STATUS_SCHEMA),
     ("events", EVENTS_SCHEMA),

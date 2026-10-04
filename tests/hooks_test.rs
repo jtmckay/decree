@@ -388,7 +388,7 @@ fn git_baseline_is_written_once_and_snapshot_stores_one_stash_per_visit() {
         "start\nround 1\nround 2\n"
     );
 
-    // Running git_baseline again (as `decree retry` does) keeps the first baseline.
+    // Running git_baseline again (as `decree process --retry` does) keeps the first baseline.
     let output = std::process::Command::new(decree.join("scripts/git_baseline.sh"))
         .current_dir(root)
         .env("DECREE_RUN_DIR", &run)

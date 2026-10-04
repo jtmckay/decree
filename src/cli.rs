@@ -37,11 +37,27 @@ pub enum Command {
     /// Process all migrations + drain inbox
     Process {
         /// Show what would be processed without executing
-        #[arg(long)]
+        #[arg(long, conflicts_with = "retry")]
         dry_run: bool,
 
+        /// First continue an interrupted or finished run: ID, or the migration that blocks
+        /// the queue
+        #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
+        retry: Option<String>,
+
+        /// Atomic state the retried run continues in [default: the interrupted run's state,
+        /// or the state a finished run last left]
+        #[arg(long = "state", value_name = "STATE", requires = "retry")]
+        state: Option<String>,
+
         /// Output format of --dry-run
-        #[arg(long, value_enum, default_value_t, requires = "dry_run")]
+        #[arg(
+            long,
+            value_enum,
+            default_value_t,
+            requires = "dry_run",
+            conflicts_with = "retry"
+        )]
         format: Format,
     },
 
@@ -125,21 +141,6 @@ pub enum Command {
     Tail {
         /// Run id
         id: Option<String>,
-    },
-
-    /// Make an interrupted or finished run pending again; the next `process` continues it
-    Retry {
-        /// Run id
-        id: String,
-
-        /// Atomic state to continue in [default: the interrupted run's state, or the state
-        /// a finished run last left]
-        #[arg(long = "state", value_name = "STATE")]
-        state: Option<String>,
-
-        /// Output format
-        #[arg(long, value_enum, default_value_t)]
-        format: Format,
     },
 
     /// Delete the folders of finished runs older than an age; only this command deletes runs

@@ -43,11 +43,25 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     // Bare `decree` runs `decree process`; every command but `init` and `help` needs a project.
     match command.unwrap_or(Command::Process {
         dry_run: false,
+        retry: None,
+        state: None,
         format: Format::Text,
     }) {
         Command::Init { ai, permissions } => commands::init::run(ai, permissions),
         Command::Help => commands::help(),
-        Command::Process { dry_run, format } => commands::process::run(&root()?, dry_run, format),
+        Command::Process {
+            dry_run,
+            retry,
+            state,
+            format,
+        } => {
+            // `--retry` alone names no run: the blocking migration.
+            let retry = retry.map(|id| commands::process::Retry {
+                id: Some(id).filter(|id| !id.is_empty()),
+                state,
+            });
+            commands::process::run(&root()?, dry_run, retry, format)
+        }
         Command::Check { format } => commands::check::run(&root()?, format),
         Command::Graph { format } => commands::graph::run(&root()?, format),
         Command::Schema { format } => commands::schema::run(&root()?, format),
@@ -64,9 +78,6 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         } => commands::event::run(&root()?, &target, &event, note.as_deref(), format),
         Command::Daemon { interval } => commands::daemon::run(&root()?, interval),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
-        Command::Retry { id, state, format } => {
-            commands::retry::run(&root()?, &id, state.as_deref(), format)
-        }
         Command::Prune {
             older_than,
             dry_run,

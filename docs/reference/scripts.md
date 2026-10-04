@@ -28,7 +28,7 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 - The log of a state's latest script run is that state's output: what a `{ output: <state>, matches: … }` check tests and what a `model` with `output: <state>` reads ([Invoke](machines.md#invoke-the-states-function), Output).
 - **Timeout.** If the script invoke sets `timeout` ([Durations](machines.md#durations)) and the invoke runs longer, decree stops it and treats it as a non-zero exit. Its `script` event records `"timed_out": true`.
 - **Attempts.** If the invoke exits non-zero (or times out) and the state has attempts left, decree runs it again without leaving the state: no `onexit` or `onentry`, one `transition` event with `event: "error"`, `from` and `to` equal, and `source: "attempt"`. Attempts = the script invoke's `max_attempts`, default 1. Only when attempts run out does `error` take its transition. `onentry` failures are not retried.
-- **Signals.** If decree receives SIGINT or SIGTERM while a script runs, it stops the script, writes no `script` event for it, and interrupts the run ([Replies](messages.md#replies), Stopping). `decree retry` re-runs the step, so scripts must be safe to re-run.
+- **Signals.** If decree receives SIGINT or SIGTERM while a script runs, it stops the script, writes no `script` event for it, and interrupts the run ([Replies](messages.md#replies), Stopping). `decree process --retry` re-runs the step, so scripts must be safe to re-run.
 - **Logs** are capped at 2 MiB (2097152 bytes). After the script exits, a larger log keeps only its last 2 MiB, behind the line `[log truncated — showing last 2MB of output]`.
 
 ## Environment

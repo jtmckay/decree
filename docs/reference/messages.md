@@ -55,7 +55,7 @@ The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). 
 3. **Validate.** If the frontmatter does not parse, `machine` is unknown, or a param is unknown or the wrong type, the run starts in `failed`: decree writes one `transition` event with `to: "failed"`, `source: "invalid_message"` and the reason, mirrors `state: failed` (unless the frontmatter itself did not parse, then `message.md` is left unchanged), appends `run_finished` with `state: "failed"` and `duration_ms: 0`, and runs nothing.
 4. **Run.** The interpreter steps the machine ([runs.md](runs.md)). A run in a `person` state pauses until a reply arrives ([Replies](#replies)).
 5. **Finish.** The run ends when it enters a root-level final state. The run folder is kept until `decree prune` removes it ([cli.md](cli.md)); nothing removes it automatically.
-6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only `decree retry <id>` continues an interrupted run ([cli.md](cli.md)).
+6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only a person continues an interrupted run, with `decree process --retry` ([Retry](cli.md#retry)).
 
 **Source of truth.** The run's state is the `to` of the last `transition` event in `events.jsonl`. `message.md`'s `state` is a mirror for humans and tools; whenever decree touches a run and the two disagree (a crash between the two writes), it rewrites the mirror. This is event sourcing: the log is the record, everything else is derived.
 
@@ -69,7 +69,7 @@ The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). 
 | `pending` | The last event is `received`, or a `transition` with `source: "retry"`. `process` and `daemon` continue it. |
 | `interrupted` | Anything else. Includes a run whose last event is `interrupted`, and a run left mid-step by a crash. |
 
-A run that reaches a root final state appends `run_finished` last ([runs.md](runs.md#step-loop), step 8), and only `decree retry` appends after it. So a run whose last event is `run_finished` is finished, and when `process`, `daemon`, `decree status` or `decree tail` look over every run, decree reads only that last line of its `events.jsonl`: a finished run costs one small read, however long its log. `decree status <id>` and stepping a run still read the whole log.
+A run that reaches a root final state appends `run_finished` last ([runs.md](runs.md#step-loop), step 8), and only `decree process --retry` appends after it. So a run whose last event is `run_finished` is finished, and when `process`, `daemon`, `decree status` or `decree tail` look over every run, decree reads only that last line of its `events.jsonl`: a finished run costs one small read, however long its log. `decree status <id>` and stepping a run still read the whole log.
 
 When `process` or `daemon` starts, it appends an `interrupted` event with `cause: "crash"` to every run that is interrupted but whose last event is not already `interrupted`, so the stop is visible in the log. It continues `pending` runs, in `id` order, before reading `inbox/`.
 
@@ -85,7 +85,7 @@ A `person` invoke ([machines.md](machines.md#invoke-the-states-function)) pauses
 
 A waiting migration blocks later migrations, as a `failed` or `interrupted` one does. `decree process` ends by printing every waiting run, its question (the state's `description`), its options and the `decree event` command for each, and exits 0.
 
-**Stopping.** On SIGINT or SIGTERM, decree stops the running script ([scripts.md](scripts.md#execution)), appends an `interrupted` event with `cause: "signal"`, deletes the lock and exits. No `onexit` scripts run; `decree retry` re-runs the `onentry` scripts instead ([runs.md](runs.md#step-loop), step 1).
+**Stopping.** On SIGINT or SIGTERM, decree stops the running script ([scripts.md](scripts.md#execution)), appends an `interrupted` event with `cause: "signal"`, deletes the lock and exits. No `onexit` scripts run; `decree process --retry` re-runs the `onentry` scripts instead ([runs.md](runs.md#step-loop), step 1).
 
 ## Run lock
 
@@ -98,7 +98,7 @@ Before stepping a run, decree creates `runs/<id>/.lock` exclusively (`O_EXCL`) a
 1. **Run from a copy.** A migration's `id` is its file stem. To start one, decree creates `runs/<id>/` (already-exists means the migration has a run already: see rule 4) and copies the file to `runs/<id>/message.md`, adding `id` and `trigger: migration`. The run then works like any other.
 2. **Run once.** A migration whose filename is in `processed.md` is skipped. `processed.md` is read as a set; duplicate lines are harmless.
 3. **Strict order.** Migrations run in byte-order of filename. Migration N+1 starts only when N is in `processed.md` and `inbox/` is empty, so follow-ups that N emits run before N+1 starts.
-4. **Stop on error.** A migration whose run is `failed` or `interrupted` blocks every later migration until `decree retry <id>` finishes it; `process` stops and exits 1, naming the migration and the `retry` command. A `waiting` migration also blocks later migrations until its reply arrives.
+4. **Stop on error.** A migration whose run is `failed` or `interrupted` blocks every later migration until `decree process --retry` continues it and it finishes; `process` stops and exits 1, naming the migration and ending ``Fix the cause, then run `decree process --retry`.`` A `waiting` migration also blocks later migrations until its reply arrives.
 5. **Ledger write.** When a migration's run enters a final state other than `failed`, decree appends the filename to `processed.md` (temp file plus rename) before that state's `onentry` scripts run. If one of them fails ([runs.md](runs.md#step-loop)), decree removes the line again.
 6. **Validate first.** Before starting the first pending migration, `process` and `daemon` parse every pending migration (frontmatter, machine, `params` against the machine's `data`). If any are invalid, they print every error and run nothing: `N migration(s) are invalid; nothing was processed.`, exit 1.
 

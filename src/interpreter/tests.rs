@@ -945,7 +945,7 @@ fn append(p: &Project, kind: &str, fields: Value) {
     log.append(kind, fields).unwrap();
 }
 
-/// The `transition` event `decree retry` writes (docs/reference/cli.md) back into `state`.
+/// The `transition` event `decree process --retry` writes (docs/reference/cli.md) back into `state`.
 fn retry(p: &Project, state: &str) {
     let fields = json!({
         "from": state, "event": "retry", "to": state, "source": "retry", "exit_code": null
@@ -1062,7 +1062,7 @@ fn recover_marks_a_crashed_run_once_and_never_continues_it() {
     assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
     assert_eq!(p.events().len(), 2);
 
-    // `decree retry` makes it pending; the stale lock does not stop it continuing.
+    // `decree process --retry` makes it pending; the stale lock does not stop it continuing.
     retry(&p, "a");
     let found = recover(&p.ctx()).unwrap();
     assert_eq!(found.pending, [RUN_ID]);

@@ -289,43 +289,57 @@ fn init_emit_process_status_shows_the_run_done() {
     assert!(overview.contains("  inbox/: 0\n"), "{overview}");
 }
 
-/// AC: a failed run; `decree retry <id>` then `decree process`: it resumes at the retried
-/// state. Also the docs/reference/cli.md exit codes of `retry`.
+/// AC: a failed run; `decree process --retry <id>` resumes it at the retried state, in
+/// the same invocation. Also the docs/reference/cli.md exit codes of `--retry`.
 #[test]
-fn retry_then_process_resumes_a_failed_run_at_the_retried_state() {
+fn process_retry_resumes_a_failed_run_at_the_retried_state() {
     let p = Project::init();
     p.machine("flaky", FLAKY);
     p.script("work", FLAKY_WORK);
     let id = p.emit("flaky", "Do the work.\n");
 
-    // The run fails: `process` stops on it with 1.
-    p.decree(&["process"]).assert().code(1);
+    // The run fails: `process` stops on it with 1 and names the command that continues it.
+    let out = p.decree(&["process"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(&format!("`decree process --retry {id}`")),
+        "{err}"
+    );
     assert_eq!(
         transitions(&p.events(&id)),
         ["- -> work (claim)", "work -> failed (exit_code)"]
     );
-    // A finished run cannot be retried into a final, unknown or compound state.
-    for bad in ["done", "nowhere"] {
-        p.decree(&["retry", &id, "--state", bad]).assert().code(1);
-    }
-    p.decree(&["retry", "no-such-run"]).assert().code(1);
-
-    fs::write(p.root().join("ok.flag"), "").unwrap();
-    let out = p.stdout(&["retry", &id], 0);
-    assert!(out.contains("pending in `work`"), "{out}");
-    assert!(fs::read_to_string(p.run_dir(&id).join("message.md"))
-        .unwrap()
-        .contains("state: work\n"));
     let status = p.stdout(&["status"], 0);
     assert!(
-        status.contains(&format!("  pending: 1\n    {id}  flaky  `work`\n")),
+        status.contains(&format!(
+            "    failed: 1\n      {id}  flaky  `failed`\n        \
+             continue with `decree process --retry {id}`\n"
+        )),
         "{status}"
     );
+    let one = p.stdout(&["status", &id], 0);
+    assert!(
+        one.contains(&format!("  continue with `decree process --retry {id}`\n")),
+        "{one}"
+    );
+    // A finished run cannot be retried into a final, unknown or compound state.
+    for bad in ["done", "nowhere"] {
+        p.decree(&["process", "--retry", &id, "--state", bad])
+            .assert()
+            .code(1);
+    }
+    p.decree(&["process", "--retry", "no-such-run"])
+        .assert()
+        .code(1);
+    assert_eq!(p.events(&id).len(), 4, "a refused retry appends nothing");
 
-    // A pending run is not retried again.
-    p.decree(&["retry", &id]).assert().code(1);
-
-    p.decree(&["process"]).assert().success();
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+    let out = p.stdout(&["process", "--retry", &id], 0);
+    assert!(
+        out.contains(&format!("run {id} continues in `work`")),
+        "{out}"
+    );
     let events = p.events(&id);
     assert_eq!(
         transitions(&events),
@@ -343,6 +357,49 @@ fn retry_then_process_resumes_a_failed_run_at_the_retried_state() {
     assert!(p
         .stdout(&["status", &id], 0)
         .contains("status: finished in `done`"));
+
+    // A pending run (the `retry` transition written, not yet continued) is not retried
+    // again: `process` continues it.
+    let events_path = p.run_dir(&id).join("events.jsonl");
+    let before = fs::read_to_string(&events_path).unwrap();
+    let mut pending = retry.clone();
+    pending["seq"] = (events.len() + 1).into();
+    pending["from"] = "done".into();
+    fs::write(&events_path, format!("{before}{pending}\n")).unwrap();
+    let status = p.stdout(&["status"], 0);
+    assert!(
+        status.contains(&format!("  pending: 1\n    {id}  flaky  `work`\n")),
+        "{status}"
+    );
+    p.decree(&["process", "--retry", &id]).assert().code(1);
+    assert_eq!(
+        fs::read_to_string(&events_path).unwrap().lines().count(),
+        events.len() + 1
+    );
+}
+
+/// AC: `--retry` with nothing to retry exits 1 and says so; `--retry` with `--dry-run`,
+/// `--state` without `--retry`, and the removed `retry` command are usage errors (exit 2).
+#[test]
+fn process_retry_with_nothing_to_retry_and_its_usage_errors() {
+    let p = Project::init();
+    let out = p.decree(&["process", "--retry"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("nothing to retry: no migration is failed or interrupted"),
+        "{err}"
+    );
+    for args in [
+        &["process", "--retry", "--dry-run"][..],
+        &["process", "--dry-run", "--retry", "some-run"],
+        &["process", "--state", "work"],
+        &["process", "--retry", "--format", "json"],
+        &["retry"],
+        &["retry", "some-run"],
+    ] {
+        p.decree(args).assert().code(2);
+    }
 }
 
 /// AC: pending messages; `decree process --dry-run` lists them and nothing runs.
@@ -401,7 +458,7 @@ fn person_prints_the_wait_and_a_reply_finishes_the_run() {
         "{status}"
     );
     // A waiting run takes a reply, not a retry.
-    p.decree(&["retry", &id]).assert().code(1);
+    p.decree(&["process", "--retry", &id]).assert().code(1);
 
     p.decree(&["event", &wait_id, "approve", "-m", "Go."])
         .assert()
@@ -420,7 +477,7 @@ fn person_prints_the_wait_and_a_reply_finishes_the_run() {
 }
 
 /// AC: SIGINT during a run under `decree process`: exit 130, the run is `interrupted`, and
-/// a later `decree process` leaves it alone until `decree retry` continues it.
+/// a later `decree process` leaves it alone until `decree process --retry` continues it.
 #[test]
 fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     let p = Project::init();
@@ -445,7 +502,7 @@ fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     let overview = p.stdout(&["status"], 0);
     assert!(
         overview.contains(&format!(
-            "  interrupted: 1\n    {id}  tick  `work`\n      continue with `decree retry {id}`\n"
+            "  interrupted: 1\n    {id}  tick  `work`\n      continue with `decree process --retry {id}`\n"
         )),
         "{overview}"
     );
@@ -453,10 +510,9 @@ fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     p.decree(&["process"]).assert().success();
     assert_eq!(p.events(&id), events);
 
-    // `decree retry` continues it, and the next `decree process` finishes it.
+    // `decree process --retry` continues it and finishes it.
     fs::remove_file(p.root().join("tick.flag")).unwrap();
-    p.decree(&["retry", &id]).assert().success();
-    p.decree(&["process"]).assert().success();
+    p.decree(&["process", "--retry", &id]).assert().success();
     assert_eq!(p.events(&id).last().unwrap()["type"], "run_finished");
     assert!(p
         .stdout(&["status", &id], 0)

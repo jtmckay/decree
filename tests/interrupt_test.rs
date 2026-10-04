@@ -146,9 +146,9 @@ impl Project {
         fs::write(path, text).unwrap();
     }
 
-    /// The `transition` event `decree retry <id>` appends for an interrupted run
-    /// (docs/reference/cli.md): back into the state it was in. The command itself is tested
-    /// in `cli_test.rs`.
+    /// The `transition` event `decree process --retry <id>` appends for an interrupted run
+    /// (docs/reference/cli.md): back into the state it was in, without continuing it. The
+    /// command itself is tested in `cli_test.rs` and `process_test.rs`.
     fn retry(&self, id: &str, machine: &str, trigger: &str, state: &str) {
         let fields = json!({
             "type": "transition", "from": state, "event": "retry", "to": state,
@@ -292,7 +292,7 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
 
     let out = p.process().output().unwrap();
     assert!(
-        stderr(&out).contains("decree retry run-a"),
+        stderr(&out).contains("`decree process --retry run-a`"),
         "{}",
         stderr(&out)
     );
@@ -313,10 +313,9 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     assert_eq!(p.events("run-a").len(), before + 1);
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
 
-    // `decree retry run-a`, then `decree process`: root `onentry` and the state's `onentry`
-    // run again, then the invoke, and the run finishes.
-    p.retry("run-a", "slow", "inbox", "work");
-    p.process().assert().success();
+    // `decree process --retry run-a`: root `onentry` and the state's `onentry` run again,
+    // then the invoke, and the run finishes.
+    p.process().args(["--retry", "run-a"]).assert().success();
     assert_eq!(
         p.order(),
         [
@@ -360,7 +359,10 @@ fn interrupted_migration_blocks_the_next_and_exits_1_naming_retry() {
     let out = p.process().assert().code(1).get_output().clone();
     let err = stderr(&out);
     assert!(err.contains("migration 01-a.md is interrupted"), "{err}");
-    assert!(err.contains("decree retry 01-a"), "{err}");
+    assert!(
+        err.contains("Fix the cause, then run `decree process --retry`."),
+        "{err}"
+    );
     assert!(!exists(&p.run_dir("02-b")));
     assert_eq!(p.read("processed.md"), "");
     let events = p.events("01-a");
@@ -487,26 +489,18 @@ fn finished_run_is_read_from_its_last_line_only() {
 }
 
 #[test]
-fn finished_run_retried_is_pending_and_continues() {
+fn finished_run_retried_continues_after_run_finished() {
     let p = Project::new();
     finished_run(&p);
+    let before_events = p.events("run-a");
     let before = p.order().len();
-    decree(&p, &["retry", "run-a", "--state", "work"])
+    decree(&p, &["process", "--retry", "run-a", "--state", "work"])
         .assert()
         .success();
     let events = p.events("run-a");
-    assert_eq!(events[events.len() - 2]["type"], "run_finished");
-    assert_eq!(events.last().unwrap()["source"], "retry");
-    let out = decree(&p, &["status"])
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(stdout.contains("  pending: 1\n"), "{stdout}");
-
-    p.process().assert().success();
-    let events = p.events("run-a");
+    assert_eq!(events[..before_events.len()], before_events[..]);
+    assert_eq!(events[before_events.len() - 1]["type"], "run_finished");
+    assert_eq!(events[before_events.len()]["source"], "retry");
     assert_eq!(events.last().unwrap()["type"], "run_finished");
     assert_eq!(last_state(&events), "done");
     assert_eq!(

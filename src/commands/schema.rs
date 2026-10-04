@@ -20,7 +20,7 @@ pub const SCHEMA_DIR: &str = "schema";
 /// compiled into the binary from `src/templates/schema/`, their single source. The first
 /// path segment is the contract version (docs/reference/README.md, Versioning); `cli/` holds
 /// the documents commands print with `--format json` (docs/reference/cli.md).
-const SCHEMAS: [(&str, &str); 14] = [
+const SCHEMAS: [(&str, &str); 13] = [
     (
         "v1/cli/check.schema.json",
         include_str!("../templates/schema/v1/cli/check.schema.json"),
@@ -44,10 +44,6 @@ const SCHEMAS: [(&str, &str); 14] = [
     (
         "v1/cli/prune.schema.json",
         include_str!("../templates/schema/v1/cli/prune.schema.json"),
-    ),
-    (
-        "v1/cli/retry.schema.json",
-        include_str!("../templates/schema/v1/cli/retry.schema.json"),
     ),
     (
         "v1/cli/schema.schema.json",

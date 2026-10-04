@@ -25,6 +25,9 @@ Commands:
                               --format json output
   decree process [--dry-run]  Deliver replies, continue pending runs, drain
                               inbox/, then run pending migrations in order
+  decree process --retry [ID] [--state S]
+                              First continue a failed or interrupted run: ID,
+                              or the migration blocking the queue
   decree daemon [--interval D]
                               The same passes plus cron, every D (default 2s)
   decree emit --machine M [--param K=V]...
@@ -35,14 +38,13 @@ Commands:
   decree status [ID]          Runs by status and queued messages; one run's events
   decree status --cron        Cron files and when each fires next
   decree tail [ID]            Follow the live output of a run
-  decree retry ID [--state S] Make an interrupted or finished run pending again
   decree prune --older-than AGE [--dry-run]
                               Delete finished runs older than AGE (30d, 12h,
                               90m, 90s); --dry-run lists them
   decree help                 This help text
   decree --version            Print the version
 
-  --format json on check, status, emit, event, retry, prune, graph, schema and
+  --format json on check, status, emit, event, prune, graph, schema and
   process --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 

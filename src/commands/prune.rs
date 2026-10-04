@@ -179,7 +179,7 @@ fn prune(rule: &Rule, id: &str, dry_run: bool) -> Result<Option<(Finished, u64)>
     let Some(lock) = RunLock::acquire(&run_dir)? else {
         return Ok(None);
     };
-    // Again under the lock: `decree retry` may have appended after `run_finished`.
+    // Again under the lock: `decree process --retry` may have appended after `run_finished`.
     let Some(run) = rule.check(id)? else {
         return Ok(None);
     };

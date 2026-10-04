@@ -6,7 +6,7 @@ The interpreter is deterministic everywhere except `model` and `person` states, 
 
 The run's current state is always an atomic state, `S`.
 
-1. **Start or continue.** New run: append the claim event (`type: "transition"`, `from: null`, `event: "claimed"`, `to`: root `initial` followed down to an atomic state), mirror `state`, run root `onentry`, then the `onentry` of each state from root `initial` down to `S`. A `pending` run after `decree retry`: run root `onentry`, then the `onentry` of every ancestor of `S` and of `S` itself, outermost first; scripts must be safe to re-run. A `pending` run after a `received` event (a reply or a timeout): go to step 4 with that event; nothing is re-run, because the run only paused.
+1. **Start or continue.** New run: append the claim event (`type: "transition"`, `from: null`, `event: "claimed"`, `to`: root `initial` followed down to an atomic state), mirror `state`, run root `onentry`, then the `onentry` of each state from root `initial` down to `S`. A `pending` run after `decree process --retry`: run root `onentry`, then the `onentry` of every ancestor of `S` and of `S` itself, outermost first; scripts must be safe to re-run. A `pending` run after a `received` event (a reply or a timeout): go to step 4 with that event; nothing is re-run, because the run only paused.
 2. **Invoke.** Run `S`'s function ([Invoke](machines.md#invoke-the-states-function)): a script ([scripts.md](scripts.md)), a check, a model, a person, or a child machine (below). A `machine` or `model` invoke appends `waiting` for its child run and steps the child; when the child finishes, the parent continues at step 4. A `person` invoke appends `waiting`, releases the lock and ends this step; a reply or timeout continues at step 4 ([Replies](messages.md#replies)).
 3. **The event.** An `onentry` failure gives `error`. Otherwise the event is what the function produced. A state with no `invoke` produces `done`.
 4. **Find the target.** Select the transition for the event ([Rules](machines.md#rules)): the state's own, else the nearest ancestor's. An `error` that matches nothing targets `failed`. If the target is compound, follow `initial` down to an atomic or final state. That state is `T`.
@@ -117,7 +117,7 @@ An `invoke: { machine: <name> }` state, and every `model` invoke, runs a **child
 
 - It is an ordinary run in its own folder, `runs/<child id>/`, so its events and logs are separate and it shows in `decree status` and Grafana like any other. Its `message.md` has `machine`, `parent` (the parent run's id), `depth` (the parent's + 1), and `traceparent`: the parent's trace, under the span of the router's `decision` or of the `machine` invoke's wait, so the child's run span nests under it ([Traces](observability.md#traces)). If that would exceed `max_depth`, no child starts: the state's event is `error`, with `router_error: "max_depth <n> reached"` on the `decision` event for `model`, and `error: "max_depth <n> reached"` on the `transition` for `machine`, `trigger: invoke`, any `params`, and the parent message's body.
 - The parent appends a `waiting` event naming the child (`child: <id>`), and the same process steps the child at once. When the child reaches a root final state, decree continues the parent: for a `machine` invoke it appends a `received` event whose event is the child's final state (`failed` becomes `error`); for a router it appends the `decision` event (above). A parent left waiting on a child that has already finished (a crash in between) is `pending`, and continues the same way.
-- If the child pauses (a `person` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree retry` on the child continues both.
+- If the child pauses (a `person` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree process --retry` on the child continues both.
 - Child runs are never claimed from the inbox, and never count as migrations.
 
 ## Person
@@ -154,10 +154,10 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
 | `file` | string | A claim from the inbox or migrations | Original inbox or migration filename. Absent for a child run, which has none. |
 | `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
-| `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree retry` starts a new run span, linked to the previous one. |
+| `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree process --retry` starts a new run span, linked to the previous one. |
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
 
-`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.
+`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree process --retry`.
 
 **`script`**: one script execution finished. Written after the script exits, before any `transition` it causes.
 
@@ -216,7 +216,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `timed_out` | bool | A timeout | Always `true` when present; `event` is `error`. |
 | `span_id` | string | Always | The wait's span, from the `waiting` event to this one. For a child that finished, the parent of its run span. |
 
-**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree retry` continues it.
+**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree process --retry` continues it.
 
 | Field | Type | Meaning |
 | --- | --- | --- |

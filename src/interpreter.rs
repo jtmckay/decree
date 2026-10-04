@@ -12,7 +12,7 @@
 //!
 //! Each run is stepped under its run lock (docs/reference/messages.md, Run lock). `recover` is what
 //! `process` and `daemon` do first: it marks runs a crash left behind `interrupted` and
-//! lists the `pending` runs to continue. Only `decree retry` makes an interrupted run
+//! lists the `pending` runs to continue. Only `decree process --retry` makes an interrupted run
 //! `pending` again; `continue_run` then re-runs its `onentry` scripts (docs/reference/runs.md, step 1).
 
 pub(crate) mod child;
@@ -233,7 +233,7 @@ impl<'a> Interpreter<'a> {
         self.interrupt_on_signal(result)
     }
 
-    /// Continue a `pending` run (step 1), under its run lock. After `decree retry` (the
+    /// Continue a `pending` run (step 1), under its run lock. After `decree process --retry` (the
     /// last event is a `transition` with `source: "retry"`), root `onentry` and the
     /// `onentry` of every ancestor of the state and of the state itself run again, then
     /// its invoke. Otherwise the last event is `received`, or `waiting` for a child run
@@ -334,7 +334,7 @@ impl<'a> Interpreter<'a> {
         self.current = s;
         repair_mirror(&self.executor.info().run_dir, &events)?;
 
-        // After `decree retry`: enter the state again, from the root.
+        // After `decree process --retry`: enter the state again, from the root.
         if last_type == Some("transition") && text(last, "source") == Some("retry") {
             return self.enter_from_root(s);
         }

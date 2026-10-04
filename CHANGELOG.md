@@ -28,6 +28,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 - **Breaking (machines and CLI):** one duration format everywhere, a whole number and `s`, `m`, `h` or `d`: a machine's `timeout` (was `timeout_s` in seconds), `decree prune --older-than` and `decree daemon --interval` (migration 80, [D49](docs/decisions.md#d49-one-duration-format)).
 - **Breaking (schema location):** the schemas moved from `.decree/schema/` to `.decree/schema/v1/`, and machines point at `../schema/v1/machine.schema.json`. `decree check` warns about any other file in `.decree/schema/`, and `decree schema` removes it (migration 81).
 - `events.jsonl`: a child run's claim event leaves `file` out instead of writing `null`, since a child run has no file (migration 81).
+- **Breaking (CLI):** `decree process --retry [<id>] [--state <s>]` replaces `decree retry <id>`. Without an id it continues the migration that blocks the queue; with one, any run. It writes the same `retry` transition and then processes the run and everything queued after it in the same invocation. The failure messages of `process`, `daemon` and `decree status` print the exact command. `decree retry` is gone (an unknown command, exit 2), and with it `retry --format json` and `.decree/schema/v1/cli/retry.schema.json`; `events.jsonl` is unchanged (migration 85, [D53](docs/decisions.md#d53-decree-process---retry-continues-a-run)).
 
 ### Removed
 

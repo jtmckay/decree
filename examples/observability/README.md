@@ -36,7 +36,7 @@ quantile_over_time(0.95, {job="decree", type="script"} | json | unwrap duration_
 # runs that ended in failed, per machine, per day
 sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | state="failed" [1d]))
 
-# interrupted runs waiting for `decree retry`
+# interrupted runs waiting for `decree process --retry`
 {job="decree", type="interrupted"} | json
 
 # model decisions below a confidence floor

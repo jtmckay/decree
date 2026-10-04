@@ -5,6 +5,12 @@
 //! run. Stops at the first run that ends in `failed`, and before a `failed`, `interrupted`
 //! or `waiting` migration. Ends by printing every waiting run.
 //!
+//! `--retry [<id>] [--state <s>]` first makes one `interrupted` or finished run `pending`
+//! again: run `<id>`, or the migration that blocks the queue. It appends a `transition`
+//! event with `source: "retry"` and mirrors `state`; the pipeline then continues it,
+//! re-running root `onentry` and the `onentry` of every ancestor of `<s>` and of `<s>`
+//! (docs/reference/runs.md, step 1).
+//!
 //! A queued message with `to:` is a reply: it is delivered to its waiting run instead,
 //! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
 //! `timeout` deadlines that have passed (docs/reference/messages.md, Replies).
@@ -14,23 +20,39 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use serde_json::json;
+
 use crate::cli::Format;
 use crate::commands::check::{md_files, Project};
 use crate::commands::print_json;
 use crate::error::DecreeError;
-use crate::events::{current_state, first_text, is_type, strings, text, EventLog};
+use crate::events::{
+    current_state, first_text, is_transition, is_type, strings, text, Event, EventLog,
+};
 use crate::interpreter::child::continue_run;
-use crate::interpreter::recover::{self, RunStatus};
+use crate::interpreter::recover::{self, mirror_state, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{self, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
 use crate::machine::FAILED;
-use crate::message::{self, Claim, LockState, Message};
+use crate::message::{self, is_valid_id, Claim, LockState, Message, RunLock};
 use crate::reply::{self, Delivery};
 use crate::runtime::{self};
 
-/// Run `decree process [--dry-run]`.
-pub fn run(project_root: &Path, dry_run: bool, format: Format) -> Result<(), DecreeError> {
+/// What `--retry` continues: run `id`, or with `None` the migration that blocks the queue.
+pub struct Retry {
+    pub id: Option<String>,
+    /// The atomic state to continue in, from `--state`.
+    pub state: Option<String>,
+}
+
+/// Run `decree process [--dry-run | --retry [<id>] [--state <s>]]`.
+pub fn run(
+    project_root: &Path,
+    dry_run: bool,
+    retry: Option<Retry>,
+    format: Format,
+) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     if dry_run {
         return run_dry(&project, format);
@@ -38,6 +60,9 @@ pub fn run(project_root: &Path, dry_run: bool, format: Format) -> Result<(), Dec
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
     let mut pipeline = Pipeline::new(project_root, &project, shutdown)?;
+    if let Some(Retry { id, state }) = retry {
+        retry_run(&pipeline.ctx, &project, id.as_deref(), state.as_deref())?;
+    }
     let result = pipeline.recover().and_then(|()| pipeline.drain());
     print_waiting(&pipeline.ctx)?;
     result.map_err(Stop::into_error)
@@ -48,7 +73,7 @@ pub fn run(project_root: &Path, dry_run: bool, format: Format) -> Result<(), Dec
 pub(crate) enum Stop {
     /// A run ended in `failed`. `process` stops; `daemon` reports it and goes on.
     Failed(String),
-    /// A migration is `failed` or `interrupted`: later migrations wait for `decree retry`.
+    /// A migration is `failed` or `interrupted`: later migrations wait for `decree process --retry`.
     Blocked(String),
     /// SIGINT or SIGTERM: the current run is `interrupted`.
     Interrupted,
@@ -118,14 +143,14 @@ impl<'a> Pipeline<'a> {
         for (id, state) in &recovery.crashed {
             eprintln!(
                 "run {id} was interrupted in `{state}` (crash); \
-                 continue it with `decree retry {id}`"
+                 continue it with `decree process --retry {id}`"
             );
         }
         self.continue_runs(&recovery.pending)
     }
 
     /// `process`: repeat until nothing is left: deliver timeouts, continue `pending` runs
-    /// (`decree retry` may have made more), claim the next inbox message, and start the
+    /// (`decree process --retry` may have made more), claim the next inbox message, and start the
     /// next migration once the inbox is empty. Stops at the first run that ends in `failed`.
     pub(crate) fn drain(&mut self) -> Result<(), Stop> {
         loop {
@@ -149,7 +174,7 @@ impl<'a> Pipeline<'a> {
         Ok(())
     }
 
-    /// Every `pending` run, in `id` order: after `decree retry`, or a delivery another
+    /// Every `pending` run, in `id` order: after `decree process --retry`, or a delivery another
     /// process made. A run another process holds is `active`, not `pending`.
     pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
         let mut pending = Vec::new();
@@ -178,10 +203,11 @@ impl<'a> Pipeline<'a> {
                 let events = self.ctx.events(id)?;
                 let migration = first_text(&events, "trigger") == Some("migration");
                 Err(if migration {
-                    blocked(&format!("{id}.md"), id, &format!("ended in `{FAILED}`"))
+                    blocked(&format!("{id}.md"), &format!("ended in `{FAILED}`"))
                 } else {
                     Stop::Failed(format!(
-                        "run {id} ended in `{FAILED}`; see .decree/runs/{id}/"
+                        "run {id} ended in `{FAILED}`; see .decree/runs/{id}/, \
+                         then continue it with `decree process --retry {id}`"
                     ))
                 })
             }
@@ -235,7 +261,8 @@ impl<'a> Pipeline<'a> {
         let id = claim.id.clone();
         match run_claim(&self.ctx, self.project, claim, problem)? {
             Outcome::Finished(state) if state == FAILED => Err(Stop::Failed(format!(
-                "run {id} ({file}) ended in `{FAILED}`; see .decree/runs/{id}/"
+                "run {id} ({file}) ended in `{FAILED}`; see .decree/runs/{id}/, \
+                 then continue it with `decree process --retry {id}`"
             ))),
             Outcome::Interrupted(_) => Err(Stop::Interrupted),
             _ => Ok(true),
@@ -409,7 +436,6 @@ fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, 
                 let state = current_state(&events).unwrap_or("no state");
                 return Err(blocked(
                     file,
-                    id,
                     &format!("is {} in `{state}`", status.as_str()),
                 ));
             }
@@ -419,7 +445,7 @@ fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, 
     };
     match outcome {
         Outcome::Finished(state) if state == FAILED => {
-            Err(blocked(file, id, &format!("ended in `{FAILED}`")))
+            Err(blocked(file, &format!("ended in `{FAILED}`")))
         }
         // Rule 5 wrote the ledger line; the loop moves on to the next migration.
         Outcome::Finished(_) => Ok(true),
@@ -452,10 +478,135 @@ fn start_migration(
 }
 
 /// Rule 4: a migration that blocks every later one, and the command that continues it.
-fn blocked(file: &str, id: &str, what: &str) -> Stop {
+fn blocked(file: &str, what: &str) -> Stop {
     Stop::Blocked(format!(
         "migration {file} {what}; later migrations are blocked. \
-         Fix the cause, then run `decree retry {id}`."
+         Fix the cause, then run `decree process --retry`."
+    ))
+}
+
+/// docs/reference/messages.md, Migrations, rule 4: the migration that blocks the queue, the
+/// earliest pending one whose run is `failed` or `interrupted`. A finished run of a pending
+/// migration blocks too, as `process` reports it, so `--retry` can continue it.
+pub(crate) fn blocking_migration(
+    ctx: &Context,
+    project: &Project,
+) -> Result<Option<String>, DecreeError> {
+    for file in project.pending_migrations()? {
+        let id = file.strip_suffix(".md").unwrap_or(&file);
+        if !ctx.runs_dir().join(id).is_dir() {
+            continue;
+        }
+        if matches!(
+            ctx.status_of(id)?.0,
+            RunStatus::Finished | RunStatus::Interrupted
+        ) {
+            return Ok(Some(id.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+/// `--retry` (docs/reference/cli.md): make an `interrupted` or finished run `pending` again,
+/// run `id` or else the blocking migration, in `state` or by default the state it was in
+/// (for a finished run, the state it last left). The pipeline then continues it.
+fn retry_run(
+    ctx: &Context,
+    project: &Project,
+    id: Option<&str>,
+    state: Option<&str>,
+) -> Result<(), DecreeError> {
+    let id = match id {
+        Some(id) => id.to_string(),
+        None => blocking_migration(ctx, project)?.ok_or_else(|| {
+            DecreeError::Other(
+                "nothing to retry: no migration is failed or interrupted".to_string(),
+            )
+        })?,
+    };
+    let id = id.as_str();
+    let run_dir = ctx.runs_dir().join(id);
+    if !is_valid_id(id) || !run_dir.is_dir() {
+        return Err(DecreeError::MessageNotFound(id.to_string()));
+    }
+    // Hold the lock while writing, so no other process steps the run meanwhile.
+    let Some(_lock) = RunLock::acquire(&run_dir)? else {
+        return Err(refuse_retry(id, RunStatus::Active));
+    };
+    let events = ctx.events(id)?;
+    let machine_name = first_text(&events, "machine").unwrap_or_default();
+    let Some(machine) = project.machines.get(machine_name) else {
+        return Err(DecreeError::Other(format!(
+            "run {id}: machine `{machine_name}` is not loaded; it cannot be continued"
+        )));
+    };
+    // This process holds the lock, so no other is stepping the run.
+    let status = ctx.status(machine, &events, false);
+    match status {
+        RunStatus::Interrupted | RunStatus::Finished => {}
+        RunStatus::Waiting => {
+            return Err(DecreeError::Other(format!(
+                "run {id} is waiting for a reply, not interrupted; answer it with `decree event`"
+            )))
+        }
+        RunStatus::Pending | RunStatus::Active => return Err(refuse_retry(id, status)),
+    }
+
+    let from = current_state(&events);
+    let target = match (state, status) {
+        (Some(s), _) => s.to_string(),
+        (None, RunStatus::Finished) => last_from(&events).ok_or_else(|| {
+            DecreeError::Other(format!(
+                "run {id} never left a state; name one with --state"
+            ))
+        })?,
+        (None, _) => from
+            .ok_or_else(|| {
+                DecreeError::Other(format!("run {id} has no state; name one with --state"))
+            })?
+            .to_string(),
+    };
+    let atomic = machine.find(&target).is_some_and(|n| {
+        let node = &machine.nodes[n];
+        node.children.is_empty() && !node.is_final
+    });
+    if !atomic {
+        return Err(DecreeError::Other(format!(
+            "`{target}` is not an atomic state of machine `{machine_name}`"
+        )));
+    }
+
+    let trigger = first_text(&events, "trigger").unwrap_or_default();
+    let mut log = EventLog::open(&run_dir, id, machine_name, trigger)?;
+    log.append(
+        "transition",
+        json!({
+            "from": from,
+            "event": "retry",
+            "to": target,
+            "source": "retry",
+            "exit_code": null,
+        }),
+    )?;
+    mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
+    println!("run {id} continues in `{target}`");
+    Ok(())
+}
+
+/// The `from` of the last `transition` event that has one.
+fn last_from(events: &[Event]) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .filter(|e| is_transition(e))
+        .find_map(|e| text(e, "from"))
+        .map(String::from)
+}
+
+fn refuse_retry(id: &str, status: RunStatus) -> DecreeError {
+    DecreeError::Other(format!(
+        "run {id} is {}; only an interrupted or finished run can be retried",
+        status.as_str()
     ))
 }
 
@@ -562,4 +713,25 @@ fn run_dry(project: &Project, format: Format) -> Result<(), DecreeError> {
 enum Target {
     Machine(String),
     Reply(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_last_from_skips_transitions_without_from() {
+        let events: Vec<_> = [
+            json!({"type": "transition", "from": null, "to": "a"}),
+            json!({"type": "transition", "from": "a", "to": "b"}),
+            json!({"type": "script", "state": "b"}),
+            json!({"type": "transition", "from": "b", "to": "failed"}),
+            json!({"type": "run_finished", "state": "failed"}),
+        ]
+        .into_iter()
+        .map(|v| v.as_object().cloned().unwrap())
+        .collect();
+        assert_eq!(last_from(&events).as_deref(), Some("b"));
+        assert_eq!(last_from(&events[..1]), None);
+    }
 }

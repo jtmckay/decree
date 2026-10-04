@@ -234,7 +234,7 @@ Had the second round failed too, `rounds_left` would have said `false` (`visits 
 
 ## Asking a person
 
-Migration 02 is in [`runs/02-upload-quota-per-plan/`](.decree/runs/02-upload-quota-per-plan/events.jsonl), paused. Nobody needs to run `decree retry`: the run continues by itself when the reply arrives.
+Migration 02 is in [`runs/02-upload-quota-per-plan/`](.decree/runs/02-upload-quota-per-plan/events.jsonl), paused. Nobody needs to run `decree process --retry`: the run continues by itself when the reply arrives.
 
 1. `verify` named `fail`; `rounds_left` said `true` (1 < 3); the model picked `retry` but with confidence 0.55, below 0.8, so `triage` produced `unsure` (event 14; the router's own run is [`20261001T150122Z-c03b7e`](.decree/runs/20261001T150122Z-c03b7e/reply.json)). The run went to `review` (event 15).
 2. `review` invokes `person`. Its `ask` script, `ask_person.sh`, ran with `DECREE_WAIT_ID=02-upload-quota-per-plan.w15` and `DECREE_CHOICES` pointing at the options and their descriptions, and printed how to reply ([`0007-review-ask_person.log`](.decree/runs/02-upload-quota-per-plan/0007-review-ask_person.log)). A real one would post this to chat or open an issue.
@@ -340,7 +340,7 @@ decree never continues a run on its own. A kill may be deliberate, and decree ca
 
 1. decree sent SIGTERM to the script's process group, waited for it to exit (SIGKILL after 10 s), wrote no `script` event for it, and appended `{"type":"interrupted","cause":"signal","state":"implement","script":"implement"}`. No `onexit` scripts ran. `decree process` exited 130.
 2. The run is now `interrupted`. `decree status` lists it; later `process` and `daemon` passes leave it alone. Had decree been killed with SIGKILL or lost power instead, the next `process` or `daemon` would find the stale lock and append the same event with `cause: "crash"`.
-3. `decree retry 20261001T030000Z-c4e81b` appends a `transition` with `source: "retry"` back into `implement`. That makes the run `pending`, and the next `process` or `daemon` continues it: root `onentry`, then the `onentry` scripts down to `implement`, then the invoke. Scripts must be safe to re-run; `git_baseline.sh` only writes its baseline the first time.
+3. `decree process --retry 20261001T030000Z-c4e81b` appends a `transition` with `source: "retry"` back into `implement`. That makes the run `pending`, and the same `process` continues it: root `onentry`, then the `onentry` scripts down to `implement`, then the invoke. Scripts must be safe to re-run; `git_baseline.sh` only writes its baseline the first time.
 
 An interrupted migration blocks the migrations after it, exactly as a failed one does. `runs/<id>/.lock` only stops two decree processes from stepping the same run at once.
 

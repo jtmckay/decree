@@ -27,10 +27,11 @@ states:
   failed: { final: true }
 ";
 
-/// Logs start and end to `order.log`; fails, or emits a follow-up, when the params say so.
+/// Logs start and end to `order.log`; fails (until `fixed.flag` exists), or emits a
+/// follow-up, when the params say so.
 const WORK: &str = r#"#!/usr/bin/env bash
 echo "start $DECREE_MESSAGE_ID" >> "$DECREE_PROJECT_ROOT/order.log"
-if [ "$DECREE_DATA_FAIL" = true ]; then exit 1; fi
+if [ "$DECREE_DATA_FAIL" = true ] && [ ! -e "$DECREE_PROJECT_ROOT/fixed.flag" ]; then exit 1; fi
 if [ "$DECREE_DATA_FOLLOWUP" = true ]; then
   inbox="$DECREE_PROJECT_ROOT/.decree/inbox"
   printf -- '---\nmachine: flow\n---\nfollow-up\n' > "$inbox/.followup.md.tmp"
@@ -104,6 +105,25 @@ impl Project {
             .arg("process");
         cmd
     }
+
+    /// The cause of the failure is fixed: `WORK` passes from now on.
+    fn fix(&self) {
+        fs::write(self.tmp.path().join("fixed.flag"), "").unwrap();
+    }
+}
+
+/// `(from, to, source)` of every `transition` event.
+fn transitions(events: &[Value]) -> Vec<(String, String, String)> {
+    let s = |v: &Value| v.as_str().unwrap_or("-").to_string();
+    events
+        .iter()
+        .filter(|e| e["type"] == "transition")
+        .map(|e| (s(&e["from"]), s(&e["to"]), s(&e["source"])))
+        .collect()
+}
+
+fn t(from: &str, to: &str, source: &str) -> (String, String, String) {
+    (from.into(), to.into(), source.into())
 }
 
 fn events(run_dir: &Path) -> Vec<Value> {
@@ -222,9 +242,35 @@ fn a_failed_inbox_run_stops_process() {
     );
     p.write("inbox/b.md", "---\nid: run-b\nmachine: flow\n---\n");
     let out = p.process().assert().code(1).get_output().clone();
-    assert!(stderr(&out).contains("run run-a (a.md) ended in `failed`"));
+    let err = stderr(&out);
+    assert!(err.contains("run run-a (a.md) ended in `failed`"), "{err}");
+    assert!(err.contains("`decree process --retry run-a`"), "{err}");
     assert_eq!(p.order(), ["start run-a"]);
     assert!(p.decree().join("inbox/b.md").exists());
+
+    // `--retry <id>` continues the failed inbox run in its folder, then drains the inbox.
+    p.fix();
+    p.process().args(["--retry", "run-a"]).assert().success();
+    assert_eq!(
+        p.order(),
+        [
+            "start run-a",
+            "start run-a",
+            "end run-a",
+            "start run-b",
+            "end run-b"
+        ]
+    );
+    assert_eq!(
+        transitions(&p.events("run-a")),
+        [
+            t("-", "work", "claim"),
+            t("work", "failed", "exit_code"),
+            t("failed", "work", "retry"),
+            t("work", "done", "exit_code"),
+        ]
+    );
+    assert!(!p.decree().join("inbox/b.md").exists());
 }
 
 // ---------------------------------------------------------------
@@ -290,16 +336,134 @@ fn rule4_failed_migration_blocks_the_next_and_exits_1() {
     let out = p.process().assert().code(1).get_output().clone();
     let err = stderr(&out);
     assert!(err.contains("migration 01-a.md ended in `failed`"), "{err}");
-    assert!(err.contains("decree retry 01-a"), "{err}");
+    assert!(
+        err.contains("Fix the cause, then run `decree process --retry`."),
+        "{err}"
+    );
     assert_eq!(p.runs(), ["01-a"]);
     assert_eq!(p.order(), ["start 01-a"]);
     assert_eq!(p.read("processed.md"), "");
 
     // The failed run still blocks the next pass; nothing re-runs.
     let out = p.process().assert().code(1).get_output().clone();
-    assert!(stderr(&out).contains("decree retry 01-a"));
+    let err = stderr(&out);
+    assert!(
+        err.contains("migration 01-a.md is finished in `failed`"),
+        "{err}"
+    );
+    assert!(err.contains("`decree process --retry`"), "{err}");
     assert_eq!(p.runs(), ["01-a"]);
     assert_eq!(p.order(), ["start 01-a"]);
+}
+
+#[test]
+fn rule4_process_retry_continues_the_blocking_migration_then_the_rest() {
+    let p = Project::new();
+    p.write(
+        "migrations/01-a.md",
+        "---\nmachine: flow\nparams: { fail: true }\n---\n",
+    );
+    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
+    p.process().assert().code(1);
+    let before = p.events("01-a");
+
+    // `--retry` alone continues the blocking migration in its own folder, keeping its
+    // events, then runs the later migration in the same invocation.
+    p.fix();
+    let out = p
+        .process()
+        .arg("--retry")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("run 01-a continues in `work`"), "{stdout}");
+    assert_eq!(p.runs(), ["01-a", "02-b"]);
+    let after = p.events("01-a");
+    assert_eq!(after[..before.len()], before[..]);
+    assert_eq!(
+        transitions(&after),
+        [
+            t("-", "work", "claim"),
+            t("work", "failed", "exit_code"),
+            t("failed", "work", "retry"),
+            t("work", "done", "exit_code"),
+        ]
+    );
+    assert_eq!(
+        p.order(),
+        [
+            "start 01-a",
+            "start 01-a",
+            "end 01-a",
+            "start 02-b",
+            "end 02-b"
+        ]
+    );
+    assert_eq!(p.read("processed.md"), "01-a.md\n02-b.md\n");
+
+    // Nothing blocks now.
+    let out = p
+        .process()
+        .arg("--retry")
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    let err = stderr(&out);
+    assert!(
+        err.contains("nothing to retry: no migration is failed or interrupted"),
+        "{err}"
+    );
+}
+
+/// Two steps; `step` fails in `second` until `fixed.flag` exists, and logs each state.
+const TWO: &str = "\
+name: two
+description: Two steps.
+initial: first
+states:
+  first:
+    invoke: step
+    transitions: { done: second }
+  second:
+    invoke: step
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+const STEP: &str = r#"#!/usr/bin/env bash
+echo "$DECREE_STATE" >> "$DECREE_PROJECT_ROOT/order.log"
+[ "$DECREE_STATE" != second ] || [ -e "$DECREE_PROJECT_ROOT/fixed.flag" ]
+"#;
+
+#[test]
+fn process_retry_state_resumes_at_the_named_state() {
+    let p = Project::new();
+    p.write("machines/two.yml", TWO);
+    write_script(&p.decree().join("scripts/step"), STEP);
+    p.write("inbox/a.md", "---\nid: run-a\nmachine: two\n---\n");
+    p.process().assert().code(1);
+    assert_eq!(p.order(), ["first", "second"]);
+
+    // Without `--state`, a failed run continues in the state it last left (`second`);
+    // `--state first` starts that state again instead.
+    p.fix();
+    p.process()
+        .args(["--retry", "run-a", "--state", "first"])
+        .assert()
+        .success();
+    assert_eq!(p.order(), ["first", "second", "first", "second"]);
+    assert_eq!(
+        transitions(&p.events("run-a"))[3..],
+        [
+            t("failed", "first", "retry"),
+            t("first", "second", "exit_code"),
+            t("second", "done", "exit_code"),
+        ]
+    );
 }
 
 #[test]

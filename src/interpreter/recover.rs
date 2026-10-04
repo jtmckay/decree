@@ -218,7 +218,7 @@ impl<'a> Context<'a> {
 
     /// Run `run_id`'s last event if it is `run_finished`: the run is finished, and nothing
     /// else in its log is read (docs/reference/messages.md, Run status). Only `decree
-    /// retry` appends after it. Scans over every run check this first.
+    /// process --retry` appends after it. Scans over every run check this first.
     pub fn run_finished(&self, run_id: &str) -> Result<Option<Event>, InterpreterError> {
         let dir = self.runs_dir().join(run_id);
         let last = last_event(&dir).map_err(io_err(&dir.join(EVENTS_FILE)))?;

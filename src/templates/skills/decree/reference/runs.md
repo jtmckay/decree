@@ -38,14 +38,14 @@ To find out why a run failed, read its `events.jsonl` from the end, then the log
 
 | Status | Meaning | What to do |
 | --- | --- | --- |
-| `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; or `decree retry` to run it again from a state. |
+| `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; or `decree process --retry <id>` to run it again from a state. |
 | `active` | A live process holds its lock. | `decree tail` to watch it. |
 | `waiting` | Paused for a person, or for a child run. | `decree event <wait id> <event>`; `decree process` prints the commands. |
-| `pending` | A reply arrived, or `decree retry` was run. | `decree process` continues it. |
-| `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree retry <id>`. decree never continues it on its own. |
+| `pending` | A reply arrived, or a `retry` transition was written. | `decree process` continues it. |
+| `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree process --retry <id>`. decree never continues it on its own. |
 
 A failed, interrupted or waiting migration blocks every later migration; `decree process` exits 1
-naming the `decree retry` command (or 0 while only waiting).
+ending ``Fix the cause, then run `decree process --retry`.`` (or 0 while only waiting).
 
 ## Graphs
 

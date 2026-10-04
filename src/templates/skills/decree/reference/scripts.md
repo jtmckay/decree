@@ -26,7 +26,7 @@ directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commi
   `[stderr] `). What an invoke prints is what a later `matches` check or model reads. Output
   is only a log: decree never reads an event from it.
 - On stop or timeout, decree sends SIGTERM to the group, then SIGKILL after 10 s.
-- Scripts must be safe to re-run: an interrupted step runs again after `decree retry`.
+- Scripts must be safe to re-run: an interrupted step runs again after `decree process --retry`.
 
 ## Reporting an event (invoke only)
 

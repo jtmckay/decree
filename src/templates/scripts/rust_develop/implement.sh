@@ -3,7 +3,7 @@
 # noting each in progress.md, so a retry continues where the last attempt
 # stopped. If the message is unclear, it writes the question to STOP instead of
 # guessing; the run fails until a person answers it, deletes STOP and runs
-# `decree retry`.
+# `decree process --retry`.
 set -euo pipefail
 
 {ai_function}

@@ -94,7 +94,7 @@
         },
         "source": {
           "enum": ["claim", "exit_code", "script", "attempt", "check", "model", "person", "machine", "timeout", "internal", "invalid_message", "retry"],
-          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `person`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `person` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree retry`."
+          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `person`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `person` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree process --retry`."
         },
         "exit_code": {
           "type": ["integer", "null"],
@@ -442,7 +442,7 @@
     },
     "run_finished": {
       "title": "run_finished",
-      "description": "The run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree retry` continues it.",
+      "description": "The run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree process --retry` continues it.",
       "required": ["type", "state", "duration_ms"],
       "properties": {
         "type": { "const": "run_finished", "description": "Always `run_finished`." },

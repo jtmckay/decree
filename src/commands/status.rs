@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use crate::cli::Format;
 use crate::commands::check::{md_files, Project};
 use crate::commands::print_json;
-use crate::commands::process::context;
+use crate::commands::process::{blocking_migration, context};
 use crate::cron;
 use crate::error::DecreeError;
 use crate::events::{current_state, strings, text, Event};
@@ -26,6 +26,7 @@ use crate::interpreter::recover::RunStatus;
 use crate::interpreter::Context;
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
+use crate::machine::FAILED;
 use crate::message::{run_ids, Message};
 use crate::runtime::Running;
 
@@ -42,7 +43,7 @@ pub fn run(
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
     match (id, format) {
-        (Some(id), Format::Text) => show_run(&ctx, id),
+        (Some(id), Format::Text) => show_run(&ctx, &project, id),
         (Some(id), Format::Json) => run_json(&ctx, id),
         (None, format) => overview(&ctx, &project, format),
     }
@@ -62,7 +63,9 @@ enum Detail {
     Running(Running),
     /// A `waiting` run's last event, a `waiting` event.
     Wait(Event),
-    Interrupted,
+    /// An `interrupted` run, or one finished in `failed`: `blocking` when it is the
+    /// migration that blocks the queue.
+    Retry { blocking: bool },
 }
 
 impl Row {
@@ -72,7 +75,7 @@ impl Row {
         self.detail.as_ref().map(|detail| match detail {
             Detail::Running(r) => running_line(id, r),
             Detail::Wait(last) => wait_line(last),
-            Detail::Interrupted => format!("continue with `decree retry {id}`"),
+            Detail::Retry { blocking } => retry_line(id, *blocking),
         })
     }
 
@@ -100,7 +103,7 @@ impl Row {
                     out["child"] = child.into();
                 }
             }
-            Some(Detail::Interrupted) | None => {}
+            Some(Detail::Retry { .. }) | None => {}
         }
         out
     }
@@ -111,14 +114,19 @@ fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), Decr
     let mut groups: Vec<(RunStatus, Row)> = Vec::new();
     let mut finished: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let ids = run_ids(&ctx.runs_dir())?;
+    let blocking = blocking_migration(ctx, project)?;
+    let retry = |id: &str| Detail::Retry {
+        blocking: blocking.as_deref() == Some(id),
+    };
     for id in &ids {
         // A finished run: its last line, `run_finished`, names its machine and final state.
         if let Some(last) = ctx.run_finished(id)? {
+            let state = field(Some(&last), "state").to_string();
             let row = Row {
                 id: id.clone(),
                 machine: field(Some(&last), "machine").to_string(),
-                state: field(Some(&last), "state").to_string(),
-                detail: None,
+                detail: (state == FAILED).then(|| retry(id)),
+                state,
             };
             finished.entry(row.state.clone()).or_default().push(row);
             continue;
@@ -129,7 +137,8 @@ fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), Decr
         let detail = match status {
             RunStatus::Active => Running::read(&run_dir)?.map(Detail::Running),
             RunStatus::Waiting => events.last().cloned().map(Detail::Wait),
-            RunStatus::Interrupted => Some(Detail::Interrupted),
+            RunStatus::Interrupted => Some(retry(id)),
+            RunStatus::Finished if state == FAILED => Some(retry(id)),
             RunStatus::Finished | RunStatus::Pending => None,
         };
         let row = Row {
@@ -219,6 +228,16 @@ fn print_rows(rows: &[&Row], indent: &str) {
     }
 }
 
+/// The command that continues an `interrupted` or `failed` run: `--retry` alone for the
+/// migration that blocks the queue, else with its id.
+fn retry_line(id: &str, blocking: bool) -> String {
+    if blocking {
+        "continue with `decree process --retry`".to_string()
+    } else {
+        format!("continue with `decree process --retry {id}`")
+    }
+}
+
 /// The script an `active` run is running now: name, pid, how long, and log path.
 fn running_line(id: &str, r: &Running) -> String {
     let elapsed = DateTime::parse_from_rfc3339(&r.started_at)
@@ -267,7 +286,7 @@ fn run_json(ctx: &Context, id: &str) -> Result<(), DecreeError> {
 }
 
 /// One run: frontmatter, status, and the events as a table.
-fn show_run(ctx: &Context, id: &str) -> Result<(), DecreeError> {
+fn show_run(ctx: &Context, project: &Project, id: &str) -> Result<(), DecreeError> {
     let run_dir = ctx.runs_dir().join(id);
     if id.is_empty() || id.contains('/') || !run_dir.is_dir() {
         eprintln!("no run {id} in {DECREE_DIR}/{RUNS_DIR}/");
@@ -285,6 +304,10 @@ fn show_run(ctx: &Context, id: &str) -> Result<(), DecreeError> {
         if let Some(last) = events.last() {
             println!("  {}", wait_line(last));
         }
+    }
+    if status == RunStatus::Interrupted || (status == RunStatus::Finished && state == FAILED) {
+        let blocking = blocking_migration(ctx, project)?.as_deref() == Some(id);
+        println!("  {}", retry_line(id, blocking));
     }
 
     println!("{}", "Frontmatter:".bold());

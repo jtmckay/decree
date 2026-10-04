@@ -3,7 +3,7 @@
 # steps, noting each in progress.md, so a retry continues where the last
 # attempt stopped. If the message is unclear, it writes the question to STOP
 # instead of guessing; the run fails until a person answers it, deletes STOP
-# and runs `decree retry`. The same rules as rust_develop's implement.
+# and runs `decree process --retry`. The same rules as rust_develop's implement.
 set -euo pipefail
 progress="${DECREE_RUN_DIR}/progress.md"
 stop="${DECREE_RUN_DIR}/STOP"
