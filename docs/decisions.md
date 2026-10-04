@@ -48,6 +48,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 | [D40](#d40-q14-a-person-answers-with-a-reply-message) | Q14: a person answers with a reply message | Open questions |
 | [D41](#d41-q15-a-machine-can-invoke-another-machine) | Q15: a machine can invoke another machine | Open questions |
 | [D42](#d42-q16-scripts-do-not-run-inside-tmux) | Q16: scripts do not run inside tmux | Open questions |
+| [D43](#d43-delete-finished-runs-on-request-never-automatically) | Delete finished runs on request, never automatically | Migration 70 |
 
 ## D1: Machines follow SCXML
 
@@ -384,3 +385,11 @@ What decree does is in the [reference](reference/README.md). The construction pl
 **Decision.** No: decree needs exact exit codes, separate stdout and stderr, and no terminal. Live visibility comes from `decree status` and `decree tail`; tmux stays a personal dashboard ([Long-running services](services.md)).
 
 **Consequences.** Scripts are plain processes. Evidence: `b1d5613` (`decree tail`).
+
+## D43: Delete finished runs on request, never automatically
+
+**Context.** Run folders were never removed, so `runs/` grows by every run's events, logs and replies (about 64 KB for a mock migration run). Deleting a folder is not free of meaning: a failed migration's folder is what keeps `process` from starting it again, and a parent run may still read its child's results. A project that ships `events.jsonl` and the script logs to Loki ([observability.md](reference/observability.md)) already keeps its history there. Prior art: `docker system prune --filter until=<duration>` and `git gc --prune=<date>` delete on request with an age cut-off; AWS Step Functions keeps execution history for a fixed period and then deletes it.
+
+**Decision.** `decree prune --older-than <age> [--dry-run]` deletes the folders of finished runs whose `run_finished` event is older than `<age>`, and nothing else ever deletes a run ([cli.md](reference/cli.md)). The age is required, so a bare `decree prune` deletes nothing. It keeps runs that are not finished, migrations that ended in `failed`, and children of unfinished parents, and it takes the run lock before deleting. No archive: it would only move the growth.
+
+**Consequences.** Retention is the log store's job, and the local `runs/` is a working copy; a project that ships nothing keeps every run until someone prunes. `decree status <id>` and `decree retry` cannot reach a pruned run. Evidence: migration 70.

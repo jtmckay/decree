@@ -67,3 +67,4 @@
 67-v05-reliability-tests.md
 68-v05-src-review.md
 69-finished-runs-from-the-last-line.md
+70-decree-prune.md

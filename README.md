@@ -224,6 +224,7 @@ Model servers and other long-running processes are not scripts and decree does n
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
 | `decree retry ID [--state S]` | Make an interrupted or finished run pending again |
+| `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`); ship them to Loki first if you keep history |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree --version` | Print the version |
 

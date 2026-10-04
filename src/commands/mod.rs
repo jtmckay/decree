@@ -5,6 +5,7 @@ pub mod event;
 pub mod graph;
 pub mod init;
 pub mod process;
+pub mod prune;
 pub mod retry;
 pub mod status;
 pub mod tail;

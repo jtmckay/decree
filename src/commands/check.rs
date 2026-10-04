@@ -144,7 +144,7 @@ impl Project {
 }
 
 /// `processed.md` as a set of filenames. A missing ledger is empty; `check` writes nothing.
-fn read_processed(decree_dir: &Path) -> Result<BTreeSet<String>, DecreeError> {
+pub(crate) fn read_processed(decree_dir: &Path) -> Result<BTreeSet<String>, DecreeError> {
     match std::fs::read_to_string(decree_dir.join(layout::PROCESSED_FILE)) {
         Ok(text) => Ok(text
             .lines()

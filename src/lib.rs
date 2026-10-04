@@ -54,6 +54,10 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         Command::Daemon { interval } => commands::daemon::run(&root()?, interval),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
         Command::Retry { id, state } => commands::retry::run(&root()?, &id, state.as_deref()),
+        Command::Prune {
+            older_than,
+            dry_run,
+        } => commands::prune::run(&root()?, older_than, dry_run),
         Command::Status { id, cron } => commands::status::run(&root()?, id.as_deref(), cron),
     }
 }

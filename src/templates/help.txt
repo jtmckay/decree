@@ -31,6 +31,9 @@ Commands:
   decree status --cron        Cron files and when each fires next
   decree tail [ID]            Follow the live output of a run
   decree retry ID [--state S] Make an interrupted or finished run pending again
+  decree prune --older-than AGE [--dry-run]
+                              Delete finished runs older than AGE (30d, 12h,
+                              90m); --dry-run lists them
   decree help                 This help text
   decree --version            Print the version
 

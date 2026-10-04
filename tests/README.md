@@ -21,6 +21,7 @@
 | `mock_replay_test.rs` | Each `mock/` run that is not a router's child run, replayed through the binary with stub scripts: its events, child runs, `message.md` and `request.json` equal the mock's. |
 | `mock_templates_test.rs` | Every `mock/` file that `init` also writes is byte-identical to it. |
 | `process_test.rs` | `decree process`: inbox claim and validation, and the six migration rules. |
+| `prune_test.rs` | `decree prune`: only finished runs older than the age, `--dry-run`, the runs it keeps (not finished, failed migration, child of an unfinished parent, locked), bad ages, and a pruned migration not run again. |
 | `readme_test.rs` | `README.md` and `--help` describe 0.5 only; every README command runs. |
 | `reply_test.rs` | Replies to waiting runs, `timeout_s`, and `decree event`. |
 | `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, as a table. |

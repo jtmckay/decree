@@ -58,6 +58,7 @@ until a reply picks one). AI and people appear only where a machine says `choose
 | `decree tail [<id>]` | Follow the output of the script running now. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `choose: person` state. |
 | `decree retry <id> [--state <s>]` | Continue an interrupted (or finished) run. |
+| `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`; keeps failed migrations and children of unfinished runs. |
 
 ## Worked example
 

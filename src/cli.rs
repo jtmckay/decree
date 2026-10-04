@@ -106,6 +106,18 @@ pub enum Command {
         state: Option<String>,
     },
 
+    /// Delete the folders of finished runs older than an age; only this command deletes runs
+    Prune {
+        /// Age of the run's `run_finished` event: a whole number and d, h or m (30d, 12h, 90m);
+        /// 0m means every finished run
+        #[arg(long, value_name = "AGE", value_parser = crate::commands::prune::parse_age)]
+        older_than: chrono::TimeDelta,
+
+        /// List the runs it would delete, and delete nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Verbose help
     Help,
 }
