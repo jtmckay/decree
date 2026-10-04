@@ -2368,7 +2368,9 @@ fn reject_starts_the_run_in_failed() {
     )
     .unwrap();
     let events = p.events();
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1]["type"], "run_finished");
+    assert_eq!(events[1]["state"], "failed");
     let t = &events[0];
     assert_eq!(t["from"], Value::Null);
     assert_eq!(t["to"], "failed");

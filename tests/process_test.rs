@@ -145,7 +145,9 @@ fn unknown_machine_ends_failed_with_invalid_message() {
     assert_eq!(p.runs(), ["run-a"]);
     assert!(!p.decree().join("inbox/a.md").exists());
     let events = p.events("run-a");
-    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events[1]["type"], "run_finished");
+    assert_eq!(events[1]["state"], "failed");
     let e = &events[0];
     assert_eq!(e["type"], "transition");
     assert_eq!(e["to"], "failed");

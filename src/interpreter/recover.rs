@@ -170,6 +170,10 @@ pub fn reject(
     if mirror {
         mirror_state(&run_dir.join(MESSAGE_FILE), FAILED)?;
     }
+    // Like every run that reaches a root final state, it ends with `run_finished`.
+    events
+        .append("run_finished", json!({ "state": FAILED, "duration_ms": 0 }))
+        .map_err(io_err(&path))?;
     Ok(())
 }
 

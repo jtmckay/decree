@@ -155,7 +155,9 @@ fn last_transition(events: &[Value]) -> &Value {
 
 /// Run `id` ended `failed` with `invalid_message`; returns the reason.
 fn invalid_message(events: &[Value]) -> String {
-    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events[1]["type"], "run_finished");
+    assert_eq!(events[1]["state"], "failed");
     let t = &events[0];
     assert_eq!(t["to"], "failed");
     assert_eq!(t["source"], "invalid_message");

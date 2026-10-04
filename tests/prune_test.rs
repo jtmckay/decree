@@ -329,3 +329,23 @@ fn a_pruned_migration_does_not_run_again() {
     let order = fs::read_to_string(p.tmp.path().join("order.log")).unwrap();
     assert_eq!(order, "01-a\n");
 }
+
+/// A message rejected at claim ends with `run_finished`, so prune can delete its run.
+#[test]
+fn a_rejected_message_is_pruned() {
+    let p = Project::new();
+    fs::write(
+        p.decree().join("inbox/bad.md"),
+        "---\nid: bad\nmachine: nope\n---\nTask.\n",
+    )
+    .unwrap();
+    p.cmd(&["process"]).assert().code(1);
+    assert_eq!(p.runs(), ["bad"]);
+    let (code, stdout) = p.run(&["prune", "--older-than", "0m"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.starts_with("pruned bad  nope  failed  finished "),
+        "{stdout}"
+    );
+    assert!(p.runs().is_empty());
+}
