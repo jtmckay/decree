@@ -10,8 +10,8 @@ the first directory holding a match wins:
 
 1. `.decree/scripts/M/`
 2. `.decree/scripts/`
-3. `<shared_source>/scripts/M/`
-4. `<shared_source>/scripts/`
+
+There is no other search path. To share a script across projects, symlink it into `scripts/`.
 
 A match is a file named `X` or `X.<ext>` (`verify.sh`), executable, and the only match in its
 directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commit`, `notify`,

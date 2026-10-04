@@ -9,9 +9,11 @@ states:
     transitions: { done: implement }
   implement:                       # waits out a usage limit and resumes the session
     invoke: implement
+    max_attempts: 3
     transitions: { done: verify }
   verify:                          # {ai_title} checks the requirements and runs the tests
     invoke: verify
+    max_attempts: 3
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

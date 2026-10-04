@@ -1,5 +1,5 @@
-use crate::config;
 use crate::error::DecreeError;
+use crate::layout;
 use crate::message::{parse_frontmatter, Message};
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap};
@@ -25,7 +25,7 @@ pub struct CronFile {
 
 /// Scan `.decree/cron/` for valid cron files.
 pub fn scan_cron_files(project_root: &Path) -> Result<Vec<CronFile>, DecreeError> {
-    let cron_dir = project_root.join(config::DECREE_DIR).join(config::CRON_DIR);
+    let cron_dir = project_root.join(layout::DECREE_DIR).join(layout::CRON_DIR);
 
     if !cron_dir.exists() {
         return Ok(Vec::new());

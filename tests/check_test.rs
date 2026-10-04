@@ -8,8 +8,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-const CONFIG: &str = "max_attempts: 3\n";
-
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
@@ -28,15 +26,10 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
-/// A temp project whose `.decree/` is a copy of `tree`, with a default `config.yml` unless
-/// the tree has its own.
+/// A temp project whose `.decree/` is a copy of `tree`.
 fn project(tree: &Path) -> TempDir {
     let tmp = TempDir::new().unwrap();
-    let decree = tmp.path().join(".decree");
-    copy_dir(tree, &decree);
-    if !decree.join("config.yml").exists() {
-        fs::write(decree.join("config.yml"), CONFIG).unwrap();
-    }
+    copy_dir(tree, &tmp.path().join(".decree"));
     tmp
 }
 
@@ -224,11 +217,6 @@ fn check_passes_on_the_section_5_examples() {
     let decree = tmp.path().join(".decree");
     copy_dir(&fixtures().join("machines"), &decree.join("machines"));
     fs::remove_dir_all(decree.join("machines/step")).unwrap();
-    fs::write(
-        decree.join("config.yml"),
-        format!("{CONFIG}default_router: claude_router\n"),
-    )
-    .unwrap();
     let scripts = decree.join("scripts");
     fs::create_dir_all(&scripts).unwrap();
     for name in [

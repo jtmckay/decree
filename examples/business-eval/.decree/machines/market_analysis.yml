@@ -11,6 +11,7 @@ states:
     transitions: { done: analyze }
   analyze:                         # claude writes the report
     invoke: analyze
+    max_attempts: 3
     transitions: { done: check_report }
   check_report:                    # the report file exists
     invoke: check_report
@@ -18,6 +19,7 @@ states:
     transitions: { done: hand_off }
   hand_off:                        # emits the next step with the idea and the report's path
     invoke: hand_off
+    max_attempts: 3
     emits: [competitive_landscape]
     transitions: { done: done }
   done:   { final: true }

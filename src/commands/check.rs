@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use serde_norway::Value;
 
 use crate::commands::graph;
-use crate::config::{self, AppConfig};
 use crate::cron;
 use crate::error::DecreeError;
+use crate::layout::{self, DECREE_DIR};
 use crate::machine::{self, CheckEnv, LoadedMachine};
 use crate::message::{validate, Message};
 
@@ -44,23 +44,21 @@ pub fn check(project_root: &Path) -> Result<Vec<String>, DecreeError> {
     let mut problems = project.problems.clone();
     let decree_dir = &project.decree_dir;
     for name in project.pending_migrations()? {
-        project.check_file(config::MIGRATIONS_DIR, &name, "M1", false, &mut problems)?;
+        project.check_file(layout::MIGRATIONS_DIR, &name, "M1", false, &mut problems)?;
     }
-    for name in md_files(&decree_dir.join(config::INBOX_DIR))? {
-        project.check_file(config::INBOX_DIR, &name, "M2", false, &mut problems)?;
+    for name in md_files(&decree_dir.join(layout::INBOX_DIR))? {
+        project.check_file(layout::INBOX_DIR, &name, "M2", false, &mut problems)?;
     }
-    for name in md_files(&decree_dir.join(config::CRON_DIR))? {
-        project.check_file(config::CRON_DIR, &name, "M3", true, &mut problems)?;
+    for name in md_files(&decree_dir.join(layout::CRON_DIR))? {
+        project.check_file(layout::CRON_DIR, &name, "M3", true, &mut problems)?;
     }
     Ok(problems)
 }
 
-/// A project's config and machines, loaded and checked against V1–V21: where `check` and
+/// A project's machines, loaded and checked against V1–V21: where `check` and
 /// `process` start.
 pub(crate) struct Project {
-    pub(crate) config: AppConfig,
     pub(crate) decree_dir: PathBuf,
-    pub(crate) shared_source: Option<PathBuf>,
     /// Every machine file, including those that fail to load.
     pub(crate) machine_ids: BTreeSet<String>,
     /// The machines that loaded.
@@ -71,11 +69,9 @@ pub(crate) struct Project {
 
 impl Project {
     pub(crate) fn load(project_root: &Path) -> Result<Project, DecreeError> {
-        let config = AppConfig::load_from_project(project_root)?;
-        let decree_dir = AppConfig::decree_dir(project_root);
-        let shared_source = config.resolved_shared_source();
+        let decree_dir = project_root.join(DECREE_DIR);
 
-        let paths = machine::machine_paths(&decree_dir, shared_source.as_deref())?;
+        let paths = machine::machine_paths(&decree_dir)?;
         let machine_ids: BTreeSet<String> = paths.keys().cloned().collect();
 
         // Load every machine first: some rules look into the machines a state invokes.
@@ -94,10 +90,8 @@ impl Project {
         }
         let env = CheckEnv {
             decree_dir: &decree_dir,
-            shared_source: shared_source.as_deref(),
             machine_ids: &machine_ids,
             machines: &machines,
-            default_router: config.default_router.as_deref(),
         };
         for (id, m) in &machines {
             for p in m.validate(&texts[id], &env) {
@@ -110,24 +104,17 @@ impl Project {
         problems.sort_by(|a, b| a.0.cmp(&b.0));
         let problems = problems.into_iter().map(|(_, line)| line).collect();
         Ok(Project {
-            config,
             decree_dir,
-            shared_source,
             machine_ids,
             machines,
             problems,
         })
     }
 
-    /// The machine for messages with no `machine:` key.
-    pub(crate) fn default_machine(&self) -> Option<&str> {
-        self.config.default_machine.as_deref()
-    }
-
     /// `migrations/*.md` not in `processed.md`, in byte order (section 4, Migrations).
     pub(crate) fn pending_migrations(&self) -> Result<Vec<String>, DecreeError> {
         let processed = read_processed(&self.decree_dir)?;
-        Ok(md_files(&self.decree_dir.join(config::MIGRATIONS_DIR))?
+        Ok(md_files(&self.decree_dir.join(layout::MIGRATIONS_DIR))?
             .into_iter()
             .filter(|name| !processed.contains(name))
             .collect())
@@ -157,7 +144,7 @@ impl Project {
 
 /// `processed.md` as a set of filenames. A missing ledger is empty; `check` writes nothing.
 fn read_processed(decree_dir: &Path) -> Result<BTreeSet<String>, DecreeError> {
-    match std::fs::read_to_string(decree_dir.join(config::PROCESSED_FILE)) {
+    match std::fs::read_to_string(decree_dir.join(layout::PROCESSED_FILE)) {
         Ok(text) => Ok(text
             .lines()
             .map(str::trim)
@@ -191,8 +178,8 @@ pub(crate) fn md_files(dir: &Path) -> Result<Vec<String>, DecreeError> {
 }
 
 impl Project {
-    /// Errors in one message as `(file line, message)`: it parses, names a known machine (or
-    /// one is configured by default), and its `params` fit that machine's `data`. Cron files
+    /// Errors in one message as `(file line, message)`: it parses, names a known machine,
+    /// and its `params` fit that machine's `data`. Cron files
     /// also need a `cron:` expression that parses.
     fn check_text(&self, text: &str, is_cron: bool) -> Vec<(usize, String)> {
         let fm = match Message::parse(text) {
@@ -219,12 +206,7 @@ impl Project {
             return errors;
         }
 
-        if let Err(e) = validate(
-            &fm,
-            &self.machines,
-            &self.machine_ids,
-            self.default_machine(),
-        ) {
+        if let Err(e) = validate(&fm, &self.machines, &self.machine_ids) {
             errors.extend(e);
         }
         errors

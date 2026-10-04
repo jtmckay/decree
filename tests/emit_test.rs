@@ -45,13 +45,12 @@ struct Project {
 }
 
 impl Project {
-    fn new(config: &str) -> Project {
+    fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
         for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
-        fs::write(decree.join("config.yml"), config).unwrap();
         fs::write(decree.join("processed.md"), "").unwrap();
         fs::write(decree.join("machines/flow.yml"), FLOW).unwrap();
         fs::write(decree.join("machines/other.yml"), OTHER).unwrap();
@@ -101,7 +100,7 @@ fn stderr(output: &std::process::Output) -> String {
 
 #[test]
 fn emit_from_a_run_sets_parent_depth_and_trigger() {
-    let p = Project::new("max_depth: 10\n");
+    let p = Project::new();
     p.parent("p1", Some(2));
     let env = [
         ("DECREE_MESSAGE_ID", "p1"),
@@ -137,7 +136,7 @@ fn emit_from_a_run_sets_parent_depth_and_trigger() {
 
 #[test]
 fn emit_without_a_run_has_no_parent_or_depth() {
-    let p = Project::new("");
+    let p = Project::new();
     let output = p
         .emit(&[], &["--machine", "other"])
         .write_stdin("x\n")
@@ -153,7 +152,7 @@ fn emit_without_a_run_has_no_parent_or_depth() {
 
 #[test]
 fn emit_of_a_machine_not_in_the_states_emits_exits_1() {
-    let p = Project::new("");
+    let p = Project::new();
     p.parent("p1", None);
     for (state, target) in [("work", "flow"), ("done", "other"), ("_root", "other")] {
         let env = [
@@ -178,9 +177,9 @@ fn emit_of_a_machine_not_in_the_states_emits_exits_1() {
 
 #[test]
 fn emit_from_a_run_at_max_depth_exits_1() {
-    let p = Project::new("max_depth: 2\n");
-    p.parent("below", Some(1));
-    p.parent("at", Some(2));
+    let p = Project::new();
+    p.parent("below", Some(9));
+    p.parent("at", Some(10));
     let env = |id| {
         [
             ("DECREE_MESSAGE_ID", id),
@@ -195,7 +194,7 @@ fn emit_from_a_run_at_max_depth_exits_1() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("depth 3 exceeds max_depth 2"),
+        stderr(&output).contains("depth 11 exceeds max_depth 10"),
         "{}",
         stderr(&output)
     );
@@ -207,12 +206,12 @@ fn emit_from_a_run_at_max_depth_exits_1() {
         .assert()
         .success();
     let text = fs::read_to_string(p.decree().join("inbox").join(&p.inbox()[0])).unwrap();
-    assert!(text.contains("depth: 2\n"), "{text}");
+    assert!(text.contains("depth: 10\n"), "{text}");
 }
 
 #[test]
 fn emit_with_bad_params_or_machine_exits_1() {
-    let p = Project::new("");
+    let p = Project::new();
     let cases: [(&[&str], &str); 5] = [
         (
             &["--machine", "other", "--param", "nope=1"],
@@ -246,7 +245,7 @@ fn emit_with_bad_params_or_machine_exits_1() {
 
 #[test]
 fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
-    let p = Project::new("max_attempts: 1\n");
+    let p = Project::new();
     fs::write(
         p.decree().join("inbox/a.md"),
         "---\nid: a\nmachine: flow\n---\nstart\n",

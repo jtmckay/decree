@@ -8,8 +8,9 @@ use std::path::Path;
 use serde_norway::{Mapping, Value};
 
 use crate::commands::check::Project;
-use crate::config::RUNS_DIR;
 use crate::error::DecreeError;
+use crate::interpreter::MAX_DEPTH;
+use crate::layout::RUNS_DIR;
 use crate::machine::{DataType, LoadedMachine};
 use crate::message::{self, Message};
 use crate::runtime::{MESSAGE_FILE, ROOT_STATE};
@@ -26,10 +27,9 @@ pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), 
     message.set("machine", machine);
     if let Some(parent) = var("DECREE_MESSAGE_ID") {
         let depth = parent_depth(&project, &parent)? + 1;
-        let max_depth = project.config.max_depth;
-        if depth > max_depth {
+        if depth > MAX_DEPTH {
             return Err(fail(format!(
-                "depth {depth} exceeds max_depth {max_depth}: run {parent} is at depth {}",
+                "depth {depth} exceeds max_depth {MAX_DEPTH}: run {parent} is at depth {}",
                 depth - 1
             )));
         }
@@ -42,8 +42,7 @@ pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), 
     if !params.is_empty() {
         message.set("params", Value::Mapping(params));
     }
-    if let Err(errors) = message::validate(&message, &project.machines, &project.machine_ids, None)
-    {
+    if let Err(errors) = message::validate(&message, &project.machines, &project.machine_ids) {
         let errors: Vec<String> = errors.into_iter().map(|(_, e)| e).collect();
         return Err(fail(errors.join("; ")));
     }

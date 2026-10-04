@@ -60,3 +60,4 @@
 60-v05-examples-blackbox.md
 61-v05-scxml-conformance.md
 62-v05-config-strict.md
+63-v05-no-config.md

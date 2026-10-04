@@ -39,7 +39,7 @@ Every command in this section runs as written, in order, in an empty directory.
 decree init
 ```
 
-This writes `.decree/` with `config.yml`, the `develop` and `rust_develop` machines and their scripts, a router machine for your AI tool (`--ai claude|copilot|opencode`; by default the first one found on `PATH`), and the decree skill for Claude Code or Copilot.
+This writes `.decree/` with the `develop` and `rust_develop` machines and their scripts, the `router` machine for your AI tool (`--ai claude|copilot|opencode`; by default the first one found on `PATH`), and the decree skill for Claude Code or Copilot.
 
 **2. Write a script.** A script does one thing. Exit 0 is the event `done`, anything else is `error`.
 
@@ -122,7 +122,7 @@ A message is a markdown file with YAML frontmatter. decree reads and writes only
 
 ```markdown
 ---
-machine: develop            # machines/develop.yml; default: default_machine
+machine: develop            # machines/develop.yml; required
 params:                     # sets the machine's data for this run
   max_rounds: 3
 ---
@@ -194,7 +194,7 @@ Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, 
 
 ### Routers
 
-A `choose: model` state asks a **router**: an ordinary machine that reads `request.json`, asks a model however it likes and writes `reply.json`. decree validates the reply against the state's transitions, so the model never names a state. `decree init` writes `claude_router`, `copilot_router` or `opencode_router`, and `default_router` in `config.yml` picks it. [docs/routers.md](docs/routers.md) shows routers for other models and local classifiers.
+A `choose: model` state asks a **router**: an ordinary machine that reads `request.json`, asks a model however it likes and writes `reply.json`. decree validates the reply against the state's transitions, so the model never names a state. A state names its router with `router:`; without one it uses the machine named `router`, which `decree init` writes to ask Claude, Copilot or OpenCode (`scripts/router/ask_<ai>.sh`). [docs/routers.md](docs/routers.md) shows routers for other models and local classifiers.
 
 ## Scripts
 
@@ -204,8 +204,6 @@ Script `X` used by machine `M` is the first match of `X` or `X.<ext>` in:
 
 1. `.decree/scripts/M/`
 2. `.decree/scripts/`
-3. `<shared_source>/scripts/M/`
-4. `<shared_source>/scripts/`
 
 An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the last stdout line is a JSON object such as `{"event":"pass"}`. Output goes to `runs/<id>/<NNNN>-<state>-<script>.log`. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all).
 
@@ -215,7 +213,7 @@ Model servers and other long-running processes are not scripts and decree does n
 
 | Command | What it does |
 | --- | --- |
-| `decree init [--ai AI] [--permissions]` | Create `.decree/` with config, machines, scripts, a router machine and the decree skill |
+| `decree init [--ai AI] [--permissions]` | Create `.decree/` with machines, scripts, the `router` machine and the decree skill |
 | `decree check` | Validate machines and pending messages |
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
@@ -235,7 +233,6 @@ decree never continues a run that was stopped by a signal or a crash: the run is
 
 ```text
 .decree/
-  config.yml                      # global settings
   .gitignore                      # inbox/ and runs/
   machines/<name>.yml             # machines
   scripts/<name>                  # scripts shared by every machine
@@ -248,16 +245,16 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   graph/                          # written by decree graph; committed
 ```
 
-`config.yml`:
+There is no configuration file. What 0.4 configured is a convention or a fixed limit:
 
-```yaml
-default_router: claude_router    # router machine for choose: model
-max_attempts: 3                  # default attempts per invoke
-max_depth: 10                    # max emit chain depth
-max_log_size: 2097152            # max bytes per script log
-default_machine: develop         # machine for messages without machine:
-shared_source: ~/.decree/shared  # shared machines/ and scripts/
-```
+| Setting | Instead |
+| --- | --- |
+| Router for `choose: model` | The machine named `router`, unless the state sets `router:` |
+| Default machine | None: every message names its `machine:` |
+| Retries | `max_attempts` on the state; default 1 (no retry) |
+| Emit depth | A fixed limit of 10 |
+| Log size | Each script log is capped at 2 MiB |
+| Sharing across projects | Symlink shared machines and scripts into `machines/` and `scripts/` |
 
 A cron file (`.decree/cron/<name>.md`, queued by `decree daemon`):
 
@@ -292,7 +289,7 @@ services:
 
 ## Upgrading from 0.4
 
-0.5.0 is a breaking release. `scripts/migrate-0.4-to-0.5.sh` moves a 0.4 project to the new layout: it moves pending inbox and outbox files into `inbox/`, renames config keys, moves removed paths into `.decree/legacy-0.4/`, and lists the machines your pending messages ask for that you still have to write. Routines do not convert mechanically; write each as a machine plus scripts. Migrations are immutable, so messages still accept `routine:` as an alias of `machine:`.
+0.5.0 is a breaking release. `scripts/migrate-0.4-to-0.5.sh` moves a 0.4 project to the new layout: it moves pending inbox and outbox files into `inbox/`, moves the configuration file and other removed paths into `.decree/legacy-0.4/`, and lists the machines your pending messages ask for that you still have to write, and the messages that name no machine. Routines do not convert mechanically; write each as a machine plus scripts. Migrations are immutable, so messages still accept `routine:` as an alias of `machine:`.
 
 | Removed in 0.5.0 | Instead |
 | --- | --- |
@@ -307,7 +304,7 @@ services:
 | `.decree/prompts/` | Removed |
 | `hooks` | `onentry` and `onexit` scripts (`git_baseline`, `snapshot`) |
 | `routines`, `shared_routines`, `commands` | Removed; machines need no registry, and router machines call the AI tool |
-| `default_routine`, `routine_source` | `default_machine`, `shared_source` |
+| The configuration file (`default_routine`, `routine_source`, `max_retries`) | Conventions: `machine:` on every message, `max_attempts` on states, symlinks for sharing |
 | `run.json` | `events.jsonl` |
 
 ## License

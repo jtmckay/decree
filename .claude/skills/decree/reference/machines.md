@@ -22,7 +22,7 @@ The first line links the machine to its graph: `# Graph: ../graph/<name>.md`.
 | State | `initial`, `states` | Make the state compound (no `invoke`). |
 | State | `final: true` | A final state: only `description`, `onentry` and `emits` allowed. |
 | State | `description` | Optional; the question context for a model. |
-| State | `max_attempts` | Extension. Re-run a failing script invoke in place (default: config `max_attempts`). |
+| State | `max_attempts` | Extension. Re-run a failing script invoke in place (default 1: no retry). |
 | State | `timeout_s` | Extension. Time limit for a script invoke; treated as a non-zero exit. |
 | State | `emits` | Extension. Machines this state's scripts may `decree emit` messages for. |
 
@@ -56,11 +56,11 @@ what a model sees by what it prints, which is also how to keep secrets out of a 
 
 A `choose: model` state never calls a model itself. decree writes `request.json` (question,
 options, input, message body, the run's history) and runs a **router**: an ordinary machine
-(`router:` on the invoke, else `default_router` in `config.yml`; `decree init` writes
-`claude_router`). Its script reads `$DECREE_REQUEST`, asks a model, and writes
+(`router:` on the invoke, else the machine named `router`, which `decree init` writes).
+Its script reads `$DECREE_REQUEST`, asks a model, and writes
 `{"event": "...", "reason": "...", "confidence": 0.86}` to `$DECREE_REPLY`. decree checks the
 event is an option and applies `min_confidence`. To use another model, write another router
-machine and point `router:` or `default_router` at it; recalibrate `min_confidence` when you do.
+machine and point `router:` at it, or replace `machines/router.yml`; recalibrate `min_confidence` when you do.
 
 ### Conditions
 

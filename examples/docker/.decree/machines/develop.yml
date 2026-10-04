@@ -9,9 +9,11 @@ states:
     transitions: { done: implement }
   implement:
     invoke: implement
+    max_attempts: 3
     transitions: { done: verify }
   verify:                          # opencode checks the acceptance criteria and fixes what fails
     invoke: verify
+    max_attempts: 3
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

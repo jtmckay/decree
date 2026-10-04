@@ -13,8 +13,8 @@ in a state that says `choose`.
 
 Commands:
   decree init [--ai AI] [--permissions]
-                              Create .decree/ with config, machines, scripts and
-                              a router machine for AI (claude, copilot or
+                              Create .decree/ with machines, scripts and the
+                              router machine for AI (claude, copilot or
                               opencode). claude and copilot also get the skill
   decree check                Validate machines and pending messages
   decree graph                Write .decree/graph/: Mermaid diagrams in Markdown
@@ -35,7 +35,6 @@ Commands:
   decree --version            Print the version
 
 Files (.decree/):
-  config.yml                  Global settings (below)
   machines/<name>.yml         Machines
   scripts/<name>              Scripts shared by every machine
   scripts/<machine>/<name>    A machine's own scripts, found before scripts/
@@ -47,7 +46,7 @@ Files (.decree/):
 
 Messages:
   ---
-  machine: develop            # machines/develop.yml; default: default_machine
+  machine: develop            # machines/develop.yml; required
   params:                     # sets the machine's data for this run
     max_rounds: 3
   ---
@@ -105,13 +104,14 @@ Scripts:
   router run DECREE_REQUEST and DECREE_REPLY; for an ask script
   DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES.
 
-config.yml:
-  default_router: claude_router   # router machine for choose: model
-  max_attempts: 3                 # default attempts per invoke
-  max_depth: 10                   # max emit chain depth
-  max_log_size: 2097152           # max bytes per script log
-  default_machine: develop        # machine for messages without machine:
-  shared_source: ~/.decree/shared # shared machines/ and scripts/
+No configuration file; conventions and fixed limits instead:
+  machines/router.yml             # answers every choose: model that names no router:
+  max_attempts: 3                 # on a script state; default 1 (no retry)
+  max_depth                       # 10: deepest chain of emits and child runs
+  script logs                     # each capped at 2 MiB
+  Share machines or scripts across projects by symlinking them into machines/
+  and scripts/. A configuration file left from 0.4 is an error: run
+  scripts/migrate-0.4-to-0.5.sh.
 
 Cron (.decree/cron/<name>.md, run by `decree daemon`):
   ---

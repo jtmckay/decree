@@ -199,7 +199,14 @@ fn test_keeps_ledger_and_archives_the_0_4_layout() {
     // Pending outbox files join inbox/; the removed paths keep their place under legacy-0.4/.
     assert!(decree_dir.join("inbox/followup.md").is_file());
     assert!(decree_dir.join("inbox/D0002-1200-fix-0.md").is_file());
-    for removed in ["outbox", "inbox/dead", "router.md", "routines", "prompts"] {
+    for removed in [
+        "config.yml",
+        "outbox",
+        "inbox/dead",
+        "router.md",
+        "routines",
+        "prompts",
+    ] {
         assert!(!decree_dir.join(removed).exists(), "{removed} still there");
         assert!(legacy.join(removed).exists(), "{removed} not archived");
     }
@@ -207,14 +214,10 @@ fn test_keeps_ledger_and_archives_the_0_4_layout() {
     assert!(legacy.join("inbox/dead/D0001-0950-broken-0.md").is_file());
     assert!(!legacy.join("outbox/followup.md").exists());
 
+    // config.yml is archived as it was: 0.5 has no configuration file.
     assert_eq!(
-        fs::read_to_string(decree_dir.join("config.yml")).unwrap(),
-        "max_attempts: 3\n\
-         max_depth: 10\n\
-         max_log_size: 2097152 # Per-log size cap in bytes (2MB), 0 to disable\n\
-         default_machine: develop\n\
-         shared_source: \"~/.decree/routines\" # optional, shared routines directory\n\
-         \n"
+        fs::read(legacy.join("config.yml")).unwrap(),
+        fs::read(root().join("tests/fixtures/legacy-0.4/config.yml")).unwrap()
     );
 }
 
@@ -263,46 +266,52 @@ fn test_check_rejects_the_0_4_config_until_migrated() {
     let tmp = project();
     let (code, stderr) = check_stderr(&tmp);
     assert_eq!(code, 1, "{stderr}");
-    assert!(
-        stderr.contains("config.yml: unknown field `commands`"),
-        "{stderr}"
+    assert_eq!(
+        stderr,
+        "error: .decree/config.yml is not used by decree 0.5; run scripts/migrate-0.4-to-0.5.sh\n"
     );
-    assert!(
-        stderr.contains("this is a 0.4 config; run scripts/migrate-0.4-to-0.5.sh"),
-        "{stderr}"
-    );
+    migrate(&tmp);
+    assert!(!tmp.path().join(".decree/config.yml").exists());
+    let (_, stderr) = check_stderr(&tmp);
+    assert!(!stderr.contains("config.yml"), "{stderr}");
 }
 
-/// `max_retries` has no 0.5 alias: the script renames it, or drops it when `max_attempts`
-/// is set too, and `decree check` accepts the result.
+/// 0.5 has no default machine: each pending message that names none is listed, and the
+/// script exits 1. A reply names the run it answers, not a machine, and is not listed.
 #[test]
-fn test_renames_max_retries_to_max_attempts() {
-    for (config, expected) in [
-        (
-            "max_retries: 5\ndefault_routine: develop\n",
-            "max_attempts: 5\ndefault_machine: develop\n",
+fn test_lists_each_pending_message_that_names_no_machine() {
+    let tmp = project();
+    let decree_dir = tmp.path().join(".decree");
+    fs::write(decree_dir.join("inbox/bare.md"), "No frontmatter.\n").unwrap();
+    fs::write(
+        decree_dir.join("migrations/03-bare.md"),
+        "---\nparams: {}\n---\nNo machine.\n",
+    )
+    .unwrap();
+    fs::write(
+        decree_dir.join("inbox/reply.md"),
+        "---\nto: 02-add-feature.w1\nevent: retry\n---\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = migrate(&tmp);
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let at = stdout
+        .find("Pending messages that name no machine")
+        .unwrap_or_else(|| panic!("no listing in:\n{stdout}"));
+    let listed = &stdout[at..stdout.find("Machines that").unwrap()];
+    assert!(
+        listed.ends_with(
+            "immutable):\n    .decree/migrations/03-bare.md\n    .decree/inbox/bare.md\n\n"
         ),
-        (
-            "max_attempts: 4\nmax_retries: 5\ndefault_routine: develop\n",
-            "max_attempts: 4\ndefault_machine: develop\n",
-        ),
-    ] {
-        let tmp = project();
-        let decree_dir = tmp.path().join(".decree");
-        fs::write(decree_dir.join("config.yml"), config).unwrap();
-        migrate(&tmp);
-        assert_eq!(
-            fs::read_to_string(decree_dir.join("config.yml")).unwrap(),
-            expected
-        );
+        "{listed}"
+    );
+    assert!(!listed.contains("reply.md"), "{listed}");
 
-        fs::create_dir_all(decree_dir.join("machines")).unwrap();
-        fs::create_dir_all(decree_dir.join("scripts")).unwrap();
-        fs::write(decree_dir.join("machines/develop.yml"), DEVELOP_YML).unwrap();
-        let work = decree_dir.join("scripts/work");
-        fs::write(&work, "#!/usr/bin/env bash\necho work\n").unwrap();
-        fs::set_permissions(&work, fs::Permissions::from_mode(0o755)).unwrap();
-        let (code, stdout) = decree(&tmp, &["check"]);
-        assert_eq!(code, 0, "decree check:\n{stdout}");
-    }
+    // With develop present, only the unnamed messages are left, and the script still exits 1.
+    fs::create_dir_all(decree_dir.join("machines")).unwrap();
+    fs::write(decree_dir.join("machines/develop.yml"), DEVELOP_YML).unwrap();
+    let (code, stdout, _) = migrate(&tmp);
+    assert_eq!(code, 1, "{stdout}");
+    assert!(stdout.contains(".decree/inbox/bare.md"), "{stdout}");
+    assert!(!stdout.contains("Machines that"), "{stdout}");
 }

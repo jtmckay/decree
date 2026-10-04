@@ -51,6 +51,6 @@ stateDiagram-v2
         check: visits implement less_than data.max_rounds
     end note
     note right of triage
-        model: claude_router, min_confidence 0.8
+        model: router, min_confidence 0.8
     end note
 ```

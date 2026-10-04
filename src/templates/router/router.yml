@@ -1,5 +1,5 @@
-# Graph: ../graph/{ai}_router.md
-name: {ai}_router
+# Graph: ../graph/router.md
+name: router
 description: Ask {ai_title} to pick one of the options in the request.
 initial: ask
 states:

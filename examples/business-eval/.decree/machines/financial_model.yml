@@ -14,6 +14,7 @@ states:
     transitions: { done: analyze }
   analyze:
     invoke: analyze
+    max_attempts: 3
     transitions: { done: check_report }
   check_report:
     invoke: check_report
@@ -21,6 +22,7 @@ states:
     transitions: { done: hand_off }
   hand_off:
     invoke: hand_off
+    max_attempts: 3
     emits: [executive_summary]
     transitions: { done: done }
   done:   { final: true }

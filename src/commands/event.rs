@@ -5,8 +5,8 @@
 use std::path::Path;
 
 use crate::commands::check::Project;
-use crate::config::RUNS_DIR;
 use crate::error::DecreeError;
+use crate::layout::RUNS_DIR;
 use crate::message::{self, Message};
 use crate::reply;
 

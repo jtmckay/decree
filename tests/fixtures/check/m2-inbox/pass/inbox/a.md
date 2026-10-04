@@ -1,1 +1,4 @@
-# No frontmatter: runs on the default machine
+---
+machine: m
+---
+# Plain message

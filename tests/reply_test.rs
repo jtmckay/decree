@@ -51,7 +51,6 @@ impl Project {
         for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
-        fs::write(decree.join("config.yml"), "max_attempts: 1\n").unwrap();
         fs::write(decree.join("processed.md"), "").unwrap();
         let machine = DEPLOY.replace("TIMEOUT", &timeout_s.to_string());
         fs::write(decree.join("machines/deploy.yml"), machine).unwrap();

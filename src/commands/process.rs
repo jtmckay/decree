@@ -17,12 +17,12 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::commands::check::{md_files, Project};
-use crate::config::{self, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
 use crate::error::DecreeError;
 use crate::interpreter::{
     self, continue_run, read_events, Context, Interpreter, InterpreterError, Outcome, RunInput,
     RunStatus,
 };
+use crate::layout::{self, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
 use crate::machine::FAILED;
 use crate::message::{self, Claim, LockState, Message};
 use crate::reply::{self, Delivery};
@@ -279,12 +279,7 @@ pub(crate) fn context<'a>(
 ) -> Context<'a> {
     Context {
         project_root: project_root.to_path_buf(),
-        shared_source: project.shared_source.clone(),
         machines: &project.machines,
-        default_router: project.config.default_router.clone(),
-        max_attempts: project.config.max_attempts,
-        max_depth: project.config.max_depth,
-        max_log_size: project.config.max_log_size,
         shutdown,
     }
 }
@@ -416,12 +411,7 @@ fn start(
     message: &Message,
 ) -> Result<Outcome, DecreeError> {
     let run_dir = ctx.runs_dir().join(id);
-    let name = match message::validate(
-        message,
-        &project.machines,
-        &project.machine_ids,
-        project.default_machine(),
-    ) {
+    let name = match message::validate(message, &project.machines, &project.machine_ids) {
         Ok(name) => name,
         Err(errors) => {
             let reason = errors
@@ -534,7 +524,7 @@ fn start_migration(
     let source = ctx
         .project_root
         .join(DECREE_DIR)
-        .join(config::MIGRATIONS_DIR)
+        .join(layout::MIGRATIONS_DIR)
         .join(file);
     let mut message = Message::read(&source).map_err(other)?;
     message.set("id", id);
@@ -620,12 +610,7 @@ fn run_dry(project: &Project) -> Result<(), DecreeError> {
                     if m.frontmatter.contains_key("to") {
                         return Ok(format!("reply to {}", m.text("to").unwrap_or_default()));
                     }
-                    message::validate(
-                        &m,
-                        &project.machines,
-                        &project.machine_ids,
-                        project.default_machine(),
-                    )
+                    message::validate(&m, &project.machines, &project.machine_ids)
                 });
             match target {
                 Ok(machine) => println!("  {file:<24} → {machine}"),

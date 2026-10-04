@@ -1,11 +1,11 @@
 pub(crate) mod cli;
 pub(crate) mod commands;
 pub(crate) mod cond;
-pub(crate) mod config;
 pub(crate) mod cron;
 pub(crate) mod error;
 pub(crate) mod graph;
 pub(crate) mod interpreter;
+pub(crate) mod layout;
 pub(crate) mod machine;
 pub(crate) mod message;
 pub(crate) mod reply;

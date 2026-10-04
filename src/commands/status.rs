@@ -17,10 +17,10 @@ use serde_json::{Map, Value};
 
 use crate::commands::check::{md_files, Project};
 use crate::commands::process::{context, run_ids, run_status};
-use crate::config::{AppConfig, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
 use crate::cron;
 use crate::error::DecreeError;
 use crate::interpreter::{current_state, Context, RunStatus};
+use crate::layout::{DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
 use crate::message::Message;
 use crate::runtime::{Running, MESSAGE_FILE};
 
@@ -303,7 +303,6 @@ fn event_detail(kind: &str, e: &Event) -> String {
 
 /// `--cron`: each cron file, its schedule and machine, and when it fires next.
 fn show_cron(project_root: &Path) -> Result<(), DecreeError> {
-    let config = AppConfig::load_from_project(project_root)?;
     let mut files = cron::scan_cron_files(project_root)?;
     files.sort_by(|a, b| a.filename.cmp(&b.filename));
     if files.is_empty() {
@@ -315,11 +314,7 @@ fn show_cron(project_root: &Path) -> Result<(), DecreeError> {
         "CRON FILE", "SCHEDULE", "MACHINE"
     );
     for cf in &files {
-        let machine = cf
-            .machine
-            .as_deref()
-            .or(config.default_machine.as_deref())
-            .unwrap_or("\u{2014}");
+        let machine = cf.machine.as_deref().unwrap_or("\u{2014}");
         let next = cf.schedule.upcoming(Local).next().map_or_else(
             || "\u{2014}".to_string(),
             |t| format!("{} (in {})", t.format("%Y-%m-%d %H:%M"), countdown(t)),
@@ -409,9 +404,9 @@ mod tests {
             ),
             (
                 json!({"type": "decision", "state": "route", "kind": "model", "event": "fix",
-                       "router": "claude_router", "child_run": "c1", "pick": "fix",
+                       "router": "router", "child_run": "c1", "pick": "fix",
                        "confidence": 0.9, "duration_ms": 1500, "reason": "tests fail"}),
-                "route: model → fix (router claude_router, run c1, pick fix, confidence 0.9, 1.5s), reason: tests fail",
+                "route: model → fix (router router, run c1, pick fix, confidence 0.9, 1.5s), reason: tests fail",
             ),
             (
                 json!({"type": "waiting", "state": "approval", "wait_id": "r.w3",

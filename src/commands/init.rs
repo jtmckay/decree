@@ -1,8 +1,8 @@
 use crate::cli::AiBackend;
 use crate::commands::graph;
-use crate::config;
 use crate::error::DecreeError;
-use crate::machine::MACHINES_DIR;
+use crate::layout;
+use crate::machine::{MACHINES_DIR, ROUTER_MACHINE};
 use crate::runtime::SCRIPTS_DIR;
 use std::path::Path;
 use std::process::Command;
@@ -10,8 +10,7 @@ use std::process::Command;
 /// An AI backend: its CLI, and how the routine templates and its router call it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Backend {
-    /// The command, which also names the router machine (`<name>_router`) and its
-    /// script (`ask_<name>`).
+    /// The command, which also names the router's script (`ask_<name>`).
     name: &'static str,
     /// The name the router machine's description and script use.
     title: &'static str,
@@ -194,17 +193,12 @@ fn select_backend(ai: Option<AiBackend>, found: impl Fn(&str) -> bool) -> Backen
 }
 
 impl Backend {
-    /// `<name>_router`: the machine `default_router` names.
-    fn router(&self) -> String {
-        format!("{}_router", self.name)
-    }
-
-    /// `machines/<name>_router.yml`.
+    /// `machines/router.yml`.
     fn router_yml(&self) -> String {
         self.fill(ROUTER_YML)
     }
 
-    /// `scripts/<name>_router/ask_<name>.sh`.
+    /// `scripts/router/ask_<name>.sh`.
     fn router_ask_sh(&self) -> String {
         self.fill(ROUTER_ASK_SH)
     }
@@ -260,20 +254,6 @@ fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// The section 3 `config.yml`, with the selected backend's router as `default_router`.
-fn generate_config(backend: Backend) -> String {
-    format!(
-        "default_router: {} # router machine for choose: model invokes that name none
-max_attempts: 3 # default attempts per invoke
-max_depth: 10 # max emit chain depth
-max_log_size: 2097152 # max bytes per script log, 0 to disable
-default_machine: develop # machine for messages with no machine: key
-# shared_source: ~/.decree/shared # shared machines and scripts
-",
-        backend.router()
-    )
-}
-
 /// Write an executable script.
 fn write_script(path: &Path, content: &str) -> Result<(), DecreeError> {
     std::fs::write(path, content)?;
@@ -314,14 +294,16 @@ fn write_shared_scripts(decree_dir: &Path) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Write `machines/<ai>_router.yml` and its executable script
-/// `scripts/<ai>_router/ask_<ai>.sh` under `decree_dir`.
+/// Write `machines/router.yml` and its executable script `scripts/router/ask_<ai>.sh`
+/// under `decree_dir` (section 7, The default router).
 fn write_router(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
-    let router = backend.router();
     let machines = decree_dir.join(MACHINES_DIR);
     std::fs::create_dir_all(&machines)?;
-    std::fs::write(machines.join(format!("{router}.yml")), backend.router_yml())?;
-    let scripts = decree_dir.join(SCRIPTS_DIR).join(&router);
+    std::fs::write(
+        machines.join(format!("{ROUTER_MACHINE}.yml")),
+        backend.router_yml(),
+    )?;
+    let scripts = decree_dir.join(SCRIPTS_DIR).join(ROUTER_MACHINE);
     std::fs::create_dir_all(&scripts)?;
     write_script(
         &scripts.join(format!("ask_{}.sh", backend.name)),
@@ -331,7 +313,7 @@ fn write_router(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> 
 
 /// Run `decree init`. Never prompts; refuses to touch an existing `.decree/`.
 pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> {
-    let decree_dir = Path::new(config::DECREE_DIR);
+    let decree_dir = Path::new(layout::DECREE_DIR);
     if decree_dir.exists() {
         return Err(DecreeError::AlreadyInitialized);
     }
@@ -357,27 +339,23 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     Ok(())
 }
 
-/// Write the section 3 layout under `decree_dir`: `config.yml`, `.gitignore`,
+/// Write the section 3 layout under `decree_dir`: `.gitignore`,
 /// `processed.md`, the empty queues, the router machine with its script, the
 /// `develop` and `rust_develop` machines with theirs, and the shared scripts.
 /// `graph/` is written by `decree graph`.
 fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
     for dir in [
-        config::MIGRATIONS_DIR,
-        config::INBOX_DIR,
-        config::RUNS_DIR,
-        config::CRON_DIR,
+        layout::MIGRATIONS_DIR,
+        layout::INBOX_DIR,
+        layout::RUNS_DIR,
+        layout::CRON_DIR,
         MACHINES_DIR,
         SCRIPTS_DIR,
     ] {
         std::fs::create_dir_all(decree_dir.join(dir))?;
     }
-    std::fs::write(
-        decree_dir.join(config::CONFIG_FILE),
-        generate_config(backend),
-    )?;
-    std::fs::write(decree_dir.join(config::GITIGNORE_FILE), DECREE_GITIGNORE)?;
-    std::fs::write(decree_dir.join(config::PROCESSED_FILE), "")?;
+    std::fs::write(decree_dir.join(layout::GITIGNORE_FILE), DECREE_GITIGNORE)?;
+    std::fs::write(decree_dir.join(layout::PROCESSED_FILE), "")?;
     write_router(decree_dir, backend)?;
     write_develop_machines(decree_dir, backend)?;
     write_shared_scripts(decree_dir)
@@ -421,39 +399,6 @@ mod tests {
         backend_entry(AiBackend::Opencode)
     }
 
-    /// The config `init` writes holds the section 3 keys and loads with their defaults.
-    #[test]
-    fn test_generate_config_loads_as_app_config() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join(config::CONFIG_FILE);
-        let content = generate_config(opencode());
-        let keys: Vec<&str> = content
-            .lines()
-            .filter(|l| !l.starts_with('#'))
-            .map(|l| l.split(':').next().unwrap())
-            .collect();
-        assert_eq!(
-            keys,
-            [
-                "default_router",
-                "max_attempts",
-                "max_depth",
-                "max_log_size",
-                "default_machine"
-            ]
-        );
-        assert!(content.contains("\n# shared_source: ~/.decree/shared "));
-        std::fs::write(&path, content).unwrap();
-
-        let config = config::AppConfig::load(&path).unwrap();
-        assert_eq!(config.max_attempts, 3);
-        assert_eq!(config.max_depth, 10);
-        assert_eq!(config.max_log_size, 2_097_152);
-        assert_eq!(config.default_machine.as_deref(), Some("develop"));
-        assert_eq!(config.default_router.as_deref(), Some("opencode_router"));
-        assert!(config.shared_source.is_none());
-    }
-
     /// `write_layout` creates the section 3 entries except `graph/`, which `decree graph` writes.
     #[test]
     fn test_write_layout_writes_the_section_3_entries() {
@@ -468,7 +413,6 @@ mod tests {
             names,
             [
                 ".gitignore",
-                "config.yml",
                 "cron",
                 "inbox",
                 "machines",
@@ -478,7 +422,8 @@ mod tests {
                 "scripts"
             ]
         );
-        assert!(dir.path().join("machines/claude_router.yml").is_file());
+        assert!(dir.path().join("machines/router.yml").is_file());
+        assert!(dir.path().join("scripts/router/ask_claude.sh").is_file());
         assert_eq!(
             std::fs::read_to_string(dir.path().join("processed.md")).unwrap(),
             ""
@@ -527,18 +472,18 @@ mod tests {
         std::fs::read_to_string(root.join("mock/.decree").join(path)).unwrap()
     }
 
-    /// `claude_router` and `ask_claude` are the mock's, byte for byte (section 7, The
+    /// Claude's `router` and `ask_claude` are the mock's, byte for byte (section 7, The
     /// default router).
     #[test]
-    fn test_claude_router_is_the_mocks() {
-        assert_eq!(claude().router_yml(), mock("machines/claude_router.yml"));
+    fn test_router_for_claude_is_the_mocks() {
+        assert_eq!(claude().router_yml(), mock("machines/router.yml"));
         assert_eq!(
             claude().router_ask_sh(),
-            mock("scripts/claude_router/ask_claude.sh")
+            mock("scripts/router/ask_claude.sh")
         );
     }
 
-    /// The copilot and opencode routers are claude's with their own names and CLI call.
+    /// The copilot and opencode routers are claude's with their own script and CLI call.
     #[test]
     fn test_routers_differ_only_in_names_and_the_cli_call() {
         let claude = claude();
@@ -557,9 +502,7 @@ mod tests {
                 "{}",
                 b.name
             );
-            assert!(b
-                .router_yml()
-                .contains(&format!("name: {}_router\n", b.name)));
+            assert!(b.router_yml().contains("name: router\n"));
             assert!(b
                 .router_yml()
                 .contains(&format!("invoke: ask_{}\n", b.name)));
@@ -633,9 +576,10 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::TempDir::new().unwrap();
         write_router(dir.path(), backend_entry(AiBackend::Copilot)).unwrap();
-        let yml = std::fs::read_to_string(dir.path().join("machines/copilot_router.yml")).unwrap();
-        assert!(yml.contains("name: copilot_router\n"));
-        let script = dir.path().join("scripts/copilot_router/ask_copilot.sh");
+        let yml = std::fs::read_to_string(dir.path().join("machines/router.yml")).unwrap();
+        assert!(yml.contains("name: router\n"));
+        assert!(yml.contains("invoke: ask_copilot\n"));
+        let script = dir.path().join("scripts/router/ask_copilot.sh");
         let mode = std::fs::metadata(&script).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o755);
     }

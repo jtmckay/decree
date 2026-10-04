@@ -17,7 +17,7 @@ Given ... When ... Then ...
 
 | Key | Who sets it | Meaning |
 | --- | --- | --- |
-| `machine` | Author, `decree emit`, cron | Machine name (`machines/<name>.yml`). Required unless `default_machine` is set in `config.yml`. |
+| `machine` | Author, `decree emit`, cron | Machine name (`machines/<name>.yml`). Required: there is no default machine. |
 | `params` | Author, `decree emit --param` | Values for the machine's `data` (string, int or bool). Unknown names fail validation. |
 | `id` | decree, at claim | `YYYYMMDDTHHMMSSZ-xxxxxx`; a migration's id is its file stem. Names the run folder. |
 | `state` | decree only | Mirror of the run's current state, in `runs/<id>/message.md`. Never set it. |
@@ -69,7 +69,7 @@ history in git.
 - People may drop a file in directly. Programs write `.<name>.tmp`, then rename it to `<name>.md`;
   files starting with `.` are ignored, so nobody reads a partial file.
 - From a script, use `decree emit`, which does the temp-file-and-rename for you, sets `parent`,
-  `depth` and `trigger: emit`, and refuses past `max_depth`:
+  `depth` and `trigger: emit`, and refuses past `max_depth` (10):
 
   ```bash
   decree emit --machine feature --param max_rounds=3 <<'EOF'

@@ -54,7 +54,6 @@ impl Project {
         for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
-        fs::write(decree.join("config.yml"), "max_attempts: 1\n").unwrap();
         fs::write(decree.join("processed.md"), "").unwrap();
         fs::write(decree.join("machines/flow.yml"), MACHINE).unwrap();
         for (name, text) in [("work", WORK), ("commit", COMMIT)] {

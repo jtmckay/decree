@@ -1,6 +1,6 @@
-use crate::config;
-use crate::config::{INBOX_DIR, RUNS_DIR};
 use crate::error::DecreeError;
+use crate::layout;
+use crate::layout::{INBOX_DIR, RUNS_DIR};
 use crate::machine::LoadedMachine;
 use crate::runtime::MESSAGE_FILE;
 use chrono::Utc;
@@ -241,14 +241,14 @@ pub struct Claim {
 /// name a run folder, or that already has a run, is replaced by a new id, so the message is
 /// still claimed and its run can be failed with the reason.
 pub fn claim(decree_dir: &Path, file: &str) -> Result<Option<Claim>, MessageError> {
-    let path = decree_dir.join(config::INBOX_DIR).join(file);
+    let path = decree_dir.join(layout::INBOX_DIR).join(file);
     let message = match Message::read(&path) {
         Err(MessageError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
             return Ok(None)
         }
         other => other,
     };
-    let runs = decree_dir.join(config::RUNS_DIR);
+    let runs = decree_dir.join(layout::RUNS_DIR);
     let wanted = message.as_ref().ok().and_then(|m| m.frontmatter.get("id"));
     let mut id_problem = None;
     let (id, run_dir) = match wanted {
@@ -424,8 +424,8 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> MessageError + '_ {
     }
 }
 
-/// Section 4, Lifecycle step 3: the machine a message names (`machine`, or its alias
-/// `routine`, else `default_machine`) exists, and its `params` fit that machine's `data`.
+/// Section 4, Lifecycle step 3: the message names a machine (`machine`, or its alias
+/// `routine`) that exists, and its `params` fit that machine's `data`.
 /// `machine_ids` holds every machine, `machines` those that loaded; a machine that fails to
 /// load is reported on its own, so its `params` are not checked. Returns the machine name,
 /// or every error as `(file line, message)`.
@@ -433,7 +433,6 @@ pub fn validate(
     msg: &Message,
     machines: &BTreeMap<String, LoadedMachine>,
     machine_ids: &BTreeSet<String>,
-    default_machine: Option<&str>,
 ) -> Result<String, Vec<(usize, String)>> {
     let machine = match (
         msg.frontmatter.get("machine"),
@@ -445,34 +444,17 @@ pub fn validate(
                 "both `machine` and its alias `routine` are set".to_string(),
             )]);
         }
-        (Some(v), None) => Some(("machine", v)),
-        (None, Some(v)) => Some(("routine", v)),
-        (None, None) => None,
+        (Some(v), None) => ("machine", v),
+        (None, Some(v)) => ("routine", v),
+        (None, None) => return Err(vec![(1, "no `machine` key".to_string())]),
     };
-    let (name, line) = match machine {
-        Some((key, Value::String(name))) => (name.as_str(), msg.line_of(key)),
-        Some((key, _)) => {
-            return Err(vec![(
-                msg.line_of(key),
-                format!("`{key}` must be a string"),
-            )])
-        }
-        None => match default_machine {
-            Some(name) => (name, 1),
-            None => {
-                return Err(vec![(
-                    1,
-                    "no `machine` key and `default_machine` is not set".to_string(),
-                )]);
-            }
-        },
+    let (key, value) = machine;
+    let line = msg.line_of(key);
+    let Value::String(name) = value else {
+        return Err(vec![(line, format!("`{key}` must be a string"))]);
     };
     if !machine_ids.contains(name) {
-        let msg = match machine {
-            Some(_) => format!("unknown machine `{name}`"),
-            None => format!("no `machine` key, and the default machine `{name}` does not exist"),
-        };
-        return Err(vec![(line, msg)]);
+        return Err(vec![(line, format!("unknown machine `{name}`"))]);
     }
     let errors = machines
         .get(name)
@@ -704,44 +686,35 @@ mod tests {
         (machines, ids)
     }
 
-    fn validated(
-        text: &str,
-        default_machine: Option<&str>,
-    ) -> Result<String, Vec<(usize, String)>> {
+    fn validated(text: &str) -> Result<String, Vec<(usize, String)>> {
         let (machines, ids) = machines();
-        validate(
-            &Message::parse(text).unwrap(),
-            &machines,
-            &ids,
-            default_machine,
-        )
+        validate(&Message::parse(text).unwrap(), &machines, &ids)
     }
 
     #[test]
     fn validate_reads_routine_as_machine() {
-        assert_eq!(validated("---\nroutine: x\n---\n", None).unwrap(), "x");
-        assert_eq!(validated("---\nmachine: x\n---\n", None).unwrap(), "x");
-        assert_eq!(validated("body\n", Some("x")).unwrap(), "x");
+        assert_eq!(validated("---\nroutine: x\n---\n").unwrap(), "x");
+        assert_eq!(validated("---\nmachine: x\n---\n").unwrap(), "x");
     }
 
     #[test]
     fn validate_rejects_unknown_machine_and_params() {
-        let errors = validated("---\nid: a\nmachine: nope\n---\n", Some("x")).unwrap_err();
+        let errors = validated("---\nid: a\nmachine: nope\n---\n").unwrap_err();
         assert_eq!(errors, [(3, "unknown machine `nope`".to_string())]);
-        let errors = validated(
-            "---\nmachine: x\nparams:\n  rounds: two\n  other: 1\n---\n",
-            None,
-        )
-        .unwrap_err();
+        let errors =
+            validated("---\nmachine: x\nparams:\n  rounds: two\n  other: 1\n---\n").unwrap_err();
         assert_eq!(errors.len(), 2, "{errors:?}");
         assert!(
             errors[0].1.contains("`rounds` must be of type `int`"),
             "{errors:?}"
         );
         assert!(errors[1].1.contains("unknown param `other`"), "{errors:?}");
-        let errors = validated("---\nmachine: x\nroutine: x\n---\n", None).unwrap_err();
+        let errors = validated("---\nmachine: x\nroutine: x\n---\n").unwrap_err();
         assert!(errors[0].1.contains("both"), "{errors:?}");
-        assert!(validated("body\n", None).is_err());
+        assert_eq!(
+            validated("body\n").unwrap_err(),
+            [(1, "no `machine` key".to_string())]
+        );
     }
 
     fn inbox(dir: &TempDir, name: &str, text: &str) -> PathBuf {

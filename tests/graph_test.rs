@@ -6,8 +6,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-const CONFIG: &str = "max_attempts: 3\n";
-
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -30,15 +28,10 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
-/// A temp project whose `.decree/` is a copy of `tree`, with a default `config.yml` unless
-/// the tree has its own.
+/// A temp project whose `.decree/` is a copy of `tree`.
 fn project(tree: &Path) -> TempDir {
     let tmp = TempDir::new().unwrap();
-    let decree = tmp.path().join(".decree");
-    copy_dir(tree, &decree);
-    if !decree.join("config.yml").exists() {
-        fs::write(decree.join("config.yml"), CONFIG).unwrap();
-    }
+    copy_dir(tree, &tmp.path().join(".decree"));
     tmp
 }
 
@@ -47,7 +40,6 @@ fn machines_project(files: &[&str]) -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path().join(".decree/machines");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(tmp.path().join(".decree/config.yml"), CONFIG).unwrap();
     for file in files {
         fs::copy(
             repo().join("tests/fixtures/machines").join(file),
@@ -91,17 +83,12 @@ fn md_names(dir: &Path) -> Vec<String> {
 
 #[test]
 fn graph_writes_one_file_per_machine_and_system_md() {
-    let tmp = machines_project(&["feature.yml", "hello.yml", "claude_router.yml"]);
-    fs::write(
-        tmp.path().join(".decree/config.yml"),
-        format!("{CONFIG}default_router: claude_router\n"),
-    )
-    .unwrap();
+    let tmp = machines_project(&["feature.yml", "hello.yml", "router.yml"]);
     let (code, stdout, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
         stdout,
-        ".decree/graph/claude_router.md\n.decree/graph/feature.md\n.decree/graph/hello.md\n.decree/graph/system.md\n"
+        ".decree/graph/feature.md\n.decree/graph/hello.md\n.decree/graph/router.md\n.decree/graph/system.md\n"
     );
     assert_eq!(
         written(&tmp, "feature.md"),
@@ -154,14 +141,9 @@ fn graph_removes_stale_md_files_only() {
 }
 
 #[test]
-fn graph_cron_without_machine_points_at_default_machine() {
+fn graph_cron_without_machine_is_an_error() {
     let tmp = machines_project(&["hello.yml"]);
     let decree = tmp.path().join(".decree");
-    fs::write(
-        decree.join("config.yml"),
-        format!("{CONFIG}default_machine: hello\n"),
-    )
-    .unwrap();
     fs::create_dir_all(decree.join("cron")).unwrap();
     fs::write(
         decree.join("cron/Hourly.md"),
@@ -169,11 +151,10 @@ fn graph_cron_without_machine_points_at_default_machine() {
     )
     .unwrap();
     let (code, _, stderr) = graph(&tmp);
-    assert_eq!(code, 0, "{stderr}");
-    let system = written(&tmp, "system.md");
+    assert_eq!(code, 1, "{stderr}");
     assert!(
-        system.contains("    cron___ourly[/\"cron: Hourly\"/]\n    cron___ourly -->|cron| hello\n"),
-        "{system}"
+        stderr.contains("cron/Hourly.md: no `machine` key (run `decree check`)"),
+        "{stderr}"
     );
 }
 

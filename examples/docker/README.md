@@ -81,15 +81,15 @@ services:
       - DECREE_AI=claude
 ```
 
-The shared directory has the same layout as `.decree/`: `machines/<name>.yml`
-and `scripts/` (with optional `scripts/<machine>/`). Then in your project's
-`.decree/config.yml`:
+decree has no shared source of its own: a project's machines load only from
+`.decree/machines/`, and scripts resolve from `.decree/scripts/<machine>/`, then
+`.decree/scripts/`. To use a shared machine or script, symlink it into those
+directories, pointing at the path where the container sees it:
 
-```yaml
-shared_source: /shared
+```bash
+ln -s /shared/machines/review.yml .decree/machines/review.yml
+ln -s /shared/scripts/notify.sh .decree/scripts/notify.sh
 ```
-
-A project-local machine or script with the same name hides the shared one.
 
 ## Interactive Shell
 

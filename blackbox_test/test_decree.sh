@@ -83,6 +83,7 @@ initial: greet
 states:
   greet:
     invoke: greet
+    max_attempts: 3
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
@@ -228,13 +229,14 @@ test_commands_without_project_fail() {
 test_init_writes_the_layout() {
   decree init --ai claude </dev/null >/dev/null || return 1
   local p
-  for p in config.yml .gitignore processed.md migrations inbox runs cron machines scripts graph \
-    machines/develop.yml machines/rust_develop.yml machines/claude_router.yml graph/system.md; do
+  for p in .gitignore processed.md migrations inbox runs cron machines scripts graph \
+    machines/develop.yml machines/rust_develop.yml machines/router.yml \
+    scripts/router/ask_claude.sh graph/system.md; do
     assert_file_exists ".decree/$p" || return 1
   done
   assert_eq $'inbox/\nruns/' "$(cat .decree/.gitignore)" || return 1
-  assert_file_contains .decree/config.yml "default_router: claude_router" || return 1
-  assert_file_contains .decree/config.yml "default_machine: develop"
+  # 0.5 has no configuration file (spec section 3).
+  [ "$(ls -A .decree | grep -c '\.yml$')" -eq 0 ] || return 1
 }
 
 test_init_refuses_an_existing_project() {

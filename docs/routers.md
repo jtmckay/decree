@@ -6,12 +6,9 @@ This page shows router machines for several backends. Running a model server is 
 
 ## The contract
 
-A router is any machine. A state picks one with `router: <machine>`; without it, config `default_router` is used:
+A router is any machine. A state picks one with `router: <machine>`; without it, the machine named `router` is used, which `decree init` writes (`decree check` fails V16 if a `choose: model` names no router and there is no `machines/router.yml`):
 
 ```yaml
-# config.yml
-default_router: claude_router
-
 # machines/sort_document.yml
 local_model:
   invoke: { choose: model, router: local_router, question: "Which kind of document is this?", min_confidence: 0.9 }
@@ -67,18 +64,19 @@ The `decision` event records the router, the router's run id (`child_run`), the 
 
 | Router | Where its confidence comes from |
 | --- | --- |
-| Chat models (`claude_router`) | The model's own estimate in its reply. The least reliable: chat models tend to report high numbers whatever they pick. |
+| Chat models (`router`, as `decree init` writes it) | The model's own estimate in its reply. The least reliable: chat models tend to report high numbers whatever they pick. |
 | TypeSafe Jev | Computed from the shape of its probability distribution over the options. |
 | GLiNER2.5-Decide | The classifier's score for the label it picks. |
 
-So a threshold only means something for the router it was set with. When a state, or `default_router`, switches to another router, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, spec section 9a) before trusting it.
+So a threshold only means something for the router it was set with. When a state switches to another router, or `machines/router.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, spec section 9a) before trusting it.
 
 ## Claude, Copilot and OpenCode (written by `decree init`)
 
-`decree init --ai claude` writes `machines/claude_router.yml`, its script `scripts/claude_router/ask_claude.sh`, and sets `default_router: claude_router`:
+`decree init --ai claude` writes `machines/router.yml` and its script `scripts/router/ask_claude.sh`:
 
 ```yaml
-name: claude_router
+# Graph: ../graph/router.md
+name: router
 description: Ask Claude to pick one of the options in the request.
 initial: ask
 states:
@@ -92,13 +90,13 @@ states:
 
 `ask_claude` renders the prompt in spec section 7 with `jq`, sends it to `claude -p`, takes the last JSON object from the reply (the last fenced block if there is one, which may span lines; else the last line holding an object), and exits non-zero unless its `event` is one of the options. It needs `jq` on `PATH`.
 
-`--ai copilot` and `--ai opencode` write `copilot_router` with `ask_copilot`, or `opencode_router` with `ask_opencode`. They are the same machine and script; only the line that calls the CLI differs:
+`--ai copilot` and `--ai opencode` write the same `router` machine with `ask_copilot` or `ask_opencode` (`scripts/router/ask_<ai>.sh`). Only the script's name and the line that calls the CLI differ:
 
-| Router | The call |
-| --- | --- |
-| `claude_router` | `printf '%s' "$prompt" \| claude -p` |
-| `copilot_router` | `copilot -p "$prompt"` |
-| `opencode_router` | `opencode run "$prompt"` |
+| `--ai` | Script | The call |
+| --- | --- | --- |
+| `claude` | `ask_claude` | `printf '%s' "$prompt" \| claude -p` |
+| `copilot` | `ask_copilot` | `copilot -p "$prompt"` |
+| `opencode` | `ask_opencode` | `opencode run "$prompt"` |
 
 ## TypeSafe Jev
 
@@ -228,7 +226,7 @@ OpenAI's Decisions API takes context and questions with fixed answer lists and r
 
 ## A self-hosted LLM
 
-A local LLM behind an OpenAI-compatible endpoint (SGLang, vLLM, Ollama) is `claude_router` with a different call. Constrain the output to the options where the server supports it (SGLang's `select`, vLLM's guided choice), so the reply is always one of them; a self-reported confidence is as weak as any chat model's.
+A local LLM behind an OpenAI-compatible endpoint (SGLang, vLLM, Ollama) is the `router` machine with a different call. Constrain the output to the options where the server supports it (SGLang's `select`, vLLM's guided choice), so the reply is always one of them; a self-reported confidence is as weak as any chat model's.
 
 ## Cheap model first, stronger model when unsure
 

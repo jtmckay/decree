@@ -18,6 +18,7 @@ states:
     transitions: { done: queue_prompt }
   queue_prompt:                    # posts the payload to ComfyUI
     invoke: queue_prompt
+    max_attempts: 3
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

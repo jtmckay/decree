@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# {ai}_router's only script. Reads the request decree wrote, asks {ai_title},
+# router's only script. Reads the request decree wrote, asks {ai_title},
 # and writes the reply. Exits non-zero (and so runs once more, max_attempts)
 # unless the reply names one of the options. Replace this machine to use
 # another model; decree validates the reply again either way.

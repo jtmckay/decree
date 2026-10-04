@@ -36,7 +36,6 @@ fn test_init_creates_directory_structure() {
         entries,
         [
             ".gitignore",
-            "config.yml",
             "cron",
             "graph",
             "inbox",
@@ -61,33 +60,8 @@ fn test_init_creates_directory_structure() {
     for d in ["cron", "inbox", "migrations", "runs"] {
         assert_eq!(fs::read_dir(decree.join(d)).unwrap().count(), 0, "{d}");
     }
-    assert!(decree.join("graph/claude_router.md").is_file());
+    assert!(decree.join("graph/router.md").is_file());
     assert!(decree.join("graph/system.md").is_file());
-}
-
-#[test]
-fn test_init_config_has_required_fields() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-
-    assert!(config.contains("default_router: "));
-    assert!(!config.contains("commands:"));
-    assert!(config.contains("max_attempts: 3"));
-    assert!(config.contains("max_depth: 10"));
-    assert!(config.contains("max_log_size: 2097152"));
-    assert!(config.contains("default_machine: develop"));
-    for removed in [
-        "hooks",
-        "routines",
-        "shared_routines",
-        "default_routine",
-        "routine_source",
-    ] {
-        assert!(!config.contains(&format!("{removed}:")), "{removed}");
-    }
 }
 
 #[test]
@@ -141,11 +115,9 @@ fn test_init_stdin_closed_asks_nothing() {
     assert!(!all.contains("[y/N]") && !all.contains("[Y/n]"));
 
     // Without --ai and with nothing on PATH, the backend is opencode.
-    let config = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-    assert!(config.starts_with("default_router: opencode_router "));
     assert!(dir
         .path()
-        .join(".decree/machines/opencode_router.yml")
+        .join(".decree/scripts/router/ask_opencode.sh")
         .is_file());
     // Without --permissions, no permissions file is written.
     assert!(!dir.path().join("opencode.json").exists());
@@ -155,7 +127,7 @@ fn test_init_stdin_closed_asks_nothing() {
 fn test_init_existing_decree_exits_2_and_changes_nothing() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
-    fs::write(dir.path().join(".decree/config.yml"), "edited: true\n").unwrap();
+    fs::write(dir.path().join(".decree/processed.md"), "edited\n").unwrap();
     let before = snapshot(dir.path());
 
     decree_cmd(&dir)
@@ -195,7 +167,7 @@ fn assert_check_passes(dir: &TempDir) {
 }
 
 #[test]
-fn test_init_ai_claude_writes_claude_router_and_check_passes() {
+fn test_init_ai_claude_writes_router_and_check_passes() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
@@ -205,12 +177,10 @@ fn test_init_ai_claude_writes_claude_router_and_check_passes() {
         .success();
 
     let decree = dir.path().join(".decree");
-    assert!(decree.join("machines/claude_router.yml").is_file());
-    assert!(decree.join("scripts/claude_router/ask_claude.sh").is_file());
-    assert!(decree.join("graph/claude_router.md").is_file());
-    let config = fs::read_to_string(decree.join("config.yml")).unwrap();
-    assert!(config.starts_with("default_router: claude_router "));
-    assert!(!config.contains("ai_router"));
+    assert!(!decree.join("config.yml").exists());
+    assert!(decree.join("machines/router.yml").is_file());
+    assert!(decree.join("scripts/router/ask_claude.sh").is_file());
+    assert!(decree.join("graph/router.md").is_file());
     assert_check_passes(&dir);
     // The decree skill is installed for the chosen backend.
     assert!(dir.path().join(".claude/skills").is_dir());
@@ -226,17 +196,18 @@ fn test_init_ai_opencode_and_copilot_write_their_routers() {
             .assert()
             .success();
         let decree = dir.path().join(".decree");
-        let config = fs::read_to_string(decree.join("config.yml")).unwrap();
-        assert!(config.starts_with(&format!("default_router: {ai}_router ")));
-        let machine = fs::read_to_string(decree.join(format!("machines/{ai}_router.yml"))).unwrap();
+        assert!(!decree.join("config.yml").exists());
+        let machine = fs::read_to_string(decree.join("machines/router.yml")).unwrap();
+        assert!(machine.contains("name: router\n"), "{machine}");
         assert!(
             machine.contains(&format!("invoke: ask_{ai}\n")),
             "{machine}"
         );
-        assert!(decree
-            .join(format!("scripts/{ai}_router/ask_{ai}.sh"))
-            .is_file());
-        assert!(!decree.join("machines/claude_router.yml").exists());
+        let scripts: Vec<String> = fs::read_dir(decree.join("scripts/router"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(scripts, [format!("ask_{ai}.sh")]);
         assert_check_passes(&dir);
     }
 }
@@ -278,16 +249,13 @@ fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
     });
     fs::write(run.join("request.json"), request.to_string()).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let out = std::process::Command::new(
-        dir.path()
-            .join(".decree/scripts/claude_router/ask_claude.sh"),
-    )
-    .current_dir(dir.path())
-    .env("PATH", path)
-    .env("DECREE_REQUEST", run.join("request.json"))
-    .env("DECREE_REPLY", run.join("reply.json"))
-    .output()
-    .unwrap();
+    let out = std::process::Command::new(dir.path().join(".decree/scripts/router/ask_claude.sh"))
+        .current_dir(dir.path())
+        .env("PATH", path)
+        .env("DECREE_REQUEST", run.join("request.json"))
+        .env("DECREE_REPLY", run.join("reply.json"))
+        .output()
+        .unwrap();
     let prompt = fs::read_to_string(bin.join("prompt.txt")).unwrap();
     assert!(prompt.contains("Question: Should we implement again or split the work?\n"));
     assert!(prompt.contains("- retry: Implement again.\n- split: Split the work."));
@@ -675,21 +643,4 @@ fn test_skill_command_is_removed() {
         .code(2)
         .stderr(predicate::str::contains("unrecognized subcommand 'skill'"));
     assert!(!dir.path().join(".claude").exists());
-}
-
-// --- Config deserialization from init output ---
-
-#[test]
-fn test_init_config_is_valid_yaml() {
-    let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
-
-    // The typed load is a unit test in `commands::init`; the crate exposes no internals.
-    let contents = fs::read_to_string(dir.path().join(".decree/config.yml")).unwrap();
-    let config: serde_norway::Value = serde_norway::from_str(&contents).unwrap();
-
-    assert_eq!(config["max_attempts"].as_u64(), Some(3));
-    assert_eq!(config["max_depth"].as_u64(), Some(10));
-    assert_eq!(config["max_log_size"].as_u64(), Some(2_097_152));
-    assert_eq!(config["default_machine"].as_str(), Some("develop"));
 }

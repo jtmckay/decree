@@ -22,7 +22,7 @@ use serde_json::{json, Map, Value};
 
 use crate::machine::{is_ident, DataSpec, LoadedMachine};
 
-/// Directory holding scripts, relative to `.decree/` or `shared_source`.
+/// Directory holding scripts, relative to `.decree/`.
 pub const SCRIPTS_DIR: &str = "scripts";
 
 /// Why a script name does not resolve to exactly one executable file (V12).
@@ -63,15 +63,10 @@ fn join_paths(paths: &[PathBuf]) -> String {
 }
 
 /// The directories script `name` is looked up in for `machine`, in order:
-/// `scripts/<machine>/`, `scripts/`, then the same two under `shared_source`.
-pub fn search_dirs(decree_dir: &Path, shared_source: Option<&Path>, machine: &str) -> Vec<PathBuf> {
-    std::iter::once(decree_dir)
-        .chain(shared_source)
-        .flat_map(|base| {
-            let scripts = base.join(SCRIPTS_DIR);
-            [scripts.join(machine), scripts]
-        })
-        .collect()
+/// `scripts/<machine>/`, then `scripts/`.
+pub fn search_dirs(decree_dir: &Path, machine: &str) -> Vec<PathBuf> {
+    let scripts = decree_dir.join(SCRIPTS_DIR);
+    vec![scripts.join(machine), scripts]
 }
 
 /// Resolve script `name` used by `machine` (section 6, Resolution). The first directory from
@@ -80,14 +75,13 @@ pub fn search_dirs(decree_dir: &Path, shared_source: Option<&Path>, machine: &st
 /// an execute bit set. Lower directories are not read once a match is found.
 pub fn resolve_script(
     decree_dir: &Path,
-    shared_source: Option<&Path>,
     machine: &str,
     name: &str,
 ) -> Result<PathBuf, ScriptError> {
     if !is_ident(name) {
         return Err(ScriptError::InvalidName(name.to_string()));
     }
-    let searched = search_dirs(decree_dir, shared_source, machine);
+    let searched = search_dirs(decree_dir, machine);
     for dir in &searched {
         let mut matches = matches_in(dir, name).map_err(|source| ScriptError::Io {
             name: name.to_string(),
@@ -334,12 +328,14 @@ pub fn data_env(
         .collect()
 }
 
+/// Each script log is capped at 2 MiB (section 6, Execution).
+pub const MAX_LOG_SIZE: u64 = 2_097_152;
+
 /// The run an `Executor` runs scripts for.
 #[derive(Debug, Clone)]
 pub struct RunInfo {
     /// Absolute path of the directory containing `.decree/`.
     pub project_root: PathBuf,
-    pub shared_source: Option<PathBuf>,
     /// Absolute path of `runs/<id>/`, which must exist.
     pub run_dir: PathBuf,
     pub run_id: String,
@@ -347,10 +343,6 @@ pub struct RunInfo {
     pub trigger: String,
     /// `DECREE_DATA_*` variables, from `data_env`.
     pub data: Vec<(String, String)>,
-    /// Config `max_attempts`, for states that do not set their own.
-    pub max_attempts: u32,
-    /// Config `max_log_size`; 0 disables truncation.
-    pub max_log_size: u64,
     /// `DECREE_PARENT`: in a child run, the parent run's id.
     pub parent: Option<String>,
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
@@ -534,12 +526,9 @@ impl Executor {
         &mut self.events
     }
 
-    /// Attempts allowed for `state`: its `max_attempts`, else config `max_attempts`.
+    /// Attempts allowed for `state`: its `max_attempts`, default 1 (section 6, Attempts).
     pub fn max_attempts(&self, machine: &LoadedMachine, state: usize) -> u32 {
-        machine.nodes[state]
-            .max_attempts
-            .unwrap_or(self.info.max_attempts)
-            .max(1)
+        machine.nodes[state].max_attempts.unwrap_or(1).max(1)
     }
 
     /// Run `state`'s script invoke, re-running it in place while it fails and attempts
@@ -621,13 +610,8 @@ impl Executor {
     /// SIGINT or SIGTERM the script's process group is stopped, no event is written, and
     /// the result is `RuntimeError::Interrupted`.
     pub fn run_script(&mut self, run: &ScriptRun) -> Result<Execution, RuntimeError> {
-        let decree_dir = self.info.project_root.join(crate::config::DECREE_DIR);
-        let path = resolve_script(
-            &decree_dir,
-            self.info.shared_source.as_deref(),
-            &self.info.machine,
-            run.script,
-        )?;
+        let decree_dir = self.info.project_root.join(crate::layout::DECREE_DIR);
+        let path = resolve_script(&decree_dir, &self.info.machine, run.script)?;
         let interrupted = || RuntimeError::Interrupted {
             script: run.script.to_string(),
         };
@@ -695,7 +679,7 @@ impl Executor {
         let last_line = join_reader(stdout).map_err(io_err(&log_path))?;
         join_reader(stderr).map_err(io_err(&log_path))?;
         let duration = start.elapsed();
-        truncate_log_if_needed(&log_path, self.info.max_log_size).map_err(io_err(&log_path))?;
+        truncate_log_if_needed(&log_path, MAX_LOG_SIZE).map_err(io_err(&log_path))?;
         if stop == Stop::Signal {
             // No `script` event; the script is no longer running.
             Running::remove(&self.info.run_dir).map_err(io_err(&running_path))?;
@@ -773,22 +757,13 @@ impl Executor {
         vars
     }
 
-    /// A script path as the `script` event records it: relative to the project root, or
-    /// `shared:` plus the path relative to `shared_source`.
+    /// A script path as the `script` event records it: relative to the project root.
     fn display_path(&self, path: &Path) -> String {
-        let decree_dir = self.info.project_root.join(crate::config::DECREE_DIR);
+        let decree_dir = self.info.project_root.join(crate::layout::DECREE_DIR);
         if path.starts_with(&decree_dir) {
             if let Ok(rel) = path.strip_prefix(&self.info.project_root) {
                 return rel.display().to_string();
             }
-        }
-        if let Some(rel) = self
-            .info
-            .shared_source
-            .as_deref()
-            .and_then(|shared| path.strip_prefix(shared).ok())
-        {
-            return format!("shared:{}", rel.display());
         }
         path.display().to_string()
     }
@@ -921,10 +896,6 @@ fn stop_group(child: &mut Child) -> io::Result<ExitStatus> {
 /// Keep only the last `max_size` bytes of the log at `path`, behind a marker line; 0
 /// disables truncation (section 6, Logs). Moved here unchanged from 0.4.2.
 pub fn truncate_log_if_needed(path: &Path, max_size: u64) -> io::Result<()> {
-    if max_size == 0 {
-        return Ok(());
-    }
-
     let metadata = fs::metadata(path)?;
     if metadata.len() <= max_size {
         return Ok(());
@@ -960,7 +931,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// A temp directory with `project/.decree/` and `shared/`, both empty.
+    /// A temp directory with an empty `project/.decree/`.
     struct Fixture {
         tmp: TempDir,
     }
@@ -969,16 +940,11 @@ mod tests {
         fn new() -> Self {
             let tmp = TempDir::new().unwrap();
             fs::create_dir_all(tmp.path().join("project/.decree")).unwrap();
-            fs::create_dir_all(tmp.path().join("shared")).unwrap();
             Fixture { tmp }
         }
 
         fn decree_dir(&self) -> PathBuf {
             self.tmp.path().join("project/.decree")
-        }
-
-        fn shared(&self) -> PathBuf {
-            self.tmp.path().join("shared")
         }
 
         /// Write a script at `rel` (relative to the temp root) with the given mode.
@@ -991,7 +957,7 @@ mod tests {
         }
 
         fn resolve(&self, machine: &str, name: &str) -> Result<PathBuf, ScriptError> {
-            resolve_script(&self.decree_dir(), Some(&self.shared()), machine, name)
+            resolve_script(&self.decree_dir(), machine, name)
         }
     }
 
@@ -1019,20 +985,9 @@ mod tests {
     }
 
     #[test]
-    fn project_overrides_shared() {
-        let f = Fixture::new();
-        let shared = f.script("shared/scripts/x.sh", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), shared);
-        let project = f.script("project/.decree/scripts/x.sh", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), project);
-    }
-
-    #[test]
     fn full_precedence_order() {
         let f = Fixture::new();
         let paths = [
-            f.script("shared/scripts/x", 0o755),
-            f.script("shared/scripts/m/x", 0o755),
             f.script("project/.decree/scripts/x", 0o755),
             f.script("project/.decree/scripts/m/x", 0o755),
         ];
@@ -1064,10 +1019,10 @@ mod tests {
     #[test]
     fn higher_match_hides_lower_ambiguous_pair() {
         let f = Fixture::new();
-        f.script("shared/scripts/x.sh", 0o755);
-        f.script("shared/scripts/x.py", 0o755);
-        let project = f.script("project/.decree/scripts/x", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), project);
+        f.script("project/.decree/scripts/x.sh", 0o755);
+        f.script("project/.decree/scripts/x.py", 0o755);
+        let own = f.script("project/.decree/scripts/m/x", 0o755);
+        assert_eq!(f.resolve("m", "x").unwrap(), own);
     }
 
     #[test]
@@ -1090,8 +1045,8 @@ mod tests {
     #[test]
     fn non_executable_winner_does_not_fall_through() {
         let f = Fixture::new();
-        f.script("shared/scripts/x.sh", 0o755);
-        f.script("project/.decree/scripts/x.sh", 0o644);
+        f.script("project/.decree/scripts/x.sh", 0o755);
+        f.script("project/.decree/scripts/m/x.sh", 0o644);
         assert!(matches!(
             f.resolve("m", "x"),
             Err(ScriptError::NotExecutable { .. })
@@ -1105,24 +1060,12 @@ mod tests {
         let err = f.resolve("m", "x").unwrap_err();
         match &err {
             ScriptError::Missing { searched, .. } => {
-                assert_eq!(
-                    searched,
-                    &search_dirs(&f.decree_dir(), Some(&f.shared()), "m")
-                );
-                assert_eq!(searched.len(), 4);
+                assert_eq!(searched, &search_dirs(&f.decree_dir(), "m"));
+                assert_eq!(searched.len(), 2);
             }
             other => panic!("expected Missing, got {other:?}"),
         }
         assert!(err.to_string().contains("not found"));
-    }
-
-    #[test]
-    fn missing_without_shared_source_searches_two_dirs() {
-        let f = Fixture::new();
-        match resolve_script(&f.decree_dir(), None, "m", "x").unwrap_err() {
-            ScriptError::Missing { searched, .. } => assert_eq!(searched.len(), 2),
-            other => panic!("expected Missing, got {other:?}"),
-        }
     }
 
     #[test]
@@ -1229,14 +1172,11 @@ mod executor_tests {
         fn info(&self) -> RunInfo {
             RunInfo {
                 project_root: self.root(),
-                shared_source: None,
                 run_dir: self.run_dir(),
                 run_id: RUN_ID.to_string(),
                 machine: "m".to_string(),
                 trigger: "inbox".to_string(),
                 data: Vec::new(),
-                max_attempts: 3,
-                max_log_size: 0,
                 parent: None,
                 router: None,
             }
@@ -1492,10 +1432,10 @@ mod executor_tests {
     }
 
     #[test]
-    fn config_max_attempts_applies_when_the_state_sets_none() {
+    fn max_attempts_defaults_to_one() {
         let p = Project::new(&["exit_three"]);
         invoke(&p, "{ invoke: exit_three, transitions: { done: done } }");
-        assert_eq!(p.events_of("script").len(), 3);
+        assert_eq!(p.events_of("script").len(), 1);
     }
 
     #[test]
@@ -1701,25 +1641,6 @@ mod executor_tests {
     }
 
     #[test]
-    fn shared_script_path_is_recorded_with_shared_prefix() {
-        let p = Project::new(&[]);
-        let shared = p.root().join("shared");
-        fs::create_dir_all(shared.join("scripts/m")).unwrap();
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scripts");
-        fs::copy(
-            fixtures.join("exit_zero.sh"),
-            shared.join("scripts/m/exit_zero.sh"),
-        )
-        .unwrap();
-        let mut info = p.info();
-        info.shared_source = Some(shared);
-        let mut exec = Executor::open(info, Arc::clone(&p.shutdown)).unwrap();
-        exec.run_script(&ScriptRun::new("exit_zero", "s", Phase::OnEntry))
-            .unwrap();
-        assert_eq!(p.events()[0]["path"], "shared:scripts/m/exit_zero.sh");
-    }
-
-    #[test]
     fn missing_script_is_a_resolution_error() {
         let p = Project::new(&[]);
         let err = p
@@ -1866,13 +1787,16 @@ mod executor_tests {
 
     #[test]
     fn log_is_truncated_at_max_log_size() {
+        assert_eq!(MAX_LOG_SIZE, 2_097_152);
         let p = Project::new(&["print_lines"]);
-        let mut info = p.info();
-        info.max_log_size = 100;
-        let mut exec = Executor::open(info, Arc::clone(&p.shutdown)).unwrap();
-        let out = exec
+        let out = p
+            .executor()
             .run_script(&ScriptRun::new("print_lines", "s", Phase::Invoke))
             .unwrap();
+        let path = p.run_dir().join(&out.log);
+        // Under the cap, the log is untouched.
+        assert!(p.log(&out.log).starts_with("line 1\n"));
+        truncate_log_if_needed(&path, 100).unwrap();
         let log = p.log(&out.log);
         assert!(log.starts_with("[log truncated"), "{log}");
         assert!(log.ends_with("line 60\n\n\n"), "{log}");
@@ -1924,15 +1848,6 @@ mod executor_tests {
         assert_eq!(format_bytes(500), "500B");
         assert_eq!(format_bytes(2048), "2KB");
         assert_eq!(format_bytes(2_097_152), "2MB");
-    }
-
-    #[test]
-    fn truncate_log_disabled() {
-        let dir = TempDir::new().unwrap();
-        let log = dir.path().join("test.log");
-        fs::write(&log, "a".repeat(5000)).unwrap();
-        truncate_log_if_needed(&log, 0).unwrap();
-        assert_eq!(fs::metadata(&log).unwrap().len(), 5000);
     }
 
     #[test]

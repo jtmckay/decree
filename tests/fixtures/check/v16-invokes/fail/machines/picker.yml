@@ -1,4 +1,4 @@
-name: router
+name: picker
 description: Answers a model request.
 initial: ask
 states:

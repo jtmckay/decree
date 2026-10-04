@@ -1,5 +1,5 @@
 name: m
-description: A model picks one option, through the default router.
+description: A model picks one option, through the machine named router.
 initial: work
 states:
   work:

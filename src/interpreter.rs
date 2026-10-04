@@ -27,10 +27,10 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
 use crate::cond::{self, CondError};
-use crate::config::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
+use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
 use crate::machine::{
     event_matches, CheckInvoke, ChooseInvoke, ChooseKind, Invoke, LoadedMachine, MachineInvoke,
-    FAILED,
+    FAILED, ROUTER_MACHINE,
 };
 use crate::message::{
     create_run_dir, lock_state, LockState, Message, MessageError, RunLock, LOCK_FILE,
@@ -108,19 +108,16 @@ pub struct RunInput {
     pub depth: u32,
 }
 
+/// The deepest a message may sit in a chain of emits and child runs (section 3, `max_depth`).
+pub const MAX_DEPTH: u32 = 10;
+
 /// Everything stepping a run needs beyond the run itself: the project's machines, and the
 /// settings each run's executor and its child runs use (section 7, Sub-machines).
 pub struct Context<'a> {
     /// The directory containing `.decree/`.
     pub project_root: PathBuf,
-    pub shared_source: Option<PathBuf>,
     /// Every machine, by name: the children a run may start.
     pub machines: &'a BTreeMap<String, LoadedMachine>,
-    /// Config `default_router`.
-    pub default_router: Option<String>,
-    pub max_attempts: u32,
-    pub max_depth: u32,
-    pub max_log_size: u64,
     /// Set on SIGINT or SIGTERM; stops the running script (section 4, Stopping).
     pub shutdown: Arc<AtomicBool>,
 }
@@ -624,7 +621,7 @@ impl<'a> Interpreter<'a> {
         choose: &ChooseInvoke,
     ) -> Result<Invoked, InterpreterError> {
         let request = self.request(s, choose)?;
-        let router = self.router(s, choose)?;
+        let router = Self::router(choose);
         let params = serde_norway::Mapping::new();
         let child = match self.run_child(s, &router, &params, Some(&request))? {
             Ok(child) => child,
@@ -643,18 +640,13 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    /// The router machine of `choose: model` state `s`: its `router`, else `default_router`.
-    fn router(&self, s: usize, choose: &ChooseInvoke) -> Result<String, InterpreterError> {
+    /// The router machine of `choose: model` state `s`: its `router`, else the machine named
+    /// [`ROUTER_MACHINE`].
+    fn router(choose: &ChooseInvoke) -> String {
         choose
             .router
             .clone()
-            .or_else(|| self.ctx.default_router.clone())
-            .ok_or_else(|| {
-                self.invalid(format!(
-                    "{}: `choose: model` names no `router`, and config.yml sets no `default_router`",
-                    self.machine.state_path(s)
-                ))
-            })
+            .unwrap_or_else(|| ROUTER_MACHINE.to_string())
     }
 
     /// Section 7, Choose: model, step 1: the request for state `s`, as the text of
@@ -703,7 +695,7 @@ impl<'a> Interpreter<'a> {
         state: &str,
         duration_ms: u64,
     ) -> Result<Decision, InterpreterError> {
-        let router = self.router(s, choose)?;
+        let router = Self::router(choose);
         let reply = if state == FAILED {
             Reply::Rejected(format!("router run `{child}` ended in `{FAILED}`"))
         } else {
@@ -816,8 +808,8 @@ impl<'a> Interpreter<'a> {
             .get(name)
             .ok_or_else(|| self.invalid(format!("machine `{name}` does not exist")))?;
         let depth = self.depth + 1;
-        if depth > ctx.max_depth {
-            return Ok(Err(format!("max_depth {} reached", ctx.max_depth)));
+        if depth > MAX_DEPTH {
+            return Ok(Err(format!("max_depth {MAX_DEPTH} reached")));
         }
         let (id, run_dir) = create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
         let parent = self.executor.info().run_id.clone();
@@ -1199,14 +1191,11 @@ impl Context<'_> {
         });
         let info = RunInfo {
             project_root: self.project_root.clone(),
-            shared_source: self.shared_source.clone(),
             run_dir,
             run_id: run_id.to_string(),
             machine: m.id.clone(),
             trigger: trigger.to_string(),
             data: data_env(&m.data, params),
-            max_attempts: self.max_attempts,
-            max_log_size: self.max_log_size,
             parent: parent.map(String::from),
             router,
         };
@@ -1740,7 +1729,7 @@ fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), InterpreterError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::INBOX_DIR;
+    use crate::layout::INBOX_DIR;
     use crate::machine::{load_machine_text, CheckEnv};
     use std::collections::{BTreeSet, HashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1762,7 +1751,6 @@ mod tests {
         tmp: TempDir,
         name: String,
         machines: BTreeMap<String, LoadedMachine>,
-        default_router: Option<String>,
         shutdown: Arc<AtomicBool>,
     }
 
@@ -1789,16 +1777,11 @@ mod tests {
 
         /// The same, for machine `name` written as `text`.
         fn from_text(name: &str, text: &str, scripts: &[(&str, &str)]) -> Self {
-            Self::from_texts(&[(name, text)], scripts, None)
+            Self::from_texts(&[(name, text)], scripts)
         }
 
-        /// The same, for several machines: the run uses the first. `default_router` is the
-        /// config value.
-        fn from_texts(
-            machines: &[(&str, &str)],
-            scripts: &[(&str, &str)],
-            default_router: Option<&str>,
-        ) -> Self {
+        /// The same, for several machines: the run uses the first.
+        fn from_texts(machines: &[(&str, &str)], scripts: &[(&str, &str)]) -> Self {
             let tmp = TempDir::new().unwrap();
             let decree = tmp.path().join(DECREE_DIR);
             let loaded: BTreeMap<String, LoadedMachine> = machines
@@ -1828,10 +1811,8 @@ mod tests {
             let ids: BTreeSet<String> = loaded.keys().cloned().collect();
             let env = CheckEnv {
                 decree_dir: &decree,
-                shared_source: None,
                 machine_ids: &ids,
                 machines: &loaded,
-                default_router,
             };
             for (name, text) in machines {
                 let problems = loaded[*name].validate(text, &env);
@@ -1843,7 +1824,6 @@ mod tests {
                 tmp,
                 name: name.to_string(),
                 machines: loaded,
-                default_router: default_router.map(String::from),
                 shutdown: Arc::new(AtomicBool::new(false)),
             };
             fs::create_dir_all(project.run_dir()).unwrap();
@@ -1861,12 +1841,7 @@ mod tests {
         fn ctx(&self) -> Context<'_> {
             Context {
                 project_root: self.root(),
-                shared_source: None,
                 machines: &self.machines,
-                default_router: self.default_router.clone(),
-                max_attempts: 3,
-                max_depth: 10,
-                max_log_size: 0,
                 shutdown: Arc::clone(&self.shutdown),
             }
         }
@@ -2538,7 +2513,7 @@ mod tests {
         let router = "name: router\ndescription: A router.\ninitial: ask\nstates:\n  \
                       ask: { invoke: ask, transitions: { done: done } }\n  \
                       done: { final: true }\n  failed: { final: true }\n";
-        let p = Project::from_texts(&[("step_confidence", text), ("router", router)], &[], None);
+        let p = Project::from_texts(&[("step_confidence", text), ("router", router)], &[]);
         let mut event = json!({
             "v": 1, "seq": 1, "ts": "2026-10-01T17:04:12.000Z", "type": "decision",
             "run_id": RUN_ID, "machine": "step_confidence", "trigger": "inbox",
@@ -3351,7 +3326,6 @@ machine: [
                 ("step_child", &fixture("step_child")),
             ],
             &[("child_work", child_work)],
-            None,
         )
     }
 
@@ -3505,7 +3479,6 @@ machine: [
                 ("step_person", &fixture("step_person")),
             ],
             &[],
-            None,
         );
         let outcome = p.run();
         let child = p.child_id();
@@ -3661,17 +3634,21 @@ machine: [
     // Choose: model (section 7)
     // ---------------------------------------------------------------
 
-    /// `step_model`, whose `triage` state asks `step_router` (config `default_router`);
+    /// `step_model`, whose `triage` state asks the machine named `router` (fixture
+    /// `step_router`, renamed);
     /// the router's `ask` script is `ask`, and `work` prints 60 lines. With `reply`, the
     /// project root holds it as `reply.json`, for the `router_reply` script.
+    fn router_fixture() -> String {
+        fixture("step_router").replace("name: step_router", "name: router")
+    }
+
     fn model_project(ask: &str, reply: Option<&str>) -> Project {
         let p = Project::from_texts(
             &[
                 ("step_model", &fixture("step_model")),
-                ("step_router", &fixture("step_router")),
+                ("router", &router_fixture()),
             ],
             &[("work", "print_lines"), ("ask", ask)],
-            Some("step_router"),
         );
         if let Some(reply) = reply {
             fs::write(p.root().join("reply.json"), reply).unwrap();
@@ -3705,7 +3682,7 @@ machine: [
         let message = fs::read_to_string(child_dir.join(MESSAGE_FILE)).unwrap();
         assert!(
             message.starts_with(&format!(
-                "---\nmachine: step_router\nid: {child}\nparent: {RUN_ID}\ndepth: 1\n\
+                "---\nmachine: router\nid: {child}\nparent: {RUN_ID}\ndepth: 1\n\
                  trigger: invoke\n"
             )),
             "{message}"
@@ -3755,7 +3732,7 @@ machine: [
         let decision = model_decision_of(&p);
         let mut want = json!({
             "state": "triage", "kind": "model", "event": "retry",
-            "options": ["retry", "split"], "router": "step_router",
+            "options": ["retry", "split"], "router": "router",
             "child_run": child, "pick": "retry", "confidence": 0.9,
         });
         for (key, value) in want.as_object_mut().unwrap() {
@@ -3788,7 +3765,6 @@ machine: [
         let p = Project::from_texts(
             &[("step_model", &text), ("other_router", &router)],
             &[("work", "print_lines"), ("ask", "router_retry")],
-            Some("step_router"),
         );
         assert_eq!(p.run(), Outcome::Finished("retried".into()));
         let child = p.child_id();
@@ -3903,7 +3879,7 @@ machine: [
         assert!(p.events_of("waiting").is_empty());
         let decision = model_decision_of(&p);
         assert_eq!(decision["router_error"], "max_depth 10 reached");
-        assert_eq!(decision["router"], "step_router");
+        assert_eq!(decision["router"], "router");
         assert!(decision.get("child_run").is_none());
         assert_eq!(p.transitions()[2], "triage error failed model");
     }

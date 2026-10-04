@@ -5,15 +5,13 @@
 #
 # - Leaves migrations/ and processed.md untouched.
 # - Moves pending outbox/*.md into inbox/ (pending inbox/*.md stay where they are).
-# - config.yml: default_routine -> default_machine, routine_source -> shared_source,
-#   max_retries -> max_attempts (dropped if max_attempts is set), and removes commands,
-#   hooks, routines and shared_routines.
-# - Moves the removed paths (outbox/, inbox/dead/, dead/, router.md, routines/, prompts/)
-#   and 0.4 run folders (runs/<id>/ without events.jsonl) into .decree/legacy-0.4/,
-#   keeping their paths.
+# - Moves the removed paths (config.yml, outbox/, inbox/dead/, dead/, router.md, routines/,
+#   prompts/) and 0.4 run folders (runs/<id>/ without events.jsonl) into
+#   .decree/legacy-0.4/, keeping their paths. 0.5 has no configuration file (section 3).
 # - Rewrites .decree/.gitignore to inbox/ and runs/.
 # - Writes no machines. Lists each machine that a pending migration, inbox message or
-#   cron file asks for but machines/ lacks, with the files that ask for it.
+#   cron file asks for but machines/ lacks, with the files that ask for it, and each such
+#   file that names no machine.
 #
 # Exit codes: 0 nothing to list, 1 machines listed, 2 nothing changed because of an error
 # (no .decree/, or a move would overwrite a file).
@@ -44,7 +42,7 @@ plan() {
 for f in "$D"/outbox/*.md; do
     [[ -f $f ]] && plan "$f" "$D/inbox/$(basename "$f")"
 done
-for p in outbox inbox/dead dead router.md routines prompts; do
+for p in config.yml outbox inbox/dead dead router.md routines prompts; do
     [[ -e $D/$p ]] && plan "$D/$p" "$LEGACY/$p"
 done
 for r in "$D"/runs/*/; do
@@ -63,33 +61,6 @@ for i in "${!sources[@]}"; do
     mv -n "${sources[$i]}" "${targets[$i]}"
     echo "moved ${sources[$i]} -> ${targets[$i]}"
 done
-
-# --- config.yml: rename three keys, drop the removed ones with their indented blocks. ---
-
-if [[ -f $D/config.yml ]]; then
-    has_attempts=0
-    grep -Eq "^[\"']?max_attempts[\"']?[[:space:]]*:" "$D/config.yml" && has_attempts=1
-    awk -v has_attempts="$has_attempts" '
-        /^[^ \t#]/ {
-            key = $0
-            sub(/[ \t]*:.*/, "", key)
-            gsub(/["\047]/, "", key)
-            skip = (key == "commands" || key == "hooks" || key == "routines" || key == "shared_routines")
-            skip = skip || (key == "max_retries" && has_attempts)
-            if (skip) next
-            sub(/^max_retries:/, "max_attempts:")
-            sub(/^"max_retries":/, "max_attempts:")
-            sub(/^default_routine:/, "default_machine:")
-            sub(/^"default_routine":/, "default_machine:")
-            sub(/^routine_source:/, "shared_source:")
-            sub(/^"routine_source":/, "shared_source:")
-        }
-        skip && (/^[ \t]/ || /^[ \t\r]*$/) { next }
-        { print }
-    ' "$D/config.yml" >"$D/.config.yml.tmp"
-    mv "$D/.config.yml.tmp" "$D/config.yml"
-    echo "rewrote $D/config.yml"
-fi
 
 printf 'inbox/\nruns/\n' >"$D/..gitignore.tmp"
 mv "$D/..gitignore.tmp" "$D/.gitignore"
@@ -116,20 +87,6 @@ frontmatter_value() {
     ' "$1"
 }
 
-default_machine=""
-if [[ -f $D/config.yml ]]; then
-    default_machine=$(awk '
-        /^default_machine:/ {
-            v = substr($0, 17)
-            sub(/[ \t]+#.*/, "", v)
-            gsub(/^[ \t]+|[ \t]+$/, "", v)
-            if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)
-            if (v != "~" && v != "null") print v
-            exit
-        }
-    ' "$D/config.yml")
-fi
-
 declare -A processed=()
 if [[ -f $D/processed.md ]]; then
     while IFS= read -r line || [[ -n $line ]]; do
@@ -148,18 +105,32 @@ done
 pending+=("$D"/inbox/*.md "$D"/cron/*.md)
 
 declare -A askers=()
+unnamed=""
 for f in "${pending[@]}"; do
     [[ -f $f ]] || continue
+    # A reply (section 4, Replies) names the run it answers, not a machine.
+    [[ -n $(frontmatter_value "$f" to) ]] && continue
     name=$(frontmatter_value "$f" machine)
     [[ -n $name ]] || name=$(frontmatter_value "$f" routine)
-    [[ -n $name ]] || name=$default_machine
-    [[ -n $name ]] || continue
+    if [[ -z $name ]]; then
+        unnamed+="    $f"$'\n'
+        continue
+    fi
     if [[ ! $name =~ ^[a-z][a-z0-9_]*$ || ! -f $D/machines/$name.yml ]]; then
         askers[$name]+="    $f"$'\n'
     fi
 done
 
-[[ ${#askers[@]} -eq 0 ]] && exit 0
+[[ ${#askers[@]} -eq 0 && -z $unnamed ]] && exit 0
+
+if [[ -n $unnamed ]]; then
+    echo
+    echo "Pending messages that name no machine (0.5 has no default; add machine: to inbox"
+    echo "and cron files, and finish migrations under decree 0.4 first, since migrations are"
+    echo "immutable):"
+    printf '%s' "$unnamed"
+fi
+[[ ${#askers[@]} -eq 0 ]] && exit 1
 
 echo
 echo "Machines that pending messages ask for but $D/machines/ lacks:"

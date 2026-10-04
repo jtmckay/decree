@@ -1,7 +1,6 @@
 //! Machines: SCXML statecharts written as YAML (spec section 5).
 //!
-//! `load_machines` reads `machines/*.yml` project-local first, then from `shared_source`,
-//! and flattens each machine into an arena of `Node`s. The interpreter, validator and graph
+//! `load_machines` reads `.decree/machines/*.yml` and flattens each machine into an arena of `Node`s. The interpreter, validator and graph
 //! exporter work on the arena, never on the raw structs.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,7 +13,7 @@ use crate::cond::{Condition, Operand, Subject, Test};
 use crate::error::DecreeError;
 use crate::runtime::{is_reserved_event, resolve_script};
 
-/// Directory holding machine files, relative to `.decree/` or `shared_source`.
+/// Directory holding machine files, relative to `.decree/`.
 pub const MACHINES_DIR: &str = "machines";
 
 /// Root-level final state an unhandled `error` goes to (V5).
@@ -365,33 +364,22 @@ fn push_children(nodes: &mut Vec<Node>, parent: usize, states: BTreeMap<String, 
     }
 }
 
-/// Load every machine: `<decree_dir>/machines/*.yml`, then `<shared_source>/machines/*.yml`.
-/// A project-local machine hides a shared one with the same id (section 3); the hidden file
-/// is not read. A missing `machines/` directory holds no machines.
-pub fn load_machines(
-    decree_dir: &Path,
-    shared_source: Option<&Path>,
-) -> Result<BTreeMap<String, LoadedMachine>, DecreeError> {
+/// Load every machine in `<decree_dir>/machines/*.yml` (section 3). A missing `machines/`
+/// directory holds no machines.
+pub fn load_machines(decree_dir: &Path) -> Result<BTreeMap<String, LoadedMachine>, DecreeError> {
     let mut machines = BTreeMap::new();
-    for (id, path) in machine_paths(decree_dir, shared_source)? {
+    for (id, path) in machine_paths(decree_dir)? {
         let machine = load_machine_file(&id, &path)?;
         machines.insert(id, machine);
     }
     Ok(machines)
 }
 
-/// The file each machine id loads from: project-local first, then `shared_source`.
-pub fn machine_paths(
-    decree_dir: &Path,
-    shared_source: Option<&Path>,
-) -> Result<BTreeMap<String, PathBuf>, DecreeError> {
-    let mut paths = BTreeMap::new();
-    for base in std::iter::once(decree_dir).chain(shared_source) {
-        for (id, path) in machine_files(&base.join(MACHINES_DIR))? {
-            paths.entry(id).or_insert(path);
-        }
-    }
-    Ok(paths)
+/// The file each machine id loads from.
+pub fn machine_paths(decree_dir: &Path) -> Result<BTreeMap<String, PathBuf>, DecreeError> {
+    Ok(machine_files(&decree_dir.join(MACHINES_DIR))?
+        .into_iter()
+        .collect())
 }
 
 /// `(stem, path)` of every `*.yml` file in `dir`, sorted by stem.
@@ -567,17 +555,17 @@ fn locate_state_error(states: &serde_norway::Value, prefix: &str) -> Option<(Str
 // Validation (section 5, Validation): rules V1–V21 on the arena
 // =================================================================
 
+/// The router of a `choose: model` that names none (section 7, The default router).
+pub const ROUTER_MACHINE: &str = "router";
+
 /// Everything outside the machine file that validation reads.
 pub struct CheckEnv<'a> {
     pub decree_dir: &'a Path,
-    pub shared_source: Option<&'a Path>,
     /// Ids of every machine file, including ones that fail to load (V13, V16).
     pub machine_ids: &'a BTreeSet<String>,
     /// Every machine that loaded, for the checks that look into another machine (V8, V16,
     /// V20).
     pub machines: &'a BTreeMap<String, LoadedMachine>,
-    /// Config `default_router` (V16, V20).
-    pub default_router: Option<&'a str>,
 }
 
 /// One validation error: where it is (a state path or `line <n>`) and what is wrong.
@@ -714,17 +702,14 @@ impl LoadedMachine {
     }
 
     /// `(state, machine)` for every machine this one runs as a child: `machine` invokes, and
-    /// the router of each `choose: model` (its `router`, else `default_router`).
-    pub fn invoked_machines<'m>(
-        &'m self,
-        default_router: Option<&'m str>,
-    ) -> Vec<(usize, &'m str)> {
+    /// the router of each `choose: model` (its `router`, else [`ROUTER_MACHINE`]).
+    pub fn invoked_machines(&self) -> Vec<(usize, &str)> {
         let mut out = Vec::new();
         for (i, node) in self.nodes.iter().enumerate() {
             let child = match &node.invoke {
                 Some(Invoke::Machine(m)) => Some(m.machine.as_str()),
                 Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
-                    c.router.as_deref().or(default_router)
+                    Some(c.router.as_deref().unwrap_or(ROUTER_MACHINE))
                 }
                 _ => None,
             };
@@ -1413,12 +1398,7 @@ impl Validator<'_> {
         }
         let prefix = format!("{}/", self.env.decree_dir.display());
         for (at, name) in uses {
-            if let Err(e) = resolve_script(
-                self.env.decree_dir,
-                self.env.shared_source,
-                &self.m.id,
-                name,
-            ) {
+            if let Err(e) = resolve_script(self.env.decree_dir, &self.m.id, name) {
                 self.push(at, format!("{} (V12)", e.to_string().replace(&prefix, "")));
             }
         }
@@ -1474,27 +1454,16 @@ impl Validator<'_> {
             match &node.invoke {
                 Some(Invoke::Machine(mi)) => self.child_machine(&at, mi),
                 Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
-                    match (c.router.as_deref(), self.env.default_router) {
-                        (Some(router), _) => {
-                            if !self.env.machine_ids.contains(router) {
-                                self.push(
-                                    at.clone(),
-                                    format!("router `{router}` is not a machine (V16)"),
-                                );
-                            }
-                        }
-                        (None, None) => self.push(
+                    match c.router.as_deref() {
+                        Some(router) if !self.env.machine_ids.contains(router) => self.push(
                             at.clone(),
-                            "`choose: model` names no `router`, and config.yml sets no `default_router` (V16)".into(),
+                            format!("router `{router}` is not a machine (V16)"),
                         ),
-                        (None, Some(router)) => {
-                            if !self.env.machine_ids.contains(router) {
-                                self.push(
-                                    at.clone(),
-                                    format!("`choose: model` names no `router`, and `default_router` `{router}` is not a machine (V16)"),
-                                );
-                            }
-                        }
+                        None if !self.env.machine_ids.contains(ROUTER_MACHINE) => self.push(
+                            at.clone(),
+                            format!("`choose: model` names no `router`, and there is no machine named `{ROUTER_MACHINE}` (V16)"),
+                        ),
+                        _ => {}
                     }
                     if let Some(n) = c.min_confidence.filter(|n| !(0.0..=1.0).contains(n)) {
                         self.push(
@@ -1645,7 +1614,7 @@ impl Validator<'_> {
 
     fn v20_cycles(&mut self) {
         let me = self.m.id.as_str();
-        for (i, child) in self.m.invoked_machines(self.env.default_router) {
+        for (i, child) in self.m.invoked_machines() {
             if let Some(path) = self.invoke_path(child, me) {
                 self.push(
                     self.m.state_path(i),
@@ -1702,7 +1671,7 @@ impl Validator<'_> {
             let Some(m) = self.env.machines.get(id) else {
                 continue;
             };
-            for (_, child) in m.invoked_machines(self.env.default_router) {
+            for (_, child) in m.invoked_machines() {
                 if seen.insert(child) {
                     parent.insert(child, id);
                     queue.push_back(child);
@@ -1720,7 +1689,7 @@ mod tests {
     use tempfile::TempDir;
 
     /// The section 5 examples, plus the router `feature` and `triage` name by default.
-    const EXAMPLES: [&str; 5] = ["hello", "deploy", "ship", "feature", "claude_router"];
+    const EXAMPLES: [&str; 5] = ["hello", "deploy", "ship", "feature", "router"];
 
     fn fixture(name: &str) -> String {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1746,7 +1715,7 @@ mod tests {
 
     fn load_err(id: &str, text: &str) -> String {
         let tmp = project(&[(id, text)]);
-        load_machines(&tmp.path().join(".decree"), None)
+        load_machines(&tmp.path().join(".decree"))
             .unwrap_err()
             .to_string()
     }
@@ -1760,10 +1729,10 @@ mod tests {
         let files: Vec<(&str, String)> = EXAMPLES.iter().map(|n| (*n, fixture(n))).collect();
         let refs: Vec<(&str, &str)> = files.iter().map(|(n, t)| (*n, t.as_str())).collect();
         let tmp = project(&refs);
-        let machines = load_machines(&tmp.path().join(".decree"), None).unwrap();
+        let machines = load_machines(&tmp.path().join(".decree")).unwrap();
         assert_eq!(
             machines.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["claude_router", "deploy", "feature", "hello", "ship"]
+            ["deploy", "feature", "hello", "router", "ship"]
         );
         for (id, m) in &machines {
             assert_eq!(&m.root().id, id);
@@ -2016,39 +1985,10 @@ mod tests {
     }
 
     #[test]
-    fn project_local_hides_shared() {
-        let tmp = project(&[("hello", &fixture("hello"))]);
-        let shared = tmp.path().join("shared");
-        let shared_hello = fixture("hello").replace("Run one script.", "Shared hello.");
-        write_machines(
-            &shared,
-            &[("hello", &shared_hello), ("deploy", &fixture("deploy"))],
-        );
-
-        let machines = load_machines(&tmp.path().join(".decree"), Some(&shared)).unwrap();
-        assert_eq!(machines.len(), 2);
-        assert_eq!(machines["hello"].description(), "Run one script.");
-        assert_eq!(
-            machines["deploy"].description(),
-            "Build, ask a person to approve, then ship."
-        );
-    }
-
-    #[test]
-    fn hidden_shared_machine_is_not_read() {
-        let tmp = project(&[("hello", &fixture("hello"))]);
-        let shared = tmp.path().join("shared");
-        write_machines(&shared, &[("hello", "not: [valid")]);
-        assert!(load_machines(&tmp.path().join(".decree"), Some(&shared)).is_ok());
-    }
-
-    #[test]
-    fn shared_machine_error_uses_relative_path() {
-        let tmp = project(&[]);
-        let shared = tmp.path().join("shared");
+    fn machine_error_uses_relative_path() {
         let text = fixture("hello").replace("failed: { final: true }", "failed: { fnal: true }");
-        write_machines(&shared, &[("hello", &text)]);
-        let err = load_machines(&tmp.path().join(".decree"), Some(&shared))
+        let tmp = project(&[("hello", &text)]);
+        let err = load_machines(&tmp.path().join(".decree"))
             .unwrap_err()
             .to_string();
         assert!(
@@ -2058,10 +1998,9 @@ mod tests {
     }
 
     #[test]
-    fn missing_dirs_load_nothing() {
+    fn missing_dir_loads_nothing() {
         let tmp = TempDir::new().unwrap();
-        let missing = tmp.path().join("nowhere");
-        let machines = load_machines(&tmp.path().join(".decree"), Some(&missing)).unwrap();
+        let machines = load_machines(&tmp.path().join(".decree")).unwrap();
         assert!(machines.is_empty());
     }
 
@@ -2071,7 +2010,7 @@ mod tests {
         let dir = tmp.path().join(".decree").join(MACHINES_DIR);
         fs::write(dir.join("notes.md"), "not a machine").unwrap();
         fs::write(dir.join("other.yaml"), "not: [valid").unwrap();
-        let machines = load_machines(&tmp.path().join(".decree"), None).unwrap();
+        let machines = load_machines(&tmp.path().join(".decree")).unwrap();
         assert_eq!(machines.keys().collect::<Vec<_>>(), ["hello"]);
     }
 
@@ -2113,10 +2052,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let env = CheckEnv {
             decree_dir: tmp.path(),
-            shared_source: None,
             machine_ids: &ids,
             machines: &machines,
-            default_router: Some("router"),
         };
         machines["m"]
             .validate(text, &env)
@@ -2147,10 +2084,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let env = CheckEnv {
             decree_dir: tmp.path(),
-            shared_source: None,
             machine_ids: &ids,
             machines: &machines,
-            default_router: Some("claude_router"),
         };
         for (name, text) in &texts {
             let found: Vec<Problem> = machines[*name]
@@ -2453,7 +2388,7 @@ mod tests {
     }
 
     #[test]
-    fn choose_model_without_router_needs_default_router() {
+    fn choose_model_without_router_needs_a_machine_named_router() {
         let text = format!(
             "{HEAD}  a:\n    invoke: {{ choose: model, question: \"Go?\" }}\n    transitions:\n      \
              go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
@@ -2462,7 +2397,7 @@ mod tests {
         assert!(problems(&text).is_empty(), "{:?}", problems(&text));
         assert_eq!(
             problems_with(&text, &[]),
-            ["a: `choose: model` names no `router`, and `default_router` `router` is not a machine (V16)"]
+            ["a: `choose: model` names no `router`, and there is no machine named `router` (V16)"]
         );
     }
 
@@ -2590,10 +2525,8 @@ mod tests {
         let ids = BTreeSet::new();
         let env = CheckEnv {
             decree_dir: tmp.path(),
-            shared_source: None,
             machine_ids: &ids,
             machines: &machines,
-            default_router: None,
         };
         let found = machines["m"].validate(&text, &env);
         assert_eq!(

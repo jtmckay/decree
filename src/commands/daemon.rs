@@ -7,9 +7,9 @@
 
 use crate::commands::check::Project;
 use crate::commands::process::{Pipeline, Stop};
-use crate::config;
 use crate::cron::{self, CronTracker};
 use crate::error::DecreeError;
+use crate::layout;
 use crate::message;
 use crate::runtime;
 use std::path::Path;
@@ -119,7 +119,7 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker) {
         }
 
         let mut msg = cron::cron_to_inbox_message(cf);
-        let decree_dir = project_root.join(config::DECREE_DIR);
+        let decree_dir = project_root.join(layout::DECREE_DIR);
         match message::queue(&decree_dir, &mut msg) {
             Ok(id) => {
                 println!("decree daemon: cron fired: {} -> {id}.md", cf.filename);

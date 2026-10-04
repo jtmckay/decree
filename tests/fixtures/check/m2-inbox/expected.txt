@@ -1,4 +1,4 @@
-inbox/a.md: line 1: no `machine` key, and the default machine `develop` does not exist (M2)
+inbox/a.md: line 1: no `machine` key (M2)
 inbox/b.md: line 3: param `max_rounds` must be of type `int` (M2)
 inbox/c.md: line 1: frontmatter has an opening `---` but no closing `---` (M2)
 inbox/d.md: line 3: duplicate entry with key "machine" (M2)
