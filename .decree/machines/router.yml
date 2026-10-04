@@ -4,8 +4,8 @@ description: Ask Claude to pick one of the options in the request.
 initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
-    invoke: ask_claude
-    max_attempts: 2                # a reply that is not one of the options fails the script; it runs once more
+    invoke:                        # a reply that is not one of the options fails the script; it runs once more
+      script: { name: ask_claude, max_attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

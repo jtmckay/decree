@@ -1,4 +1,4 @@
-//! Replies to runs waiting in a `choose: person` state (docs/reference/messages.md, Replies): the
+//! Replies to runs waiting in a `person` state (docs/reference/messages.md, Replies): the
 //! checks `decree event` makes before writing a reply, delivery when `process` claims one,
 //! and `timeout_s` deadlines. Both deliveries append a `received` event under the run lock,
 //! which makes the run `pending`; the caller then continues it.

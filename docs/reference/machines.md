@@ -2,7 +2,7 @@
 
 A machine is a YAML statechart in `.decree/machines/<name>.yml`: an SCXML document written as YAML. It holds only structure: states, what each state invokes, and transitions from events to states. It never contains code or paths. Keys use SCXML's names (`initial`, `states`, `transitions`, `target`, `type`, `onentry`, `onexit`, `invoke`, `data`, `final`); a few decree extensions are marked as such.
 
-Every state does one thing: it **invokes a function**, and the function's result is an event that picks the next state. A function is either a script, or one of decree's three built-in decision functions. As far as the machine is concerned, they are all just functions.
+Every state does one thing: it **invokes a function**, and the function's result is an event that picks the next state. A function is a script, one of decree's three built-in decision functions (`check`, `model`, `person`), or another machine. As far as the machine is concerned, they are all just functions.
 
 ## Example: the smallest machine
 
@@ -31,7 +31,11 @@ states:
     invoke: build
     transitions: { done: approval }
   approval:                        # a person picks one option; the run pauses for the reply
-    invoke: { choose: person, question: "Ship this build?", ask: ask_person, timeout_s: 86400 }
+    invoke:
+      person:
+        question: Ship this build?
+        ask: ask_person
+        timeout_s: 86400
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
@@ -81,29 +85,38 @@ states:
     invoke: precheck
     transitions: { done: work }
   work:                            # compound: the implement/verify loop as one unit
-    initial: implement
     transitions: { done.state.work: done }   # raised when work reaches its own final state
+    initial: implement
     states:
       implement:
-        invoke: implement
-        max_attempts: 2            # extension: re-run a crashing script in place
+        invoke:                    # max_attempts: re-run a crashing script in place
+          script: { name: implement, max_attempts: 2 }
         onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }
       verify:                      # script: prints pass or fail
         invoke: verify
         transitions: { pass: verified, fail: rounds_left }
-      rounds_left:                 # deterministic check: yes or no
-        invoke: { check: { visits: implement, less_than: { data: max_rounds } } }
-        transitions: { yes: triage, no: review }
+      rounds_left:                 # deterministic check: true or false
+        invoke:
+          check: { visits: implement, less_than: { data: max_rounds } }
+        transitions: { true: triage, false: review }
       triage:                      # a model picks one option; below the floor it is unsure
-        invoke: { choose: model, question: "Should we implement again or split the work?", min_confidence: 0.8, input: verify }
+        invoke:
+          model:
+            question: Should we implement again or split the work?
+            min_confidence: 0.8
+            output: verify
         transitions:
           retry:  { target: implement, description: The failures look fixable; implement again. }
           split:  { target: spawn_followups, description: The scope is too large; emit smaller follow-up messages. }
-          unsure: { target: review }
+          unsure: review
       review:                      # a person picks one option; the run pauses for the reply
-        invoke: { choose: person, question: "Tests still fail. What next?", ask: ask_person, timeout_s: 172800 }
+        invoke:
+          person:
+            question: Tests still fail. What next?
+            ask: ask_person
+            timeout_s: 172800
         transitions:
           approve: { target: verified, description: Good enough; commit it. }
           retry:   { target: implement, description: Try again; see my note. }
@@ -111,45 +124,46 @@ states:
       verified: { final: true }    # raises done.state.work
   spawn_followups:
     invoke: spawn
-    emits: [feature]               # extension: machines its scripts may emit messages for
     transitions: { done: done }
+    emits: [feature]               # extension: machines its scripts may emit messages for
   done:   { final: true, onentry: [commit] }   # migrations: processed.md is written first, so the commit includes it
   failed: { final: true }
 ```
 
-There are two retry mechanisms, and they mean different things. `max_attempts` re-runs a crashing script in place: same state, no `onexit` or `onentry`. A transition back to an earlier state (`retry` above) is a new round chosen by the machine, bounded here by the `rounds_left` check.
+There are two retry mechanisms, and they mean different things. `max_attempts`, inside the script invoke, re-runs a crashing script in place: same state, no `onexit` or `onentry`. A transition back to an earlier state (`retry` above) is a new round chosen by the machine, bounded here by the `rounds_left` check.
 
 ## Invoke: the state's function
 
 `invoke` is SCXML's `<invoke>`. Invoking another state machine is SCXML's own invoke type; the others are decree's, as SCXML lets each platform define types.
 
+`invoke` is a map with exactly one key, which names the kind; its value is that kind's object. This is how serde writes an externally tagged enum, and how GitHub Actions tells a step's `uses` from its `run`. For `script` and `machine`, a bare name is short for `{ name: <name> }`, and `invoke: <script name>` is short for `invoke: { script: <script name> }`.
+
 | `invoke` | SCXML `type` | What runs | Events it produces |
 | --- | --- | --- | --- |
-| `<script name>` | `decree:script` | The script ([scripts.md](scripts.md)). | `done` (exit 0), `error` (non-zero), or an event the script prints. |
-| `{ check: <condition>, input?: <state> }` | `decree:check` | decree evaluates the condition. Deterministic, no AI. | `yes` or `no`. |
-| `{ choose: model, question: <text>, router?: <machine>, min_confidence?: <0..1>, input?: <state> }` | `decree:model` | A router machine (default: the machine named `router`) asks a model to pick one of the state's transitions ([Choose: model](runs.md#choose-model)). | One of the state's events; `unsure` if its confidence is below `min_confidence`; `error` if the router fails or replies with something that is not an option. |
-| `{ machine: <name>, params?: {…} }` | `http://www.w3.org/TR/scxml/` (SCXML's own: a child state machine) | The machine runs as a child run ([Sub-machines](runs.md#sub-machines)). | The id of the root final state the child reached; `failed` becomes `error`. |
-| `{ choose: person, question: <text>, ask: <script>, timeout_s?: <int> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions ([Replies](messages.md#replies)). | One of the state's events; `error` on timeout. |
+| `script: { name: <script>, max_attempts?: <int>, timeout_s?: <int> }` | `decree:script` | The script ([scripts.md](scripts.md)), up to `max_attempts` times (default 1), each stopped after `timeout_s` seconds ([Execution](scripts.md#execution)). | `done` (exit 0), `error` (non-zero), or an event the script prints. |
+| `check: <condition>` | `decree:check` | decree evaluates the condition. Deterministic, no AI. | `true` or `false`. |
+| `model: { question: <text>, router?: <machine>, min_confidence?: <0..1>, output?: <state> }` | `decree:model` | A router machine (default: the machine named `router`) asks a model to pick one of the state's transitions ([Model](runs.md#model)). | One of the state's events; `unsure` if its confidence is below `min_confidence`; `error` if the router fails or replies with something that is not an option. |
+| `person: { question: <text>, ask: <script>, timeout_s?: <int> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions ([Replies](messages.md#replies)). | One of the state's events; `error` on timeout. |
+| `machine: { name: <machine>, params?: {…} }` | `http://www.w3.org/TR/scxml/` (SCXML's own: a child state machine) | The machine runs as a child run ([Sub-machines](runs.md#sub-machines)). | The id of the root final state the child reached; `failed` becomes `error`. |
 
 A state with no `invoke` and a `done` transition passes straight through (SCXML's eventless transition).
 
-**Choices.** For `choose`, `question` is what is being decided, and the options are the state's transitions, except `unsure` and `error`. Each option must have a `description`. The question and the options with their descriptions are exactly what the model or the person sees, so write them to stand alone. They map directly onto decision models: TypeSafe Jev's `instructions` and `criteria`, GLiNER2's instructions and described labels, and the question-and-answers of OpenAI's Decisions API. Inside `{ … }`, quote questions and descriptions (`question: "Ship this build?"`): a `, ` or `?` in unquoted text breaks YAML's inline maps, and `decree check` then rejects the machine. The examples here quote every question for that reason.
+**Choices.** For `model` and `person`, `question` is what is being decided, and the options are the state's transitions, except `unsure` and `error`. Each option must have a `description`. The question and the options with their descriptions are exactly what the model or the person sees, so write them to stand alone. They map directly onto decision models: TypeSafe Jev's `instructions` and `criteria`, GLiNER2's instructions and described labels, and the question-and-answers of OpenAI's Decisions API. Write prose (`question`, `description`) in block style, one key per line, so no character in it can end a YAML flow map.
 
-**Input.** `input` names a state; `matches` and the model read that state's latest script output (stdout and stderr, as logged). Without `input`, they read the output of the most recent script in the run. A model also always sees the message body.
+**Output.** `output` names a state with a script invoke; a `matches` condition and a model read that state's latest script output, as logged (stdout, and stderr lines with their `[stderr] ` prefix). A model sees only what it is given: that output, if `output` is named, and the message body. Without `output`, the request's `input` is empty.
 
-**Conditions** are typed objects, one subject and one operator, so the YAML parser and `decree check` catch mistakes:
+**Conditions** are typed objects with exactly one subject and one operator, so the YAML parser and `decree check` catch mistakes:
 
-| Condition | Meaning |
-| --- | --- |
-| `{ matches: '<regex>' }` | The input (a state's output) matches the regular expression. |
-| `{ data: <name>, matches: '<regex>' }` | A `string` data value, such as a file name from the message's `params`, matches the regular expression. |
-| `{ visits: <state>, <op>: <value> }` | How many times `<state>` has been entered in this run, compared to a value. |
-| `{ data: <name>, <op>: <value> }` | A `data` value compared to a value. |
-| `{ confidence: <state>, <op>: <number> }` | The confidence of the latest `choose: model` decision in `<state>`, 0 to 1 (0 if the router reported none). |
+| Subject | Value | Operators |
+| --- | --- | --- |
+| `output: <state>` | That state's latest script output, as logged (Output, above). The state must have a script invoke. | `matches` |
+| `data: <name>` | A `data` value. | `equals`, `not_equals`, `less_than`, `at_most`, `more_than`, `at_least`; `matches` for `string` data |
+| `visits: <state>` | How many times that atomic state was entered in this run. | the comparison operators |
+| `confidence: <state>` | The latest `model` decision's confidence in that state, 0 to 1 (0 if the router reported none). | the comparison operators |
 
-`<op>` is one of `equals`, `not_equals`, `less_than`, `at_most`, `more_than`, `at_least`. `<value>` is a literal or `{ data: <name> }`. Regular expressions use the `regex` crate's syntax and match anywhere unless anchored. There is no `and`/`or`: to test two things, use two `check` states in a row.
+For example `{ output: read_text, matches: '(?i)invoice' }`, `{ data: file, matches: '\.pdf$' }`, `{ visits: implement, less_than: { data: max_rounds } }` or `{ confidence: big_model, at_least: 0.4 }`. The comparison operators are `equals`, `not_equals`, `less_than`, `at_most`, `more_than` and `at_least`; `matches` is only an operator. `<value>` is a literal or `{ data: <name> }`. Regular expressions use the `regex` crate's syntax and match anywhere unless anchored. There is no `and`/`or`: to test two things, use two `check` states in a row.
 
-**Escalation** is a chain of states, cheapest first, each passing what it cannot decide to the next: `no` from a `check`, `unsure` from a `choose: model` below its `min_confidence`. A `confidence` check after `unsure` splits the rest into bands (worth asking a person, or not). The `sort_document` machine in `mock/` goes the whole way: file name, document text, a local classifier, a large model, a person.
+**Escalation** is a chain of states, cheapest first, each passing what it cannot decide to the next: `false` from a `check`, `unsure` from a `model` below its `min_confidence`. A `confidence` check after `unsure` splits the rest into bands (worth asking a person, or not). The `sort_document` machine in `mock/` goes the whole way: file name, document text, a local classifier, a large model, a person.
 
 ## Keys
 
@@ -165,9 +179,7 @@ A state with no `invoke` and a `done` transition passes straight through (SCXML'
 | Root | `states` | map of id to state | child `<state>` and `<final>` | Required. The map key is the state's `id`. |
 | State | `final` | `true` | `<final>` | Marks a final state. Final states may only have `description`, `onentry` and `emits`. |
 | State | `description` | string | extension | Optional. |
-| State | `invoke` | script name or decision object | `<invoke type>` | Optional on atomic states (above). |
-| State | `max_attempts` | int | extension | Optional on script states. Default 1. See [Execution](scripts.md#execution), Attempts. |
-| State | `timeout_s` | int | extension | Optional on script states (limit for the script). For `choose: person`, it goes inside `invoke`. |
+| State | `invoke` | script name, or a map with one key: `script`, `check`, `model`, `person` or `machine` | `<invoke type>` | Optional on atomic states (above). `max_attempts` and `timeout_s` go inside it. |
 | State | `onentry`, `onexit` | list of script names | `<onentry>`, `<onexit>` | Optional. Run every time this state is entered or exited. |
 | State | `initial`, `states` | as root | `<state initial>`, child states | Present together on compound states, absent on all others. |
 | State | `transitions` | map of event to target | `<transition event target type>` | Short form `event: target`, or long form `{target, description, type}`. Not allowed on final states. |
@@ -183,12 +195,12 @@ decree implements SCXML's semantics (the algorithm in Appendix D, "Algorithm for
 | `<transition event target type>` on atomic and compound states | Yes. One transition per event per state (a map), always with a target. `type: internal` as in SCXML. |
 | Event matching | SCXML's: a transition's event matches an event with the same name, or one that extends it after a `.` (`done.state` matches `done.state.work`). The active state's transitions are checked first, then each ancestor's, innermost first. |
 | `done.state.<id>` | Yes: raised when a compound state's own final child is entered, and handled before anything else. |
-| `<invoke type>` | Yes: one per atomic state: a child machine (SCXML's own type), or `decree:script`, `decree:check`, `decree:model` or `decree:person` (above). The invoked function's result is an event sent to the machine, as SCXML invoked services send events to their parent. Script completion is `done` (SCXML `done.invoke.<id>`); failure is `error` (SCXML `error.execution`). |
-| External events | Yes: a `choose: person` invoke receives the reply as an external event ([Replies](messages.md#replies)). |
+| `<invoke type>` | Yes: one per atomic state, its kind the key under `invoke`: a child machine (SCXML's own type), or `decree:script`, `decree:check`, `decree:model` or `decree:person` (above). The invoked function's result is an event sent to the machine, as SCXML invoked services send events to their parent. Script completion is `done` (SCXML `done.invoke.<id>`); failure is `error` (SCXML `error.execution`). |
+| External events | Yes: a `person` invoke receives the reply as an external event ([Replies](messages.md#replies)). |
 | `<onentry>`, `<onexit>` | Yes, as lists of scripts. |
 | Eventless transitions | Only `done` on a state with no `invoke`. |
 | Data model | A custom data model (SCXML allows these through the `datamodel` attribute): read-only typed `data`, plus `visits`. Conditions are evaluated by `check` invokes, not on transitions. |
-| `cond` on transitions | No. A decision is a state of its own (a `check` or `choose` invoke), so every transition is unconditional. |
+| `cond` on transitions | No. A decision is a state of its own (a `check`, `model` or `person` invoke), so every transition is unconditional. |
 | `<parallel>`, `<history>` | No. A run is always in exactly one atomic state, which is what `events.jsonl` records. |
 | `<send>`, `<raise>`, `<assign>`, `<script>`, `<if>`, `<foreach>`, `<log>`, `<cancel>`, `<donedata>` | No. A script's printed event replaces `<raise>`; `decree emit` replaces `<send>` to other sessions; `data` is read-only. |
 | Targetless transitions | No. |
@@ -204,7 +216,7 @@ Where SCXML leaves a choice to the platform, decree's choice is in this referenc
 ## Rules
 
 - **State ids are unique across the whole machine,** as SCXML requires. A target is always a bare state id.
-- **Events.** Script events are described in [Events from an invoke](scripts.md#events-from-an-invoke). Decision events are listed in the Invoke table. `done.state.<id>` is raised by decree. Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Events a script prints and `choose` options may not be `done`, `error`, `unsure`, or start with `done.` or `error.`; `yes` and `no` are free to use.
+- **Events.** Script events are described in [Events from an invoke](scripts.md#events-from-an-invoke). Decision events are listed in the Invoke table. `done.state.<id>` is raised by decree. Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Events a script prints and `model` or `person` options may not be `done`, `error`, `unsure`, or start with `done.` or `error.`; `true`, `false`, `yes` and `no` are ordinary event names.
 - **Selecting a transition.** For an event, check the current atomic state's `transitions`, then its parent's, up to the root, and take the first match (Event matching, above). Within one state, no transition's event may extend another's (`done` beside `done.state.work`): SCXML would pick by document order, which a YAML map does not keep (V21).
 - **Unhandled events.** If `error` matches nothing, the target is the root-level final state `failed`. Every machine must have it. (Like a Step Functions `Catch` on `States.ALL`.) Any other event that matches nothing becomes `error`.
 - **`visits.<state>`** is how many times that state has been entered in this run, derived from `events.jsonl` ([Step loop](runs.md#step-loop), Visits).
@@ -213,9 +225,11 @@ Where SCXML leaves a choice to the platform, decree's choice is in this referenc
 
 ## YAML
 
-Machines are YAML 1.2. YAML 1.1 tools (PyYAML, some editors) read some bare words as booleans (`on`, `no`, `yes`), the "Norway problem" `serde_norway` is named after. decree reads them as strings, which matters here because `yes` and `no` are event names.
+Machines are YAML 1.2. In YAML 1.2, `true:` and `false:` as map keys are booleans; decree reads a boolean key in `transitions` as the event name `true` or `false`, so `transitions: { true: a, false: b }` works without quotes. YAML 1.1 tools (PyYAML, some editors) also read `on`, `yes` and `no` as booleans, the "Norway problem" `serde_norway` is named after. decree reads them as strings.
 
 Unknown keys fail validation everywhere: at the root, in a state, a `data` entry, a long-form transition, every `invoke` object and every condition, so a misspelled key never falls back to another meaning (V19). A condition's `<value>` is a literal (int, float, string, bool) or `{ data: <name> }`; floats appear only in `confidence` conditions.
+
+**Style.** Decision invokes, and anything holding prose (`question`, `description`), use block style. Short structural maps (`transitions: { done: verify }`, `{ final: true }`) may stay inline. Inside a state, keys go in this order: `description`, `invoke`, `onentry`, `onexit`, `transitions`, `emits`, then `initial` and `states` for a compound state. Defaults are not written out (no `max_attempts: 1`).
 
 ## Validation
 
@@ -230,18 +244,18 @@ Unknown keys fail validation everywhere: at the root, in a state, a `data` entry
 | V5 | A root-level final state named `failed` exists. |
 | V6 | Compound states have `initial` and `states`, and no `invoke`. |
 | V7 | Final states have only `final`, `description`, `onentry` and `emits`. |
-| V8 | Decision and sub-machine states cover their events: a `check` state handles `yes` and `no`; a `choose: model` state with `min_confidence` handles `unsure`; a `choose` state has a `question` and at least two options, each with a `description`; a `machine` state handles every root final state of the child except `failed`. |
-| V9 | Every `input` names a state with a script invoke. A `matches` check without `input` is in a machine that has a script state before it on some path. |
-| V10 | Every condition has exactly one subject (`matches`, `visits`, `data` or `confidence`) and, except for a bare `matches`, exactly one operator; `visits` names an atomic state; `confidence` names a `choose: model` state and compares to a number from 0 to 1; `data` names existing data, compared to a value of its type, or with `matches` to a regex when its type is `string`; every `matches` compiles as a regular expression. |
+| V8 | Decision and sub-machine states cover their events: a `check` state handles `true` and `false`; a `model` state with `min_confidence` handles `unsure`; a `model` or `person` state has a `question` and at least two options, each with a `description`; a `machine` state handles every root final state of the child except `failed`. |
+| V9 | Every `output`, in a condition or a `model`, names a state with a script invoke. |
+| V10 | Every condition has exactly one subject (`output`, `data`, `visits` or `confidence`) and exactly one operator that subject takes; `visits` names an atomic state; `confidence` names a `model` state and compares to a number from 0 to 1; `data` names existing data, compared to a value of its type, or with `matches` to a regex when its type is `string`; every `matches` compiles as a regular expression. |
 | V11 | Every state is reachable from root `initial`, and every non-final state can reach a root-level final state. |
-| V12 | Every script name (`invoke`, `ask`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file ([Resolution](scripts.md#resolution)). |
+| V12 | Every script name (`script`, `ask`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file ([Resolution](scripts.md#resolution)); a `person` has an `ask` script. |
 | V13 | Every `emits` entry is an existing machine name. |
 | V14 | Every `data` default matches its `type`. |
 | V15 | Every compound state with a final child handles `done.state.<id>`, itself or through an ancestor, so the run cannot stall. |
-| V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `choose: model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; `max_attempts` only on script states. |
+| V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; `max_attempts` and `timeout_s` appear only inside a `script` invoke (and `timeout_s` inside a `person`), which the parser enforces with V19. |
 | V17 | `type: internal` appears only on a compound state's transition whose target is one of its descendants. |
-| V18 | Event names follow the Rules; no reserved name is a script-printed event or a `choose` option. |
-| V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. |
+| V18 | Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-printed event or a `model` or `person` option. |
+| V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `person:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` or `timeout_s` on a state (inside `invoke: { script: … }`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`). |
 | V20 | No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others. |
 | V21 | Within one state, no transition's event equals another's followed by `.` and more (`done` and `done.state.work`), so at most one of a state's transitions matches any event. |
 | M1 | Every pending migration (not in `processed.md`) parses, names a known machine in `machine:` (or `routine:`), and has valid `params` for that machine's `data`. |

@@ -68,3 +68,4 @@
 68-v05-src-review.md
 69-finished-runs-from-the-last-line.md
 70-decree-prune.md
+71-one-shape-per-machine-key.md

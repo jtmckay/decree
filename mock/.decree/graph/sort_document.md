@@ -16,10 +16,10 @@ stateDiagram-v2
     big_model --> file_other: other (model)
     big_model --> file_receipt: receipt (model)
     big_model --> worth_asking: unsure (model)
-    by_name --> read_text: no (check)
-    by_name --> file_invoice: yes (check)
-    by_text --> local_model: no (check)
-    by_text --> file_invoice: yes (check)
+    by_name --> read_text: false (check)
+    by_name --> file_invoice: true (check)
+    by_text --> local_model: false (check)
+    by_text --> file_invoice: true (check)
     file_invoice --> done: done
     file_invoice --> failed: error (implicit)
     file_other --> done: done
@@ -33,8 +33,8 @@ stateDiagram-v2
     local_model --> big_model: unsure (model: local_router)
     read_text --> by_text: done
     read_text --> failed: error (implicit)
-    worth_asking --> set_aside: no (check)
-    worth_asking --> ask_person: yes (check)
+    worth_asking --> set_aside: false (check)
+    worth_asking --> ask_person: true (check)
     done --> [*]
     failed --> [*]
     set_aside --> [*]
@@ -48,7 +48,7 @@ stateDiagram-v2
         check: data file matches '^scans/invoice-[0-9]+\.pdf$'
     end note
     note right of by_text
-        check: matches '(?i)invoice (no|number)[.:]'
+        check: output read_text matches '(?i)invoice (no|number)[.:]'
     end note
     note right of local_model
         model: local_router, min_confidence 0.9

@@ -43,7 +43,7 @@ Run so far:
 - precheck: done
 - implement: done
 - verify: fail
-- rounds_left: yes
+- rounds_left: true
 
 Options:
 - retry: The failures look fixable; implement again.

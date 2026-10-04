@@ -7,19 +7,27 @@ initial: classify
 states:
   classify:                        # a model picks one option; if it fails twice: error -> failed
     description: The request is in the message body. Decide which kind of work it is.
-    invoke: { choose: model, question: "What kind of work is this request?" }
+    invoke:
+      model:
+        question: What kind of work is this request?
     transitions:
-      small_change: { target: to_develop, description: "A small, self-contained code change with no formal spec." }
-      feature:      { target: to_feature, description: A feature with acceptance criteria that should be verified and committed. }
-      reject:       { target: rejected,   description: "Not actionable, or not a code change." }
+      small_change:
+        target: to_develop
+        description: A small, self-contained code change with no formal spec.
+      feature:
+        target: to_feature
+        description: A feature with acceptance criteria that should be verified and committed.
+      reject:
+        target: rejected
+        description: Not actionable, or not a code change.
   to_develop:
     invoke: forward
-    emits: [develop]
     transitions: { done: done }
+    emits: [develop]
   to_feature:
     invoke: forward
-    emits: [feature]
     transitions: { done: done }
+    emits: [feature]
   done:     { final: true }
   rejected: { final: true }
   failed:   { final: true }

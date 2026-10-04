@@ -5,9 +5,10 @@ onexit: [root_exit]
 initial: a
 states:
   a:
+    invoke:
+      check: { visits: a, less_than: 2 }
     onentry: [a_entry]
-    invoke: { check: { visits: a, less_than: 2 } }
     onexit: [a_exit]
-    transitions: { yes: a, no: done }
+    transitions: { true: a, false: done }
   done:   { final: true, onentry: [done_entry] }
   failed: { final: true, onentry: [failed_entry] }

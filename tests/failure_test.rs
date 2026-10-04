@@ -55,11 +55,14 @@ description: Let a router pick.
 initial: decide
 states:
   decide:
-    invoke: { choose: model, question: \"Ship or rework?\", min_confidence: 0.8 }
+    invoke:
+      model:
+        question: Ship or rework?
+        min_confidence: 0.8
     transitions:
       ship: { target: shipped, description: Ship it. }
       rework: { target: reworked, description: Rework it. }
-      unsure: { target: unsure_end }
+      unsure: unsure_end
   shipped: { final: true }
   reworked: { final: true }
   unsure_end: { final: true }

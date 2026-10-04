@@ -59,7 +59,7 @@ pub enum Command {
         params: Vec<String>,
     },
 
-    /// Reply to a run waiting in a `choose: person` state
+    /// Reply to a run waiting in a `person` state
     Event {
         /// Wait id (<run id>.w<seq>), or run id meaning its current wait
         target: String,

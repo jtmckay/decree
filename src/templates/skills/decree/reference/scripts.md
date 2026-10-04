@@ -88,7 +88,7 @@ EOF
 | `DECREE_EVENTS` | Events the current state accepts, space-separated. |
 | `DECREE_PARENT` | In a child run, the parent run's id. |
 | `DECREE_REQUEST`, `DECREE_REPLY` | In a router run: the request JSON to read and the reply JSON to write. |
-| `DECREE_WAIT_ID`, `DECREE_QUESTION`, `DECREE_CHOICES` | For a `choose: person` `ask` script: the wait id, the question, and a JSON file of options and descriptions. |
+| `DECREE_WAIT_ID`, `DECREE_QUESTION`, `DECREE_CHOICES` | For a `person` `ask` script: the wait id, the question, and a JSON file of options and descriptions. |
 | `DECREE_RECEIVED` | The last reply this run received (`runs/<id>/received/<file>`), or empty. |
 | `DECREE_DATA_<NAME>` | Each `data` value: the message's `params`, else the default. |
 

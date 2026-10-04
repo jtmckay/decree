@@ -7,18 +7,18 @@ states:
   p:
     onentry: [p_entry]
     onexit: [p_exit]
-    initial: a
     transitions:
       pass: { target: b, type: internal }
+    initial: a
     states:
       a:
-        onentry: [a_entry]
         invoke: a_invoke                 # prints pass
+        onentry: [a_entry]
         onexit: [a_exit]
         transitions: { done: b }
       b:
-        onentry: [b_entry]
         invoke: b_invoke
+        onentry: [b_entry]
         onexit: [b_exit]
         transitions: { done: done }
   done:   { final: true, onentry: [done_entry] }

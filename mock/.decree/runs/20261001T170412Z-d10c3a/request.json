@@ -22,9 +22,9 @@
   "input": "ACME OFFICE SUPPLY                     Order 88213\n1 x Toner cartridge, black            $64.00\nSubtotal $64.00   Tax $5.28   Total $69.28\nCard ending 4417   Status: PAID   Balance due: $0.00\nQuestions about this order? billing@acme.example\n",
   "message_body": "Scanned on the office scanner, tray 2.\n",
   "history": [
-    "by_name: no",
+    "by_name: false",
     "read_text: done",
-    "by_text: no",
+    "by_text: false",
     "local_model: unsure"
   ],
   "min_confidence": 0.7

@@ -5,10 +5,10 @@
 //!
 //! Interpreted here: the whole SCXML subset (docs/reference/machines.md). Transitions on compound states, with
 //! events bubbling from the atomic state outward; `type: internal`; final states at any
-//! level, a nested one raising `done.state.<parent>`; `choose: person`, which runs its
+//! level, a nested one raising `done.state.<parent>`; `person`, which runs its
 //! `ask` script, appends `waiting` and stops until a `received` event continues the run;
 //! and child runs (docs/reference/runs.md, Sub-machines): a `machine` invoke, and the router machine of
-//! a `choose: model` invoke. Replies and timeouts are delivered by `reply`.
+//! a `model` invoke. Replies and timeouts are delivered by `reply`.
 //!
 //! Each run is stepped under its run lock (docs/reference/messages.md, Run lock). `recover` is what
 //! `process` and `daemon` do first: it marks runs a crash left behind `interrupted` and
@@ -35,7 +35,7 @@ use crate::events::{
 };
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
-use crate::machine::{event_matches, ChooseKind, Invoke, LoadedMachine, FAILED};
+use crate::machine::{event_matches, Invoke, LoadedMachine, FAILED};
 use crate::message::{Message, MessageError, RunLock, LOCK_FILE};
 use crate::runtime::{
     data_env, Executor, InvokeEvent, Phase, RouterFiles, RunInfo, RuntimeError, ScriptRun,
@@ -134,10 +134,10 @@ pub enum Outcome {
     /// SIGINT or SIGTERM stopped a script in this state; an `interrupted` event was
     /// appended (docs/reference/messages.md, Stopping).
     Interrupted(String),
-    /// The run entered this `choose: person` state, its `ask` script ran, and a `waiting`
+    /// The run entered this `person` state, its `ask` script ran, and a `waiting`
     /// event was appended. A reply must name `wait_id` (docs/reference/messages.md, Replies).
     Waiting { state: String, wait_id: String },
-    /// The run waits in this `machine` or `choose: model` state for child run `child`, which
+    /// The run waits in this `machine` or `model` state for child run `child`, which
     /// stopped with `outcome` before finishing: it waits for a reply itself, or was
     /// interrupted. The run continues when the child finishes (docs/reference/runs.md, Sub-machines).
     Child {
@@ -346,7 +346,7 @@ impl<'a> Interpreter<'a> {
             })?;
             let decision = match invoke {
                 Some(Invoke::Machine(_)) => self.machine_finished(&child, &finished)?,
-                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
+                Some(Invoke::Model(c)) => {
                     let duration_ms = self.child_duration(&child)?;
                     self.model_finished(s, c, &child, &finished, duration_ms)?
                 }
@@ -366,10 +366,8 @@ impl<'a> Interpreter<'a> {
             }
             return self.step_from(s, Some(Decision::new(&event, "machine", None)));
         }
-        if invoke.and_then(|i| i.choose(ChooseKind::Person)).is_none() {
-            return Err(not_received(
-                "its current state is not a `choose: person` state",
-            ));
+        if !matches!(invoke, Some(Invoke::Person(_))) {
+            return Err(not_received("its current state is not a `person` state"));
         }
         let decision = self.person_received(s, &events, &event)?;
         self.step_from(s, Some(decision))
@@ -477,8 +475,8 @@ impl<'a> Interpreter<'a> {
                 }))
             }
             Some(Invoke::Check(check)) => self.check(s, check).map(Invoked::Event),
-            Some(Invoke::Choose(c)) if c.choose == ChooseKind::Person => self.ask(s, c),
-            Some(Invoke::Choose(c)) => self.choose_model(s, c),
+            Some(Invoke::Model(c)) => self.ask_model(s, c),
+            Some(Invoke::Person(c)) => self.ask(s, c),
             Some(Invoke::Machine(invoke)) => self.invoke_machine(s, invoke),
         }
     }

@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::machine::{ChooseKind, Invoke, LoadedMachine, FAILED, MACHINES_DIR, ROUTER_MACHINE};
+use crate::machine::{Invoke, LoadedMachine, FAILED, MACHINES_DIR, ROUTER_MACHINE};
 
 /// The file `decree graph` writes for the whole system, beside one per machine.
 pub const SYSTEM_FILE: &str = "system.md";
@@ -108,12 +108,12 @@ fn invoke_suffix(invoke: &Invoke, is_error: bool) -> String {
         Invoke::Script(_) => String::new(),
         Invoke::Check(_) => " (check)".into(),
         _ if is_error => String::new(),
-        Invoke::Choose(c) => match (c.choose, &c.router) {
-            (ChooseKind::Model, Some(router)) => format!(" (model: {router})"),
-            (ChooseKind::Model, None) => " (model)".into(),
-            (ChooseKind::Person, _) => " (person)".into(),
+        Invoke::Model(model) => match &model.router {
+            Some(router) => format!(" (model: {router})"),
+            None => " (model)".into(),
         },
-        Invoke::Machine(mi) => format!(" (machine: {})", mi.machine),
+        Invoke::Person(_) => " (person)".into(),
+        Invoke::Machine(mi) => format!(" (machine: {})", mi.name),
     }
 }
 
@@ -132,8 +132,8 @@ fn notes(m: &LoadedMachine, out: &mut String) {
     for node in m.nodes.iter().skip(1) {
         let mut lines = Vec::new();
         match &node.invoke {
-            Some(Invoke::Check(c)) => lines.push(format!("check: {}", c.check)),
-            Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
+            Some(Invoke::Check(c)) => lines.push(format!("check: {c}")),
+            Some(Invoke::Model(c)) => {
                 let router = c.router.as_deref().unwrap_or(ROUTER_MACHINE);
                 let mut line = format!("model: {router}");
                 if let Some(n) = c.min_confidence {
@@ -141,8 +141,8 @@ fn notes(m: &LoadedMachine, out: &mut String) {
                 }
                 lines.push(line);
             }
-            Some(Invoke::Machine(mi)) => lines.push(format!("machine: {}", mi.machine)),
-            Some(Invoke::Choose(c)) => {
+            Some(Invoke::Machine(mi)) => lines.push(format!("machine: {}", mi.name)),
+            Some(Invoke::Person(c)) => {
                 lines.push(format!("person: {}", c.ask.as_deref().unwrap_or_default()))
             }
             Some(Invoke::Script(_)) | None => {}
@@ -201,7 +201,7 @@ fn container(
 }
 
 /// Whether to draw ` (implicit)` `error` to `failed`: a non-final atomic state that
-/// invokes a script, a machine, `choose: model` or `choose: person`, or has an `onentry`,
+/// invokes a script, a machine, a `model` or a `person`, or has an `onentry`,
 /// where nothing in its chain handles `error`. A `check` cannot fail.
 fn implicit_error(m: &LoadedMachine, i: usize) -> bool {
     let node = &m.nodes[i];
@@ -315,11 +315,11 @@ mod tests {
     fn decision_labels_and_notes() {
         let m = load(
             "m",
-            "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    invoke: { check: { matches: '<ok>' }, input: s }\n    transitions: { yes: b, no: s }\n  s:\n    invoke: s\n    transitions: { done: a }\n  b:\n    invoke: { choose: model, question: \"Q?\", router: picker }\n    transitions:\n      go: { target: c, description: Go. }\n      stop: { target: done, description: Stop. }\n      error: failed\n  c:\n    invoke: { machine: child }\n    onentry: [prep]\n    transitions: { done: done, error: failed }\n  done: { final: true }\n  failed: { final: true }\n",
+            "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    invoke:\n      check: { output: s, matches: '<ok>' }\n    transitions: { true: b, false: s }\n  s:\n    invoke: s\n    transitions: { done: a }\n  b:\n    invoke:\n      model: { question: Q?, router: picker }\n    transitions:\n      go: { target: c, description: Go. }\n      stop: { target: done, description: Stop. }\n      error: failed\n  c:\n    invoke: { machine: child }\n    onentry: [prep]\n    transitions: { done: done, error: failed }\n  done: { final: true }\n  failed: { final: true }\n",
         );
         assert_eq!(
             state_diagram(&m).unwrap(),
-            "stateDiagram-v2\n    [*] --> a\n    a --> s: no (check)\n    a --> b: yes (check)\n    b --> failed: error\n    b --> c: go (model: picker)\n    b --> done: stop (model: picker)\n    c --> done: done (machine: child)\n    c --> failed: error\n    s --> a: done\n    s --> failed: error (implicit)\n    done --> [*]\n    failed --> [*]\n    note right of a\n        check: matches '<ok>'\n    end note\n    note right of b\n        model: picker\n    end note\n    note right of c\n        machine: child\n        onentry: prep\n    end note\n"
+            "stateDiagram-v2\n    [*] --> a\n    a --> s: false (check)\n    a --> b: true (check)\n    b --> failed: error\n    b --> c: go (model: picker)\n    b --> done: stop (model: picker)\n    c --> done: done (machine: child)\n    c --> failed: error\n    s --> a: done\n    s --> failed: error (implicit)\n    done --> [*]\n    failed --> [*]\n    note right of a\n        check: output s matches '<ok>'\n    end note\n    note right of b\n        model: picker\n    end note\n    note right of c\n        machine: child\n        onentry: prep\n    end note\n"
         );
     }
 

@@ -3,7 +3,8 @@ description: Run a child machine; the final state it reaches is the event.
 initial: build
 states:
   build:
-    invoke: { machine: step_child, params: { label: release } }
+    invoke:
+      machine: { name: step_child, params: { label: release } }
     onexit: [build_exit]
     transitions: { done: done, rejected: rejected }
   done:     { final: true }

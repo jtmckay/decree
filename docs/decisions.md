@@ -49,6 +49,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 | [D41](#d41-q15-a-machine-can-invoke-another-machine) | Q15: a machine can invoke another machine | Open questions |
 | [D42](#d42-q16-scripts-do-not-run-inside-tmux) | Q16: scripts do not run inside tmux | Open questions |
 | [D43](#d43-delete-finished-runs-on-request-never-automatically) | Delete finished runs on request, never automatically | Migration 70 |
+| [D44](#d44-one-shape-per-machine-key) | One shape per machine key | Migration 71 |
 
 ## D1: Machines follow SCXML
 
@@ -78,7 +79,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 
 **Context.** A `choose: model` decision has to ask some model. The spike first decided that a router is a command named in `config.yml`, which reads a rendered prompt or a JSON request on stdin and prints a reply. That kept decree free of HTTP clients, but put prompts, retries and budgets in configuration that could not be seen, validated or drawn like the rest of the workflow.
 
-**Decision.** A router is an ordinary machine. decree writes `request.json` in a child run's folder, runs the router machine as that child run, and reads and validates `reply.json` ([Choose: model](reference/runs.md#choose-model)). This supersedes the spike's command design (its R1, R2, R3, R6 and R7 as first recorded) and the `routers:` and `default_router` keys of `config.yml`.
+**Decision.** A router is an ordinary machine. decree writes `request.json` in a child run's folder, runs the router machine as that child run, and reads and validates `reply.json` ([Model](reference/runs.md#model)). This supersedes the spike's command design (its R1, R2, R3, R6 and R7 as first recorded) and the `routers:` and `default_router` keys of `config.yml`.
 
 **Consequences.** Routers are replaceable and visible like any machine: their own runs, logs, events and graphs. Any backend and any language fit. decree contains no model code. A router can itself escalate between models. Evidence: `759fa59` (questions table changed to "a router is a machine"), `8074a50` and `aa4139b` (implemented), `docs/spikes/router.md` at `32223bb` (both versions of the record).
 
@@ -104,7 +105,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 
 **Decision.** `min_confidence` on `choose: model`: below it, or with no confidence reported, the state's event is `unsure`, an ordinary event the machine must handle (V8). Escalating to a person is a transition from `unsure` to a `choose: person` state. There are no bands in the invoke; a `confidence` check after `unsure` splits further when wanted.
 
-**Consequences.** The threshold sits where the decision is made, and escalation shows in the machine and its graph. Confidence is the router's own number, so a threshold is calibrated per router ([Choose: model](reference/runs.md#choose-model)). Evidence: `759fa59`, `aa4139b`.
+**Consequences.** The threshold sits where the decision is made, and escalation shows in the machine and its graph. Confidence is the router's own number, so a threshold is calibrated per router ([Model](reference/runs.md#model)). Evidence: `759fa59`, `aa4139b`.
 
 ## D8: Asking a person is `choose: person` plus a reply message
 
@@ -118,7 +119,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 
 **Context.** A router needs enough to decide, and no more: secrets must stay out of prompts, and the input must be explainable. The first record had decree cut the input and body to a router's `max_input_bytes`.
 
-**Decision.** The request holds the machine and state with their descriptions, the question, the options with descriptions, `min_confidence`, the input state's output, the message body and the run's history ([Choose: model](reference/runs.md#choose-model)). A script chooses what the model sees by what it prints. Trimming to a model's budget is the router's job.
+**Decision.** The request holds the machine and state with their descriptions, the question, the options with descriptions, `min_confidence`, the input state's output, the message body and the run's history ([Model](reference/runs.md#model)). A script chooses what the model sees by what it prints. Trimming to a model's budget is the router's job.
 
 **Consequences.** Secrets stay out by design, not by redaction. `input` and `message_body` stay separate, so a router can pass structured context (Jev's `state` takes any JSON). The request is versioned (`v: 1`), so fields such as attachments can be added without breaking routers. Evidence: `759fa59`, `8074a50`.
 
@@ -393,3 +394,19 @@ What decree does is in the [reference](reference/README.md). The construction pl
 **Decision.** `decree prune --older-than <age> [--dry-run]` deletes the folders of finished runs whose `run_finished` event is older than `<age>`, and nothing else ever deletes a run ([cli.md](reference/cli.md)). The age is required, so a bare `decree prune` deletes nothing. It keeps runs that are not finished, migrations that ended in `failed`, and children of unfinished parents, and it takes the run lock before deleting. No archive: it would only move the growth.
 
 **Consequences.** Retention is the log store's job, and the local `runs/` is a working copy; a project that ships nothing keeps every run until someone prunes. `decree status <id>` and `decree retry` cannot reach a pruned run. Evidence: migration 70.
+
+## D44: One shape per machine key
+
+**Context.** The machine format had places where one idea took several shapes. `invoke` named its kind three ways: a bare string was a script, `check:` and `machine:` were keys, and `choose: model` and `choose: person` were values, each with its own sibling fields. Where a check's text came from was implicit: `{ matches: re }` read the `input:` state named beside `check:`, or, without one, whichever script ran last, and `matches` was both a subject and an operator. A check produced `yes` or `no` where a reader expects true and false. `max_attempts` and a script's `timeout_s` sat on the state while a person's `timeout_s` sat inside `invoke`. And the examples wrote prose inside flow maps, where an unquoted `?` or `, ` breaks YAML. People and models had to guess which shape a key took. Prior art for naming a kind by its key: serde's externally tagged enums (`{ variant: value }`, a map with one key), and GitHub Actions steps, which are a `uses:` step or a `run:` step by the key that is present.
+
+**Decision.** One shape per key, explicit over implicit ([Invoke](reference/machines.md#invoke-the-states-function)):
+
+- `invoke` is a map with exactly one key, which names the kind: `script`, `check`, `model`, `person` or `machine`. `invoke: <name>` is short for `invoke: { script: <name> }`, and a bare name under `script` or `machine` is short for `{ name: <name> }`.
+- A check's events are `true` and `false`. YAML 1.2 reads `true:` and `false:` as booleans; decree reads a boolean key in `transitions` as that event name, so no quotes are needed.
+- A condition has exactly one subject and one operator. `output: <state>` is the subject that reads a state's script output, and `matches` is only an operator. A `model` reads the state named by its `output`, or nothing: there is no fallback to the most recent script.
+- Script settings (`max_attempts`, `timeout_s`) sit inside the script invoke, as a person's `timeout_s` sits inside `person`.
+- Machines write decision invokes and prose in block style.
+
+No old shape is accepted: `choose`, `input`, a bare `matches`, a state-level `max_attempts` or `timeout_s`, and `{ machine: x, params }` each fail V19 with a message that names the new shape. Nothing old is read or translated. This supersedes the syntax in [D5](#d5-each-choose-model-names-its-router-or-uses-the-machine-named-router), [D8](#d8-asking-a-person-is-choose-person-plus-a-reply-message) and [D12](#d12-ai-and-people-decide-only-where-a-machine-says-choose) (the decisions stand; `choose: model` is now `model:` and `choose: person` is now `person:`), and the input fallback in [D9](#d9-what-the-router-request-holds).
+
+**Consequences.** A reader knows an invoke's kind from its one key and a condition's text from its named `output`, so a machine reads the same to a person and a model, and a JSON Schema can describe each kind on its own (migration 72). Every machine, recorded check event and doc example changed once, before 0.5 is released. A model state that names no `output` gets an empty `input`, so its prompt holds only what the machine names. Evidence: migration 71.

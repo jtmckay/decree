@@ -5,23 +5,20 @@ initial: precheck
 states:
   precheck:                        # fails fast if claude or cargo is not on PATH
     invoke: precheck
-    max_attempts: 1
     transitions: { done: implement }
   implement:                       # logs each step in progress.md; writes STOP instead of guessing
-    invoke: implement
-    max_attempts: 3
+    invoke:
+      script: { name: implement, max_attempts: 3 }
     transitions: { done: gate, stop: failed }
   gate:                            # cargo fmt --check, clippy -D warnings and test, kept in gate.log
     invoke: gate
-    max_attempts: 1
     transitions: { done: done, error: qa }
   qa:                              # Claude fixes what gate.log reports
-    invoke: qa
-    max_attempts: 3
+    invoke:
+      script: { name: qa, max_attempts: 3 }
     transitions: { done: final_gate, stop: failed }
   final_gate:                      # the gate again; if it fails, so does the run
     invoke: gate
-    max_attempts: 1
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

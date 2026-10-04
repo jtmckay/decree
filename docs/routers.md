@@ -1,17 +1,22 @@
 # Router machines
 
-A `choose: model` state asks a **router**: an ordinary machine that reads a request, asks a model however it likes, and writes a reply ([Choose: model](reference/runs.md#choose-model)). decree writes the request, runs the router as a child run, and validates the reply. Prompts, models, retries and budgets all live in the router, so changing how a decision is made is a machine and script edit, never a decree release.
+A `model` state asks a **router**: an ordinary machine that reads a request, asks a model however it likes, and writes a reply ([Model](reference/runs.md#model)). decree writes the request, runs the router as a child run, and validates the reply. Prompts, models, retries and budgets all live in the router, so changing how a decision is made is a machine and script edit, never a decree release.
 
 This page shows router machines for several backends. Running a model server is outside decree: these routers only talk to one (see `docs/services.md` for running services next to decree).
 
 ## The contract
 
-A router is any machine. A state picks one with `router: <machine>`; without it, the machine named `router` is used, which `decree init` writes (`decree check` fails V16 if a `choose: model` names no router and there is no `machines/router.yml`):
+A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, which `decree init` writes (`decree check` fails V16 if a `model` names no router and there is no `machines/router.yml`):
 
 ```yaml
 # machines/sort_document.yml
 local_model:
-  invoke: { choose: model, router: local_router, question: "Which kind of document is this?", min_confidence: 0.9 }
+  invoke:
+    model:
+      question: Which kind of document is this?
+      router: local_router
+      min_confidence: 0.9
+      output: read_text
 ```
 
 Its scripts get two extra variables ([Environment](reference/scripts.md#environment)):
@@ -34,13 +39,13 @@ Its scripts get two extra variables ([Environment](reference/scripts.md#environm
     {"event": "split", "description": "The scope is too large; emit smaller follow-up messages."}
   ],
   "min_confidence": 0.8,
-  "input": "<the input state's output>",
+  "input": "<the output state's output>",
   "message_body": "<the parent message's body>",
-  "history": ["precheck: done", "implement: done", "verify: fail", "rounds_left: yes"]
+  "history": ["precheck: done", "implement: done", "verify: fail", "rounds_left: true"]
 }
 ```
 
-`options` are the state's transitions except `unsure` and `error`, in name order. `min_confidence` is present only when the state sets it; decree applies it, so a router only reports. `input` is what the input state's script printed: a script decides what the model sees, which is also how secrets stay out of a prompt.
+`options` are the state's transitions except `unsure` and `error`, in name order. `min_confidence` is present only when the invoke sets it; decree applies it, so a router only reports. `input` is what the invoke's `output` state's script printed, and empty when it names no `output`: a script decides what the model sees, which is also how secrets stay out of a prompt.
 
 **Reply** (`reply.json`, written by the router):
 
@@ -68,7 +73,7 @@ The `decision` event records the router, the router's run id (`child_run`), the 
 | TypeSafe Jev | Computed from the shape of its probability distribution over the options. |
 | GLiNER2.5-Decide | The classifier's score for the label it picks. |
 
-So a threshold only means something for the router it was set with. When a state switches to another router, or `machines/router.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, [Observability](reference/observability.md)) before trusting it.
+So a threshold only means something for the router it was set with. When a `model` invoke switches to another router, or `machines/router.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, [Observability](reference/observability.md)) before trusting it.
 
 ## Claude, Copilot and OpenCode (written by `decree init`)
 
@@ -81,8 +86,8 @@ description: Ask Claude to pick one of the options in the request.
 initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
-    invoke: ask_claude
-    max_attempts: 2                # a reply that is not one of the options fails the script; it runs once more
+    invoke:                        # a reply that is not one of the options fails the script; it runs once more
+      script: { name: ask_claude, max_attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
@@ -119,8 +124,8 @@ description: Ask TypeSafe Jev to choose one of the options in the request.
 initial: ask
 states:
   ask:
-    invoke: ask_jev
-    max_attempts: 2                # network errors: try once more
+    invoke:                        # network errors: try once more
+      script: { name: ask_jev, max_attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
@@ -222,7 +227,7 @@ jq '{probabilities: .} + (to_entries | max_by(.value) | {event: .key, confidence
 
 ## OpenAI Decisions API (pending)
 
-OpenAI's Decisions API takes context and questions with fixed answer lists and returns one answer per question, which is the same shape as a `choose: model` request. As of 2026-10-02 it is in limited preview, and its schema, endpoint and pricing are not published. A router for it will be the same two-file pattern as `jev_router`: `question` as the question, the options as its answers, `input` and `message_body` as context, and the answer back as `event`, with a confidence if the API reports one. This section will get its machine and script once the schema is public.
+OpenAI's Decisions API takes context and questions with fixed answer lists and returns one answer per question, which is the same shape as a `model` request. As of 2026-10-02 it is in limited preview, and its schema, endpoint and pricing are not published. A router for it will be the same two-file pattern as `jev_router`: `question` as the question, the options as its answers, `input` and `message_body` as context, and the answer back as `event`, with a confidence if the API reports one. This section will get its machine and script once the schema is public.
 
 ## A self-hosted LLM
 
@@ -254,4 +259,4 @@ jq -e '(.confidence // 0) >= 0.85' "$DECREE_REPLY" > /dev/null && echo '{"event"
 exit 0
 ```
 
-The `0.85` belongs to the cheap model, and the `min_confidence` on the deciding state then applies to whichever model answered last; calibrate both. The same ladder can also be built in the deciding machine instead, with two `choose: model` states and an `unsure` transition between them, as `sort_document` in `mock/` does; that puts the escalation in the main machine's graph rather than inside the router.
+The `0.85` belongs to the cheap model, and the `min_confidence` on the deciding state then applies to whichever model answered last; calibrate both. The same ladder can also be built in the deciding machine instead, with two `model` states and an `unsure` transition between them, as `sort_document` in `mock/` does; that puts the escalation in the main machine's graph rather than inside the router.

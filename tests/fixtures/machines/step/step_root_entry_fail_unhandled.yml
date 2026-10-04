@@ -5,8 +5,8 @@ onexit: [root_exit]
 initial: a
 states:
   a:
-    onentry: [a_entry]
     invoke: a_invoke
+    onentry: [a_entry]
     onexit: [a_exit]
     transitions: { done: done }
   done:   { final: true, onentry: [done_entry] }

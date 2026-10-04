@@ -5,10 +5,9 @@ onexit: [root_exit]
 initial: a
 states:
   a:
-    onentry: [a_entry]
     invoke: a_invoke_fail
+    onentry: [a_entry]
     onexit: [a_exit]
-    max_attempts: 1
     transitions: { done: done }
   done:   { final: true, onentry: [done_entry] }
   failed: { final: true, onentry: [failed_entry] }

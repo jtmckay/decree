@@ -21,7 +21,7 @@ use serde_json::{json, Map, Value};
 
 use crate::events::{timestamp, EventLog, EVENTS_FILE};
 use crate::layout::MESSAGE_FILE;
-use crate::machine::{is_reserved_event, DataSpec, LoadedMachine};
+use crate::machine::{is_reserved_event, DataSpec, LoadedMachine, ScriptInvoke};
 use resolve::{resolve_script, ScriptError};
 
 /// `DECREE_STATE`, and the state in log names, for root `onentry` and `onexit` scripts.
@@ -133,7 +133,7 @@ pub struct RunInfo {
     /// `DECREE_PARENT`: in a child run, the parent run's id.
     pub parent: Option<String>,
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
-    /// where the reply must go (docs/reference/runs.md, Choose: model).
+    /// where the reply must go (docs/reference/runs.md, Model).
     pub router: Option<RouterFiles>,
 }
 
@@ -157,7 +157,7 @@ pub struct ScriptRun<'a> {
     /// `DECREE_EVENTS`: what the state accepts, from `LoadedMachine::accepted_events`.
     pub events: &'a [String],
     /// `DECREE_WAIT_ID`, `DECREE_QUESTION` and `DECREE_CHOICES`: set for the `ask` script of
-    /// a `choose: person` state, empty otherwise.
+    /// a `person` state, empty otherwise.
     pub wait_id: &'a str,
     pub question: &'a str,
     pub choices: &'a Path,
@@ -320,7 +320,7 @@ impl Executor {
         &mut self,
         machine: &LoadedMachine,
         state: usize,
-        script: &str,
+        script: &ScriptInvoke,
         visits: u32,
     ) -> Result<InvokeOutcome, RuntimeError> {
         let node = &machine.nodes[state];
@@ -333,8 +333,8 @@ impl Executor {
                 attempt,
                 max_attempts,
                 events: &events,
-                timeout: node.timeout_s.map(Duration::from_secs),
-                ..ScriptRun::new(script, &node.id, Phase::Invoke)
+                timeout: script.timeout_s.map(Duration::from_secs),
+                ..ScriptRun::new(&script.name, &node.id, Phase::Invoke)
             })?;
             if execution.succeeded() || attempt >= max_attempts {
                 break execution;
@@ -813,7 +813,7 @@ pub(crate) mod executor_tests {
     }
 
     /// The script state `s` of `m` invokes.
-    fn script_of(m: &LoadedMachine) -> &str {
+    fn script_of(m: &LoadedMachine) -> &ScriptInvoke {
         let s = m.find("s").unwrap();
         m.nodes[s].invoke.as_ref().and_then(|i| i.script()).unwrap()
     }
@@ -867,7 +867,7 @@ pub(crate) mod executor_tests {
         let p = Project::new(&["exit_three"]);
         let out = invoke(
             &p,
-            "{ invoke: exit_three, max_attempts: 2, transitions: { done: done } }",
+            "{ invoke: { script: { name: exit_three, max_attempts: 2 } }, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("error"));
         assert_eq!(out.execution.exit_code, Some(3));
@@ -916,7 +916,7 @@ pub(crate) mod executor_tests {
         let p = Project::new(&["print_pass_exit_one"]);
         let out = invoke(
             &p,
-            "{ invoke: print_pass_exit_one, max_attempts: 1, transitions: { done: done, pass: done } }",
+            "{ invoke: print_pass_exit_one, transitions: { done: done, pass: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("error"));
         assert_eq!(out.execution.exit_code, Some(1));
@@ -978,7 +978,7 @@ pub(crate) mod executor_tests {
         let p = Project::new(&["fail_until_final"]);
         let out = invoke(
             &p,
-            "{ invoke: fail_until_final, max_attempts: 3, transitions: { done: done } }",
+            "{ invoke: { script: { name: fail_until_final, max_attempts: 3 } }, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("done"));
         let scripts = p.events_of("script");
@@ -1116,7 +1116,7 @@ pub(crate) mod executor_tests {
     #[test]
     fn root_and_invoke_variables_have_their_defaults() {
         let p = Project::new(&["print_env"]);
-        let m = machine("{ invoke: print_env, max_attempts: 2, transitions: { done: done } }");
+        let m = machine("{ invoke: { script: { name: print_env, max_attempts: 2 } }, transitions: { done: done } }");
         let mut exec = p.executor();
         let out = exec
             .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 4)
@@ -1224,7 +1224,7 @@ pub(crate) mod executor_tests {
         let start = Instant::now();
         let out = invoke(
             &p,
-            "{ invoke: sleep_long, timeout_s: 1, max_attempts: 1, transitions: { done: done } }",
+            "{ invoke: { script: { name: sleep_long, timeout_s: 1 } }, transitions: { done: done } }",
         );
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_secs(12), "took {elapsed:?}");

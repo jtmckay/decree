@@ -16,9 +16,9 @@ Task message:
 Scanned on the office scanner, tray 2.
 
 Run so far:
-- by_name: no
+- by_name: false
 - read_text: done
-- by_text: no
+- by_text: false
 - local_model: unsure
 
 Options:

@@ -61,7 +61,7 @@ Restart=on-failure
 ```ini
 # ~/.config/systemd/user/decide.service
 [Unit]
-Description=GLiNER2.5-Decide on CPU, for choose: model routers
+Description=GLiNER2.5-Decide on CPU, for model routers
 
 [Service]
 ExecStart=%h/bin/serve-decide         # loads the model once, serves decisions over HTTP

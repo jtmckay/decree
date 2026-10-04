@@ -20,7 +20,11 @@ initial: approval
 states:
   approval:
     description: Ship this build?
-    invoke: { choose: person, question: \"Ship this build?\", ask: ask_person, timeout_s: TIMEOUT }
+    invoke:
+      person:
+        question: Ship this build?
+        ask: ask_person
+        timeout_s: TIMEOUT
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }

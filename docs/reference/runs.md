@@ -1,13 +1,13 @@
 # Runs
 
-The interpreter is deterministic everywhere except `choose: model` and `choose: person` states, and even there the chooser can only pick one of the options the state declares, and decree validates the pick.
+The interpreter is deterministic everywhere except `model` and `person` states, and even there the chooser can only pick one of the options the state declares, and decree validates the pick.
 
 ## Step loop
 
 The run's current state is always an atomic state, `S`.
 
 1. **Start or continue.** New run: append the claim event (`type: "transition"`, `from: null`, `event: "claimed"`, `to`: root `initial` followed down to an atomic state), mirror `state`, run root `onentry`, then the `onentry` of each state from root `initial` down to `S`. A `pending` run after `decree retry`: run root `onentry`, then the `onentry` of every ancestor of `S` and of `S` itself, outermost first; scripts must be safe to re-run. A `pending` run after a `received` event (a reply or a timeout): go to step 4 with that event; nothing is re-run, because the run only paused.
-2. **Invoke.** Run `S`'s function ([Invoke](machines.md#invoke-the-states-function)): a script ([scripts.md](scripts.md)), a check, a choice, or a child machine (below). A `machine` or `choose: model` invoke appends `waiting` for its child run and steps the child; when the child finishes, the parent continues at step 4. A `choose: person` invoke appends `waiting`, releases the lock and ends this step; a reply or timeout continues at step 4 ([Replies](messages.md#replies)).
+2. **Invoke.** Run `S`'s function ([Invoke](machines.md#invoke-the-states-function)): a script ([scripts.md](scripts.md)), a check, a model, a person, or a child machine (below). A `machine` or `model` invoke appends `waiting` for its child run and steps the child; when the child finishes, the parent continues at step 4. A `person` invoke appends `waiting`, releases the lock and ends this step; a reply or timeout continues at step 4 ([Replies](messages.md#replies)).
 3. **The event.** An `onentry` failure gives `error`. Otherwise the event is what the function produced. A state with no `invoke` produces `done`.
 4. **Find the target.** Select the transition for the event ([Rules](machines.md#rules)): the state's own, else the nearest ancestor's. An `error` that matches nothing targets `failed`. If the target is compound, follow `initial` down to an atomic or final state. That state is `T`.
 5. **Exit.** Run `onexit` scripts from `S` outward, up to but not including the transition domain ([Rules](machines.md#rules)).
@@ -21,11 +21,11 @@ The run's current state is always an atomic state, `S`.
 
 ## Check
 
-`{ check: <condition> }` evaluates the condition ([Invoke](machines.md#invoke-the-states-function), Conditions) against the input, `data` and visits, appends a `decision` event with the result, and produces `yes` or `no`. No script runs and nothing leaves the machine.
+`check: <condition>` evaluates the condition ([Invoke](machines.md#invoke-the-states-function), Conditions) against the named `output` state's output, `data`, visits or a model's confidence, appends a `decision` event with the result and the condition as written, and produces `true` or `false`. No script runs and nothing leaves the machine.
 
-## Choose: model
+## Model
 
-A `choose: model` invoke asks a **router**: an ordinary machine that answers the question. decree builds the question, runs the router as a child run, and validates the answer; everything about prompts, models, retries and budgets lives in the router, so it can be read, changed and replaced like any machine.
+A `model` invoke asks a **router**: an ordinary machine that answers the question. decree builds the question, runs the router as a child run, and validates the answer; everything about prompts, models, retries and budgets lives in the router, so it can be read, changed and replaced like any machine.
 
 1. **Request.** decree writes `request.json` in the child run's folder:
 
@@ -40,21 +40,21 @@ A `choose: model` invoke asks a **router**: an ordinary machine that answers the
        {"event": "split", "description": "The scope is too large; emit smaller follow-up messages."}
      ],
      "min_confidence": 0.8,
-     "input": "<the input state's output>",
+     "input": "<the output state's output>",
      "message_body": "<the parent message's body>",
-     "history": ["precheck: done", "implement: done", "verify: fail", "rounds_left: yes"]
+     "history": ["precheck: done", "implement: done", "verify: fail", "rounds_left: true"]
    }
    ```
 
-   Options are the state's transitions except `unsure` and `error`, in name order. `input` and `message_body` are kept apart, so a router can pass them on as structured context (Jev's `state` accepts any JSON). `input` is the input state's latest script output, as logged (stdout, and stderr lines with their `[stderr] ` prefix): a script decides what the model sees by what it prints, which is also how to keep secrets out of a prompt. `history` has one `"<from>: <event>"` entry for each `transition` event of this run so far, in order, except the claim.
-2. **Route.** decree starts the router machine (the state's `router:`, else the machine named `router`) as a child run (Sub-machines, below), with `DECREE_REQUEST` and `DECREE_REPLY` set for its scripts.
+   Options are the state's transitions except `unsure` and `error`, in name order. `input` and `message_body` are kept apart, so a router can pass them on as structured context (Jev's `state` accepts any JSON). `input` is the latest script output of the invoke's `output` state, as logged (stdout, and stderr lines with their `[stderr] ` prefix), and empty when the invoke names no `output`: a model sees only what it is given, a script decides what that is by what it prints, and that is also how to keep secrets out of a prompt. `history` has one `"<from>: <event>"` entry for each `transition` event of this run so far, in order, except the claim.
+2. **Route.** decree starts the router machine (the invoke's `router:`, else the machine named `router`) as a child run (Sub-machines, below), with `DECREE_REQUEST` and `DECREE_REPLY` set for its scripts.
 3. **Reply.** The router writes `reply.json`: `{"event": "<one option>", "reason": "…", "confidence": 0.86, "probabilities": {…}}`. Only `event` is required.
 4. **Validate.** If the child run ends in `failed`, or `reply.json` is missing or its `event` is not one of the options, the event is `error` with `router_error`. With `min_confidence` set, a missing or lower `confidence` produces `unsure` instead of the pick. decree appends a `decision` event with the pick, the reason, the confidence and the child run's id. Never fuzzy-match an option.
 
 
 ## The default router
 
-`decree init` writes `machines/router.yml` and its script. It is a normal machine: edit it, replace it, or write another and point a state's `router:` at it. Below is the `--ai claude` version; `--ai copilot` and `--ai opencode` differ only in the script name (`ask_copilot`, `ask_opencode`) and the CLI call ([cli.md](cli.md)).
+`decree init` writes `machines/router.yml` and its script. It is a normal machine: edit it, replace it, or write another and point a `model` invoke's `router:` at it. Below is the `--ai claude` version; `--ai copilot` and `--ai opencode` differ only in the script name (`ask_copilot`, `ask_opencode`) and the CLI call ([cli.md](cli.md)).
 
 ```yaml
 # Graph: ../graph/router.md
@@ -63,8 +63,8 @@ description: Ask Claude to pick one of the options in the request.
 initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
-    invoke: ask_claude
-    max_attempts: 2                # a reply that is not one of the options fails the script; it runs once more
+    invoke:                        # a reply that is not one of the options fails the script; it runs once more
+      script: { name: ask_claude, max_attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
@@ -96,18 +96,18 @@ Options:
 
 `{history}` is one `- <entry>` line per `history` entry; `{input}` and `{message_body}` are inserted as they are.
 
-**Confidence is the router's number.** Jev derives it from its probability distribution; GLiNER2 scores each label; chat models report their own, which is the least reliable. A `min_confidence` is therefore calibrated for one router: when a state switches router, or the `router` machine changes, revisit the threshold. Every `decision` event records the router, so thresholds can be checked against outcomes in Grafana. Other routers are other machines: TypeSafe Jev (hosted), Fastino's GLiNER2.5-Decide (a 1B classifier that runs locally on CPU, Apache-2.0), OpenAI's Decisions API (in preview; its schema is not public yet), a self-hosted LLM (SGLang, vLLM, Ollama), or a machine that asks a cheap model first and a stronger one only when the first is unsure. [Router machines](../routers.md) shows them; running a model server is outside decree.
+**Confidence is the router's number.** Jev derives it from its probability distribution; GLiNER2 scores each label; chat models report their own, which is the least reliable. A `min_confidence` is therefore calibrated for one router: when a `model` invoke switches router, or the `router` machine changes, revisit the threshold. Every `decision` event records the router, so thresholds can be checked against outcomes in Grafana. Other routers are other machines: TypeSafe Jev (hosted), Fastino's GLiNER2.5-Decide (a 1B classifier that runs locally on CPU, Apache-2.0), OpenAI's Decisions API (in preview; its schema is not public yet), a self-hosted LLM (SGLang, vLLM, Ollama), or a machine that asks a cheap model first and a stronger one only when the first is unsure. [Router machines](../routers.md) shows them; running a model server is outside decree.
 
 ## Sub-machines
 
-An `invoke: { machine: <name> }` state, and every `choose: model`, runs a **child run**:
+An `invoke: { machine: <name> }` state, and every `model` invoke, runs a **child run**:
 
-- It is an ordinary run in its own folder, `runs/<child id>/`, so its events and logs are separate and it shows in `decree status` and Grafana like any other. Its `message.md` has `machine`, `parent` (the parent run's id), `depth` (the parent's + 1). If that would exceed `max_depth`, no child starts: the state's event is `error`, with `router_error: "max_depth <n> reached"` on the `decision` event for `choose: model`, and `error: "max_depth <n> reached"` on the `transition` for `machine`, `trigger: invoke`, any `params`, and the parent message's body.
+- It is an ordinary run in its own folder, `runs/<child id>/`, so its events and logs are separate and it shows in `decree status` and Grafana like any other. Its `message.md` has `machine`, `parent` (the parent run's id), `depth` (the parent's + 1). If that would exceed `max_depth`, no child starts: the state's event is `error`, with `router_error: "max_depth <n> reached"` on the `decision` event for `model`, and `error: "max_depth <n> reached"` on the `transition` for `machine`, `trigger: invoke`, any `params`, and the parent message's body.
 - The parent appends a `waiting` event naming the child (`child: <id>`), and the same process steps the child at once. When the child reaches a root final state, decree continues the parent: for a `machine` invoke it appends a `received` event whose event is the child's final state (`failed` becomes `error`); for a router it appends the `decision` event (above). A parent left waiting on a child that has already finished (a crash in between) is `pending`, and continues the same way.
-- If the child pauses (a `choose: person` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree retry` on the child continues both.
+- If the child pauses (a `person` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree retry` on the child continues both.
 - Child runs are never claimed from the inbox, and never count as migrations.
 
-## Choose: person
+## Person
 
 See [Replies](messages.md#replies). The options and their descriptions are written to a JSON file whose path the `ask` script gets as `DECREE_CHOICES`, with the wait id as `DECREE_WAIT_ID`. When the reply is delivered, decree appends a `decision` event (who replied is not known to decree; the reply file is) and takes the transition.
 
@@ -141,7 +141,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `file` | string | Claim event | Original inbox or migration filename. |
 | `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
 
-`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `stdout` is an event the script printed; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `choose: person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.
+`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `stdout` is an event the script printed; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.
 
 **`script`**: one script execution finished. Written after the script exits, before any `transition` it causes.
 
@@ -158,7 +158,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `timed_out` | bool | Timed out | Always `true` when present. |
 | `log` | string | Always | Log filename in the run folder. |
 
-**`decision`**: a `check` or `choose` invoke produced its event. Written before the `transition` it causes.
+**`decision`**: a `check`, `model` or `person` invoke produced its event. Written before the `transition` it causes.
 
 | Field | Type | When | Meaning |
 | --- | --- | --- | --- |
@@ -177,14 +177,14 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `duration_ms` | int | `model` | Wall time of the router run. |
 | `reply` | string | `person` | The reply's filename under `received/`. |
 
-**`waiting`**: the run is paused in a `choose: person` state.
+**`waiting`**: the run is paused in a `person` state.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `state` | string | The `choose: person` state. |
+| `state` | string | The `person` state. |
 | `wait_id` | string | `<run id>.w<seq>`; a reply must name it (or the run id). Absent when waiting for a child. |
 | `child` | string | The child run waited for, when waiting on a sub-machine or a router. |
-| `options` | list of strings | The options, in name order (a `choose: person` wait). |
+| `options` | list of strings | The options, in name order (a `person` wait). |
 | `timeout_at` | string or null | RFC 3339 deadline from `timeout_s`, or `null`. |
 
 **`received`**: an external event arrived for a waiting run.

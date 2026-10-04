@@ -24,7 +24,7 @@
 | `prune_test.rs` | `decree prune`: only finished runs older than the age, `--dry-run`, the runs it keeps (not finished, failed migration, child of an unfinished parent, locked), bad ages, and a pruned migration not run again. |
 | `readme_test.rs` | `README.md` and `--help` describe 0.5 only; every README command runs. |
 | `reply_test.rs` | Replies to waiting runs, `timeout_s`, and `decree event`. |
-| `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, as a table. |
+| `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, plus a failing case for each machine shape that migration 71 replaced (V19), as a table. |
 
 `fixtures/` holds only what is not in `mock/`: the graph `system` project, the 0.4.2 project for the migrate script, the `step_*` machines and the scripts that unit tests in `src/` run, 0.4.2's routines for `develop_test.rs` (`scripts/v0_4_2/`), and the SCXML IRP notes.
 
@@ -45,6 +45,6 @@ Case {
 ```
 
 - `files` are written under `.decree/`: machines, and any `migrations/`, `inbox/`, `cron/` or `processed.md`.
-- Every script a machine names (`invoke`, `ask`, `onentry`, `onexit`) gets an executable stub at `scripts/<name>`. List a script in `scripts` to change that: `Script::Missing("setup")`, `Script::At("m/snapshot.sh")` or `Script::NotExecutable("snapshot.sh")`.
+- Every script a machine names (`invoke`, `script`, `ask`, `onentry`, `onexit`) gets an executable stub at `scripts/<name>`. List a script in `scripts` to change that: `Script::Missing("setup")`, `Script::At("m/snapshot.sh")` or `Script::NotExecutable("snapshot.sh")`.
 - `expected` is the exact stdout of `decree check`, or `PASSES` for exit 0 and no output. Each line of a failing case must end with `(<rule>)`.
 - A new rule also needs a line in `RULES` and in `rule_tests!`; `every_rule_has_a_passing_and_a_failing_case` fails until it has both.

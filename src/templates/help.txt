@@ -9,7 +9,7 @@ decree runs work through state machines. It is built from three blocks:
             report one outcome. Bash by default.
 
 A model or a person only ever picks among the transitions a machine declares,
-in a state that says `choose`.
+in a state that invokes `model` or `person`.
 
 Commands:
   decree init [--ai AI] [--permissions]
@@ -71,28 +71,32 @@ Machines:
       invoke: build               # scripts/deploy/build, else scripts/build
       transitions: { done: approval }
     approval:
-      invoke: { choose: person, question: "Ship it?", ask: ask_person }
+      invoke:
+        person:
+          question: Ship it?
+          ask: ask_person
       transitions:
         approve: { target: ship, description: Ship this build. }
         reject:  { target: rejected, description: Do not ship. }
     ship:
-      invoke: ship
-      max_attempts: 2             # re-run on a non-zero exit
+      invoke:
+        script: { name: ship, max_attempts: 2 }   # re-run on a non-zero exit
       transitions: { done: done }
     done:     { final: true }
     rejected: { final: true }
     failed:   { final: true }     # every machine has one; unhandled errors go here
 
-  A machine is an SCXML statechart written in YAML. A state invokes one of:
-    <script>                                  a script
-    { check: { visits: S, less_than: 3 } }    a condition: yes or no
-    { choose: model, question: "..." }        a router machine asks a model
-    { choose: person, question: "...", ask: <script> }
-                                              a person replies with `decree event`
-    { machine: <name> }                       a child run of another machine
+  A machine is an SCXML statechart written in YAML. `invoke` has one key,
+  which names the kind:
+    <script>, or script: { name: <script>, max_attempts: 2, timeout_s: 600 }
+                                              a script
+    check: { visits: S, less_than: 3 }        a condition: true or false
+    model: { question: ..., output: <state> } a router machine asks a model
+    person: { question: ..., ask: <script> }  a person replies with `decree event`
+    machine: <name>                           a child run of another machine
   Other keys: onentry and onexit (scripts run on entering or leaving a state,
-  or the whole run at the root), data, emits, timeout_s, compound states
-  (initial plus states), and final.
+  or the whole run at the root), data, emits, compound states (initial plus
+  states), and final.
 
 Scripts:
   An invoked script's event is `done` on exit 0 and `error` otherwise, unless
@@ -108,8 +112,8 @@ Scripts:
   DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES.
 
 No configuration file; conventions and fixed limits instead:
-  machines/router.yml             # answers every choose: model that names no router:
-  max_attempts: 3                 # on a script state; default 1 (no retry)
+  machines/router.yml             # answers every model invoke that names no router:
+  max_attempts: 3                 # inside a script invoke; default 1 (no retry)
   max_depth                       # 10: deepest chain of emits and child runs
   script logs                     # each capped at 2 MiB
   Share machines or scripts across projects by symlinking them into machines/

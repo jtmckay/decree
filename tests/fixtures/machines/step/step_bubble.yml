@@ -7,18 +7,18 @@ states:
   outer:
     onentry: [outer_entry]
     onexit: [outer_exit]
-    initial: work
     transitions: { pass: failed }        # hidden by work's own `pass`
+    initial: work
     states:
       work:
         onentry: [work_entry]
         onexit: [work_exit]
-        initial: a
         transitions: { pass: after }
+        initial: a
         states:
           a:
-            onentry: [a_entry]
             invoke: a_invoke             # prints pass, which `a` does not handle
+            onentry: [a_entry]
             onexit: [a_exit]
             transitions: { done: b }
           b:

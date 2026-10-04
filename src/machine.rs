@@ -19,7 +19,7 @@ pub const MACHINES_DIR: &str = "machines";
 /// Root-level final state an unhandled `error` goes to (V5).
 pub const FAILED: &str = "failed";
 
-/// Events a `choose` state handles beside its options (docs/reference/machines.md, Choices).
+/// Events a `model` or `person` state handles beside its options (docs/reference/machines.md, Choices).
 const NOT_OPTIONS: [&str; 2] = ["unsure", "error"];
 
 /// A machine file: one SCXML document (`<scxml>`), written as YAML.
@@ -63,8 +63,6 @@ struct State {
     pub is_final: bool,
     pub description: Option<String>,
     pub invoke: Option<Invoke>,
-    pub max_attempts: Option<u32>,
-    pub timeout_s: Option<u64>,
     #[serde(default)]
     pub onentry: Vec<String>,
     #[serde(default)]
@@ -73,110 +71,166 @@ struct State {
     #[serde(default)]
     pub states: BTreeMap<String, State>,
     #[serde(default)]
-    pub transitions: BTreeMap<String, Transition>,
+    pub transitions: BTreeMap<EventName, Transition>,
     #[serde(default)]
     pub emits: Vec<String>,
 }
 
-/// A state's function, SCXML `<invoke type>` (docs/reference/machines.md, Invoke): a script name, or an
-/// object whose key `machine`, `check` or `choose` names the type.
+/// A state's function, SCXML `<invoke type>` (docs/reference/machines.md, Invoke): a map with
+/// exactly one key, which names the kind, as serde's externally tagged enums. A bare string is
+/// short for `{ script: <name> }`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Invoke {
     /// `decree:script`
-    Script(String),
+    Script(ScriptInvoke),
+    /// `decree:check`, boxed: a condition is much larger than the other kinds.
+    Check(Box<Condition>),
+    /// `decree:model`
+    Model(ModelInvoke),
+    /// `decree:person`
+    Person(PersonInvoke),
     /// SCXML's own type: a child state machine.
     Machine(MachineInvoke),
-    /// `decree:check`
-    Check(CheckInvoke),
-    /// `decree:model` or `decree:person`
-    Choose(ChooseInvoke),
 }
 
-/// `{ machine, params? }`
+/// `{ script: { name, max_attempts?, timeout_s? } }`, or `{ script: <name> }`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MachineInvoke {
-    pub machine: String,
-    #[serde(default)]
-    pub params: serde_norway::Mapping,
+pub struct ScriptInvoke {
+    pub name: String,
+    pub max_attempts: Option<u32>,
+    pub timeout_s: Option<u64>,
 }
 
-/// `{ check, input? }`
+/// `{ model: { question, router?, min_confidence?, output? } }`. `question` is optional
+/// here so that V8, not the parser, reports it missing.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CheckInvoke {
-    pub check: Condition,
-    pub input: Option<String>,
-}
-
-/// `{ choose: model | person, question, router?, min_confidence?, input?, ask?, timeout_s? }`.
-/// `question` is optional here so that V8, not the parser, reports it missing.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ChooseInvoke {
-    pub choose: ChooseKind,
+pub struct ModelInvoke {
     pub question: Option<String>,
     pub router: Option<String>,
     pub min_confidence: Option<f64>,
-    pub input: Option<String>,
+    pub output: Option<String>,
+}
+
+/// `{ person: { question, ask, timeout_s? } }`. `question` and `ask` are optional here so
+/// that V8 and V12, not the parser, report them missing.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonInvoke {
+    pub question: Option<String>,
     pub ask: Option<String>,
     pub timeout_s: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ChooseKind {
-    Model,
-    Person,
+/// `{ machine: { name, params? } }`, or `{ machine: <name> }`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineInvoke {
+    pub name: String,
+    #[serde(default)]
+    pub params: serde_norway::Mapping,
+}
+
+/// The kinds `invoke` names, in the order the reference lists them.
+const INVOKE_KINDS: &str = "`script`, `check`, `model`, `person` or `machine`";
+
+/// A `script` or `machine` invoke's value: a bare name is short for `{ name: <name> }`.
+fn named<T: serde::de::DeserializeOwned>(value: serde_norway::Value) -> Result<T, String> {
+    let value = match value {
+        serde_norway::Value::String(name) => {
+            let mut map = serde_norway::Mapping::new();
+            map.insert("name".into(), name.into());
+            serde_norway::Value::Mapping(map)
+        }
+        other => other,
+    };
+    serde_norway::from_value(value).map_err(|e| e.to_string())
 }
 
 impl<'de> Deserialize<'de> for Invoke {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_norway::Value::deserialize(deserializer)?;
-        let has = |key: &str| value.get(key).is_some();
-        let result =
-            match &value {
-                serde_norway::Value::String(name) => return Ok(Invoke::Script(name.clone())),
-                serde_norway::Value::Mapping(_) if has("machine") => {
-                    serde_norway::from_value(value).map(Invoke::Machine)
-                }
-                serde_norway::Value::Mapping(_) if has("check") => {
-                    serde_norway::from_value(value).map(Invoke::Check)
-                }
-                serde_norway::Value::Mapping(_) if has("choose") => {
-                    serde_norway::from_value(value).map(Invoke::Choose)
-                }
-                _ => return Err(D::Error::custom(
-                    "`invoke` is a script name or an object with `machine`, `check` or `choose`",
-                )),
-            };
+        let map = match value {
+            serde_norway::Value::String(name) => {
+                return Ok(Invoke::Script(ScriptInvoke {
+                    name,
+                    max_attempts: None,
+                    timeout_s: None,
+                }))
+            }
+            serde_norway::Value::Mapping(map) if map.len() == 1 => map,
+            _ => {
+                return Err(D::Error::custom(format!(
+                    "`invoke` is a script name or a map with exactly one key, which names the kind: {INVOKE_KINDS}"
+                )))
+            }
+        };
+        let (kind, value) = map.into_iter().next().unwrap_or_default();
+        let result = match kind.as_str().unwrap_or_default() {
+            "script" => named(value).map(Invoke::Script),
+            "check" => serde_norway::from_value(value)
+                .map(|c| Invoke::Check(Box::new(c)))
+                .map_err(|e| e.to_string()),
+            "model" => serde_norway::from_value(value)
+                .map(Invoke::Model)
+                .map_err(|e| e.to_string()),
+            "person" => serde_norway::from_value(value)
+                .map(Invoke::Person)
+                .map_err(|e| e.to_string()),
+            "machine" => named(value).map(Invoke::Machine),
+            other => Err(format!(
+                "unknown invoke kind `{other}`: `invoke` names one of {INVOKE_KINDS}"
+            )),
+        };
         result.map_err(D::Error::custom)
     }
 }
 
 impl Invoke {
-    /// The script an invoke runs, if it is a script invoke.
-    pub fn script(&self) -> Option<&str> {
+    /// The script invoke, if this is one.
+    pub fn script(&self) -> Option<&ScriptInvoke> {
         match self {
-            Invoke::Script(name) => Some(name),
+            Invoke::Script(script) => Some(script),
             _ => None,
         }
     }
 
-    /// The state whose output a `check` or `choose: model` reads (docs/reference/machines.md, Input).
-    fn input(&self) -> Option<&str> {
+    /// The state whose output a `check` or `model` reads (docs/reference/machines.md, Output).
+    fn output(&self) -> Option<&str> {
         match self {
-            Invoke::Check(c) => c.input.as_deref(),
-            Invoke::Choose(c) => c.input.as_deref(),
+            Invoke::Check(c) => c.output.as_deref(),
+            Invoke::Model(m) => m.output.as_deref(),
             _ => None,
         }
     }
 
-    /// The `choose` invoke, if this is one of `kind`.
-    pub fn choose(&self, kind: ChooseKind) -> Option<&ChooseInvoke> {
+    /// The `question` of a `model` or `person` invoke: the kind's name and the question.
+    pub fn question(&self) -> Option<(&'static str, Option<&str>)> {
         match self {
-            Invoke::Choose(c) if c.choose == kind => Some(c),
+            Invoke::Model(m) => Some(("model", m.question.as_deref())),
+            Invoke::Person(p) => Some(("person", p.question.as_deref())),
             _ => None,
+        }
+    }
+}
+
+/// A transition's event name. YAML 1.2 reads `true:` and `false:` as booleans; in
+/// `transitions` they are the event names `true` and `false`, the events of a `check`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct EventName(String);
+
+impl<'de> Deserialize<'de> for EventName {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match serde_norway::Value::deserialize(deserializer)? {
+            serde_norway::Value::String(name) => Ok(EventName(name)),
+            serde_norway::Value::Bool(b) => Ok(EventName(b.to_string())),
+            other => Err(D::Error::custom(format!(
+                "an event name is a string, not {}",
+                serde_norway::to_string(&other)
+                    .unwrap_or_default()
+                    .trim_end()
+            ))),
         }
     }
 }
@@ -258,8 +312,6 @@ pub struct Node {
     pub is_final: bool,
     pub description: Option<String>,
     pub invoke: Option<Invoke>,
-    pub max_attempts: Option<u32>,
-    pub timeout_s: Option<u64>,
     pub onentry: Vec<String>,
     pub onexit: Vec<String>,
     pub initial: Option<String>,
@@ -318,8 +370,6 @@ fn flatten(id: &str, machine: Machine) -> LoadedMachine {
         is_final: false,
         description: Some(machine.description),
         invoke: None,
-        max_attempts: None,
-        timeout_s: None,
         onentry: machine.onentry,
         onexit: machine.onexit,
         initial: Some(machine.initial),
@@ -348,15 +398,13 @@ fn push_children(nodes: &mut Vec<Node>, parent: usize, states: BTreeMap<String, 
             is_final: state.is_final,
             description: state.description,
             invoke: state.invoke,
-            max_attempts: state.max_attempts,
-            timeout_s: state.timeout_s,
             onentry: state.onentry,
             onexit: state.onexit,
             initial: state.initial,
             transitions: state
                 .transitions
                 .into_iter()
-                .map(|(event, t)| Edge::new(event, t))
+                .map(|(event, t)| Edge::new(event.0, t))
                 .collect(),
             emits: state.emits,
         });
@@ -403,10 +451,12 @@ pub fn load_machine_text(id: &str, text: &str) -> Result<LoadedMachine, DecreeEr
 
 /// Keys outside the SCXML subset that a state may be written with, and what to use instead
 /// (V19). SCXML elements are named as such; the rest are decree 0.5 drafts that the
-/// decision invokes replaced.
-const UNSUPPORTED_STATE_KEYS: [(&str, &str); 13] = [
-    ("router", "router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... }"),
-    ("default", "default on a state is not supported: a choose: model state takes unsure, or error, instead"),
+/// decision invokes replaced, and script settings that moved inside the script invoke.
+const UNSUPPORTED_STATE_KEYS: [(&str, &str); 15] = [
+    ("router", "router on a state is not supported: make the decision a state with invoke: { model: { question: ... } }"),
+    ("default", "default on a state is not supported: a model state takes unsure, or error, instead"),
+    ("max_attempts", "max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } }"),
+    ("timeout_s", "timeout_s on a state is not supported: write it inside the invoke, invoke: { script: { name: <script>, timeout_s: <n> } } (or person: { ..., timeout_s: <n> })"),
     ("cond", "cond is not supported: make the decision a state with invoke: { check: ... }"),
     ("parallel", "SCXML <parallel> is not supported: a run is always in exactly one atomic state"),
     ("history", "SCXML <history> is not supported: a run is always in exactly one atomic state"),
@@ -420,6 +470,39 @@ const UNSUPPORTED_STATE_KEYS: [(&str, &str); 13] = [
     ("donedata", "SCXML <donedata> is not supported: data is read-only"),
 ];
 
+/// Old `invoke` shapes and their replacements (V19): `choose`, `input`, `{ machine, params }`
+/// and a bare `matches`. Nothing old is read: each fails with the shape to write instead.
+const CHOOSE: &str = "choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { person: { question: ..., ask: <script> } } for a person";
+const INPUT: &str = "input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } })";
+const MACHINE_PARAMS: &str = "{ machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } }";
+const BARE_MATCHES: &str =
+    "a bare matches is not supported: name the state it reads, { output: <state>, matches: ... }";
+
+/// The first old shape in a state's `invoke`, if any (V19).
+fn old_invoke_shape(invoke: &serde_norway::Value) -> Option<&'static str> {
+    let map = invoke.as_mapping()?;
+    let has = |key: &str| map.contains_key(key);
+    if has("choose") {
+        return Some(CHOOSE);
+    }
+    let model_input = invoke
+        .get("model")
+        .is_some_and(|m| m.get("input").is_some());
+    if has("input") || model_input {
+        return Some(INPUT);
+    }
+    if has("machine") && map.len() > 1 {
+        return Some(MACHINE_PARAMS);
+    }
+    let bare_matches = invoke.get("check").is_some_and(|c| {
+        c.get("matches").is_some()
+            && !["output", "data", "visits", "confidence"]
+                .iter()
+                .any(|subject| c.get(subject).is_some())
+    });
+    bare_matches.then_some(BARE_MATCHES)
+}
+
 /// The docs/reference/machines.md message for `cond` on a transition (V19).
 const COND_ON_TRANSITION: &str =
     "cond on a transition is not supported: make the decision a state with invoke: { check: ... }";
@@ -427,12 +510,9 @@ const COND_ON_TRANSITION: &str =
 /// Parse machine YAML. On failure the error starts with the dotted path of the state that
 /// fails to deserialize (`work.implement: unknown field ...`), or with `line <n>` when the
 /// problem is in the YAML syntax or at the root. A key outside the SCXML subset is reported
-/// with its decree alternative, and every unknown key is tagged `(V19)`.
+/// with its decree alternative, as is an old shape with the one that replaced it, and every
+/// unknown key is tagged `(V19)`.
 fn parse_machine(text: &str) -> Result<Machine, String> {
-    let err = match serde_norway::from_str::<Machine>(text) {
-        Ok(machine) => return Ok(machine),
-        Err(e) => e,
-    };
     let at_line = |e: &serde_norway::Error, msg: String| match e.location() {
         Some(loc) => format!("line {}: {msg}", loc.line()),
         None => msg,
@@ -441,10 +521,18 @@ fn parse_machine(text: &str) -> Result<Machine, String> {
         Ok(value) => value,
         Err(syntax) => return Err(at_line(&syntax, syntax.to_string())),
     };
+    // Before parsing: an old shape may also parse as a new one (a bare `matches`).
+    if let Some(found) = value
+        .get("states")
+        .and_then(|states| unsupported_key(states, ""))
+    {
+        return Err(found);
+    }
+    let err = match serde_norway::from_str::<Machine>(text) {
+        Ok(machine) => return Ok(machine),
+        Err(e) => e,
+    };
     if let Some(states) = value.get("states") {
-        if let Some(found) = unsupported_key(states, "") {
-            return Err(found);
-        }
         if let Some((path, msg)) = locate_state_error(states, "") {
             return Err(format!("{path}: {}", tag_unknown(msg)));
         }
@@ -463,16 +551,17 @@ fn parse_machine(text: &str) -> Result<Machine, String> {
     Err(at_line(&err, tag_unknown(msg)))
 }
 
-/// An unknown key is outside the SCXML subset (V19).
+/// An unknown key, or an unknown invoke kind, is outside the SCXML subset (V19).
 fn tag_unknown(msg: String) -> String {
-    if msg.contains("unknown field") {
+    if msg.contains("unknown field") || msg.contains("unknown invoke kind") {
         format!("{msg} (V19)")
     } else {
         msg
     }
 }
 
-/// The first state key, or transition `cond`, outside the SCXML subset: `<path>: <message>`.
+/// The first state key, transition `cond` or old invoke shape outside the SCXML subset:
+/// `<path>: <message>`.
 fn unsupported_key(states: &serde_norway::Value, prefix: &str) -> Option<String> {
     for (key, state) in states.as_mapping()? {
         let path = join_path(prefix, key);
@@ -480,6 +569,9 @@ fn unsupported_key(states: &serde_norway::Value, prefix: &str) -> Option<String>
             if state.get(name).is_some() {
                 return Some(format!("{path}: {message} (V19)"));
             }
+        }
+        if let Some(message) = state.get("invoke").and_then(old_invoke_shape) {
+            return Some(format!("{path}: {message} (V19)"));
         }
         let transitions = state.get("transitions").and_then(|t| t.as_mapping());
         for (event, transition) in transitions.into_iter().flatten() {
@@ -537,7 +629,7 @@ fn locate_state_error(states: &serde_norway::Value, prefix: &str) -> Option<(Str
     None
 }
 
-/// The router of a `choose: model` that names none (docs/reference/runs.md, The default router).
+/// The router of a `model` invoke that names none (docs/reference/runs.md, The default router).
 pub const ROUTER_MACHINE: &str = "router";
 
 impl DataType {
@@ -577,7 +669,7 @@ pub(crate) fn is_event_name(s: &str) -> bool {
         })
 }
 
-/// Events an invoke may not print and a `choose` option may not be (docs/reference/machines.md, Rules).
+/// Events an invoke may not print and a `model` or `person` option may not be (docs/reference/machines.md, Rules).
 pub fn is_reserved_event(event: &str) -> bool {
     matches!(event, "done" | "error" | "unsure")
         || event.starts_with("done.")
@@ -612,10 +704,16 @@ impl LoadedMachine {
         })
     }
 
-    /// Attempts allowed for state `i`: its `max_attempts`, default 1 (docs/reference/scripts.md,
-    /// Execution, Attempts).
+    /// Attempts allowed for state `i`: its script invoke's `max_attempts`, default 1
+    /// (docs/reference/scripts.md, Execution, Attempts).
     pub fn max_attempts(&self, i: usize) -> u32 {
-        self.nodes[i].max_attempts.unwrap_or(1).max(1)
+        self.nodes[i]
+            .invoke
+            .as_ref()
+            .and_then(Invoke::script)
+            .and_then(|s| s.max_attempts)
+            .unwrap_or(1)
+            .max(1)
     }
 
     /// A final state whose parent is the root: entering it ends the run.
@@ -661,7 +759,7 @@ impl LoadedMachine {
         Some(cur)
     }
 
-    /// The options of `choose` state `i` (docs/reference/machines.md, Choices): its own transitions except
+    /// The options of `model` or `person` state `i` (docs/reference/machines.md, Choices): its own transitions except
     /// `unsure` and `error`, in name order.
     pub fn options(&self, i: usize) -> impl Iterator<Item = &Edge> {
         self.nodes[i]
@@ -698,15 +796,13 @@ impl LoadedMachine {
     }
 
     /// `(state, machine)` for every machine this one runs as a child: `machine` invokes, and
-    /// the router of each `choose: model` (its `router`, else [`ROUTER_MACHINE`]).
+    /// the router of each `model` invoke (its `router`, else [`ROUTER_MACHINE`]).
     pub fn invoked_machines(&self) -> Vec<(usize, &str)> {
         let mut out = Vec::new();
         for (i, node) in self.nodes.iter().enumerate() {
             let child = match &node.invoke {
-                Some(Invoke::Machine(m)) => Some(m.machine.as_str()),
-                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
-                    Some(c.router.as_deref().unwrap_or(ROUTER_MACHINE))
-                }
+                Some(Invoke::Machine(m)) => Some(m.name.as_str()),
+                Some(Invoke::Model(c)) => Some(c.router.as_deref().unwrap_or(ROUTER_MACHINE)),
                 _ => None,
             };
             out.extend(child.map(|c| (i, c)));

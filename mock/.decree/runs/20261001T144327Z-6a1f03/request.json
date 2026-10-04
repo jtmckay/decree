@@ -21,7 +21,7 @@
     "precheck: done",
     "implement: done",
     "verify: fail",
-    "rounds_left: yes"
+    "rounds_left: true"
   ],
   "min_confidence": 0.8
 }

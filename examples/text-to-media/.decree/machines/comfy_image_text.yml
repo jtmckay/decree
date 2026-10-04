@@ -10,15 +10,13 @@ initial: precheck
 states:
   precheck:                        # fails fast if curl or jq is missing
     invoke: precheck
-    max_attempts: 1
     transitions: { done: build_payload }
   build_payload:                   # patches the workflow template into runs/<id>/comfy-payload.json
     invoke: build_payload
-    max_attempts: 1
     transitions: { done: queue_prompt }
   queue_prompt:                    # posts the payload to ComfyUI
-    invoke: queue_prompt
-    max_attempts: 3
+    invoke:
+      script: { name: queue_prompt, max_attempts: 3 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

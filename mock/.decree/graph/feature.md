@@ -12,8 +12,8 @@ stateDiagram-v2
         implement --> verify: done
         review --> verified: approve (person)
         review --> implement: retry (person)
-        rounds_left --> review: no (check)
-        rounds_left --> triage: yes (check)
+        rounds_left --> review: false (check)
+        rounds_left --> triage: true (check)
         triage --> implement: retry (model)
         triage --> review: unsure (model)
         verify --> rounds_left: fail

@@ -1,5 +1,5 @@
 //! Child runs (docs/reference/runs.md, Sub-machines): a `machine` invoke, and the router run
-//! of a `choose: model` invoke. The parent appends `waiting`, the same process steps the
+//! of a `model` invoke. The parent appends `waiting`, the same process steps the
 //! child, and a finished child continues its parent.
 
 use std::time::Instant;
@@ -71,7 +71,7 @@ impl Interpreter<'_> {
         s: usize,
         invoke: &MachineInvoke,
     ) -> Result<Invoked, InterpreterError> {
-        let child = match self.run_child(s, &invoke.machine, &invoke.params, None)? {
+        let child = match self.run_child(s, &invoke.name, &invoke.params, None)? {
             Ok(child) => child,
             Err(reason) => {
                 return Ok(Invoked::Event(Decision {

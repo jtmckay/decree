@@ -34,16 +34,16 @@ For each container (the root, then each compound state recursively), with 4-spac
 After the root's last line, emit notes, also at root level:
 
 - For the root: `note left of <root initial>` with lines `machine onentry: <scripts>` and `machine onexit: <scripts>`, then `end note`. Omit empty lines and omit the note if both are empty.
-- For each state with `onentry`, `onexit` or a decision invoke, in name order: `note right of <state>` with, in this order and only when present, `check: <condition>` (as `<subject> <name> <op> <value>`, e.g. `visits implement less_than data.max_rounds`, `data file matches '<regex>'`, `confidence big_model at_least 0.4`, or `matches '<regex>'`), `model: <router machine>` plus `, min_confidence <n>`, `machine: <name>`, `person: <ask script>`, `onentry: <scripts>` and `onexit: <scripts>`, then `end note`.
+- For each state with `onentry`, `onexit` or a decision invoke, in name order: `note right of <state>` with, in this order and only when present, `check: <condition>` (as `<subject> <name> <op> <value>`, e.g. `visits implement less_than data.max_rounds`, `data file matches '<regex>'`, `confidence big_model at_least 0.4`, or `output read_text matches '<regex>'`), `model: <router machine>` plus `, min_confidence <n>`, `machine: <name>`, `person: <ask script>`, `onentry: <scripts>` and `onexit: <scripts>`, then `end note`.
 
 Labels are the event name plus these suffixes, in this order:
 
 - ` (check)` if the source state invokes a `check`.
-- ` (model)` if it invokes `choose: model`, or ` (model: <router>)` when the invoke names a router. Not on `error`.
+- ` (model)` if it invokes a `model`, or ` (model: <router>)` when the invoke names a router. Not on `error`.
 - ` (machine: <name>)` if it invokes a machine. Not on `error`.
-- ` (person)` if it invokes `choose: person`. Not on `error`.
+- ` (person)` if it invokes a `person`. Not on `error`.
 - ` (internal)` for a `type: internal` transition.
-- ` (implicit)` on unhandled `error` edges to `failed`. Draw one from every non-final atomic state that invokes a script, a machine, `choose: model` or `choose: person`, or has an `onentry`, when neither it nor any ancestor has a transition matching `error`.
+- ` (implicit)` on unhandled `error` edges to `failed`. Draw one from every non-final atomic state that invokes a script, a machine, a `model` or a `person`, or has an `onentry`, when neither it nor any ancestor has a transition matching `error`.
 
 Escape `<` as `#lt;` and `>` as `#gt;` in labels (Mermaid entity codes).
 
@@ -59,8 +59,8 @@ stateDiagram-v2
         implement --> verify: done
         review --> verified: approve (person)
         review --> implement: retry (person)
-        rounds_left --> review: no (check)
-        rounds_left --> triage: yes (check)
+        rounds_left --> review: false (check)
+        rounds_left --> triage: true (check)
         triage --> implement: retry (model)
         triage --> review: unsure (model)
         verify --> rounds_left: fail

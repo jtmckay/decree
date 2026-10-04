@@ -25,9 +25,9 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 - Each script runs in its own process group. To stop a script (on SIGINT, SIGTERM or timeout), decree sends SIGTERM to the whole group, waits up to 10 s for every process in it to exit, then sends SIGKILL.
 - stdout and stderr are both read line by line, on two threads, into one log file `runs/<id>/NNNN-<state>-<script>.log`. `NNNN` is a counter of script executions in this run, starting at `0001`: 4 digits, zero-padded, and more digits past `9999`; every attempt gets its own number. stderr lines get the prefix `[stderr] ` (with one trailing space). Root `entry` and `exit` actions use `_root` as the state.
 - While a script runs, `runs/<id>/.running` holds one JSON object: `{"pid": 4242, "state": "implement", "phase": "invoke", "script": "implement", "started_at": "<RFC 3339 UTC, ms>", "log": "0004-implement-implement.log"}`. decree writes it (temp file plus rename) right after spawning and deletes it after writing the `script` event. `decree status` and `decree tail` read it; it is not part of the record. A `.running` left behind by a crash names the `script` of the `interrupted` event.
-- The log of a state's latest script run is what `matches` checks and models read as that state's output ([Invoke](machines.md#invoke-the-states-function), Input).
-- **Timeout.** If the state sets `timeout_s` and the invoke runs longer, decree stops it and treats it as a non-zero exit. Its `script` event records `"timed_out": true`.
-- **Attempts.** If the invoke exits non-zero (or times out) and the state has attempts left, decree runs it again without leaving the state: no `onexit` or `onentry`, one `transition` event with `event: "error"`, `from` and `to` equal, and `source: "attempt"`. Attempts = the state's `max_attempts`, default 1. Only when attempts run out does `error` take its transition. `onentry` failures are not retried.
+- The log of a state's latest script run is that state's output: what a `{ output: <state>, matches: … }` check tests and what a `model` with `output: <state>` reads ([Invoke](machines.md#invoke-the-states-function), Output).
+- **Timeout.** If the script invoke sets `timeout_s` and the invoke runs longer, decree stops it and treats it as a non-zero exit. Its `script` event records `"timed_out": true`.
+- **Attempts.** If the invoke exits non-zero (or times out) and the state has attempts left, decree runs it again without leaving the state: no `onexit` or `onentry`, one `transition` event with `event: "error"`, `from` and `to` equal, and `source: "attempt"`. Attempts = the script invoke's `max_attempts`, default 1. Only when attempts run out does `error` take its transition. `onentry` failures are not retried.
 - **Signals.** If decree receives SIGINT or SIGTERM while a script runs, it stops the script, writes no `script` event for it, and interrupts the run ([Replies](messages.md#replies), Stopping). `decree retry` re-runs the step, so scripts must be safe to re-run.
 - **Logs** are capped at 2 MiB (2097152 bytes). After the script exits, a larger log keeps only its last 2 MiB, behind the line `[log truncated — showing last 2MB of output]`.
 
@@ -49,10 +49,10 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 | `DECREE_TRIGGER` | The message's `trigger`. |
 | `DECREE_EVENTS` | The events the current state accepts, space-separated, in name order. Lets a script check what it may print. |
 | `DECREE_PARENT` | In a child run: the parent run's id. Empty otherwise. |
-| `DECREE_REQUEST` | In a router run: absolute path of the request JSON ([Choose: model](runs.md#choose-model)). Empty otherwise. |
+| `DECREE_REQUEST` | In a router run: absolute path of the request JSON ([Model](runs.md#model)). Empty otherwise. |
 | `DECREE_REPLY` | In a router run: absolute path where the reply JSON must be written. Empty otherwise. |
-| `DECREE_WAIT_ID` | For the `ask` script of a `choose: person` state: the wait id a reply must name. Empty otherwise. |
-| `DECREE_QUESTION` | For the `ask` script of a `choose: person` state: its `question`. Empty otherwise. |
+| `DECREE_WAIT_ID` | For the `ask` script of a `person` state: the wait id a reply must name. Empty otherwise. |
+| `DECREE_QUESTION` | For the `ask` script of a `person` state: its `question`. Empty otherwise. |
 | `DECREE_CHOICES` | For the `ask` script: absolute path of a JSON file mapping each option to its description. Empty otherwise. |
 | `DECREE_RECEIVED` | Absolute path of the last reply this run received (`runs/<id>/received/<file>`), or empty. |
 | `DECREE_DATA_<NAME>` | One per `data` entry, `<NAME>` uppercased: the message's `params` value, else the default. Ints as decimal, bools as `true` or `false`. |

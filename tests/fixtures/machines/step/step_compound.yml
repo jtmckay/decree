@@ -10,13 +10,13 @@ states:
     initial: inner
     states:
       inner:
-        onentry: [inner_entry]
         invoke: inner_invoke
+        onentry: [inner_entry]
         onexit: [inner_exit]
         transitions: { done: after }
   after:
-    onentry: [after_entry]
     invoke: after_invoke
+    onentry: [after_entry]
     onexit: [after_exit]
     transitions: { done: done }
   done:   { final: true, onentry: [done_entry] }

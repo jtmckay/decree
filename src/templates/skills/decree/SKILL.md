@@ -24,9 +24,10 @@ decree runs work through three building blocks:
   `error`, or a JSON last stdout line names a richer event (`{"event":"pass"}`).
 
 Every state invokes one function, and its result is an event. The function is a script, a child
-machine (`{ machine: deploy }`), or a built-in decision: `check` (deterministic), `choose: model`
-(a model picks an option, asked through a router machine) or `choose: person` (the run pauses
-until a reply picks one). AI and people appear only where a machine says `choose`.
+machine (`machine: deploy`), or a built-in decision: `check` (deterministic: `true` or `false`),
+`model` (a model picks an option, asked through a router machine) or `person` (the run pauses
+until a reply picks one). `invoke` has exactly one key, which names the kind. AI and people
+appear only where a machine invokes `model` or `person`.
 
 ## Rules
 
@@ -37,7 +38,7 @@ until a reply picks one). AI and people appear only where a machine says `choose
   outcomes are observable (exit codes, file contents, output).
 - **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
 - **Machines decide, scripts work.** A script makes no routing decision beyond printing one
-  event; a decision is a state of its own (`check` or `choose`), never logic hidden in a script.
+  event; a decision is a state of its own (`check`, `model` or `person`), never logic hidden in a script.
 - **Queue follow-up work with `decree emit`**, never by writing into `.decree/inbox/` by hand
   from a script. The emitting state must list the target in `emits:`.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and
@@ -56,7 +57,7 @@ until a reply picks one). AI and people appear only where a machine says `choose
 | `decree daemon [--interval <s>]` | The same, in a loop, with cron. |
 | `decree status [<id>] [--cron]` | Runs by status; one run's events; cron schedule. |
 | `decree tail [<id>]` | Follow the output of the script running now. |
-| `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `choose: person` state. |
+| `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree retry <id> [--state <s>]` | Continue an interrupted (or finished) run. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`; keeps failed migrations and children of unfinished runs. |
 

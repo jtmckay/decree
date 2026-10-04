@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::{
-    event_matches, is_event_name, is_ident, is_reserved_event, ChooseKind, DataType, Edge, Invoke,
+    event_matches, is_event_name, is_ident, is_reserved_event, DataType, Edge, Invoke,
     LoadedMachine, MachineInvoke, FAILED, ROUTER_MACHINE,
 };
 use crate::cond::{Condition, Operand, Subject, Test};
@@ -70,12 +70,16 @@ impl LoadedMachine {
                     any_event = true;
                     can_error = true;
                 }
-                Some(Invoke::Check(_)) => events.extend(["yes".into(), "no".into()]),
-                Some(Invoke::Choose(c)) => {
+                Some(Invoke::Check(_)) => events.extend(["true".into(), "false".into()]),
+                Some(Invoke::Model(c)) => {
                     events.extend(self.options(i).map(|e| e.event.clone()));
-                    if c.choose == ChooseKind::Model && c.min_confidence.is_some() {
+                    if c.min_confidence.is_some() {
                         events.push("unsure".into());
                     }
+                    can_error = true;
+                }
+                Some(Invoke::Person(_)) => {
+                    events.extend(self.options(i).map(|e| e.event.clone()));
                     can_error = true;
                 }
             }
@@ -115,7 +119,7 @@ impl LoadedMachine {
         v.v6_compound();
         v.v7_final();
         v.v8_decisions();
-        v.v9_input();
+        v.v9_output();
         v.v10_conditions();
         v.v11_reachable();
         v.v12_scripts();
@@ -125,7 +129,6 @@ impl LoadedMachine {
         v.v16_invokes();
         v.v17_internal();
         v.v18_events();
-        v.v19_choose_keys();
         v.v20_cycles();
         v.v21_overlapping_events();
         v.problems
@@ -329,8 +332,6 @@ impl Validator<'_> {
             }
             let found: Vec<&str> = [
                 ("invoke", node.invoke.is_some()),
-                ("max_attempts", node.max_attempts.is_some()),
-                ("timeout_s", node.timeout_s.is_some()),
                 ("onexit", !node.onexit.is_empty()),
                 ("initial", node.initial.is_some()),
                 ("states", !node.children.is_empty()),
@@ -356,7 +357,7 @@ impl Validator<'_> {
             let at = self.m.state_path(i);
             match &self.m.nodes[i].invoke {
                 Some(Invoke::Check(_)) => {
-                    for event in ["yes", "no"] {
+                    for event in ["true", "false"] {
                         if !self.m.handles(i, event) {
                             self.push(
                                 at.clone(),
@@ -365,12 +366,11 @@ impl Validator<'_> {
                         }
                     }
                 }
-                Some(Invoke::Choose(c)) => {
-                    let kind = match c.choose {
-                        ChooseKind::Model => "choose: model",
-                        ChooseKind::Person => "choose: person",
+                Some(invoke @ (Invoke::Model(_) | Invoke::Person(_))) => {
+                    let Some((kind, question)) = invoke.question() else {
+                        continue;
                     };
-                    if c.question.as_deref().is_none_or(|q| q.trim().is_empty()) {
+                    if question.is_none_or(|q| q.trim().is_empty()) {
                         self.push(
                             at.clone(),
                             format!(
@@ -399,18 +399,17 @@ impl Validator<'_> {
                             );
                         }
                     }
-                    if c.choose == ChooseKind::Model
-                        && c.min_confidence.is_some()
-                        && !self.m.handles(i, "unsure")
-                    {
+                    let min_confidence =
+                        matches!(invoke, Invoke::Model(m) if m.min_confidence.is_some());
+                    if min_confidence && !self.m.handles(i, "unsure") {
                         self.push(
                             at.clone(),
-                            "a `choose: model` state with `min_confidence` must handle `unsure`, itself or through an ancestor (V8)".into(),
+                            "a `model` state with `min_confidence` must handle `unsure`, itself or through an ancestor (V8)".into(),
                         );
                     }
                 }
                 Some(Invoke::Machine(mi)) => {
-                    let Some(child) = self.env.machines.get(&mi.machine) else {
+                    let Some(child) = self.env.machines.get(&mi.name) else {
                         continue; // V16
                     };
                     for event in child.final_events() {
@@ -419,7 +418,7 @@ impl Validator<'_> {
                                 at.clone(),
                                 format!(
                                     "machine `{}` can end in `{event}`, which this state does not handle, itself or through an ancestor (V8)",
-                                    mi.machine
+                                    mi.name
                                 ),
                             );
                         }
@@ -430,58 +429,23 @@ impl Validator<'_> {
         }
     }
 
-    fn v9_input(&mut self) {
+    fn v9_output(&mut self) {
         for i in self.atomic() {
-            let Some(invoke) = &self.m.nodes[i].invoke else {
+            let Some(output) = self.m.nodes[i].invoke.as_ref().and_then(Invoke::output) else {
                 continue;
             };
-            let at = self.m.state_path(i);
-            if let Some(input) = invoke.input() {
-                let is_script = self
-                    .m
-                    .find(input)
-                    .and_then(|s| self.m.nodes[s].invoke.as_ref())
-                    .is_some_and(|inv| inv.script().is_some());
-                if !is_script {
-                    self.push(
-                        at,
-                        format!("input `{input}` is not a state with a script invoke (V9)"),
-                    );
-                }
-            } else if let Invoke::Check(c) = invoke {
-                if matches!(c.check.shape(), Ok((Subject::Matches(_), _))) && !self.script_before(i)
-                {
-                    self.push(
-                        at,
-                        "`matches` without `input` reads the most recent script's output, but no script state comes before this state (V9)".into(),
-                    );
-                }
+            let is_script = self
+                .m
+                .find(output)
+                .and_then(|s| self.m.nodes[s].invoke.as_ref())
+                .is_some_and(|inv| inv.script().is_some());
+            if !is_script {
+                self.push(
+                    self.m.state_path(i),
+                    format!("output `{output}` is not a state with a script invoke (V9)"),
+                );
             }
         }
-    }
-
-    /// Whether some state that invokes a script can lead to atomic state `i`.
-    fn script_before(&self, i: usize) -> bool {
-        let m = self.m;
-        let scripts = self.atomic().into_iter().filter(|&s| {
-            m.nodes[s]
-                .invoke
-                .as_ref()
-                .is_some_and(|inv| inv.script().is_some())
-        });
-        for start in scripts {
-            let mut seen = vec![false; m.nodes.len()];
-            let mut queue = m.successors(start);
-            while let Some(s) = queue.pop() {
-                if s == i {
-                    return true;
-                }
-                if !std::mem::replace(&mut seen[s], true) {
-                    queue.extend(m.successors(s));
-                }
-            }
-        }
-        false
     }
 
     fn v10_conditions(&mut self) {
@@ -490,7 +454,7 @@ impl Validator<'_> {
                 continue;
             };
             let at = self.m.state_path(i);
-            for message in self.condition_problems(&c.check) {
+            for message in self.condition_problems(c) {
                 self.push(at.clone(), format!("check: {message} (V10)"));
             }
         }
@@ -504,12 +468,8 @@ impl Validator<'_> {
         };
         let mut out = Vec::new();
         let left = match subject {
-            Subject::Matches(pattern) => {
-                if let Err(e) = crate::cond::compile(pattern) {
-                    out.push(e.to_string());
-                }
-                return out;
-            }
+            // V9 checks the state; `shape` gives `output` only `matches`.
+            Subject::Output(_) => None,
             Subject::Visits(state) => {
                 let atomic = self
                     .m
@@ -524,19 +484,16 @@ impl Validator<'_> {
             }
             Subject::Data(name) => self.data_type(name, &mut out),
             Subject::Confidence(state) => {
-                let model = self.m.find(state).is_some_and(|s| {
-                    self.m.nodes[s]
-                        .invoke
-                        .as_ref()
-                        .and_then(|i| i.choose(ChooseKind::Model))
-                        .is_some()
-                });
+                let model = self
+                    .m
+                    .find(state)
+                    .is_some_and(|s| matches!(self.m.nodes[s].invoke, Some(Invoke::Model(_))));
                 if !model {
                     out.push(format!(
-                        "`confidence` names `{state}`, which is not a `choose: model` state"
+                        "`confidence` names `{state}`, which is not a `model` state"
                     ));
                 }
-                if let Some(Test::Compare(_, operand)) = test {
+                if let Test::Compare(_, operand) = test {
                     if let Err(e) = crate::cond::confidence_operand(operand) {
                         out.push(e.to_string());
                     }
@@ -545,8 +502,7 @@ impl Validator<'_> {
             }
         };
         let (op, operand) = match test {
-            None => return out,
-            Some(Test::Matches(pattern)) => {
+            Test::Matches(pattern) => {
                 match left {
                     Some(DataType::String) | None => {}
                     Some(kind) => out.push(format!(
@@ -560,7 +516,7 @@ impl Validator<'_> {
                 }
                 return out;
             }
-            Some(Test::Compare(op, operand)) => (op, operand),
+            Test::Compare(op, operand) => (op, operand),
         };
         let right = match operand {
             Operand::Int(_) => Some(DataType::Int),
@@ -685,12 +641,12 @@ impl Validator<'_> {
             let node = &self.m.nodes[i];
             let at = self.m.state_path(i);
             let invoked = match &node.invoke {
-                Some(Invoke::Script(name)) => Some(name.as_str()),
-                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Person => {
+                Some(Invoke::Script(script)) => Some(script.name.as_str()),
+                Some(Invoke::Person(c)) => {
                     if c.ask.is_none() {
                         self.push(
                             at.clone(),
-                            "a `choose: person` state needs an `ask` script, which tells someone how to reply (V12)".into(),
+                            "a `person` state needs an `ask` script, which tells someone how to reply (V12)".into(),
                         );
                     }
                     c.ask.as_deref()
@@ -758,11 +714,10 @@ impl Validator<'_> {
 
     fn v16_invokes(&mut self) {
         for i in self.states() {
-            let node = &self.m.nodes[i];
             let at = self.m.state_path(i);
-            match &node.invoke {
+            match &self.m.nodes[i].invoke {
                 Some(Invoke::Machine(mi)) => self.child_machine(&at, mi),
-                Some(Invoke::Choose(c)) if c.choose == ChooseKind::Model => {
+                Some(Invoke::Model(c)) => {
                     match c.router.as_deref() {
                         Some(router) if !self.env.machine_ids.contains(router) => self.push(
                             at.clone(),
@@ -770,42 +725,32 @@ impl Validator<'_> {
                         ),
                         None if !self.env.machine_ids.contains(ROUTER_MACHINE) => self.push(
                             at.clone(),
-                            format!("`choose: model` names no `router`, and there is no machine named `{ROUTER_MACHINE}` (V16)"),
+                            format!("`model` names no `router`, and there is no machine named `{ROUTER_MACHINE}` (V16)"),
                         ),
                         _ => {}
                     }
                     if let Some(n) = c.min_confidence.filter(|n| !(0.0..=1.0).contains(n)) {
                         self.push(
-                            at.clone(),
+                            at,
                             format!("min_confidence {n} is not between 0 and 1 (V16)"),
                         );
                     }
                 }
                 _ => {}
             }
-            let is_script = node
-                .invoke
-                .as_ref()
-                .is_some_and(|inv| inv.script().is_some());
-            if node.max_attempts.is_some() && !is_script && !node.is_final {
-                self.push(
-                    at,
-                    "`max_attempts` is only allowed on states that invoke a script (V16)".into(),
-                );
-            }
         }
     }
 
-    /// V16 for `invoke: { machine, params }`.
+    /// V16 for `invoke: { machine: { name, params } }`.
     fn child_machine(&mut self, at: &str, mi: &MachineInvoke) {
-        if !self.env.machine_ids.contains(&mi.machine) {
+        if !self.env.machine_ids.contains(&mi.name) {
             self.push(
                 at.to_string(),
-                format!("machine `{}` does not exist (V16)", mi.machine),
+                format!("machine `{}` does not exist (V16)", mi.name),
             );
             return;
         }
-        let Some(child) = self.env.machines.get(&mi.machine) else {
+        let Some(child) = self.env.machines.get(&mi.name) else {
             return; // it fails to load, and is reported on its own
         };
         for (key, value) in &mi.params {
@@ -815,7 +760,7 @@ impl Validator<'_> {
                     at.to_string(),
                     format!(
                         "unknown param `{key}`: machine `{}` has no data `{key}` (V16)",
-                        mi.machine
+                        mi.name
                     ),
                 ),
                 Some(spec) if !spec.kind.matches(value) => self.push(
@@ -868,7 +813,7 @@ impl Validator<'_> {
                     );
                 }
             }
-            if matches!(node.invoke, Some(Invoke::Choose(_))) {
+            if matches!(node.invoke, Some(Invoke::Model(_) | Invoke::Person(_))) {
                 let reserved: Vec<String> = self
                     .m
                     .options(i)
@@ -881,42 +826,6 @@ impl Validator<'_> {
                         format!("option `{event}` is reserved: `done`, `error`, `unsure` and names starting with `done.` or `error.` cannot be options (V18)"),
                     );
                 }
-            }
-        }
-    }
-
-    /// V19 inside an invoke: the `choose` keys that belong to the other kind.
-    fn v19_choose_keys(&mut self) {
-        for i in self.states() {
-            let Some(Invoke::Choose(c)) = &self.m.nodes[i].invoke else {
-                continue;
-            };
-            let (kind, keys) = match c.choose {
-                ChooseKind::Model => (
-                    "choose: model",
-                    vec![
-                        ("ask", c.ask.is_some()),
-                        ("timeout_s", c.timeout_s.is_some()),
-                    ],
-                ),
-                ChooseKind::Person => (
-                    "choose: person",
-                    vec![
-                        ("router", c.router.is_some()),
-                        ("min_confidence", c.min_confidence.is_some()),
-                        ("input", c.input.is_some()),
-                    ],
-                ),
-            };
-            let found: Vec<&str> = keys
-                .into_iter()
-                .filter_map(|(key, set)| set.then_some(key))
-                .collect();
-            if !found.is_empty() {
-                self.push(
-                    self.m.state_path(i),
-                    format!("`{kind}` does not take {} (V19)", backticked(&found)),
-                );
             }
         }
     }

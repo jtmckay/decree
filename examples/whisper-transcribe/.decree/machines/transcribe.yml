@@ -9,11 +9,10 @@ initial: precheck
 states:
   precheck:                        # fails fast if whisper or the input file is missing
     invoke: precheck
-    max_attempts: 1
     transitions: { done: transcribe }
   transcribe:
-    invoke: transcribe
-    max_attempts: 3
+    invoke:
+      script: { name: transcribe, max_attempts: 3 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

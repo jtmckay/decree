@@ -168,9 +168,9 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
         ),
         (
             "deploy.yml",
-            "question: \"Ship this build?\", ",
+            "        question: Ship this build?\n",
             "",
-            "machines/deploy.yml: approval: a `choose: person` state needs a `question`: what is being decided (V8)",
+            "machines/deploy.yml: approval: a `person` state needs a `question`: what is being decided (V8)",
         ),
         (
             "deploy.yml",
@@ -211,7 +211,7 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
     assert_eq!(code, 1);
     assert_eq!(
         stdout,
-        "machines/b.yml: work.step: router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... } (V19)\n"
+        "machines/b.yml: work.step: router on a state is not supported: make the decision a state with invoke: { model: { question: ... } } (V19)\n"
     );
 }
 
@@ -227,7 +227,7 @@ fn check_rejects_bad_escalation_conditions_with_v10() {
         (
             "confidence: big_model",
             "confidence: read_text",
-            "machines/sort_document.yml: worth_asking: check: `confidence` names `read_text`, which is not a `choose: model` state (V10)",
+            "machines/sort_document.yml: worth_asking: check: `confidence` names `read_text`, which is not a `model` state (V10)",
         ),
         (
             "at_least: 0.4",

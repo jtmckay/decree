@@ -6,7 +6,7 @@
 //! each case, `decree check` passes, `decree process` runs one message, and the run's
 //! events, hooks and mirror must hold the invariants listed on `check_case`.
 //!
-//! Termination: every transition goes forward in state order except a `check`'s `yes`,
+//! Termination: every transition goes forward in state order except a `check`'s `true`,
 //! which may go back only when it tests `visits` of its own state with `less_than`, so
 //! every loop passes a bound.
 
@@ -73,14 +73,14 @@ enum Invoke {
         of: usize,
         op: &'static str,
         n: u32,
-        yes: Target,
+        on_true: Target,
     },
 }
 
 #[derive(Clone, Debug)]
 struct Atom {
     invoke: Invoke,
-    /// The `done` target of a script, the `no` target of a check.
+    /// The `done` target of a script, the `false` target of a check.
     next: Target,
     onentry: bool,
     onexit: bool,
@@ -170,14 +170,14 @@ impl Spec {
                         of: i,
                         op: "less_than",
                         n: 1 + d.below(3) as u32,
-                        yes: d.pick(&back),
+                        on_true: d.pick(&back),
                     }
                 } else {
                     Invoke::Check {
                         of: d.below(k),
                         op: d.pick(&OPS),
                         n: d.below(3) as u32,
-                        yes: d.pick(&forward(i)),
+                        on_true: d.pick(&forward(i)),
                     }
                 }
             } else {
@@ -313,8 +313,11 @@ impl Spec {
                 t.extend(error.map(|e| ("error".to_string(), e)));
                 t
             }
-            Invoke::Check { yes, .. } => {
-                vec![("yes".to_string(), *yes), ("no".to_string(), atom.next)]
+            Invoke::Check { on_true, .. } => {
+                vec![
+                    ("true".to_string(), *on_true),
+                    ("false".to_string(), atom.next),
+                ]
             }
         }
     }
@@ -373,22 +376,22 @@ impl Spec {
         let atom = |i: usize, indent: &str| -> String {
             let a = &self.atoms[i];
             let mut s = format!("{indent}s{i}:\n");
+            match &a.invoke {
+                Invoke::Script { attempts: 1, .. } => {
+                    s.push_str(&format!("{indent}  invoke: work\n"));
+                }
+                Invoke::Script { attempts, .. } => s.push_str(&format!(
+                    "{indent}  invoke:\n{indent}    script: {{ name: work, max_attempts: {attempts} }}\n"
+                )),
+                Invoke::Check { of, op, n, .. } => s.push_str(&format!(
+                    "{indent}  invoke:\n{indent}    check: {{ visits: s{of}, {op}: {n} }}\n"
+                )),
+            }
             if a.onentry {
                 s.push_str(&format!("{indent}  onentry: [hook]\n"));
             }
             if a.onexit {
                 s.push_str(&format!("{indent}  onexit: [hook]\n"));
-            }
-            match &a.invoke {
-                Invoke::Script { attempts, .. } => {
-                    s.push_str(&format!("{indent}  invoke: work\n"));
-                    if *attempts > 1 {
-                        s.push_str(&format!("{indent}  max_attempts: {attempts}\n"));
-                    }
-                }
-                Invoke::Check { of, op, n, .. } => s.push_str(&format!(
-                    "{indent}  invoke: {{ check: {{ visits: s{of}, {op}: {n} }} }}\n"
-                )),
             }
             s.push_str(&format!(
                 "{indent}  transitions: {}\n",
@@ -674,9 +677,9 @@ fn check_case(spec: &Spec, out: &Outcome) -> Result<(), TestCaseError> {
                 };
                 let count = visits.get(&format!("s{of}")).copied().unwrap_or(0);
                 let want = if compare(op, count, i64::from(n)) {
-                    "yes"
+                    "true"
                 } else {
-                    "no"
+                    "false"
                 };
                 prop_assert_eq!(e["kind"].as_str(), Some("check"));
                 prop_assert_eq!(e["event"].as_str(), Some(want), "{}", e);

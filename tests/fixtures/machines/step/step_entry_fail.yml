@@ -9,12 +9,12 @@ states:
   outer:
     onentry: [outer_entry_fail, outer_entry]
     onexit: [outer_exit]
-    initial: inner
     transitions: { error: failed }
+    initial: inner
     states:
       inner:
-        onentry: [inner_entry]
         invoke: work
+        onentry: [inner_entry]
         onexit: [inner_exit]
         transitions: { done: done, error: cleanup }
   cleanup:

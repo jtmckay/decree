@@ -3,8 +3,8 @@ description: An invoke that fails on every attempt but the last.
 initial: work
 states:
   work:
-    invoke: fail_until_final
-    max_attempts: 3
+    invoke:
+      script: { name: fail_until_final, max_attempts: 3 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

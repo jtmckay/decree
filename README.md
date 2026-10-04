@@ -6,7 +6,7 @@ Run work through state machines you can read, check and graph. decree is built f
 - **Machines** are YAML statecharts that say *in what order*: states, what each state invokes, and which event leads where. They follow [W3C SCXML](https://www.w3.org/TR/scxml/), written in YAML, and contain no code and no paths.
 - **Scripts** are executables that do *one piece of work* and report one outcome. Bash by default.
 
-A model or a person only ever picks among the transitions a machine declares, in a state that says `choose`. Everything else is deterministic, and every step is recorded in an append-only `events.jsonl` per run.
+A model or a person only ever picks among the transitions a machine declares, in a state that invokes `model` or `person`. Everything else is deterministic, and every step is recorded in an append-only `events.jsonl` per run.
 
 ```text
             decree emit
@@ -15,7 +15,7 @@ A model or a person only ever picks among the transitions a machine declares, in
   |   Message   (frontmatter = structured, body = unstructured)
   |      | names machine; decree mirrors state
   |      v
-  |   Machine   (states, invokes, transitions)   <-- options / one event -->  model or person (choose)
+  |   Machine   (states, invokes, transitions)   <-- options / one event -->  model or person
   |      | script name + DECREE_* env       ^ event: exit code or JSON line
   |      v                                  |
   +-- Scripts   (scripts/<name>, bash by default)
@@ -67,7 +67,10 @@ states:
     invoke: greet
     transitions: { done: approval }
   approval:
-    invoke: { choose: person, question: "Approve the greeting?", ask: ask_person }
+    invoke:
+      person:
+        question: Approve the greeting?
+        ask: ask_person
     transitions:
       approve: { target: done, description: Keep it. }
       reject:  { target: rejected, description: Throw it away. }
@@ -157,30 +160,33 @@ states:
     invoke: build               # scripts/deploy/build*, else scripts/build*
     transitions: { done: approval }
   approval:
-    invoke: { choose: person, question: "Ship it?", ask: ask_person }
+    invoke:
+      person:
+        question: Ship it?
+        ask: ask_person
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
   ship:
-    invoke: ship
-    max_attempts: 2             # re-run on a non-zero exit
+    invoke:
+      script: { name: ship, max_attempts: 2 }   # re-run on a non-zero exit
     transitions: { done: done }
   done:     { final: true }
   rejected: { final: true }
   failed:   { final: true }     # every machine has one; unhandled errors go here
 ```
 
-Every state does one thing: it invokes a function, and the function's result is the event that picks the next state.
+Every state does one thing: it invokes a function, and the function's result is the event that picks the next state. `invoke` has exactly one key, which names the kind:
 
 | `invoke:` | What happens | Events |
 | --- | --- | --- |
-| `<script>` | Runs the script. | `done`, `error`, or the `event` of a JSON object on its last stdout line |
-| `{ check: ... }` | A deterministic condition over a state's output, `data`, `visits` or a model's confidence, such as `{ check: { visits: fix, less_than: 3 } }`. | `yes`, `no` |
-| `{ choose: model, question: "..." }` | A router machine asks a model to pick one of the state's transitions, with a confidence. Below `min_confidence` the event is `unsure`. | the transition names, `unsure` |
-| `{ choose: person, question: "...", ask: <script> }` | The `ask` script tells someone; the run pauses until a reply arrives. | the transition names, `error` on `timeout_s` |
-| `{ machine: <name> }` | Runs another machine as a child run. | the child's final state (`failed` as `error`) |
+| `<script>`, or `script: { name: <script>, max_attempts: 2, timeout_s: 600 }` | Runs the script, re-running it up to `max_attempts` times and stopping it after `timeout_s`. | `done`, `error`, or the `event` of a JSON object on its last stdout line |
+| `check: <condition>` | A deterministic condition over a state's output, `data`, `visits` or a model's confidence, such as `check: { visits: fix, less_than: 3 }`. | `true`, `false` |
+| `model: { question: ..., output: <state> }` | A router machine asks a model to pick one of the state's transitions, with a confidence, given the `output` state's output and the message body. Below `min_confidence` the event is `unsure`. | the transition names, `unsure` |
+| `person: { question: ..., ask: <script> }` | The `ask` script tells someone; the run pauses until a reply arrives. | the transition names, `error` on `timeout_s` |
+| `machine: <name>`, or `machine: { name: <name>, params: {...} }` | Runs another machine as a child run. | the child's final state (`failed` as `error`) |
 
-Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, or the whole run at the root), `data` (typed values set from a message's `params`), `emits` (machines a state's scripts may `decree emit` to), `timeout_s`, `max_attempts`, compound states (`initial` plus `states`, with transitions that bubble up) and `final`.
+Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, or the whole run at the root), `data` (typed values set from a message's `params`), `emits` (machines a state's scripts may `decree emit` to), compound states (`initial` plus `states`, with transitions that bubble up) and `final`.
 
 [The reference](docs/reference/README.md) is the full contract, [the decision log](docs/decisions.md) says why, and `mock/` is a worked example of every feature with real files (start at [`mock/README.md`](mock/README.md)).
 
@@ -194,7 +200,7 @@ Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, 
 
 ### Routers
 
-A `choose: model` state asks a **router**: an ordinary machine that reads `request.json`, asks a model however it likes and writes `reply.json`. decree validates the reply against the state's transitions, so the model never names a state. A state names its router with `router:`; without one it uses the machine named `router`, which `decree init` writes to ask Claude, Copilot or OpenCode (`scripts/router/ask_<ai>.sh`). [docs/routers.md](docs/routers.md) shows routers for other models and local classifiers.
+A `model` state asks a **router**: an ordinary machine that reads `request.json`, asks a model however it likes and writes `reply.json`. decree validates the reply against the state's transitions, so the model never names a state. A state names its router with `router:`; without one it uses the machine named `router`, which `decree init` writes to ask Claude, Copilot or OpenCode (`scripts/router/ask_<ai>.sh`). [docs/routers.md](docs/routers.md) shows routers for other models and local classifiers.
 
 ## Scripts
 
@@ -250,9 +256,9 @@ There is no configuration file. What 0.4 configured is a convention or a fixed l
 
 | Setting | Instead |
 | --- | --- |
-| Router for `choose: model` | The machine named `router`, unless the state sets `router:` |
+| Router for a `model` invoke | The machine named `router`, unless the invoke sets `router:` |
 | Default machine | None: every message names its `machine:` |
-| Retries | `max_attempts` on the state; default 1 (no retry) |
+| Retries | `max_attempts` in the script invoke; default 1 (no retry) |
 | Emit depth | A fixed limit of 10 |
 | Log size | Each script log is capped at 2 MiB |
 | Sharing across projects | Symlink shared machines and scripts into `machines/` and `scripts/` |
@@ -303,11 +309,11 @@ The image has no Rust toolchain, so the `rust_develop` machine, whose scripts ru
 | `.decree/routines/` | `.decree/machines/` and `.decree/scripts/` |
 | `.decree/outbox/` | `decree emit` writes to `inbox/` |
 | `dead/` folders | Runs end in a `failed` state; see `decree status` |
-| `.decree/router.md` | A `choose: model` state in a machine (see `mock/.decree/machines/triage.yml`) |
+| `.decree/router.md` | A `model` state in a machine (see `mock/.decree/machines/triage.yml`) |
 | `.decree/prompts/` | Removed |
 | `hooks` | `onentry` and `onexit` scripts (`git_baseline`, `snapshot`) |
 | `routines`, `shared_routines`, `commands` | Removed; machines need no registry, and router machines call the AI tool |
-| The configuration file (`default_routine`, `routine_source`, `max_retries`) | Conventions: `machine:` on every message, `max_attempts` on states, symlinks for sharing |
+| The configuration file (`default_routine`, `routine_source`, `max_retries`) | Conventions: `machine:` on every message, `max_attempts` in script invokes, symlinks for sharing |
 | `run.json` | `events.jsonl` |
 
 ## License

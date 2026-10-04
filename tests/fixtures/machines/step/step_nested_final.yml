@@ -7,20 +7,20 @@ states:
   work:
     onentry: [work_entry]
     onexit: [work_exit]
-    initial: a
     transitions:
       done.state.work: after
       error: recovered
+    initial: a
     states:
       a:
-        onentry: [a_entry]
         invoke: a_invoke
+        onentry: [a_entry]
         onexit: [a_exit]
         transitions: { done: finished }
       finished: { final: true, onentry: [finished_entry] }
   after:
-    onentry: [after_entry]
     invoke: after_invoke
+    onentry: [after_entry]
     transitions: { done: done }
   recovered: { final: true, onentry: [recovered_entry] }
   done:      { final: true, onentry: [done_entry] }

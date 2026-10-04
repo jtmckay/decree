@@ -25,10 +25,10 @@ onexit: [after_all]
 initial: work
 states:
   work:
+    invoke:
+      script: { name: work, max_attempts: 2 }
     onentry: [before_each]
     onexit: [after_each]
-    invoke: work
-    max_attempts: 2
     transitions: { done: done }
   done: { final: true, onentry: [commit] }
   failed: { final: true, onentry: [on_dead_letter] }

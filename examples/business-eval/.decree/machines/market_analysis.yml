@@ -7,20 +7,18 @@ initial: precheck
 states:
   precheck:                        # fails fast if claude is not on PATH
     invoke: precheck
-    max_attempts: 1
     transitions: { done: analyze }
   analyze:                         # claude writes the report
-    invoke: analyze
-    max_attempts: 3
+    invoke:
+      script: { name: analyze, max_attempts: 3 }
     transitions: { done: check_report }
   check_report:                    # the report file exists
     invoke: check_report
-    max_attempts: 1
     transitions: { done: hand_off }
   hand_off:                        # emits the next step with the idea and the report's path
-    invoke: hand_off
-    max_attempts: 3
-    emits: [competitive_landscape]
+    invoke:
+      script: { name: hand_off, max_attempts: 3 }
     transitions: { done: done }
+    emits: [competitive_landscape]
   done:   { final: true }
   failed: { final: true }

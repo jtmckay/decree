@@ -25,7 +25,6 @@ initial: work
 states:
   work:
     invoke: work
-    max_attempts: 1
     transitions: { done: done }
   done: { final: true }
   failed: { final: true }
@@ -42,7 +41,10 @@ initial: approval
 states:
   approval:
     description: Ship the build?
-    invoke: { choose: person, question: Ship it?, ask: ask_person }
+    invoke:
+      person:
+        question: Ship it?
+        ask: ask_person
     transitions:
       approve: { target: shipped, description: Ship it. }
       reject: { target: done, description: Do not ship. }
@@ -62,7 +64,11 @@ states:
     transitions: { done: decide }
   decide:
     description: Decide what to do with the build.
-    invoke: { choose: model, question: Ship or rework?, router: test_router, input: build }
+    invoke:
+      model:
+        question: Ship or rework?
+        router: test_router
+        output: build
     transitions:
       ship: { target: done, description: The build is good. }
       rework: { target: failed, description: The build needs work. }

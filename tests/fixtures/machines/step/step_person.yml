@@ -13,15 +13,19 @@ states:
     initial: approval
     states:
       approval:
+        invoke:
+          person:
+            question: Ship this build?
+            ask: ask_person
+            timeout_s: 60
         onentry: [approval_entry]
         onexit: [approval_exit]
-        invoke: { choose: person, question: "Ship this build?", ask: ask_person, timeout_s: 60 }
         transitions:
           approve: { target: ship, description: Ship this build. }
           reject:  { target: rejected, description: Do not ship. }
   ship:
-    onentry: [ship_entry]
     invoke: ship_invoke
+    onentry: [ship_entry]
     transitions: { done: done }
   rejected:  { final: true, onentry: [rejected_entry] }
   done:      { final: true, onentry: [done_entry] }

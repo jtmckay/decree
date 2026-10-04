@@ -37,8 +37,8 @@ fn script_names(m: &LoadedMachine) -> Vec<&str> {
     let mut names = Vec::new();
     for node in &m.nodes {
         match &node.invoke {
-            Some(Invoke::Script(name)) => names.push(name.as_str()),
-            Some(Invoke::Choose(c)) => names.extend(c.ask.as_deref()),
+            Some(Invoke::Script(script)) => names.push(script.name.as_str()),
+            Some(Invoke::Person(c)) => names.extend(c.ask.as_deref()),
             _ => {}
         }
         names.extend(node.onentry.iter().chain(&node.onexit).map(String::as_str));
@@ -303,7 +303,7 @@ fn order_self_transition_exits_and_reenters_the_state() {
     );
     assert_eq!(
         p.transitions(),
-        ["- claimed a claim", "a yes a check", "a no done check"]
+        ["- claimed a claim", "a true a check", "a false done check"]
     );
     assert_eq!(visits(&p.events())["a"], 2);
 }
@@ -615,16 +615,16 @@ fn visits_check_ends_a_retry_loop_after_two_visits() {
             "implement error implement attempt",
             "implement done verify exit_code",
             "verify done rounds_left exit_code",
-            "rounds_left yes implement check",
+            "rounds_left true implement check",
             "implement error implement attempt",
             "implement done verify exit_code",
             "verify done rounds_left exit_code",
-            "rounds_left no done check"
+            "rounds_left false done check"
         ]
     );
     let decisions = p.events_of("decision");
     assert_eq!(decisions.len(), 2);
-    assert_eq!(decisions[1]["event"], "no");
+    assert_eq!(decisions[1]["event"], "false");
 }
 
 #[test]
@@ -650,16 +650,15 @@ fn visits_count_claim_and_retry_but_not_attempts() {
 // ---------------------------------------------------------------
 
 /// Machine `step_check`: `work` runs `script` (a fixture name), then `decide` checks
-/// `condition` (YAML flow mapping), with `input: work` if `input` is set.
-fn check_project(condition: &str, input: bool, script: &str) -> Project {
-    let input = if input { ", input: work" } else { "" };
+/// `condition` (YAML flow mapping).
+fn check_project(condition: &str, script: &str) -> Project {
     let text = format!(
         "name: step_check\ndescription: Run a script, then check a condition.\n\
          data:\n  max_rounds: {{ type: int, default: 2 }}\n  limit: {{ type: int, default: 1 }}\n  \
          mode: {{ type: string, default: fast }}\n  strict: {{ type: bool, default: true }}\n\
          initial: work\nstates:\n  \
          work: {{ invoke: work, transitions: {{ done: decide }} }}\n  \
-         decide:\n    invoke: {{ check: {condition}{input} }}\n    transitions: {{ yes: passed, no: refused }}\n  \
+         decide:\n    invoke:\n      check: {condition}\n    transitions: {{ true: passed, false: refused }}\n  \
          passed: {{ final: true }}\n  refused: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     Project::from_text("step_check", &text, &[("work", script)])
@@ -667,11 +666,11 @@ fn check_project(condition: &str, input: bool, script: &str) -> Project {
 
 /// The event a check produces, from its `decision` event, after a clean run.
 fn check_event(condition: &str, params_yaml: &str) -> String {
-    let p = check_project(condition, false, "exit_zero");
+    let p = check_project(condition, "exit_zero");
     let outcome = p.run_with("inbox", "inbox.md", &params(params_yaml));
     let decision = &p.events_of("decision")[0];
     let event = decision["event"].as_str().unwrap().to_string();
-    let expected = if event == "yes" { "passed" } else { "refused" };
+    let expected = if event == "true" { "passed" } else { "refused" };
     assert_eq!(outcome, Outcome::Finished(expected.into()), "{condition}");
     event
 }
@@ -679,7 +678,7 @@ fn check_event(condition: &str, params_yaml: &str) -> String {
 #[test]
 fn check_each_operator_on_visits() {
     // `work` has been entered once when `decide` runs.
-    for (op, yes, no) in [
+    for (op, holds, fails) in [
         ("equals", 1, 2),
         ("not_equals", 2, 1),
         ("less_than", 2, 1),
@@ -688,14 +687,14 @@ fn check_each_operator_on_visits() {
         ("at_least", 1, 2),
     ] {
         let cond = |n: i32| format!("{{ visits: work, {op}: {n} }}");
-        assert_eq!(check_event(&cond(yes), "{}"), "yes", "{op} {yes}");
-        assert_eq!(check_event(&cond(no), "{}"), "no", "{op} {no}");
+        assert_eq!(check_event(&cond(holds), "{}"), "true", "{op} {holds}");
+        assert_eq!(check_event(&cond(fails), "{}"), "false", "{op} {fails}");
     }
 }
 
 #[test]
 fn check_each_operator_on_data() {
-    for (cond, yes) in [
+    for (cond, holds) in [
         ("{ data: mode, equals: fast }", true),
         ("{ data: mode, not_equals: fast }", false),
         ("{ data: strict, equals: true }", true),
@@ -705,7 +704,7 @@ fn check_each_operator_on_data() {
         ("{ data: max_rounds, more_than: 1 }", true),
         ("{ data: max_rounds, at_least: 3 }", false),
     ] {
-        let want = if yes { "yes" } else { "no" };
+        let want = if holds { "true" } else { "false" };
         assert_eq!(check_event(cond, "{}"), want, "{cond}");
     }
 }
@@ -713,27 +712,35 @@ fn check_each_operator_on_data() {
 #[test]
 fn check_compares_with_a_data_value_set_by_params() {
     let cond = "{ visits: work, less_than: { data: max_rounds } }";
-    assert_eq!(check_event(cond, "{}"), "yes");
-    assert_eq!(check_event(cond, "max_rounds: 1"), "no");
+    assert_eq!(check_event(cond, "{}"), "true");
+    assert_eq!(check_event(cond, "max_rounds: 1"), "false");
     let cond = "{ data: limit, equals: { data: max_rounds } }";
-    assert_eq!(check_event(cond, "{}"), "no");
-    assert_eq!(check_event(cond, "limit: 2"), "yes");
+    assert_eq!(check_event(cond, "{}"), "false");
+    assert_eq!(check_event(cond, "limit: 2"), "true");
 }
 
 #[test]
-fn check_matches_reads_the_input_states_output() {
+fn check_output_matches_reads_the_named_states_output() {
     // `exit_zero` prints `hello`; `stderr` writes `[stderr] to stderr` to its log.
     for (script, cond, want) in [
-        ("exit_zero", "{ matches: '(?m)^hello$' }", "yes"),
-        ("exit_zero", "{ matches: hel+o }", "yes"),
-        ("exit_zero", "{ matches: '(?m)^bye$' }", "no"),
+        (
+            "exit_zero",
+            "{ output: work, matches: '(?m)^hello$' }",
+            "true",
+        ),
+        ("exit_zero", "{ output: work, matches: hel+o }", "true"),
+        (
+            "exit_zero",
+            "{ output: work, matches: '(?m)^bye$' }",
+            "false",
+        ),
         (
             "stderr",
-            "{ matches: '(?m)^\\[stderr\\] to stderr$' }",
-            "yes",
+            "{ output: work, matches: '(?m)^\\[stderr\\] to stderr$' }",
+            "true",
         ),
     ] {
-        let p = check_project(cond, true, script);
+        let p = check_project(cond, script);
         p.run();
         let decision = &p.events_of("decision")[0];
         assert_eq!(decision["event"], want, "{script} {cond}");
@@ -741,21 +748,36 @@ fn check_matches_reads_the_input_states_output() {
 }
 
 #[test]
-fn check_matches_without_input_reads_the_most_recent_invoke() {
-    let p = check_project("{ matches: '^hello' }", false, "exit_zero");
+fn check_output_reads_the_named_state_not_the_latest_script() {
+    let text = "name: step_output\ndescription: Two scripts, then a check on the first.\n\
+                initial: first\nstates:\n  \
+                first: { invoke: first, transitions: { done: second } }\n  \
+                second: { invoke: second, transitions: { done: decide } }\n  \
+                decide:\n    invoke:\n      check: { output: first, matches: '^hello' }\n    \
+                transitions: { true: passed, false: refused }\n  \
+                passed: { final: true }\n  refused: { final: true }\n  failed: { final: true }\n";
+    let p = Project::from_text(
+        "step_output",
+        text,
+        &[("first", "exit_zero"), ("second", "print_lines")],
+    );
     assert_eq!(p.run(), Outcome::Finished("passed".into()));
+    assert_eq!(
+        p.events_of("decision")[0]["condition"],
+        json!({ "output": "first", "matches": "^hello" })
+    );
 }
 
 #[test]
 fn check_data_matches_tests_the_string_value_set_by_params() {
     let text = "name: step_file\ndescription: Check a file name.\n\
                 data:\n  file: { type: string, default: \"\" }\ninitial: decide\nstates:\n  \
-                decide:\n    invoke: { check: { data: file, matches: '\\.md$' } }\n    \
-                transitions: { yes: passed, no: refused }\n  \
+                decide:\n    invoke:\n      check: { data: file, matches: '\\.md$' }\n    \
+                transitions: { true: passed, false: refused }\n  \
                 passed: { final: true }\n  refused: { final: true }\n  failed: { final: true }\n";
     for (file, want, end) in [
-        ("notes/a.md", "yes", "passed"),
-        ("notes/a.txt", "no", "refused"),
+        ("notes/a.md", "true", "passed"),
+        ("notes/a.txt", "false", "refused"),
     ] {
         let p = Project::from_text("step_file", text, &[]);
         let outcome = p.run_with("inbox", "inbox.md", &params(&format!("file: {file}")));
@@ -770,20 +792,20 @@ fn check_data_matches_tests_the_string_value_set_by_params() {
 }
 
 /// Machine `step_confidence`: `worth_asking` checks `big_model`'s confidence. `gate`
-/// skips `big_model`, which only exists so the condition names a `choose: model` state;
+/// skips `big_model`, which only exists so the condition names a `model` state;
 /// instead the run's `events.jsonl` starts with `decision`, a decision event of it.
 fn confidence_project(decision: Value) -> Project {
     let text = "name: step_confidence\ndescription: Check a model's confidence.\n\
                 initial: gate\nstates:\n  \
-                gate:\n    invoke: { check: { visits: big_model, equals: 0 } }\n    \
-                transitions: { yes: worth_asking, no: big_model }\n  \
-                worth_asking:\n    invoke: { check: { confidence: big_model, at_least: 0.4 } }\n    \
-                transitions: { yes: ask_person, no: set_aside }\n  \
-                big_model:\n    invoke: { choose: model, router: router, question: \"Which kind?\", min_confidence: 0.7 }\n    \
+                gate:\n    invoke:\n      check: { visits: big_model, equals: 0 }\n    \
+                transitions: { true: worth_asking, false: big_model }\n  \
+                worth_asking:\n    invoke:\n      check: { confidence: big_model, at_least: 0.4 }\n    \
+                transitions: { true: ask_person, false: set_aside }\n  \
+                big_model:\n    invoke:\n      model: { question: Which kind?, router: router, min_confidence: 0.7 }\n    \
                 transitions:\n      \
                 invoice: { target: ask_person, description: A bill. }\n      \
                 receipt: { target: set_aside, description: A paid bill. }\n      \
-                unsure: { target: worth_asking }\n  \
+                unsure: worth_asking\n  \
                 ask_person: { final: true }\n  set_aside: { final: true }\n  failed: { final: true }\n";
     let router = "name: router\ndescription: A router.\ninitial: ask\nstates:\n  \
                   ask: { invoke: ask, transitions: { done: done } }\n  \
@@ -808,10 +830,10 @@ fn check_confidence_reads_the_latest_decision_of_the_state() {
     for (decision, want, end) in [
         (
             json!({ "pick": "invoice", "confidence": 0.55 }),
-            "yes",
+            "true",
             "ask_person",
         ),
-        (json!({}), "no", "set_aside"),
+        (json!({}), "false", "set_aside"),
     ] {
         let p = confidence_project(decision.clone());
         assert_eq!(p.run(), Outcome::Finished(end.into()), "{decision}");
@@ -833,7 +855,6 @@ fn check_confidence_reads_the_latest_decision_of_the_state() {
 fn check_appends_a_decision_before_its_transition() {
     let p = check_project(
         "{ visits: work, less_than: { data: max_rounds } }",
-        false,
         "exit_zero",
     );
     assert_eq!(p.run(), Outcome::Finished("passed".into()));
@@ -842,7 +863,7 @@ fn check_appends_a_decision_before_its_transition() {
     let d = &events[i];
     assert_eq!(d["state"], "decide");
     assert_eq!(d["kind"], "check");
-    assert_eq!(d["event"], "yes");
+    assert_eq!(d["event"], "true");
     assert_eq!(
         d["condition"],
         json!({ "visits": "work", "less_than": { "data": "max_rounds" } })
@@ -859,7 +880,7 @@ fn check_appends_a_decision_before_its_transition() {
         ),
         (
             &json!("decide"),
-            &json!("yes"),
+            &json!("true"),
             &json!("passed"),
             &json!("check"),
             &Value::Null
@@ -1317,7 +1338,7 @@ fn nested_final_onentry_failure_is_error_resolved_from_that_state() {
 }
 
 // ---------------------------------------------------------------
-// Choose: person, interpreter side (docs/reference/messages.md, Replies; docs/reference/runs.md)
+// Person, interpreter side (docs/reference/messages.md, Replies; docs/reference/runs.md)
 // ---------------------------------------------------------------
 
 /// The `step_person` project, run until it waits. `ask_person` prints its environment.
@@ -1405,7 +1426,7 @@ fn person_ask_script_sees_the_wait_id_and_choices_then_the_run_waits() {
 fn person_without_timeout_has_null_timeout_at() {
     let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_person.yml"))
         .unwrap()
-        .replace(", timeout_s: 60", "");
+        .replace("            timeout_s: 60\n", "");
     let p = Project::from_text("step_person", &text, &[]);
     assert!(matches!(p.run(), Outcome::Waiting { .. }));
     assert_eq!(p.events_of("waiting")[0]["timeout_at"], Value::Null);
@@ -1552,7 +1573,7 @@ fn every_decision_waiting_and_received_field_appears() {
         &q,
         json!({ "wait_id": wait_id, "event": "error", "timed_out": true }),
     );
-    let c = check_project("{ visits: work, equals: 1 }", false, "exit_zero");
+    let c = check_project("{ visits: work, equals: 1 }", "exit_zero");
     c.run();
     let common = ["v", "seq", "ts", "type", "run_id", "machine", "trigger"];
     let keys = |kind: &str| -> HashSet<String> {
@@ -1739,7 +1760,7 @@ fn machine_invoke_past_max_depth_starts_no_child_and_is_error() {
 /// `step_parent` invoking `step_person`, run until the child waits for a reply.
 fn parent_of_person() -> (Project, String, String) {
     let parent = fixture("step_parent").replace(
-        "machine: step_child, params: { label: release }",
+        "machine: { name: step_child, params: { label: release } }",
         "machine: step_person",
     );
     let p = Project::from_texts(
@@ -1898,7 +1919,7 @@ fn interrupted_child_leaves_the_parent_waiting() {
 }
 
 // ---------------------------------------------------------------
-// Choose: model (docs/reference/runs.md)
+// Model (docs/reference/runs.md)
 // ---------------------------------------------------------------
 
 /// `step_model`, whose `triage` state asks the machine named `router` (fixture
@@ -2025,7 +2046,10 @@ fn model_router_reply_is_the_event_and_the_request_matches_the_reference() {
 #[test]
 fn model_request_omits_min_confidence_when_unset_and_router_overrides_the_default() {
     let text = fixture("step_model")
-        .replace(", min_confidence: 0.8", ", router: other_router")
+        .replace(
+            "        min_confidence: 0.8\n",
+            "        router: other_router\n",
+        )
         .replace("      unsure: asked_person\n", "")
         .replace("  asked_person: { final: true }\n", "");
     let router = fixture("step_router").replace("name: step_router", "name: other_router");

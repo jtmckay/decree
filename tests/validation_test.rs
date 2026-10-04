@@ -297,7 +297,7 @@ states:
     // V8
     Case {
         rule: "V8",
-        name: "a check handles yes and no, a person is asked a question",
+        name: "a check handles true and false, a person is asked a question",
         files: &[(
             "machines/m.yml",
             "\
@@ -309,10 +309,14 @@ states:
     invoke: work
     transitions: { done: again }
   again:
-    invoke: { check: { visits: work, less_than: 2 } }
-    transitions: { yes: work, no: approval }
+    invoke:
+      check: { visits: work, less_than: 2 }
+    transitions: { true: work, false: approval }
   approval:
-    invoke: { choose: person, question: \"Ship it?\", ask: ask }
+    invoke:
+      person:
+        question: Ship it?
+        ask: ask
     transitions:
       approve: { target: done, description: Ship it. }
       reject:  { target: failed, description: Do not ship. }
@@ -325,22 +329,24 @@ states:
     },
     Case {
         rule: "V8",
-        name: "a check misses no, a person is asked nothing",
+        name: "a check misses false, a person is asked nothing",
         files: &[(
             "machines/m.yml",
             "\
 name: m
-description: A check that misses no, and a person asked nothing.
+description: A check that misses false, and a person asked nothing.
 initial: work
 states:
   work:
     invoke: work
     transitions: { done: again }
   again:
-    invoke: { check: { visits: work, less_than: 2 } }
-    transitions: { yes: approval }
+    invoke:
+      check: { visits: work, less_than: 2 }
+    transitions: { true: approval }
   approval:
-    invoke: { choose: person, ask: ask }
+    invoke:
+      person: { ask: ask }
     transitions:
       approve: { target: done, description: Ship it. }
       reject:  failed
@@ -350,15 +356,15 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: again: a `check` state must handle `no`, itself or through an ancestor (V8)
-machines/m.yml: approval: a `choose: person` state needs a `question`: what is being decided (V8)
+machines/m.yml: again: a `check` state must handle `false`, itself or through an ancestor (V8)
+machines/m.yml: approval: a `person` state needs a `question`: what is being decided (V8)
 machines/m.yml: approval: option `reject` needs a `description`: write it as `reject: { target: failed, description: ... }` (V8)
 ",
     },
     // V9
     Case {
         rule: "V9",
-        name: "input names a script state",
+        name: "output names a script state",
         files: &[(
             "machines/m.yml",
             "\
@@ -370,8 +376,9 @@ states:
     invoke: work
     transitions: { done: ok }
   ok:
-    invoke: { check: { matches: \"^ok\" }, input: work }
-    transitions: { yes: done, no: work }
+    invoke:
+      check: { output: work, matches: \"^ok\" }
+    transitions: { true: done, false: work }
   done: { final: true }
   failed: { final: true }
 ",
@@ -381,7 +388,7 @@ states:
     },
     Case {
         rule: "V9",
-        name: "input names a state that runs no script",
+        name: "output names a state that runs no script",
         files: &[(
             "machines/m.yml",
             "\
@@ -393,14 +400,15 @@ states:
     invoke: work
     transitions: { done: ok }
   ok:
-    invoke: { check: { matches: \"^ok\" }, input: ok }
-    transitions: { yes: done, no: work }
+    invoke:
+      check: { output: ok, matches: \"^ok\" }
+    transitions: { true: done, false: work }
   done: { final: true }
   failed: { final: true }
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: ok: input `ok` is not a state with a script invoke (V9)\n",
+        expected: "machines/m.yml: ok: output `ok` is not a state with a script invoke (V9)\n",
     },
     // V10
     Case {
@@ -419,8 +427,9 @@ states:
     invoke: work
     transitions: { done: again }
   again:
-    invoke: { check: { visits: work, less_than: { data: max_rounds } } }
-    transitions: { yes: work, no: done }
+    invoke:
+      check: { visits: work, less_than: { data: max_rounds } }
+    transitions: { true: work, false: done }
   done: { final: true }
   failed: { final: true }
 ",
@@ -444,8 +453,9 @@ states:
     invoke: work
     transitions: { done: again }
   again:
-    invoke: { check: { visits: work, less_than: { data: rounds } } }
-    transitions: { yes: work, no: done }
+    invoke:
+      check: { visits: work, less_than: { data: rounds } }
+    transitions: { true: work, false: done }
   done: { final: true }
   failed: { final: true }
 ",
@@ -468,8 +478,9 @@ states:
     invoke: work
     transitions: { done: again }
   again:
-    invoke: { check: { visits: work, less_than: 2 } }
-    transitions: { yes: work, no: done }
+    invoke:
+      check: { visits: work, less_than: 2 }
+    transitions: { true: work, false: done }
   done: { final: true }
   failed: { final: true }
 ",
@@ -491,8 +502,9 @@ states:
     invoke: work
     transitions: { done: done, hold: wait }
   wait:
-    invoke: { check: { visits: wait, less_than: 2 } }
-    transitions: { yes: wait, no: wait }
+    invoke:
+      check: { visits: wait, less_than: 2 }
+    transitions: { true: wait, false: wait }
   orphan:
     invoke: work
     transitions: { done: done }
@@ -676,7 +688,7 @@ states:
     // V16
     Case {
         rule: "V16",
-        name: "choose: model with a machine named router",
+        name: "a model with a machine named router",
         files: &[
             ("machines/m.yml", V16_MACHINE.0),
             (
@@ -719,7 +731,7 @@ states:
         ],
         scripts: &[],
         expected: "\
-machines/m.yml: triage: `choose: model` names no `router`, and there is no machine named `router` (V16)
+machines/m.yml: triage: `model` names no `router`, and there is no machine named `router` (V16)
 machines/m.yml: triage: min_confidence 80 is not between 0 and 1 (V16)
 ",
     },
@@ -844,8 +856,52 @@ states:
         scripts: &[],
         expected: "\
 machines/a.yml: work: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)
-machines/b.yml: work.step: router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... } (V19)
+machines/b.yml: work.step: router on a state is not supported: make the decision a state with invoke: { model: { question: ... } } (V19)
 ",
+    },
+    Case {
+        rule: "V19",
+        name: "choose, the old decision invoke",
+        files: &[("machines/m.yml", OLD_CHOOSE)],
+        scripts: &[],
+        expected: "machines/m.yml: approval: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { person: { question: ..., ask: <script> } } for a person (V19)\n",
+    },
+    Case {
+        rule: "V19",
+        name: "input beside a check",
+        files: &[("machines/m.yml", OLD_INPUT)],
+        scripts: &[],
+        expected: "machines/m.yml: ok: input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } }) (V19)\n",
+    },
+    Case {
+        rule: "V19",
+        name: "a bare matches",
+        files: &[("machines/m.yml", OLD_BARE_MATCHES)],
+        scripts: &[],
+        expected: "machines/m.yml: ok: a bare matches is not supported: name the state it reads, { output: <state>, matches: ... } (V19)\n",
+    },
+    Case {
+        rule: "V19",
+        name: "max_attempts and timeout_s on a state",
+        files: &[
+            ("machines/a.yml", OLD_MAX_ATTEMPTS),
+            ("machines/b.yml", OLD_TIMEOUT_S),
+        ],
+        scripts: &[],
+        expected: "\
+machines/a.yml: work: max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } } (V19)
+machines/b.yml: work: timeout_s on a state is not supported: write it inside the invoke, invoke: { script: { name: <script>, timeout_s: <n> } } (or person: { ..., timeout_s: <n> }) (V19)
+",
+    },
+    Case {
+        rule: "V19",
+        name: "params beside machine",
+        files: &[
+            ("machines/m.yml", OLD_MACHINE_PARAMS),
+            ("machines/n.yml", V19_CHILD),
+        ],
+        scripts: &[],
+        expected: "machines/m.yml: work: { machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } } (V19)\n",
     },
     // V20
     Case {
@@ -1093,7 +1149,7 @@ states:
   failed: { final: true }
 ";
 
-/// A `choose: model` state with a valid and an invalid `min_confidence` (V16).
+/// A `model` state with a valid and an invalid `min_confidence` (V16).
 const V16_MACHINE: (&str, &str) = (
     "\
 name: m
@@ -1104,7 +1160,10 @@ states:
     invoke: work
     transitions: { done: triage }
   triage:
-    invoke: { choose: model, question: \"Is it done?\", min_confidence: 0.8 }
+    invoke:
+      model:
+        question: Is it done?
+        min_confidence: 0.8
     transitions:
       finish: { target: done, description: It is done. }
       again:  { target: work, description: Work on it again. }
@@ -1121,7 +1180,10 @@ states:
     invoke: work
     transitions: { done: triage }
   triage:
-    invoke: { choose: model, question: \"Is it done?\", min_confidence: 80 }
+    invoke:
+      model:
+        question: Is it done?
+        min_confidence: 80
     transitions:
       finish: { target: done, description: It is done. }
       again:  { target: work, description: Work on it again. }
@@ -1130,6 +1192,110 @@ states:
   failed: { final: true }
 ",
 );
+
+/// `choose: person`, which `person:` replaced (V19).
+const OLD_CHOOSE: &str = "\
+name: m
+description: A person picks one option, written the old way.
+initial: approval
+states:
+  approval:
+    invoke: { choose: person, question: Ship it?, ask: ask }
+    transitions:
+      approve: { target: done, description: Ship it. }
+      reject:  { target: failed, description: Do not ship. }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// `input:` beside `check:`, which `output:` in the condition replaced (V19).
+const OLD_INPUT: &str = "\
+name: m
+description: A check on a script's output, written the old way.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: ok }
+  ok:
+    invoke: { check: { matches: \"^ok\" }, input: work }
+    transitions: { true: done, false: work }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// A `matches` with no subject, which read the most recent script's output (V19).
+const OLD_BARE_MATCHES: &str = "\
+name: m
+description: A check on the latest output, written the old way.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: ok }
+  ok:
+    invoke:
+      check: { matches: \"^ok\" }
+    transitions: { true: done, false: work }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// `max_attempts` on a state, which moved inside `invoke: { script: … }` (V19).
+const OLD_MAX_ATTEMPTS: &str = "\
+name: a
+description: Retries written the old way.
+initial: work
+states:
+  work:
+    invoke: work
+    max_attempts: 2
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// `timeout_s` on a state, which moved inside `invoke: { script: … }` (V19).
+const OLD_TIMEOUT_S: &str = "\
+name: b
+description: A time limit written the old way.
+initial: work
+states:
+  work:
+    invoke: work
+    timeout_s: 60
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// `{ machine: x, params }`, which `{ machine: { name: x, params } }` replaced (V19).
+const OLD_MACHINE_PARAMS: &str = "\
+name: m
+description: A child machine with params, written the old way.
+initial: work
+states:
+  work:
+    invoke: { machine: n, params: { label: release } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// The child of `OLD_MACHINE_PARAMS`.
+const V19_CHILD: &str = "\
+name: n
+description: A child machine with one datum.
+data:
+  label: { type: string, default: none }
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
 
 /// A 0.4 `router:` on a state inside a compound state (V19).
 const ROUTER_ON_A_STATE: &str = "\
@@ -1171,7 +1337,12 @@ fn script_names(value: &Value, names: &mut Vec<String>) {
         Value::Mapping(map) => {
             for (key, value) in map {
                 match (key.as_str(), value) {
-                    (Some("invoke" | "ask"), Value::String(name)) => names.push(name.clone()),
+                    (Some("invoke" | "script" | "ask"), Value::String(name)) => {
+                        names.push(name.clone())
+                    }
+                    (Some("script"), Value::Mapping(script)) => {
+                        names.extend(script.get("name").and_then(Value::as_str).map(String::from))
+                    }
                     (Some("onentry" | "onexit"), Value::Sequence(list)) => {
                         names.extend(list.iter().filter_map(|v| v.as_str()).map(String::from))
                     }
@@ -1286,7 +1457,7 @@ rule_tests! {
     v6_compound => "V6",
     v7_final => "V7",
     v8_decisions => "V8",
-    v9_input => "V9",
+    v9_output => "V9",
     v10_condition => "V10",
     v11_reachable => "V11",
     v12_scripts => "V12",
@@ -1350,7 +1521,8 @@ states:
     invoke: work
     transitions: { done: again, skip: done }
   again:
-    invoke: { check: { visits: work, less_than: 2 } }
+    invoke:
+      check: { visits: work, less_than: 2 }
     transitions: { pass: done }
   done: { final: true }
   failed: { final: true }
@@ -1365,9 +1537,9 @@ states:
 machines/a.yml: work: transition `done` targets unknown state `nowhere` (V4)
 machines/a.yml: done: state is unreachable from the root `initial` (V11)
 machines/b.yml: line 4: no root-level final state `failed`: every machine needs one for unhandled errors (V5)
-machines/c.yml: x: unknown field `invok`, expected one of `final`, `description`, `invoke`, `max_attempts`, `timeout_s`, `onentry`, `onexit`, `initial`, `states`, `transitions`, `emits` (V19)
-machines/d.yml: again: a `check` state must handle `yes`, itself or through an ancestor (V8)
-machines/d.yml: again: a `check` state must handle `no`, itself or through an ancestor (V8)
+machines/c.yml: x: unknown field `invok`, expected one of `final`, `description`, `invoke`, `onentry`, `onexit`, `initial`, `states`, `transitions`, `emits` (V19)
+machines/d.yml: again: a `check` state must handle `true`, itself or through an ancestor (V8)
+machines/d.yml: again: a `check` state must handle `false`, itself or through an ancestor (V8)
 "
     );
 }

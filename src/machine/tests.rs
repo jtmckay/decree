@@ -60,10 +60,9 @@ fn reference_examples_load() {
 
     let deploy = &machines["deploy"];
     let approval = &deploy.nodes[deploy.find("approval").unwrap()];
-    let Some(Invoke::Choose(c)) = &approval.invoke else {
+    let Some(Invoke::Person(c)) = &approval.invoke else {
         panic!("{:?}", approval.invoke);
     };
-    assert_eq!(c.choose, ChooseKind::Person);
     assert_eq!(c.question.as_deref(), Some("Ship this build?"));
     assert_eq!(c.ask.as_deref(), Some("ask_person"));
     assert_eq!(c.timeout_s, Some(86400));
@@ -73,7 +72,7 @@ fn reference_examples_load() {
     assert_eq!(
         build.invoke,
         Some(Invoke::Machine(MachineInvoke {
-            machine: "feature".into(),
+            name: "feature".into(),
             params: serde_norway::Mapping::new(),
         }))
     );
@@ -123,33 +122,33 @@ fn feature_arena_has_eleven_states_plus_root() {
     assert_eq!(m.nodes[verify].depth, 2);
     assert_eq!(
         m.nodes[verify].invoke,
-        Some(Invoke::Script("verify".into()))
+        Some(Invoke::Script(ScriptInvoke {
+            name: "verify".into(),
+            max_attempts: None,
+            timeout_s: None,
+        }))
     );
 
     let rounds = &m.nodes[m.find("rounds_left").unwrap()];
     let Some(Invoke::Check(check)) = &rounds.invoke else {
         panic!("{:?}", rounds.invoke);
     };
-    assert_eq!(check.check.visits.as_deref(), Some("implement"));
-    assert_eq!(
-        check.check.less_than,
-        Some(Operand::Data("max_rounds".into()))
-    );
-    // `yes` and `no` are strings, not YAML 1.1 booleans.
+    assert_eq!(check.visits.as_deref(), Some("implement"));
+    assert_eq!(check.less_than, Some(Operand::Data("max_rounds".into())));
+    // `true:` and `false:` are YAML booleans, read as the event names `true` and `false`.
     let events: Vec<&str> = rounds
         .transitions
         .iter()
         .map(|e| e.event.as_str())
         .collect();
-    assert_eq!(events, ["no", "yes"]);
+    assert_eq!(events, ["false", "true"]);
 
     let triage = m.find("triage").unwrap();
-    let Some(Invoke::Choose(c)) = &m.nodes[triage].invoke else {
+    let Some(Invoke::Model(c)) = &m.nodes[triage].invoke else {
         panic!();
     };
-    assert_eq!(c.choose, ChooseKind::Model);
     assert_eq!(c.min_confidence, Some(0.8));
-    assert_eq!(c.input.as_deref(), Some("verify"));
+    assert_eq!(c.output.as_deref(), Some("verify"));
     assert_eq!(c.router, None);
     let options: Vec<&str> = m.options(triage).map(|e| e.event.as_str()).collect();
     assert_eq!(options, ["retry", "split"]);
@@ -162,7 +161,7 @@ fn feature_arena_has_eleven_states_plus_root() {
     assert!(!retry.internal);
 
     let implement = &m.nodes[m.find("implement").unwrap()];
-    assert_eq!(implement.max_attempts, Some(2));
+    assert_eq!(m.max_attempts(m.find("implement").unwrap()), 2);
     assert_eq!(implement.onentry, ["snapshot"]);
     assert_eq!(implement.onexit, ["collect_logs"]);
 
@@ -194,7 +193,7 @@ fn accepted_events_skip_reserved_names_and_include_ancestors() {
 }
 
 #[test]
-fn misspelled_state_key_names_file_and_state_path() {
+fn misspelled_script_setting_names_file_and_state_path() {
     let text = fixture("feature").replace("max_attempts: 2", "max_attempt: 2");
     let err = load_err("feature", &text);
     assert!(
@@ -239,9 +238,17 @@ fn invoke_object_without_a_type_key() {
     let text = fixture("hello").replace("invoke: greet ", "invoke: { run: greet }");
     let err = load_err("hello", &text);
     assert!(
-        err.contains(
-            "greet: `invoke` is a script name or an object with `machine`, `check` or `choose`"
-        ),
+        err.contains("greet: unknown invoke kind `run`: `invoke` names one of `script`, `check`, `model`, `person` or `machine`"),
+        "{err}"
+    );
+    assert!(err.ends_with("(V19)"), "{err}");
+    let text = fixture("hello").replace(
+        "invoke: greet ",
+        "invoke: { script: greet, check: { visits: greet, equals: 1 } }",
+    );
+    let err = load_err("hello", &text);
+    assert!(
+        err.contains("greet: `invoke` is a script name or a map with exactly one key, which names the kind: `script`, `check`, `model`, `person` or `machine`"),
         "{err}"
     );
 }
@@ -287,7 +294,7 @@ fn router_llm_on_a_state_names_the_alternative() {
                 done: { final: true }\n  failed: { final: true }\n";
     assert_eq!(
         parse_machine(text).unwrap_err(),
-        "work.step: router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... } (V19)"
+        "work.step: router on a state is not supported: make the decision a state with invoke: { model: { question: ... } } (V19)"
     );
 }
 
@@ -481,45 +488,63 @@ fn initial_without_states() {
 // V8: decision and sub-machine states cover their events.
 
 #[test]
-fn check_must_handle_yes_and_no() {
+fn check_must_handle_true_and_false() {
     let text = format!(
-        "{HEAD}  a: {{ invoke: {{ check: {{ visits: a, less_than: 2 }} }}, transitions: {{ yes: done }} }}\n  \
+        "{HEAD}  a: {{ invoke: {{ check: {{ visits: a, less_than: 2 }} }}, transitions: {{ true: done }} }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     assert_eq!(
         problems(&text),
-        ["a: a `check` state must handle `no`, itself or through an ancestor (V8)"]
+        ["a: a `check` state must handle `false`, itself or through an ancestor (V8)"]
     );
 }
 
 #[test]
-fn choose_needs_a_question_and_described_options() {
+fn check_events_true_and_false_are_written_without_quotes() {
     let text = format!(
-        "{HEAD}  a:\n    invoke: {{ choose: person, ask: tell }}\n    transitions:\n      \
+        "{HEAD}  a:\n    invoke:\n      check: {{ visits: a, less_than: 2 }}\n    \
+         transitions: {{ true: done, false: failed }}\n  \
+         done: {{ final: true }}\n  failed: {{ final: true }}\n"
+    );
+    let m = load("m", &text);
+    let a = &m.nodes[m.find("a").unwrap()];
+    let events: Vec<(&str, &str)> = a
+        .transitions
+        .iter()
+        .map(|e| (e.event.as_str(), e.target.as_str()))
+        .collect();
+    assert_eq!(events, [("false", "failed"), ("true", "done")]);
+    assert!(problems(&text).is_empty(), "{:?}", problems(&text));
+}
+
+#[test]
+fn person_needs_a_question_and_described_options() {
+    let text = format!(
+        "{HEAD}  a:\n    invoke:\n      person: {{ ask: tell }}\n    transitions:\n      \
          ship: {{ target: done, description: Ship it. }}\n      stop: done\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     assert_eq!(
         problems(&text),
         [
-            "a: a `choose: person` state needs a `question`: what is being decided (V8)",
+            "a: a `person` state needs a `question`: what is being decided (V8)",
             "a: option `stop` needs a `description`: write it as `stop: { target: done, description: ... }` (V8)",
         ]
     );
 }
 
 #[test]
-fn choose_needs_two_options_and_min_confidence_needs_unsure() {
+fn model_needs_two_options_and_min_confidence_needs_unsure() {
     let text = format!(
-        "{HEAD}  a:\n    invoke: {{ choose: model, question: \"Go?\", min_confidence: 0.5 }}\n    \
+        "{HEAD}  a:\n    invoke:\n      model: {{ question: Go?, min_confidence: 0.5 }}\n    \
          transitions:\n      go: {{ target: done, description: Go. }}\n      error: failed\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     assert_eq!(
         problems(&text),
         [
-            "a: a `choose: model` state needs at least 2 options (transitions other than `unsure` and `error`), has 1 (V8)",
-            "a: a `choose: model` state with `min_confidence` must handle `unsure`, itself or through an ancestor (V8)",
+            "a: a `model` state needs at least 2 options (transitions other than `unsure` and `error`), has 1 (V8)",
+            "a: a `model` state with `min_confidence` must handle `unsure`, itself or through an ancestor (V8)",
         ]
     );
 }
@@ -539,32 +564,28 @@ fn machine_state_handles_every_final_state_of_the_child() {
     );
 }
 
-// V9: input.
+// V9: output.
 
 #[test]
-fn input_names_a_script_state_and_matches_needs_a_script_before_it() {
-    let text = format!(
-        "{HEAD}  a: {{ invoke: {{ check: {{ matches: ok }} }}, transitions: {{ yes: b, no: b }} }}\n  \
-         b: {{ invoke: {{ check: {{ matches: ok }}, input: a }}, transitions: {{ yes: done, no: done }} }}\n  \
-         done: {{ final: true }}\n  failed: {{ final: true }}\n"
-    );
-    assert_eq!(
-        problems(&text),
-        [
-            "a: `matches` without `input` reads the most recent script's output, but no script state comes before this state (V9)",
-            "b: input `a` is not a state with a script invoke (V9)",
-        ]
-    );
-}
-
-#[test]
-fn matches_after_a_script_state_needs_no_input() {
+fn output_names_a_script_state() {
     let text = format!(
         "{HEAD}  a: {{ invoke: x, transitions: {{ done: b }} }}\n  \
-         b: {{ invoke: {{ check: {{ matches: ok }} }}, transitions: {{ yes: done, no: a }} }}\n  \
+         b:\n    invoke:\n      check: {{ output: a, matches: ok }}\n    transitions: {{ true: c, false: c }}\n  \
+         c:\n    invoke:\n      model: {{ question: Go?, output: a }}\n    transitions:\n      \
+         go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     assert!(problems(&text).is_empty(), "{:?}", problems(&text));
+    let wrong = text
+        .replace("output: a, matches", "output: b, matches")
+        .replace("output: a }", "output: nowhere }");
+    assert_eq!(
+        problems(&wrong),
+        [
+            "b: output `b` is not a state with a script invoke (V9)",
+            "c: output `nowhere` is not a state with a script invoke (V9)",
+        ]
+    );
 }
 
 // V10: conditions.
@@ -574,12 +595,13 @@ fn condition_rules() {
     let text = "name: m\ndescription: d\ndata:\n  max_rounds: { type: int, default: 2 }\n  \
                 mode: { type: string, default: fast }\ninitial: a\nstates:\n  \
                 a: { invoke: x, transitions: { done: b } }\n  \
-                b: { invoke: { check: { visits: w, less_than: { data: rounds } } }, transitions: { yes: c, no: c } }\n  \
-                c: { invoke: { check: { data: mode, less_than: b } }, transitions: { yes: d, no: d } }\n  \
-                d: { invoke: { check: { data: max_rounds, equals: fast } }, transitions: { yes: e, no: e } }\n  \
-                e: { invoke: { check: { matches: '(' } }, transitions: { yes: f, no: f } }\n  \
-                f: { invoke: { check: { visits: a, data: mode, equals: 1 } }, transitions: { yes: g, no: g } }\n  \
-                g: { invoke: { check: { visits: a } }, transitions: { yes: done, no: done } }\n  \
+                b: { invoke: { check: { visits: w, less_than: { data: rounds } } }, transitions: { true: c, false: c } }\n  \
+                c: { invoke: { check: { data: mode, less_than: b } }, transitions: { true: d, false: d } }\n  \
+                d: { invoke: { check: { data: max_rounds, equals: fast } }, transitions: { true: e, false: e } }\n  \
+                e: { invoke: { check: { output: a, matches: '(' } }, transitions: { true: f, false: f } }\n  \
+                f: { invoke: { check: { visits: a, data: mode, equals: 1 } }, transitions: { true: g, false: g } }\n  \
+                g: { invoke: { check: { visits: a } }, transitions: { true: h, false: h } }\n  \
+                h: { invoke: { check: { output: a, equals: ok } }, transitions: { true: done, false: done } }\n  \
                 w:\n    initial: z\n    transitions: { done.state.w: done }\n    states:\n      z: { final: true }\n  \
                 done: { final: true }\n  failed: { final: true }\n";
     let found: Vec<String> = problems(text)
@@ -596,6 +618,7 @@ fn condition_rules() {
             "e: check: `matches` '(' is not a regular expression: unclosed group (V10)",
             "f: check: a condition has exactly one subject, not `visits` and `data`; use two `check` states in a row (V10)",
             "g: check: `visits` needs one operator: `equals`, `not_equals`, `less_than`, `at_most`, `more_than` or `at_least` (V10)",
+            "h: check: `output` takes the operator `matches`, not `equals` (V10)",
         ]
     );
 }
@@ -628,7 +651,7 @@ fn handled_error_that_loops_stalls() {
 #[test]
 fn a_check_loop_without_a_way_out_stalls() {
     let text = format!(
-        "{HEAD}  a: {{ invoke: {{ check: {{ visits: a, less_than: 3 }} }}, transitions: {{ yes: a, no: a }} }}\n  \
+        "{HEAD}  a: {{ invoke: {{ check: {{ visits: a, less_than: 3 }} }}, transitions: {{ true: a, false: a }} }}\n  \
          failed: {{ final: true }}\n"
     );
     assert_eq!(
@@ -683,10 +706,10 @@ fn invoke_names_and_values() {
                  states:\n  a: { invoke: x, transitions: { done: done } }\n  \
                  done: { final: true }\n  failed: { final: true }\n";
     let text = format!(
-        "{HEAD}  a: {{ invoke: {{ machine: child, params: {{ n: two, k: 1 }} }}, transitions: {{ done: b }} }}\n  \
+        "{HEAD}  a: {{ invoke: {{ machine: {{ name: child, params: {{ n: two, k: 1 }} }} }}, transitions: {{ done: b }} }}\n  \
          b: {{ invoke: {{ machine: nobody }}, transitions: {{ done: c }} }}\n  \
-         c:\n    invoke: {{ choose: model, question: \"Go?\", router: nobody, min_confidence: 1.5 }}\n    \
-         max_attempts: 2\n    transitions:\n      \
+         c:\n    invoke:\n      model: {{ question: Go?, router: nobody, min_confidence: 1.5 }}\n    \
+         transitions:\n      \
          go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n      \
          unsure: done\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
@@ -703,22 +726,21 @@ fn invoke_names_and_values() {
             "b: machine `nobody` does not exist (V16)",
             "c: router `nobody` is not a machine (V16)",
             "c: min_confidence 1.5 is not between 0 and 1 (V16)",
-            "c: `max_attempts` is only allowed on states that invoke a script (V16)",
         ]
     );
 }
 
 #[test]
-fn choose_model_without_router_needs_a_machine_named_router() {
+fn model_without_router_needs_a_machine_named_router() {
     let text = format!(
-        "{HEAD}  a:\n    invoke: {{ choose: model, question: \"Go?\" }}\n    transitions:\n      \
+        "{HEAD}  a:\n    invoke:\n      model: {{ question: Go? }}\n    transitions:\n      \
          go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     assert!(problems(&text).is_empty(), "{:?}", problems(&text));
     assert_eq!(
         problems_with(&text, &[]),
-        ["a: `choose: model` names no `router`, and there is no machine named `router` (V16)"]
+        ["a: `model` names no `router`, and there is no machine named `router` (V16)"]
     );
 }
 
@@ -742,7 +764,7 @@ fn internal_only_from_a_compound_state_to_a_descendant() {
 fn event_names_and_reserved_options() {
     let text = format!(
         "{HEAD}  a: {{ invoke: x, transitions: {{ Done: b, done: b }} }}\n  \
-         b:\n    invoke: {{ choose: person, question: \"Go?\", ask: tell }}\n    transitions:\n      \
+         b:\n    invoke:\n      person: {{ question: Go?, ask: tell }}\n    transitions:\n      \
          go: {{ target: done, description: Go. }}\n      done.later: {{ target: done, description: Later. }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
@@ -755,24 +777,101 @@ fn event_names_and_reserved_options() {
     );
 }
 
-// V19 inside an invoke.
+// V19: old shapes fail with the shape that replaced them.
 
-#[test]
-fn choose_keys_of_the_other_kind() {
+/// The parse error for state `a` written with `state`, the YAML of its keys after the
+/// state's own line.
+fn old_shape(state: &str) -> String {
     let text = format!(
-        "{HEAD}  a:\n    invoke: {{ choose: person, question: \"Go?\", ask: tell, router: router, input: a }}\n    \
-         transitions:\n      go: {{ target: done, description: Go. }}\n      \
-         stop: {{ target: done, description: Stop. }}\n  \
+        "{HEAD}  s: {{ invoke: s, transitions: {{ done: a }} }}\n  a:\n{state}  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
-    let found: Vec<String> = problems(&text)
-        .into_iter()
-        .filter(|p| p.ends_with("(V19)"))
-        .collect();
+    parse_machine(&text).unwrap_err()
+}
+
+#[test]
+fn choose_names_model_and_person() {
     assert_eq!(
-        found,
-        ["a: `choose: person` does not take `router`, `input` (V19)"]
+        old_shape("    invoke: { choose: model, question: Go? }\n    transitions: { go: done, stop: done }\n"),
+        "a: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { person: { question: ..., ask: <script> } } for a person (V19)"
     );
+}
+
+#[test]
+fn input_names_output() {
+    let message = "a: input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } }) (V19)";
+    assert_eq!(
+        old_shape("    invoke: { check: { matches: ok }, input: s }\n    transitions: { true: done, false: done }\n"),
+        message
+    );
+    assert_eq!(
+        old_shape("    invoke:\n      model: { question: Go?, input: s }\n    transitions: { go: done, stop: done }\n"),
+        message
+    );
+}
+
+#[test]
+fn bare_matches_names_output() {
+    assert_eq!(
+        old_shape("    invoke:\n      check: { matches: ok }\n    transitions: { true: done, false: done }\n"),
+        "a: a bare matches is not supported: name the state it reads, { output: <state>, matches: ... } (V19)"
+    );
+}
+
+#[test]
+fn state_level_script_settings_name_the_script_invoke() {
+    assert_eq!(
+        old_shape("    invoke: s\n    max_attempts: 2\n    transitions: { done: done }\n"),
+        "a: max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } } (V19)"
+    );
+    assert_eq!(
+        old_shape("    invoke: s\n    timeout_s: 60\n    transitions: { done: done }\n"),
+        "a: timeout_s on a state is not supported: write it inside the invoke, invoke: { script: { name: <script>, timeout_s: <n> } } (or person: { ..., timeout_s: <n> }) (V19)"
+    );
+}
+
+#[test]
+fn machine_with_params_beside_it_names_the_long_form() {
+    assert_eq!(
+        old_shape("    invoke: { machine: child, params: { n: 1 } }\n    transitions: { done: done }\n"),
+        "a: { machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } } (V19)"
+    );
+}
+
+#[test]
+fn script_and_machine_take_a_bare_name_or_the_long_form() {
+    let text = format!(
+        "{HEAD}  a:\n    invoke:\n      script: {{ name: s, max_attempts: 3, timeout_s: 9 }}\n    \
+         transitions: {{ done: b }}\n  \
+         b: {{ invoke: {{ script: s }}, transitions: {{ done: c }} }}\n  \
+         c: {{ invoke: {{ machine: {{ name: child, params: {{ n: 1 }} }} }}, transitions: {{ done: done }} }}\n  \
+         done: {{ final: true }}\n  failed: {{ final: true }}\n"
+    );
+    let m = load("m", &text);
+    let a = m.find("a").unwrap();
+    let Some(Invoke::Script(script)) = &m.nodes[a].invoke else {
+        panic!("{:?}", m.nodes[a].invoke);
+    };
+    assert_eq!(
+        (script.name.as_str(), script.max_attempts, script.timeout_s),
+        ("s", Some(3), Some(9))
+    );
+    assert_eq!(m.max_attempts(a), 3);
+    let b = m.find("b").unwrap();
+    assert_eq!(
+        m.nodes[b].invoke,
+        Some(Invoke::Script(ScriptInvoke {
+            name: "s".into(),
+            max_attempts: None,
+            timeout_s: None,
+        }))
+    );
+    assert_eq!(m.max_attempts(b), 1);
+    let Some(Invoke::Machine(child)) = &m.nodes[m.find("c").unwrap()].invoke else {
+        panic!();
+    };
+    assert_eq!(child.name, "child");
+    assert_eq!(child.params.len(), 1);
 }
 
 // V20: invoke cycles.
@@ -795,7 +894,7 @@ fn a_machine_that_invokes_itself_through_its_router() {
                   a: { invoke: { machine: m }, transitions: { done: done } }\n  \
                   done: { final: true }\n  failed: { final: true }\n";
     let text = format!(
-        "{HEAD}  a:\n    invoke: {{ choose: model, question: \"Go?\" }}\n    transitions:\n      \
+        "{HEAD}  a:\n    invoke:\n      model: {{ question: Go? }}\n    transitions:\n      \
          go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
@@ -837,7 +936,7 @@ fn data_types() {
 fn script_problems_name_the_state_and_relative_path() {
     let text = format!(
         "{HEAD}  a: {{ invoke: x, transitions: {{ done: b }} }}\n  \
-         b:\n    invoke: {{ choose: person, question: \"Go?\" }}\n    transitions:\n      \
+         b:\n    invoke:\n      person: {{ question: Go? }}\n    transitions:\n      \
          go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
@@ -855,7 +954,9 @@ fn script_problems_name_the_state_and_relative_path() {
         [
             Problem {
                 at: "b".into(),
-                message: "a `choose: person` state needs an `ask` script, which tells someone how to reply (V12)".into(),
+                message:
+                    "a `person` state needs an `ask` script, which tells someone how to reply (V12)"
+                        .into(),
             },
             Problem {
                 at: "a".into(),

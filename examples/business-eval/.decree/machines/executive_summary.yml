@@ -10,15 +10,13 @@ initial: precheck
 states:
   precheck:
     invoke: precheck
-    max_attempts: 1
     transitions: { done: analyze }
   analyze:
-    invoke: analyze
-    max_attempts: 3
+    invoke:
+      script: { name: analyze, max_attempts: 3 }
     transitions: { done: check_report }
   check_report:
     invoke: check_report
-    max_attempts: 1
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

@@ -1,9 +1,8 @@
-//! Conditions of `check` invokes (docs/reference/machines.md, Conditions): typed objects with one
-//! subject and, except a bare `matches`, one operator, so the YAML parser and `decree check`
-//! catch mistakes.
+//! Conditions of `check` invokes (docs/reference/machines.md, Conditions): typed objects with
+//! exactly one subject and one operator, so the YAML parser and `decree check` catch mistakes.
 //!
 //! ```yaml
-//! { matches: '^ok' }
+//! { output: read_text, matches: '^ok' }
 //! { data: file, matches: '\.md$' }
 //! { visits: implement, less_than: { data: max_rounds } }
 //! { data: mode, equals: fast }
@@ -21,20 +20,21 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
-/// A `check` condition, as written. `shape` checks that it has exactly one subject and the
-/// operator that subject needs (V10).
+/// A `check` condition, as written. `shape` checks that it has exactly one subject and one
+/// operator that subject takes (V10).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Condition {
-    /// A subject alone, or the operator of a `data` subject.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub matches: Option<String>,
+    pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visits: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matches: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub equals: Option<Operand>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,23 +70,24 @@ pub enum Op {
     AtLeast,
 }
 
-/// A condition's subject and, except for a bare `matches`, its test.
-type Shape<'a> = (Subject<'a>, Option<Test<'a>>);
+/// A condition's subject and its test.
+type Shape<'a> = (Subject<'a>, Test<'a>);
 
 /// What a condition tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subject<'a> {
-    /// The input matches this regular expression.
-    Matches(&'a str),
+    /// The latest script output of this state, as logged.
+    Output(&'a str),
     /// How many times this state has been entered.
     Visits(&'a str),
     /// This `data` value.
     Data(&'a str),
-    /// The confidence of this state's latest `choose: model` decision.
+    /// The confidence of this state's latest `model` decision.
     Confidence(&'a str),
 }
 
-/// What a subject is tested with: a comparison, or (on `data`) a regular expression.
+/// What a subject is tested with: a comparison, or (on `output` and `data`) a regular
+/// expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Test<'a> {
     Compare(Op, &'a Operand),
@@ -102,8 +103,8 @@ pub struct Facts<'a> {
     pub visits: &'a BTreeMap<String, u32>,
     /// The confidence of each state's latest decision; a state missing here counts 0.
     pub confidence: &'a BTreeMap<String, f64>,
-    /// The text a bare `matches` reads.
-    pub input: &'a str,
+    /// The logged output of the state an `output` subject names; empty if it has not run.
+    pub output: &'a str,
 }
 
 /// A value a condition compares: a literal, a `data` value or a visit count.
@@ -116,17 +117,17 @@ pub enum Value {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CondError {
-    #[error("a condition needs one subject: `matches`, `visits`, `data` or `confidence`")]
+    #[error("a condition needs one subject: `output`, `visits`, `data` or `confidence`")]
     NoSubject,
     #[error("a condition has exactly one subject, not {0}; use two `check` states in a row")]
     ManySubjects(String),
-    #[error("`{0}` needs one operator: `equals`, `not_equals`, `less_than`, `at_most`, `more_than` or `at_least`")]
+    #[error("`{}` needs one operator: {}", .0, operators_of(.0))]
     NoOperator(&'static str),
     #[error("a condition has exactly one operator, not {0}; use two `check` states in a row")]
     ManyOperators(String),
-    #[error("`matches` takes no operator, but has `{0}`")]
-    OperatorOnMatches(&'static str),
-    #[error("`matches` tests the input or a `data` value, not `{0}`")]
+    #[error("`output` takes the operator `matches`, not `{0}`")]
+    CompareOutput(&'static str),
+    #[error("`matches` tests `output` or a `data` value, not `{0}`")]
     MatchesOn(&'static str),
     #[error("`matches` needs a string, not {0}")]
     MatchesNotString(&'static str),
@@ -258,10 +259,10 @@ impl Condition {
         .collect()
     }
 
-    /// The subject and, except for a bare `matches`, the test: exactly one of each (V10).
-    /// `matches` is the subject when nothing else is, and otherwise an operator of `data`.
+    /// The subject and the test: exactly one of each (V10).
     pub fn shape(&self) -> Result<Shape<'_>, CondError> {
         let subjects: Vec<Subject> = [
+            self.output.as_deref().map(Subject::Output),
             self.visits.as_deref().map(Subject::Visits),
             self.data.as_deref().map(Subject::Data),
             self.confidence.as_deref().map(Subject::Confidence),
@@ -269,35 +270,35 @@ impl Condition {
         .into_iter()
         .flatten()
         .collect();
-        let ops = self.operators();
-        let subject = match (subjects.as_slice(), self.matches.as_deref()) {
-            ([], None) => return Err(CondError::NoSubject),
-            ([], Some(pattern)) => {
-                return match ops.first() {
-                    None => Ok((Subject::Matches(pattern), None)),
-                    Some((op, _)) => Err(CondError::OperatorOnMatches(op.as_str())),
-                };
-            }
-            ([one], _) => *one,
-            (many, _) => {
+        let subject = match subjects.as_slice() {
+            [] => return Err(CondError::NoSubject),
+            [one] => *one,
+            many => {
                 let names: Vec<String> = many.iter().map(|s| format!("`{}`", s.key())).collect();
                 return Err(CondError::ManySubjects(names.join(" and ")));
             }
         };
-        let mut tests: Vec<Test> = ops
+        let mut tests: Vec<Test> = self
+            .matches
+            .as_deref()
+            .map(Test::Matches)
             .into_iter()
-            .map(|(op, v)| Test::Compare(op, v))
             .collect();
-        if let Some(pattern) = self.matches.as_deref() {
-            tests.push(Test::Matches(pattern));
-        }
-        match tests.as_slice() {
-            [] => Err(CondError::NoOperator(subject.key())),
-            [Test::Matches(_)] if !matches!(subject, Subject::Data(_)) => {
+        tests.extend(
+            self.operators()
+                .into_iter()
+                .map(|(op, v)| Test::Compare(op, v)),
+        );
+        match (subject, tests.as_slice()) {
+            (_, []) => Err(CondError::NoOperator(subject.key())),
+            (Subject::Output(_), [Test::Compare(op, _)]) => {
+                Err(CondError::CompareOutput(op.as_str()))
+            }
+            (Subject::Visits(_) | Subject::Confidence(_), [Test::Matches(_)]) => {
                 Err(CondError::MatchesOn(subject.key()))
             }
-            [one] => Ok((subject, Some(*one))),
-            many => {
+            (_, [one]) => Ok((subject, *one)),
+            (_, many) => {
                 let names: Vec<String> = many.iter().map(|t| format!("`{}`", t.key())).collect();
                 Err(CondError::ManyOperators(names.join(" and ")))
             }
@@ -305,30 +306,32 @@ impl Condition {
     }
 
     /// Evaluate against the run's facts: `data`, visit counts, decision confidences and the
-    /// input text.
+    /// output of the state an `output` subject names.
     pub fn eval(&self, facts: &Facts) -> Result<bool, CondError> {
         let (op, left, operand) = match self.shape()? {
-            (Subject::Matches(pattern), _) => return Ok(compile(pattern)?.is_match(facts.input)),
-            (Subject::Confidence(state), Some(Test::Compare(op, operand))) => {
-                let left = facts.confidence.get(state).copied().unwrap_or(0.0);
-                return Ok(op.compare(left, confidence_operand(operand)?));
+            (Subject::Output(_), Test::Matches(pattern)) => {
+                return Ok(compile(pattern)?.is_match(facts.output))
             }
-            (Subject::Data(name), Some(Test::Matches(pattern))) => {
+            (Subject::Data(name), Test::Matches(pattern)) => {
                 return match lookup(facts.data, name)? {
                     Value::Str(s) => Ok(compile(pattern)?.is_match(&s)),
                     other => Err(CondError::MatchesNotString(other.kind())),
                 };
             }
-            (Subject::Visits(state), Some(Test::Compare(op, operand))) => {
+            (Subject::Confidence(state), Test::Compare(op, operand)) => {
+                let left = facts.confidence.get(state).copied().unwrap_or(0.0);
+                return Ok(op.compare(left, confidence_operand(operand)?));
+            }
+            (Subject::Visits(state), Test::Compare(op, operand)) => {
                 let visits = facts.visits.get(state).copied().unwrap_or(0);
                 (op, Value::Int(visits.into()), operand)
             }
-            (Subject::Data(name), Some(Test::Compare(op, operand))) => {
+            (Subject::Data(name), Test::Compare(op, operand)) => {
                 (op, lookup(facts.data, name)?, operand)
             }
-            // `shape` gives `visits` and `confidence` a comparison, and nothing else a
-            // missing test.
-            (subject, _) => return Err(CondError::NoOperator(subject.key())),
+            // `shape` gives `output` only `matches`, and `visits` and `confidence` only a
+            // comparison.
+            (subject, _) => return Err(CondError::MatchesOn(subject.key())),
         };
         let right = match operand {
             Operand::Int(n) => Value::Int(*n),
@@ -372,7 +375,7 @@ impl Test<'_> {
 impl Subject<'_> {
     pub fn key(self) -> &'static str {
         match self {
-            Subject::Matches(_) => "matches",
+            Subject::Output(_) => "output",
             Subject::Visits(_) => "visits",
             Subject::Data(_) => "data",
             Subject::Confidence(_) => "confidence",
@@ -380,26 +383,38 @@ impl Subject<'_> {
     }
 }
 
+/// The operators the subject `key` takes, for [`CondError::NoOperator`].
+fn operators_of(key: &str) -> &'static str {
+    match key {
+        "output" => "`matches`",
+        "data" => {
+            "`matches`, `equals`, `not_equals`, `less_than`, `at_most`, `more_than` or `at_least`"
+        }
+        _ => "`equals`, `not_equals`, `less_than`, `at_most`, `more_than` or `at_least`",
+    }
+}
+
 impl fmt::Display for Condition {
     /// As a graph note shows it: `<subject> <name> <op> <value>`, e.g.
     /// `visits implement less_than data.max_rounds`, `data file matches '<regex>'`,
-    /// `confidence big_model at_least 0.4`, or `matches '<regex>'`.
+    /// `confidence big_model at_least 0.4`, or `output read_text matches '<regex>'`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut words = Vec::new();
-        if let Some(state) = &self.visits {
-            words.push(format!("visits {state}"));
-        }
-        if let Some(name) = &self.data {
-            words.push(format!("data {name}"));
-        }
-        if let Some(state) = &self.confidence {
-            words.push(format!("confidence {state}"));
-        }
-        for (op, value) in self.operators() {
-            words.push(format!("{op} {value}"));
+        for (key, name) in [
+            ("output", &self.output),
+            ("visits", &self.visits),
+            ("data", &self.data),
+            ("confidence", &self.confidence),
+        ] {
+            if let Some(name) = name {
+                words.push(format!("{key} {name}"));
+            }
         }
         if let Some(pattern) = &self.matches {
             words.push(format!("matches '{pattern}'"));
+        }
+        for (op, value) in self.operators() {
+            words.push(format!("{op} {value}"));
         }
         f.write_str(&words.join(" "))
     }
@@ -479,7 +494,7 @@ mod tests {
             data,
             visits,
             confidence,
-            input: "tests: 3 passed\n[stderr] warning\n",
+            output: "tests: 3 passed\n[stderr] warning\n",
         })
     }
 
@@ -530,11 +545,17 @@ mod tests {
     // One test per subject.
 
     #[test]
-    fn subject_matches_reads_the_input_as_logged() {
-        assert_eq!(eval(r"{ matches: '\d+ passed' }"), Ok(true));
-        assert_eq!(eval("{ matches: '^\\[stderr\\] warning$' }"), Ok(false));
-        assert_eq!(eval("{ matches: '(?m)^\\[stderr\\] warning$' }"), Ok(true));
-        assert_eq!(eval("{ matches: failed }"), Ok(false));
+    fn subject_output_reads_the_state_output_as_logged() {
+        assert_eq!(eval(r"{ output: s, matches: '\d+ passed' }"), Ok(true));
+        assert_eq!(
+            eval("{ output: s, matches: '^\\[stderr\\] warning$' }"),
+            Ok(false)
+        );
+        assert_eq!(
+            eval("{ output: s, matches: '(?m)^\\[stderr\\] warning$' }"),
+            Ok(true)
+        );
+        assert_eq!(eval("{ output: s, matches: failed }"), Ok(false));
     }
 
     #[test]
@@ -555,7 +576,7 @@ mod tests {
             ),
             Ok(false)
         );
-        // It reads the value, not the input.
+        // It reads the value, not the output.
         assert_eq!(eval("{ data: file, matches: passed }"), Ok(false));
     }
 
@@ -643,18 +664,30 @@ mod tests {
             parse("{ data: a, equals: 1, less_than: 2 }").shape(),
             Err(CondError::ManyOperators("`equals` and `less_than`".into()))
         );
+        assert_eq!(parse("{ matches: x }").shape(), Err(CondError::NoSubject));
         assert_eq!(
-            parse("{ matches: x, equals: 1 }").shape(),
-            Err(CondError::OperatorOnMatches("equals"))
+            parse("{ output: s, equals: 1 }").shape(),
+            Err(CondError::CompareOutput("equals"))
         );
-        assert!(parse("{ matches: x }").shape().is_ok());
+        assert_eq!(
+            parse("{ output: s }").shape(),
+            Err(CondError::NoOperator("output"))
+        );
+        assert_eq!(
+            parse("{ output: s, matches: x }").shape(),
+            Ok((Subject::Output("s"), Test::Matches("x")))
+        );
         assert_eq!(
             parse("{ data: f, matches: x }").shape(),
-            Ok((Subject::Data("f"), Some(Test::Matches("x"))))
+            Ok((Subject::Data("f"), Test::Matches("x")))
         );
         assert_eq!(
             parse("{ data: f, matches: x, equals: y }").shape(),
-            Err(CondError::ManyOperators("`equals` and `matches`".into()))
+            Err(CondError::ManyOperators("`matches` and `equals`".into()))
+        );
+        assert_eq!(
+            parse("{ output: s, data: f, matches: x }").shape(),
+            Err(CondError::ManySubjects("`output` and `data`".into()))
         );
         assert_eq!(
             parse("{ visits: a, matches: x }").shape(),
@@ -745,7 +778,7 @@ mod tests {
             })
         );
         assert!(matches!(
-            eval("{ matches: '(' }"),
+            eval("{ output: s, matches: '(' }"),
             Err(CondError::Regex { .. })
         ));
         assert_eq!(
@@ -771,7 +804,10 @@ mod tests {
             parse("{ visits: implement, less_than: { data: max_rounds } }").to_string(),
             "visits implement less_than data.max_rounds"
         );
-        assert_eq!(parse("{ matches: '^ok$' }").to_string(), "matches '^ok$'");
+        assert_eq!(
+            parse("{ output: read_text, matches: '^ok$' }").to_string(),
+            "output read_text matches '^ok$'"
+        );
         assert_eq!(
             parse("{ data: strict, equals: true }").to_string(),
             "data strict equals true"

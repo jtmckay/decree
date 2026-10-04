@@ -30,9 +30,9 @@ observability/config.alloy        shipping events and logs to Loki
 - A **machine** says *in what order*: states, what each state invokes, and which event leads to which state. It names functions but never contains code or paths.
 - A **script** does one piece of work and reports one outcome: exit 0 (`done`), non-zero (`error`), or a JSON line naming a richer event (`{"event":"pass"}`). Generic scripts (`commit`, `notify`, `snapshot`, `test`) live once in `scripts/` and serve every machine; `scripts/feature/implement.sh` and `scripts/develop/implement.sh` are each machine's own `implement`, found first because `scripts/<machine>/` is checked before `scripts/`.
 
-There is no configuration file. A `choose: model` with no `router:` uses the machine named `router`, every message names its machine, and retries are set per state with `max_attempts`.
+There is no configuration file. A `model` with no `router:` uses the machine named `router`, every message names its machine, and retries are set per script with `max_attempts` inside its invoke.
 
-Every state **invokes one function**, and the function's result is an event. The function is a script, or one of decree's three built-in decisions: `check` (a deterministic condition), `choose: model` (a model picks an option) or `choose: person` (a person picks an option). AI and people appear only where a machine says `choose`.
+Every state **invokes one function**, and the function's result is an event. The function is a script, or one of decree's three built-in decisions: `check` (a deterministic condition), `model` (a model picks an option) or `person` (a person picks an option). AI and people appear only where a machine invokes `model` or `person`.
 
 ## Reading a machine
 
@@ -63,7 +63,11 @@ states:
     invoke: build
     transitions: { done: approval }
   approval:                        # a person picks one option; the run pauses for the reply
-    invoke: { choose: person, ask: ask_person, timeout_s: 86400 }
+    invoke:
+      person:
+        question: Ship this build?
+        ask: ask_person
+        timeout_s: 86400
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
@@ -75,7 +79,7 @@ states:
   failed:   { final: true }
 ```
 
-`approval` invokes `choose: person`: its `ask` script, [`ask_person.sh`](.decree/scripts/ask_person.sh), tells someone the options, and the run pauses until a reply picks one (see Asking a person, below). decree only knows the run is waiting for `approve` or `reject`. No reply in a day (`timeout_s`) is an `error`.
+`approval` invokes a `person`: its `ask` script, [`ask_person.sh`](.decree/scripts/ask_person.sh), tells someone the options, and the run pauses until a reply picks one (see Asking a person, below). decree only knows the run is waiting for `approve` or `reject`. No reply in a day (`timeout_s`) is an `error`.
 
 [`machines/feature.yml`](.decree/machines/feature.yml) uses everything, drawn by `decree graph feature` ([`.decree/graph/feature.md`](.decree/graph/feature.md)):
 
@@ -87,8 +91,8 @@ stateDiagram-v2
         implement --> verify: done
         review --> verified: approve (person)
         review --> implement: retry (person)
-        rounds_left --> review: no (check)
-        rounds_left --> triage: yes (check)
+        rounds_left --> review: false (check)
+        rounds_left --> triage: true (check)
         triage --> implement: retry (model)
         triage --> review: unsure (model)
         verify --> rounds_left: fail
@@ -126,13 +130,13 @@ stateDiagram-v2
         check: visits implement less_than data.max_rounds
     end note
     note right of triage
-        model: default, min_confidence 0.8
+        model: router, min_confidence 0.8
     end note
 ```
 
 - `work` is a **compound state**: the states inside it loop until it reaches its own final state `verified`. Reaching it raises `done.state.work`, which `work` handles by going to `done`. The inner states never need to know what happens after `work`.
 - `verify` is a **script** that prints `pass` or `fail`.
-- `rounds_left` is a **check**: `visits implement less_than data.max_rounds`. Deterministic, no AI. `yes` gives the model a go; `no` goes straight to a person.
+- `rounds_left` is a **check**: `visits implement less_than data.max_rounds`. Deterministic, no AI. `true` gives the model a go; `false` goes straight to a person.
 - `triage` is a **model's choice** between `retry` and `split`. Below `min_confidence: 0.8` it produces `unsure`, which hands the decision to `review`.
 - `review` is a **person's choice**, like `deploy`'s `approval`.
 - `triage` doesn't call a model itself: it hands a request to the **router machine** `router` (see Models and routers).
@@ -145,17 +149,17 @@ A machine is an SCXML statechart written in YAML. The keys are SCXML's names; if
 | --- | --- | --- |
 | `name`, `initial`, `states` | `<scxml name initial>`, child `<state>` | Where a run starts; nesting. |
 | `invoke: implement` | `<invoke type="decree:script">` | Runs the `implement` script (here `scripts/feature/implement.sh`). Its result is the event: `done`, `error` or a printed name. |
-| `invoke: { check: … }` | `<invoke type="decree:check">` | A typed condition over `data`, `visits` or a regex on output. Produces `yes` or `no`. |
-| `invoke: { choose: model, question: … }` | `<invoke type="decree:model">` | A router machine asks a model the `question`; the state's transitions, with their descriptions, are the answers. `unsure` below `min_confidence`. |
+| `invoke: { check: … }` | `<invoke type="decree:check">` | A typed condition: one subject (`output`, `data`, `visits` or `confidence`) and one operator. Produces `true` or `false`. |
+| `invoke: { model: { question: …, output: … } }` | `<invoke type="decree:model">` | A router machine asks a model the `question`, given the `output` state's output; the state's transitions, with their descriptions, are the answers. `unsure` below `min_confidence`. |
 | `invoke: { machine: deploy }` | `<invoke type="http://www.w3.org/TR/scxml/">` (a child state machine) | Runs the machine as a child run; the final state it reaches is the event. |
-| `invoke: { choose: person, question: …, ask: … }` | `<invoke type="decree:person">` | The `ask` script posts the question and options; the run pauses until a reply picks one. |
+| `invoke: { person: { question: …, ask: … } }` | `<invoke type="decree:person">` | The `ask` script posts the question and options; the run pauses until a reply picks one. |
 | `transitions: { done: verify }` | `<transition event target>` | Event → next state. Long form `{ target, description }`; the description is what a chooser reads. |
 | `onentry: [snapshot]`, `onexit: [collect_logs]` | `<onentry>`, `<onexit>` | Scripts run every time the state is entered or exited. They report no event. |
 | `final: true` | `<final>` | At the root, ends the run. Inside a compound state `P`, raises `done.state.P`. |
 | `type: internal` (not used here) | `type="internal"` | A compound state's transition to its own child without leaving the compound. |
 | `data` (in the machine), `params` (in a message) | `<datamodel><data>`, `<invoke><param>` | Typed, read-only values; a message's `params` set them for its run. Scripts see `DECREE_DATA_MAX_ROUNDS`. |
 | `emits: [feature]` | extension | Which machines this state's scripts may queue messages for, via `decree emit`. |
-| `max_attempts`, `timeout_s` | extension (as AWS Step Functions `Retry`, `TimeoutSeconds`) | Mechanical retry and time limit for a script, or for a reply. |
+| `invoke: { script: { name: implement, max_attempts: 2 } }`, `timeout_s` | extension (as AWS Step Functions `Retry`, `TimeoutSeconds`) | Mechanical retry and time limit for a script (inside its invoke), or for a reply (inside `person`). |
 
 ## Composing machines
 
@@ -194,14 +198,14 @@ Each `invoke: { machine: … }` starts a **child run** in its own folder under `
 | 8 `transition` `implement → verify` (`done`) | | | |
 | 9 `script` verify, invoke | `0006` | `cargo test` failed; `verify.sh` printed `{"event":"fail"}`. | A script names its own result. |
 | 10 `transition` `verify → rounds_left` (`fail`, `source: stdout`) | | | |
-| 11 `decision` rounds_left, `check` | | `visits implement` (1) `less_than data.max_rounds` (2): `yes`. | Deterministic; no log, no AI. |
-| 12 `transition` `rounds_left → triage` (`yes`, `source: check`) | | | |
+| 11 `decision` rounds_left, `check` | | `visits implement` (1) `less_than data.max_rounds` (2): `true`. | Deterministic; no log, no AI. |
+| 12 `transition` `rounds_left → triage` (`true`, `source: check`) | | | |
 | 13 `waiting` triage, child `20261001T144327Z-6a1f03` | | `triage` handed the question to the router machine `router`, as a child run with its own folder. | Routers are machines: replaceable, visible, logged separately. |
 | 14 `decision` triage, `model` | | The child read [`request.json`](.decree/runs/20261001T144327Z-6a1f03/request.json), asked Claude ([its log](.decree/runs/20261001T144327Z-6a1f03/0001-ask-ask_claude.log)) and wrote [`reply.json`](.decree/runs/20261001T144327Z-6a1f03/reply.json): `retry`, confidence 0.86 (≥ 0.8). decree checked it is an option and recorded pick, reason and confidence. | Every model decision is auditable. |
 | 15 `transition` `triage → implement` (`retry`, `source: model`) | | | |
 | 16 `script` snapshot, onentry | `0007` | Round 2 (`DECREE_VISITS=2`). | |
 | 17 `script` implement, invoke, attempt 1 | `0008` | The agent's API call failed: exit 1. | |
-| 18 `transition` `implement → implement` (`error`, `source: attempt`) | | `max_attempts: 2`, so decree re-ran the invoke in place: no `onexit` or `onentry`. | Attempts are mechanical retries; they are not visits. |
+| 18 `transition` `implement → implement` (`error`, `source: attempt`) | | `max_attempts: 2` in `implement`'s invoke, so decree re-ran it in place: no `onexit` or `onentry`. | Attempts are mechanical retries; they are not visits. |
 | 19 `script` implement, invoke, attempt 2 | `0009` | `DECREE_FINAL_ATTEMPT=true`. Succeeded. | |
 | 20 `script` collect_logs, onexit | `0010` | | |
 | 21 `transition` `implement → verify` (`done`) | | | |
@@ -212,7 +216,7 @@ Each `invoke: { machine: … }` starts a **child run** in its own folder under `
 | 26 `script` notify, root `onexit` | `0013` | Last script of the run. | |
 | 27 `run_finished` `done` | | 21 min 7 s end to end. | |
 
-Had the second round failed too, `rounds_left` would have said `no` (`visits implement` 2 is not less than 2), and the run would have gone straight to a person: the loop is bounded by the machine, not by the model's judgement.
+Had the second round failed too, `rounds_left` would have said `false` (`visits implement` 2 is not less than 2), and the run would have gone straight to a person: the loop is bounded by the machine, not by the model's judgement.
 
 `runs/01-rate-limit-upload/message.md` says `state: done`. That is a mirror for humans. The record is the last `transition` event; if decree crashes between the two writes, it trusts the log and repairs the mirror.
 
@@ -220,8 +224,8 @@ Had the second round failed too, `rounds_left` would have said `no` (`visits imp
 
 Migration 02 is in [`runs/02-upload-quota-per-plan/`](.decree/runs/02-upload-quota-per-plan/events.jsonl), paused. Nobody needs to run `decree retry`: the run continues by itself when the reply arrives.
 
-1. `verify` printed `fail`; `rounds_left` said `yes` (1 < 3); the model picked `retry` but with confidence 0.55, below 0.8, so `triage` produced `unsure` (event 14; the router's own run is [`20261001T150122Z-c03b7e`](.decree/runs/20261001T150122Z-c03b7e/reply.json)). The run went to `review` (event 15).
-2. `review` invokes `choose: person`. Its `ask` script, `ask_person.sh`, ran with `DECREE_WAIT_ID=02-upload-quota-per-plan.w15` and `DECREE_CHOICES` pointing at the options and their descriptions, and printed how to reply ([`0007-review-ask_person.log`](.decree/runs/02-upload-quota-per-plan/0007-review-ask_person.log)). A real one would post this to chat or open an issue.
+1. `verify` printed `fail`; `rounds_left` said `true` (1 < 3); the model picked `retry` but with confidence 0.55, below 0.8, so `triage` produced `unsure` (event 14; the router's own run is [`20261001T150122Z-c03b7e`](.decree/runs/20261001T150122Z-c03b7e/reply.json)). The run went to `review` (event 15).
+2. `review` invokes `person`. Its `ask` script, `ask_person.sh`, ran with `DECREE_WAIT_ID=02-upload-quota-per-plan.w15` and `DECREE_CHOICES` pointing at the options and their descriptions, and printed how to reply ([`0007-review-ask_person.log`](.decree/runs/02-upload-quota-per-plan/0007-review-ask_person.log)). A real one would post this to chat or open an issue.
 3. decree appended a `waiting` event (event 17) with the wait id, the options and the deadline (`timeout_s`: two days). `decree status` lists the run as `waiting`; `decree process` prints the same commands and exits 0. Migrations after 02 wait too.
 4. A person replied with `decree event 02-upload-quota-per-plan.w15 retry -m "..."`, which wrote [`inbox/20261001T160301Z-9be210.md`](.decree/inbox/20261001T160301Z-9be210.md):
 
@@ -246,7 +250,7 @@ A reply to a stale wait id, or with an event that is not an option, is not appli
 | Means | "That crashed; run it again." | "That worked but the result is wrong; do another round." |
 | Decided by | Exit code | The machine: a script's result, a `check`, a model or a person |
 | Leaves the state? | No: no `onexit` or `onentry`, no new visit | Yes: `onexit`, `onentry`, `visits` + 1 |
-| Bounded by | `max_attempts` on the state (default 1) | A `check` on `visits` |
+| Bounded by | `max_attempts` in the script invoke (default 1) | A `check` on `visits` |
 | In `events.jsonl` | `transition` with `source: attempt`, `from == to` | An ordinary `transition` |
 
 ## Routing a free-form request (0.4's router, rebuilt)
@@ -254,7 +258,7 @@ A reply to a stale wait id, or with an event that is not an option, is not appli
 In 0.4 a message without `routine:` went to a global LLM router that could pick any routine. In 0.5 that is just a machine: [`machines/triage.yml`](.decree/machines/triage.yml).
 
 1. Someone dropped `dark-mode.md` (`machine: triage`) into `inbox/`. decree claimed it as `runs/20261001T151455Z-5d2e90/`.
-2. `classify` invokes `choose: model`, so the router machine `router` ran as a child run ([`20261001T151455Z-8d21f4`](.decree/runs/20261001T151455Z-8d21f4/0001-ask-ask_claude.log)). Claude's reply came back in a code fence, which `ask_claude` handles; it chose `small_change` (confidence 0.93).
+2. `classify` invokes `model`, so the router machine `router` ran as a child run ([`20261001T151455Z-8d21f4`](.decree/runs/20261001T151455Z-8d21f4/0001-ask-ask_claude.log)). Claude's reply came back in a code fence, which `ask_claude` handles; it chose `small_change` (confidence 0.93).
 3. `to_develop` invoked `forward.sh`, which piped the body into `decree emit --machine develop`. `emit` checked that `develop` is in `to_develop`'s `emits`, wrote `inbox/.20261001T151502Z-a41c07.md.tmp`, and renamed it into place with `parent`, `depth: 1` and `trigger: emit`.
 4. That message is waiting in [`inbox/`](.decree/inbox/20261001T151502Z-a41c07.md). The inbox drains in filename order (FIFO): it runs first, then the reply for migration 02, then `fix-login-typo.md`.
 
@@ -266,21 +270,21 @@ If the model had failed twice, `classify` would have produced `error`, which goe
 
 | Step | State | How it decides | Acts when | Otherwise |
 | --- | --- | --- | --- | --- |
-| 1 | `by_name` | `check: { data: file, matches: '^scans/invoice-[0-9]+\.pdf$' }` (free, certain) | `yes` | `no` |
-| 2 | `by_text` | `check: { matches: '(?i)invoice (no\|number)[.:]' }, input: read_text` (free, likely) | `yes` | `no` |
-| 3 | `local_model` | `choose: model, router: local_router, min_confidence: 0.9` (a small CPU classifier, measured scores) | confidence ≥ 0.9 | `unsure` |
-| 4 | `big_model` | `choose: model, min_confidence: 0.7` (the default router, Claude) | confidence ≥ 0.7 | `unsure` |
-| 5 | `worth_asking` | `check: { confidence: big_model, at_least: 0.4 }` | 0.4 to 0.7: `yes`, ask a person | below 0.4: `no`, set aside |
-| 6 | `ask_person` | `choose: person, ask: ask_person` | the person's pick | no reply in a week: `error`, set aside |
+| 1 | `by_name` | `check: { data: file, matches: '^scans/invoice-[0-9]+\.pdf$' }` (free, certain) | `true` | `false` |
+| 2 | `by_text` | `check: { output: read_text, matches: '(?i)invoice (no\|number)[.:]' }` (free, likely) | `true` | `false` |
+| 3 | `local_model` | `model: { router: local_router, min_confidence: 0.9, output: read_text }` (a small CPU classifier, measured scores) | confidence ≥ 0.9 | `unsure` |
+| 4 | `big_model` | `model: { min_confidence: 0.7, output: read_text }` (the default router, Claude) | confidence ≥ 0.7 | `unsure` |
+| 5 | `worth_asking` | `check: { confidence: big_model, at_least: 0.4 }` | 0.4 to 0.7: `true`, ask a person | below 0.4: `false`, set aside |
+| 6 | `ask_person` | `person: { ask: ask_person }` | the person's pick | no reply in a week: `error`, set aside |
 
 So there are three thresholds, and each one is a number in the machine: 0.9 to trust the small model, 0.7 to trust the large one, and 0.4 below which a person's time is not worth spending. Each model's threshold is calibrated for that model: GLiNER2.5-Decide's scores are probabilities across the options, while Claude's confidence is self-reported. Where an option leads is written once per deciding state, so each state's options are exactly what that model or person sees.
 
 [`runs/20261001T170412Z-3f9a51/`](.decree/runs/20261001T170412Z-3f9a51/events.jsonl) climbs every step. The scan is `scans/2026-10-01-scan-0412.pdf`, an order confirmation marked PAID:
 
-1. `by_name` said `no`, because the name is not `invoice-<n>.pdf` (event 2). `read_text` printed the text ([log](.decree/runs/20261001T170412Z-3f9a51/0001-read_text-extract_text.log)), and `by_text` found no invoice number (event 6).
+1. `by_name` said `false`, because the name is not `invoice-<n>.pdf` (event 2). `read_text` printed the text ([log](.decree/runs/20261001T170412Z-3f9a51/0001-read_text-extract_text.log)), and `by_text` found no invoice number (event 6).
 2. `local_model` ran `local_router` as child run [`20261001T170412Z-b72e06`](.decree/runs/20261001T170412Z-b72e06/0001-ask-ask_local.log). The classifier scored receipt 0.62, invoice 0.31 and other 0.07 ([`reply.json`](.decree/runs/20261001T170412Z-b72e06/reply.json)). 0.62 is below 0.9, so the event was `unsure` (event 9), and the `decision` event keeps the pick and all three scores.
 3. `big_model` asked Claude through `router` ([`20261001T170412Z-d10c3a`](.decree/runs/20261001T170412Z-d10c3a/0001-ask-ask_claude.log)), with the run so far in the request's `history`. Claude also picked receipt, but only at 0.55: "titled as an order, not a receipt". That is below 0.7, so `unsure` again (event 12).
-4. `worth_asking` checked 0.55 ≥ 0.4: `yes` (event 14). Had Claude said 0.2, the run would have ended in `set_aside`, and nobody would have been asked.
+4. `worth_asking` checked 0.55 ≥ 0.4: `true` (event 14). Had Claude said 0.2, the run would have ended in `set_aside`, and nobody would have been asked.
 5. `ask_person` printed how to reply ([log](.decree/runs/20261001T170412Z-3f9a51/0002-ask_person-ask_person.log)) and the run waited on `20261001T170412Z-3f9a51.w15`. Eighteen minutes later a reply arrived ([`received/`](.decree/runs/20261001T170412Z-3f9a51/received/20261001T172208Z-e7d204.md)) with `event: receipt`, and `file_away` moved the scan to `filed/receipt/`.
 
 Most scans would stop at step 1 or 2 and cost nothing; few would ever reach a person.
@@ -375,7 +379,7 @@ topk(10, max_over_time({job="decree", type="script", machine="feature"} | json |
 
 ## Models and routers
 
-A `choose: model` state never calls a model itself. decree writes a `request.json` (the state's options and their descriptions, the input, the message body and the run's history), then runs a **router**: an ordinary machine, here [`machines/router.yml`](.decree/machines/router.yml):
+A `model` state never calls a model itself. decree writes a `request.json` (the state's options and their descriptions, the `output` state's output, the message body and the run's history), then runs a **router**: an ordinary machine, here [`machines/router.yml`](.decree/machines/router.yml):
 
 ```yaml
 name: router
@@ -383,8 +387,8 @@ description: Ask Claude to pick one of the options in the request.
 initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
-    invoke: ask_claude
-    max_attempts: 2                # a reply that is not one of the options fails the script; it runs once more
+    invoke:                        # a reply that is not one of the options fails the script; it runs once more
+      script: { name: ask_claude, max_attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
@@ -392,7 +396,7 @@ states:
 
 Its script, [`ask_claude.sh`](.decree/scripts/router/ask_claude.sh), renders the prompt, asks `claude -p`, and writes `reply.json` (`event`, `reason`, `confidence`). decree then checks that the event is one of the options and applies `min_confidence`.
 
-Because a router is just a machine, replacing it is ordinary work: edit or replace `machines/router.yml` (the router every `choose: model` without `router:` uses), or point a state's `router:` at another machine, for example one that asks a decision model (TypeSafe's Jev, Fastino's GLiNER2.5-Decide locally, OpenAI's Decisions API), a self-hosted LLM, or a cheap model first and a stronger one only when the first is unsure. Each router run is its own child run, so its logs and timing show up separately in `decree status` and Grafana.
+Because a router is just a machine, replacing it is ordinary work: edit or replace `machines/router.yml` (the router every `model` without `router:` uses), or point a state's `router:` at another machine, for example one that asks a decision model (TypeSafe's Jev, Fastino's GLiNER2.5-Decide locally, OpenAI's Decisions API), a self-hosted LLM, or a cheap model first and a stronger one only when the first is unsure. Each router run is its own child run, so its logs and timing show up separately in `decree status` and Grafana.
 
 ## From 0.4 to 0.5
 
@@ -404,7 +408,7 @@ Because a router is just a machine, replacing it is ordinary work: edit or repla
 | `hooks: beforeAll / afterAll` | Root `onentry` / `onexit` |
 | `hooks: beforeEach / afterEach` | `onentry` / `onexit` on states |
 | `hooks: onDeadLetter`, `inbox/dead/` | `failed` final state and its `onentry` |
-| `router.md`, any-routine routing | `choose: model` states over declared options, asked through a router machine; the `triage` machine |
+| `router.md`, any-routine routing | `model` states over declared options, asked through a router machine; the `triage` machine |
 | `outbox/` relay | `decree emit`, checked against `emits` |
 | Chain ids, `seq` | `id`, `parent`, `depth` |
 | `run.json`, `routine.log` | `events.jsonl` (state, timings, decisions), numbered logs |

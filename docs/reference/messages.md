@@ -28,7 +28,7 @@ Given ... When ... Then ...
 | `depth` | int | No | `decree emit` | Parent's `depth` + 1. Absent means 0. |
 | `trigger` | string | No | decree | `migration`, `cron`, `emit`, `inbox` or `invoke` (a child run). Exposed as `DECREE_TRIGGER`. |
 | `params` | map of string to string, int or bool | No | Author, `decree emit` | Sets the machine's `data` for this run, overriding defaults (like SCXML `<invoke><param>`). Unknown names fail validation. |
-| `to` | string | Reply messages only | Author, `decree event`, any tool | The wait id (or run id) of a run paused in a `choose: person` state. Makes the message a reply, not a new run ([Replies](#replies)). |
+| `to` | string | Reply messages only | Author, `decree event`, any tool | The wait id (or run id) of a run paused in a `person` state. Makes the message a reply, not a new run ([Replies](#replies)). |
 | `event` | string | Reply messages only | Author, `decree event`, any tool | The event to deliver. |
 
 `routine` is read as an alias of `machine`: migration files are immutable, and existing projects have unprocessed migrations that still carry it. Any other key is kept exactly as written and ignored by decree.
@@ -49,7 +49,7 @@ The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). 
 1. **Queue.** A file appears in `inbox/`. Humans may write directly. Programs must write `.<name>.tmp` then rename; `decree emit` and cron do this for you and name the file `<id>.md`. Files whose names start with `.` are ignored.
 2. **Claim.** decree takes the inbox file with the lowest byte-order filename, so emitted and cron messages run first-in, first-out. A file with `to:` is a reply and is delivered instead ([Replies](#replies)). Otherwise decree assigns `id` if missing, sets `trigger: inbox` if missing, creates `runs/<id>/`, and renames the file to `runs/<id>/message.md`. The rename is the claim: if it fails with not-found, another process won, so decree skips it.
 3. **Validate.** If the frontmatter does not parse, `machine` is unknown, or a param is unknown or the wrong type, the run starts in `failed`: decree writes one `transition` event with `to: "failed"`, `source: "invalid_message"` and the reason, mirrors `state: failed` (unless the frontmatter itself did not parse, then `message.md` is left unchanged), appends `run_finished` with `state: "failed"` and `duration_ms: 0`, and runs nothing.
-4. **Run.** The interpreter steps the machine ([runs.md](runs.md)). A run in a `choose: person` state pauses until a reply arrives ([Replies](#replies)).
+4. **Run.** The interpreter steps the machine ([runs.md](runs.md)). A run in a `person` state pauses until a reply arrives ([Replies](#replies)).
 5. **Finish.** The run ends when it enters a root-level final state. The run folder is kept until `decree prune` removes it ([cli.md](cli.md)); nothing removes it automatically.
 6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only `decree retry <id>` continues an interrupted run ([cli.md](cli.md)).
 
@@ -61,7 +61,7 @@ The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). 
 | --- | --- |
 | `finished` | The last event is `run_finished`, or the last `transition` event's `to` is a final state. |
 | `active` | The run's `.lock` holds a live pid. |
-| `waiting` | The last event is `waiting`: the run asked for a reply (`choose: person`), or is waiting for a child run. |
+| `waiting` | The last event is `waiting`: the run asked for a reply (`person`), or is waiting for a child run. |
 | `pending` | The last event is `received`, or a `transition` with `source: "retry"`. `process` and `daemon` continue it. |
 | `interrupted` | Anything else. Includes a run whose last event is `interrupted`, and a run left mid-step by a crash. |
 
@@ -71,7 +71,7 @@ When `process` or `daemon` starts, it appends an `interrupted` event with `cause
 
 ## Replies
 
-A `choose: person` invoke ([machines.md](machines.md#invoke-the-states-function)) pauses the run until a person picks an option. decree does not know who is asked or how: the `ask` script does that. This is SCXML's external event queue, and the same pattern as the AWS Step Functions callback (`.waitForTaskToken`): the wait id plays the task token.
+A `person` invoke ([machines.md](machines.md#invoke-the-states-function)) pauses the run until a person picks an option. decree does not know who is asked or how: the `ask` script does that. This is SCXML's external event queue, and the same pattern as the AWS Step Functions callback (`.waitForTaskToken`): the wait id plays the task token.
 
 1. **Wait.** decree runs the `ask` script with the **wait id** `<run id>.w<seq>` (`seq` is that of the `transition` event that entered the state) and the options in its environment ([scripts.md](scripts.md#environment)), so it can tell a person, a UI or another system how to reply. Then it appends a `waiting` event with the wait id, the options and the deadline if `timeout_s` is set, releases the lock, and the run's status becomes `waiting`.
 2. **Reply.** A reply is an ordinary inbox message with `to:` (the wait id, or the run id meaning "its current wait") and `event:` (one of the options). The body is optional: a note or data for the run's later scripts. `decree event <wait id> <event> [-m <note>]` writes one through the `emit` writer; any program can write one the same way ([Lifecycle](#lifecycle) step 1).

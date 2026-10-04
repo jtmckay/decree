@@ -3,14 +3,15 @@ description: Implement, then verify, and implement again while fewer than 2 roun
 initial: implement
 states:
   implement:
-    invoke: fail_until_final
-    max_attempts: 2
+    invoke:
+      script: { name: fail_until_final, max_attempts: 2 }
     transitions: { done: verify }
   verify:
     invoke: verify
     transitions: { done: rounds_left }
   rounds_left:
-    invoke: { check: { visits: implement, less_than: 2 } }
-    transitions: { yes: implement, no: done }
+    invoke:
+      check: { visits: implement, less_than: 2 }
+    transitions: { true: implement, false: done }
   done:   { final: true }
   failed: { final: true }
