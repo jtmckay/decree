@@ -1671,7 +1671,7 @@ fn machine_invoke_runs_a_child_run_in_its_own_folder() {
     assert_eq!(claim["machine"], "step_child");
     assert_eq!(claim["run_id"], json!(child));
     assert_eq!(claim["trigger"], "invoke");
-    assert_eq!(claim["file"], Value::Null);
+    assert_eq!(claim.get("file"), None, "a child run has no file");
     assert_eq!(events.last().unwrap()["type"], "run_finished");
     assert_eq!(events.last().unwrap()["state"], "done");
     let script = events.iter().find(|e| e["type"] == "script").unwrap();

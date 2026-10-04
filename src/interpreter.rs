@@ -282,17 +282,18 @@ impl<'a> Interpreter<'a> {
             .filter(|&i| m.nodes[i].parent == Some(0))
             .and_then(|i| m.enter(i))
             .ok_or_else(|| self.invalid(format!("initial `{initial}` is not a root state")))?;
-        self.entered_seq = self.append(
-            "transition",
-            json!({
-                "from": null,
-                "event": "claimed",
-                "to": m.nodes[s].id,
-                "source": "claim",
-                "exit_code": null,
-                "file": self.file,
-            }),
-        )?;
+        let mut fields = json!({
+            "from": null,
+            "event": "claimed",
+            "to": m.nodes[s].id,
+            "source": "claim",
+            "exit_code": null,
+        });
+        // A child run was never a file in the inbox or migrations, so it has none.
+        if let Some(file) = &self.file {
+            fields["file"] = json!(file);
+        }
+        self.entered_seq = self.append("transition", fields)?;
         self.current = s;
         self.mirror(s)?;
         self.enter_from_root(s)

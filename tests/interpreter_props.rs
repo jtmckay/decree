@@ -4,7 +4,8 @@
 //! script and `check` invokes, `onentry`/`onexit` hooks, finals at both levels) and what
 //! each script execution does (exit code, an event it names, declared or not). For
 //! each case, `decree check` passes, `decree process` runs one message, and the run's
-//! events, hooks and mirror must hold the invariants listed on `check_case`.
+//! events, hooks and mirror must hold the invariants listed on `check_case`, and every
+//! line of its `events.jsonl` must validate against `events.schema.json`.
 //!
 //! Termination: every transition goes forward in state order except a `check`'s `true`,
 //! which may go back only when it tests `visits` of its own state with `less_than`, so
@@ -19,6 +20,14 @@ use tempfile::TempDir;
 
 mod common;
 use common::write_script;
+#[path = "common/schema.rs"]
+mod schema;
+
+/// `events.schema.json`, compiled once for every case.
+fn events_validator() -> &'static jsonschema::Validator {
+    static VALIDATOR: std::sync::OnceLock<jsonschema::Validator> = std::sync::OnceLock::new();
+    VALIDATOR.get_or_init(schema::events_validator)
+}
 
 /// Every hook: appends `<phase> <state>` to `trace.log`.
 const HOOK: &str = r#"#!/bin/sh
@@ -447,6 +456,8 @@ struct Outcome {
     check_stdout: String,
     process_code: Option<i32>,
     events: Vec<Value>,
+    /// Every way a line of `events.jsonl` breaks `events.schema.json`.
+    schema_errors: Vec<String>,
     trace: Vec<String>,
     mirror: Option<String>,
 }
@@ -486,8 +497,9 @@ fn run_case(spec: &Spec) -> Outcome {
     let check = decree_cmd("check");
     let process = decree_cmd("process");
     let run = decree.join("runs/run-a");
-    let events = fs::read_to_string(run.join("events.jsonl"))
-        .unwrap_or_default()
+    let log = fs::read_to_string(run.join("events.jsonl")).unwrap_or_default();
+    let schema_errors = schema::events_errors(events_validator(), &log);
+    let events = log
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
@@ -505,6 +517,7 @@ fn run_case(spec: &Spec) -> Outcome {
         check_stdout: String::from_utf8_lossy(&check.stdout).into_owned(),
         process_code: process.status.code(),
         events,
+        schema_errors,
         trace,
         mirror,
     }
@@ -524,6 +537,7 @@ fn compare(op: &str, left: i64, right: i64) -> bool {
 
 /// The invariants, checked against an oracle that walks the events:
 /// - `decree check` passes, and the run ends in a root-level final state;
+/// - every line validates against `events.schema.json`;
 /// - `seq` is 1, 2, 3, … with no gaps;
 /// - every `transition`'s `to` is a state of the machine and its `from` is the previous
 ///   transition's `to`; its event follows from the invoke's result (scripts.md, Events from
@@ -543,6 +557,11 @@ fn check_case(spec: &Spec, out: &Outcome) -> Result<(), TestCaseError> {
     );
     let events = &out.events;
     prop_assert!(!events.is_empty(), "no events");
+    prop_assert!(
+        out.schema_errors.is_empty(),
+        "events.schema.json: {:?}",
+        out.schema_errors
+    );
 
     let mut visits: BTreeMap<String, i64> = BTreeMap::new();
     let mut execs: BTreeMap<String, usize> = BTreeMap::new();

@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/tts.md
 name: tts
 description: Speak a message's body with a local Chatterbox TTS server and save it as an MP3.

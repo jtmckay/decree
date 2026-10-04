@@ -7,7 +7,7 @@ Every state does one thing: it **invokes a function**, and the function's result
 ## Example: the smallest machine
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/hello.md
 name: hello
 description: Run one script.
@@ -23,7 +23,7 @@ states:
 ## Example: asking a person
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/deploy.md
 name: deploy
 description: Build, ask a person to approve, then ship.
@@ -54,7 +54,7 @@ states:
 A state can invoke a whole machine. It runs as a child run, and the final state it reaches becomes this state's event: `done`, `rejected`, and `failed` as `error`.
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/ship.md
 name: ship
 description: Implement a feature, then deploy it.
@@ -75,7 +75,7 @@ states:
 Scripts, a deterministic check, a model's choice that hands over to a person when unsure, nesting, data and an emit.
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/feature.md
 name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.
@@ -241,17 +241,17 @@ Unknown keys fail validation everywhere: at the root, in a state, a `data` entry
 
 ## Schema
 
-`decree schema` writes two JSON Schemas (draft 2020-12) into `.decree/schema/`: `machine.schema.json` for machine files and `message.schema.json` for message frontmatter ([messages.md](messages.md)). Their single source is compiled into decree, `decree init` writes them, and `decree check` warns when they are missing or differ from what `decree schema` would write. Every property has a description taken from this reference, and the schemas carry examples, so they are one precise contract for people, editors and models alike.
+`decree schema` writes a JSON Schema (draft 2020-12) for every file decree reads or writes into `.decree/schema/v1/` ([Schemas](README.md#schemas)): among them `machine.schema.json` for machine files and `message.schema.json` for message frontmatter ([messages.md](messages.md)). Their single source is compiled into decree, `decree init` writes them, and `decree check` warns when they are missing or differ from what `decree schema` would write. Every property has a description taken from this reference, and the schemas carry examples, so they are one precise contract for people, editors and models alike.
 
 **Editors.** Every machine starts with a comment that points the YAML language server at the schema, above its `# Graph:` line:
 
 ```text
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 ```
 
 The path is relative to the machine file. VS Code with the YAML extension by Red Hat, and other editors that run the YAML language server, then complete keys, show each key's description on hover, and underline a misspelled key or a wrong value as you type. No setting is needed. The language server does not read Markdown, so message frontmatter is checked by `decree check`, or by any JSON Schema validator given `message.schema.json`.
 
-**Models.** A model that writes or edits a machine reads `.decree/schema/machine.schema.json` first, writes against it, and runs `decree check` after.
+**Models.** A model that writes or edits a machine reads `.decree/schema/v1/machine.schema.json` first, writes against it, and runs `decree check` after.
 
 **What the schema checks** is everything about one file's shape: its keys and their types, required keys and unknown keys (V19, including each shape migration 71 replaced), each `invoke` kind and its short forms, transitions in short and long form (with `true:` and `false:` keys read as the event names), conditions with exactly one subject and one operator that subject takes and a value of the right type (V10), the name patterns (V1, V2, V18, script and machine names), the ranges of `min_confidence` and `confidence` values (V10, V16), the root-level final state `failed` (V5), which keys each kind of state may have (V6, V7, `type: internal` only on a compound state for V17), the options of a `model` or `person` state (at least two, each with a `description`, none reserved; V8, V18), `true` and `false` rather than `yes` and `no` on a `check` state (V8), and `data` defaults of their `type` (V14). A message has one of two shapes: a message that names its `machine`, or a reply with `to` and `event`.
 

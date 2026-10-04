@@ -194,7 +194,7 @@ fn every_example_ships_its_graph_and_schema_and_starts_fresh_unless_recorded() {
     for name in projects() {
         let decree = examples().join(&name).join(".decree");
         assert!(decree.join("graph/system.md").is_file(), "{name}: no graph");
-        for schema in ["machine.schema.json", "message.schema.json"] {
+        for schema in ["v1/machine.schema.json", "v1/message.schema.json"] {
             assert!(
                 decree.join("schema").join(schema).is_file(),
                 "{name}: no {schema}"
@@ -223,7 +223,7 @@ fn every_example_ships_its_graph_and_schema_and_starts_fresh_unless_recorded() {
             assert_eq!(
                 head,
                 [
-                    "# yaml-language-server: $schema=../schema/machine.schema.json",
+                    "# yaml-language-server: $schema=../schema/v1/machine.schema.json",
                     format!("# Graph: ../graph/{stem}.md").as_str()
                 ],
                 "{}",

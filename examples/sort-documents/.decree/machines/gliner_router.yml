@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/gliner_router.md
 # A typed router (docs/routers.md): GLiNER2.5-Decide, a classifier, picks one of
 # the option labels it is given, so its answer is always an option and its

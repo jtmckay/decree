@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/market_analysis.md
 name: market_analysis
 description: First step of a business evaluation. Analyze the market for the idea in the message body, then hand off to competitive_landscape.

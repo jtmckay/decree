@@ -1,15 +1,20 @@
-//! The JSON Schemas (docs/reference/machines.md, Schema): both are valid draft 2020-12 schemas;
-//! every machine in `examples/`, `src/templates/`, this repository and a fresh
-//! `decree init` for each `--ai` validates against `machine.schema.json`; every message in
-//! `examples/` validates against `message.schema.json`; `decree schema` writes both, and
-//! `decree check` warns when they are missing or stale. Whether the schemas reject what
-//! `decree check` rejects is tested case by case in `validation_test.rs`.
+//! The JSON Schemas (docs/reference/README.md, Schemas): each is a valid draft 2020-12
+//! schema with a description on every property; every machine in `examples/`,
+//! `src/templates/`, this repository and a fresh `decree init` for each `--ai` validates
+//! against `machine.schema.json`; every message in `examples/` against
+//! `message.schema.json`; every `events.jsonl` line, `request.json` and `reply.json` in
+//! `examples/` and in a run made here against `events.schema.json`, `request.schema.json`
+//! and `reply.schema.json`; `decree schema` writes them all to `.decree/schema/v1/` and
+//! removes anything else, and `decree check` warns until it has. Whether the schemas reject
+//! what `decree check` rejects is tested case by case in `validation_test.rs`; every line
+//! the property test in `interpreter_props.rs` writes is validated there.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+mod common;
 #[path = "common/schema.rs"]
 mod schema;
 
@@ -81,11 +86,8 @@ fn machine_rejects(files: &[(String, String)]) -> String {
 }
 
 #[test]
-fn both_schemas_are_valid_draft_2020_12_schemas() {
-    for (name, text) in [
-        ("machine", schema::MACHINE_SCHEMA),
-        ("message", schema::MESSAGE_SCHEMA),
-    ] {
+fn every_schema_is_a_valid_draft_2020_12_schema() {
+    for (name, text) in schema::ALL {
         let schema: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(
             schema["$schema"], "https://json-schema.org/draft/2020-12/schema",
@@ -104,6 +106,8 @@ fn both_schemas_are_valid_draft_2020_12_schemas() {
 /// Subschemas that only narrow keys declared elsewhere: conditional branches, and the defs
 /// they reference. Their properties need no `description` of their own.
 const NARROWING: &[&str] = &["if", "then", "else", "oneOf", "allOf", "not"];
+/// Keys whose values are instances, not subschemas.
+const INSTANCES: &[&str] = &["examples", "const", "enum", "default"];
 const NARROWING_DEFS: &[&str] = &[
     "finalState",
     "compoundState",
@@ -112,7 +116,7 @@ const NARROWING_DEFS: &[&str] = &[
     "option",
 ];
 
-/// Every property either schema declares has a `description`, its own or its `$ref`'s, so
+/// Every property a schema declares has a `description`, its own or its `$ref`'s, so
 /// an editor shows it on hover and a model reading the schema learns what each key means.
 #[test]
 fn every_property_has_a_description() {
@@ -139,7 +143,7 @@ fn every_property_has_a_description() {
             }
         }
         for (key, child) in map {
-            if NARROWING.contains(&key.as_str()) {
+            if NARROWING.contains(&key.as_str()) || INSTANCES.contains(&key.as_str()) {
                 continue;
             }
             let children: Vec<(String, &serde_json::Value)> = match (key.as_str(), child) {
@@ -160,10 +164,7 @@ fn every_property_has_a_description() {
             }
         }
     }
-    for (name, text) in [
-        ("machine", schema::MACHINE_SCHEMA),
-        ("message", schema::MESSAGE_SCHEMA),
-    ] {
+    for (name, text) in schema::ALL {
         let schema: serde_json::Value = serde_json::from_str(text).unwrap();
         let mut missing = Vec::new();
         walk(&schema, "#", &schema, &mut missing);
@@ -216,7 +217,7 @@ fn every_machine_of_a_fresh_init_validates_for_each_ai() {
             let text = fs::read_to_string(path).unwrap();
             assert!(
                 text.starts_with(
-                    "# yaml-language-server: $schema=../schema/machine.schema.json\n# Graph: "
+                    "# yaml-language-server: $schema=../schema/v1/machine.schema.json\n# Graph: "
                 ),
                 "{ai}: {}",
                 path.display()
@@ -454,30 +455,31 @@ fn decree(dir: &Path, cmd: &str) -> (i32, String, String) {
 }
 
 #[test]
-fn decree_schema_writes_both_schemas() {
+fn decree_schema_writes_every_schema_in_v1() {
     let tmp = project();
     let (code, stdout, _) = decree(tmp.path(), "schema");
-    assert_eq!(
-        (code, stdout.as_str()),
-        (
-            0,
-            ".decree/schema/machine.schema.json\n.decree/schema/message.schema.json\n"
-        )
-    );
-    let dir = tmp.path().join(".decree/schema");
-    assert_eq!(
-        fs::read_to_string(dir.join("machine.schema.json")).unwrap(),
-        schema::MACHINE_SCHEMA
-    );
-    assert_eq!(
-        fs::read_to_string(dir.join("message.schema.json")).unwrap(),
-        schema::MESSAGE_SCHEMA
-    );
+    let expected: String = schema::ALL
+        .iter()
+        .map(|(name, _)| format!(".decree/schema/v1/{name}.schema.json\n"))
+        .collect();
+    assert_eq!((code, stdout.as_str()), (0, expected.as_str()));
+    let dir = tmp.path().join(".decree/schema/v1");
+    for (name, text) in schema::ALL {
+        assert_eq!(
+            fs::read_to_string(dir.join(format!("{name}.schema.json"))).unwrap(),
+            text,
+            "{name}"
+        );
+    }
     let names: Vec<String> = fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names.len(), 2, "a temp file was left: {names:?}");
+    assert_eq!(
+        names.len(),
+        schema::ALL.len(),
+        "a temp file was left: {names:?}"
+    );
 }
 
 #[test]
@@ -486,20 +488,22 @@ fn check_warns_when_the_schema_is_missing_or_stale_until_decree_schema_runs() {
     decree(tmp.path(), "graph");
     let (code, stdout, stderr) = decree(tmp.path(), "check");
     assert_eq!((code, stdout.as_str()), (0, ""));
-    assert_eq!(
-        stderr,
-        "warning: schema/machine.schema.json: missing; run `decree schema`\n\
-         warning: schema/message.schema.json: missing; run `decree schema`\n"
-    );
+    let missing: String = schema::ALL
+        .iter()
+        .map(|(name, _)| {
+            format!("warning: schema/v1/{name}.schema.json: missing; run `decree schema`\n")
+        })
+        .collect();
+    assert_eq!(stderr, missing);
 
     decree(tmp.path(), "schema");
-    let dir = tmp.path().join(".decree/schema");
+    let dir = tmp.path().join(".decree/schema/v1");
     fs::write(dir.join("machine.schema.json"), "{}\n").unwrap();
     let (code, stdout, stderr) = decree(tmp.path(), "check");
     assert_eq!((code, stdout.as_str()), (0, ""));
     assert_eq!(
         stderr,
-        "warning: schema/machine.schema.json: out of date; run `decree schema`\n"
+        "warning: schema/v1/machine.schema.json: out of date; run `decree schema`\n"
     );
 
     decree(tmp.path(), "schema");
@@ -507,4 +511,207 @@ fn check_warns_when_the_schema_is_missing_or_stale_until_decree_schema_runs() {
         decree(tmp.path(), "check"),
         (0, String::new(), String::new())
     );
+}
+
+/// A project from before the schemas were versioned: `decree check` warns about the
+/// unversioned files, and `decree schema` leaves only `.decree/schema/v1/`.
+#[test]
+fn unversioned_schemas_are_reported_then_removed() {
+    let tmp = project();
+    decree(tmp.path(), "graph");
+    decree(tmp.path(), "schema");
+    let dir = tmp.path().join(".decree/schema");
+    for name in ["machine.schema.json", "message.schema.json"] {
+        fs::write(dir.join(name), "{}\n").unwrap();
+    }
+    let (code, stdout, stderr) = decree(tmp.path(), "check");
+    assert_eq!((code, stdout.as_str()), (0, ""));
+    assert_eq!(
+        stderr,
+        "warning: schema/machine.schema.json: not one decree writes; run `decree schema`\n\
+         warning: schema/message.schema.json: not one decree writes; run `decree schema`\n"
+    );
+
+    decree(tmp.path(), "schema");
+    let names: Vec<String> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["v1"]);
+    assert_eq!(
+        decree(tmp.path(), "check"),
+        (0, String::new(), String::new())
+    );
+}
+
+/// Every file named `name` in the recorded runs of every project in `examples/`.
+fn recorded(name: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for project in fs::read_dir(repo().join("examples")).unwrap() {
+        let Ok(runs) = fs::read_dir(project.unwrap().path().join(".decree/runs")) else {
+            continue;
+        };
+        for run in runs {
+            let path = run.unwrap().path().join(name);
+            if path.is_file() {
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort();
+    paths
+}
+
+fn events_rejects(files: &[(String, String)]) -> String {
+    let validator = schema::events_validator();
+    rejected(files, |text| Some(schema::events_errors(&validator, text)))
+}
+
+fn json_rejects(schema_text: &str, files: &[(String, String)]) -> String {
+    let validator = schema::validator(schema_text);
+    rejected(files, |text| schema::json_errors(&validator, text))
+}
+
+#[test]
+fn every_event_in_examples_validates() {
+    let paths = recorded("events.jsonl");
+    assert!(paths.len() >= 10, "found only {paths:?}");
+    let found = events_rejects(&read(&paths));
+    assert!(found.is_empty(), "{found}");
+}
+
+#[test]
+fn every_request_and_reply_in_examples_validates() {
+    for (file, schema_text) in [
+        ("request.json", schema::REQUEST_SCHEMA),
+        ("reply.json", schema::REPLY_SCHEMA),
+    ] {
+        let paths = recorded(file);
+        assert!(paths.len() >= 3, "found only {paths:?}");
+        let found = json_rejects(schema_text, &read(&paths));
+        assert!(found.is_empty(), "{found}");
+    }
+}
+
+/// Mistakes a router or a pipeline could make: each is rejected.
+#[test]
+fn wrong_events_requests_and_replies_are_rejected() {
+    let events = schema::events_validator();
+    let common = r#""v": 1, "seq": 1, "ts": "2026-10-01T14:30:05.123Z", "run_id": "r", "machine": "m", "trigger": "inbox""#;
+    for wrong in [
+        // An unknown field, a v2 line, an unknown type, a field of another type.
+        r#""type": "run_finished", "state": "done", "duration_ms": 1, "extra": 1"#,
+        r#""type": "run_finished", "state": "done", "duration_ms": 1, "v": 2"#,
+        r#""type": "finished", "state": "done", "duration_ms": 1"#,
+        r#""type": "run_finished", "state": "done", "duration_ms": 1, "cause": "crash""#,
+        // A claim without its file; a model decision with an error and a pick.
+        r#""type": "transition", "from": null, "event": "claimed", "to": "a", "source": "claim", "exit_code": null"#,
+        r#""type": "decision", "state": "s", "kind": "model", "event": "error", "options": ["a"], "router": "router", "duration_ms": 0, "pick": "a", "router_error": "x""#,
+        // A person wait without its deadline; a child wait with options.
+        r#""type": "waiting", "state": "s", "wait_id": "r.w1", "options": ["a"]"#,
+        r#""type": "waiting", "state": "s", "child": "c", "options": ["a"]"#,
+    ] {
+        // The fields of `wrong` replace the common ones of the same name.
+        let mut line: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&format!("{{{common}}}")).unwrap();
+        let fields: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&format!("{{{wrong}}}")).unwrap();
+        line.extend(fields);
+        assert!(!events.is_valid(&line.into()), "accepted: {wrong}");
+    }
+    let reply = schema::validator(schema::REPLY_SCHEMA);
+    for wrong in [
+        r#"{"reason": "no event"}"#,
+        r#"{"event": "a", "confidence": 1.5}"#,
+        r#"{"event": "a", "note": "unknown key"}"#,
+    ] {
+        assert!(
+            !reply.is_valid(&serde_json::from_str(wrong).unwrap()),
+            "accepted: {wrong}"
+        );
+    }
+}
+
+/// A run made here with a `model` state and a router whose script answers from the request:
+/// the `request.json` decree writes, the router's `reply.json`, and every line of both runs'
+/// `events.jsonl` validate.
+#[test]
+fn a_model_run_writes_files_that_validate() {
+    let tmp = TempDir::new().unwrap();
+    let decree_dir = tmp.path().join(".decree");
+    for dir in ["machines", "inbox"] {
+        fs::create_dir_all(decree_dir.join(dir)).unwrap();
+    }
+    fs::write(
+        decree_dir.join("machines/ask.yml"),
+        "name: ask\n\
+         description: Ask the router which way to go.\n\
+         initial: read\n\
+         states:\n\
+         \x20 read:\n\
+         \x20   invoke: read\n\
+         \x20   transitions: { done: pick }\n\
+         \x20 pick:\n\
+         \x20   invoke:\n\
+         \x20     model: { question: Which way?, min_confidence: 0.5, output: read }\n\
+         \x20   transitions:\n\
+         \x20     left:   { target: done, description: Go left. }\n\
+         \x20     right:  { target: done, description: Go right. }\n\
+         \x20     unsure: failed\n\
+         \x20 done: { final: true }\n\
+         \x20 failed: { final: true }\n",
+    )
+    .unwrap();
+    fs::write(
+        decree_dir.join("machines/router.yml"),
+        "name: router\n\
+         description: Always go left.\n\
+         initial: answer\n\
+         states:\n\
+         \x20 answer:\n\
+         \x20   invoke: answer\n\
+         \x20   transitions: { done: done }\n\
+         \x20 done: { final: true }\n\
+         \x20 failed: { final: true }\n",
+    )
+    .unwrap();
+    script(&decree_dir.join("scripts/read"), "echo 'the road forks'\n");
+    script(
+        &decree_dir.join("scripts/answer"),
+        "test -s \"$DECREE_REQUEST\" || exit 1\n\
+         printf '%s' '{\"event\": \"left\", \"reason\": \"Left is shorter.\", \"confidence\": 0.9, \"probabilities\": {\"left\": 0.9, \"right\": 0.1}}' > \"$DECREE_REPLY\"\n",
+    );
+    fs::write(
+        decree_dir.join("inbox/go.md"),
+        "---\nid: go\nmachine: ask\n---\nPick a way.\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = decree(tmp.path(), "process");
+    assert_eq!(code, 0, "{stdout}{stderr}");
+
+    let runs = decree_dir.join("runs");
+    let child: Vec<PathBuf> = fs::read_dir(&runs)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.join("request.json").is_file())
+        .collect();
+    assert_eq!(child.len(), 1, "{child:?}");
+    let child = &child[0];
+    let found = json_rejects(schema::REQUEST_SCHEMA, &read(&[child.join("request.json")]));
+    assert!(found.is_empty(), "{found}");
+    let found = json_rejects(schema::REPLY_SCHEMA, &read(&[child.join("reply.json")]));
+    assert!(found.is_empty(), "{found}");
+    let logs = [runs.join("go/events.jsonl"), child.join("events.jsonl")];
+    let found = events_rejects(&read(&logs));
+    assert!(found.is_empty(), "{found}");
+    let parent = fs::read_to_string(&logs[0]).unwrap();
+    for kind in ["\"waiting\"", "\"decision\"", "\"run_finished\""] {
+        assert!(parent.contains(kind), "no {kind} event in {parent}");
+    }
+}
+
+/// An executable bash script at `path` running `body`.
+fn script(path: &Path, body: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    common::write_script(path, &format!("#!/usr/bin/env bash\n{body}"));
 }

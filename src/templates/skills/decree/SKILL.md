@@ -37,11 +37,13 @@ appear only where a machine invokes `model` or `person`.
 - **One concern per migration**, day-sized, with Given / When / Then acceptance criteria whose
   outcomes are observable (exit codes, file contents, output).
 - **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
-- **Read `.decree/schema/machine.schema.json` before writing a machine**, and write against it.
+- **Read `.decree/schema/v1/machine.schema.json` before writing a machine**, and write against it.
   It is the JSON Schema of every machine key: types, required keys, each `invoke` kind and
   condition, name patterns, with a description and examples for each. Every machine starts
-  with `# yaml-language-server: $schema=../schema/machine.schema.json`, so editors check it
-  too. Run `decree schema` if `.decree/schema/` is missing.
+  with `# yaml-language-server: $schema=../schema/v1/machine.schema.json`, so editors check it
+  too. Run `decree schema` if `.decree/schema/v1/` is missing. The same folder holds the
+  schemas of `events.jsonl` lines (`events.schema.json`) and of a router's `request.json` and
+  `reply.json`: read them before writing a router or anything that reads a run.
 - **Machines decide, scripts work.** A script makes no routing decision beyond printing one
   event; a decision is a state of its own (`check`, `model` or `person`), never logic hidden in a script.
 - **Route with a typed router.** For a `model` decision that routes work (which model, which
@@ -61,7 +63,7 @@ appear only where a machine invokes `model` or `person`.
 | --- | --- |
 | `decree check` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line. |
 | `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
-| `decree schema` | Write the JSON Schemas for machines and message frontmatter to `.decree/schema/`. |
+| `decree schema` | Write the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/`. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
 | `decree daemon [--interval <duration>]` | The same, in a loop, with cron, every `2s` by default. |
@@ -95,7 +97,7 @@ Limit each API key to 10 uploads per minute on `POST /api/upload`.
 The smallest machine:
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/hello.md
 name: hello
 description: Run one script.

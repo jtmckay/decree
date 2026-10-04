@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/illustrated_post.md
 # Services in tmux sessions (README.md): use_<service> uses the service if it
 # answers, or starts it in a tmux session and waits until it answers;

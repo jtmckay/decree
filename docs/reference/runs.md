@@ -58,9 +58,9 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
    }
    ```
 
-   Options are the state's transitions except `unsure` and `error`, in name order. `input` and `message_body` are kept apart, so a router can pass them on as structured context (Jev's `state` accepts any JSON). `input` is the latest script output of the invoke's `output` state, as logged (stdout, and stderr lines with their `[stderr] ` prefix), and empty when the invoke names no `output`: a model sees only what it is given, a script decides what that is by what it prints, and that is also how to keep secrets out of a prompt. `history` has one `"<from>: <event>"` entry for each `transition` event of this run so far, in order, except the claim. `reply_schema` is a JSON Schema (draft 2020-12) for `reply.json` (step 3): `event` is one of the options, `confidence` a number from 0 to 1, `reason` a string and `probabilities` a number per option; only `event` is required, and no other key is allowed. A typed router hands it unchanged to a constrained decoder (Ollama's `format`, an OpenAI-style `response_format`), so the model cannot answer outside the options ([Router machines](../routers.md)); an untyped one may ignore it, since decree validates the reply either way.
+   `.decree/schema/v1/request.schema.json` states this file as a JSON Schema ([Schemas](README.md#schemas)). Options are the state's transitions except `unsure` and `error`, in name order. `input` and `message_body` are kept apart, so a router can pass them on as structured context (Jev's `state` accepts any JSON). `input` is the latest script output of the invoke's `output` state, as logged (stdout, and stderr lines with their `[stderr] ` prefix), and empty when the invoke names no `output`: a model sees only what it is given, a script decides what that is by what it prints, and that is also how to keep secrets out of a prompt. `history` has one `"<from>: <event>"` entry for each `transition` event of this run so far, in order, except the claim. `reply_schema` is a JSON Schema (draft 2020-12) for `reply.json` (step 3): `event` is one of the options, `confidence` a number from 0 to 1, `reason` a string and `probabilities` a number per option; only `event` is required, and no other key is allowed. A typed router hands it unchanged to a constrained decoder (Ollama's `format`, an OpenAI-style `response_format`), so the model cannot answer outside the options ([Router machines](../routers.md)); an untyped one may ignore it, since decree validates the reply either way.
 2. **Route.** decree starts the router machine (the invoke's `router:`, else the machine named `router`) as a child run (Sub-machines, below), with `DECREE_REQUEST` and `DECREE_REPLY` set for its scripts.
-3. **Reply.** The router writes `reply.json`: `{"event": "<one option>", "reason": "…", "confidence": 0.86, "probabilities": {…}}`. Only `event` is required.
+3. **Reply.** The router writes `reply.json`: `{"event": "<one option>", "reason": "…", "confidence": 0.86, "probabilities": {…}}`. Only `event` is required. `.decree/schema/v1/reply.schema.json` is this general shape; the request's `reply_schema` is the exact one.
 4. **Validate.** If the child run ends in `failed`, or `reply.json` is missing or its `event` is not one of the options, the event is `error` with `router_error`. With `min_confidence` set, a missing or lower `confidence` produces `unsure` instead of the pick. decree appends a `decision` event with the pick, the reason, the confidence and the child run's id. Never fuzzy-match an option.
 
 
@@ -69,7 +69,7 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
 `decree init` writes `machines/router.yml` and its script. It is a normal machine: edit it, replace it, or write another and point a `model` invoke's `router:` at it. Below is the `--ai claude` version; `--ai copilot` and `--ai opencode` differ only in the script name (`ask_copilot`, `ask_opencode`) and the CLI call ([cli.md](cli.md)).
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/router.md
 name: router
 description: Ask Claude to pick one of the options in the request.
@@ -126,7 +126,7 @@ See [Replies](messages.md#replies). The options and their descriptions are writt
 
 ## events.jsonl
 
-One JSON object per line (JSON Lines), appended with a single `write` call on a file opened with `O_APPEND`. This file is both the run's record ([Lifecycle](messages.md#lifecycle), Source of truth) and its telemetry: it is designed to be shipped to Loki as it is ([observability.md](observability.md)).
+One JSON object per line (JSON Lines), appended with a single `write` call on a file opened with `O_APPEND`. This file is both the run's record ([Lifecycle](messages.md#lifecycle), Source of truth) and its telemetry: it is designed to be shipped to Loki as it is ([observability.md](observability.md)). `.decree/schema/v1/events.schema.json` states every type below as a JSON Schema for one line ([Schemas](README.md#schemas)).
 
 Every event carries these fields, so each line stands alone in a log pipeline:
 
@@ -151,7 +151,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `exit_code` | int or null | Always | The invoke's exit code. `null` if there was no invoke. |
 | `invalid_event` | string | [Events from an invoke](scripts.md#events-from-an-invoke), step 4 | The undeclared event the invoke named. |
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
-| `file` | string | Claim event | Original inbox or migration filename. |
+| `file` | string | A claim from the inbox or migrations | Original inbox or migration filename. Absent for a child run, which has none. |
 | `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
 
 `source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.

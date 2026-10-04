@@ -8,11 +8,11 @@ you know SCXML, you know how a machine behaves.
 The first two lines point editors at the schema and link the machine to its graph:
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/<name>.md
 ```
 
-**Read `.decree/schema/machine.schema.json` before writing a machine.** It is the precise
+**Read `.decree/schema/v1/machine.schema.json` before writing a machine.** It is the precise
 contract for every key below: types, required keys, each `invoke` kind and condition, name
 patterns and ranges, with a description and examples for each key. Write against it, then run
 `decree check`, which also checks what a schema cannot: that names resolve, targets exist and
@@ -84,11 +84,12 @@ sees by what it prints, which is also how to keep secrets out of a prompt.
 
 A `model` state never calls a model itself. decree writes `request.json` (question,
 options, the `output` state's output as `input`, message body, the run's history, and
-`reply_schema`, a JSON Schema for the reply) and runs a
+`reply_schema`, a JSON Schema for the reply; `.decree/schema/v1/request.schema.json`) and runs a
 **router**: an ordinary machine (`router:` on the invoke, else the machine named `router`, which
 `decree init` writes).
 Its script reads `$DECREE_REQUEST`, asks a model, and writes
-`{"event": "...", "reason": "...", "confidence": 0.86}` to `$DECREE_REPLY`. decree checks the
+`{"event": "...", "reason": "...", "confidence": 0.86}` to `$DECREE_REPLY`
+(`.decree/schema/v1/reply.schema.json`). decree checks the
 event is an option and applies `min_confidence`. To use another model, write another router
 machine and point `router:` at it, or replace `machines/router.yml`; recalibrate `min_confidence` when you do.
 
@@ -150,7 +151,7 @@ a state, `timeout_s` in an invoke, `{ machine: x, params: ... }`).
 ## Example: everything at once
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/feature.md
 name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.
@@ -212,7 +213,7 @@ states:
 ## Example: composing machines
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/ship.md
 name: ship
 description: Implement a feature, then deploy it.

@@ -54,6 +54,8 @@ What decree does is in the [reference](reference/README.md). The construction pl
 | [D46](#d46-no-04-compatibility-and-examples-by-topic) | No 0.4 compatibility, and examples by topic | Migration 73 |
 | [D47](#d47-typed-routers-for-routing-untyped-models-for-the-work) | Typed routers for routing, untyped models for the work | Migration 74 |
 | [D48](#d48-scripts-name-their-event-in-decree_event_file) | Scripts name their event in `$DECREE_EVENT_FILE` | Migration 79 |
+| [D49](#d49-one-duration-format) | One duration format | Migration 80 |
+| [D50](#d50-a-versioned-schema-for-every-file) | A versioned schema for every file | Migration 81 |
 
 ## D1: Machines follow SCXML
 
@@ -454,3 +456,11 @@ No old shape is accepted: `choose`, `input`, a bare `matches`, a state-level `ma
 **Decision.** One format everywhere: a whole number followed by one unit, `s`, `m`, `h` or `d` (`90s`, `10m`, `12h`, `7d`), with no fractions, no combinations (`1h30m`) and no bare numbers ([Durations](reference/machines.md#durations)). One parser reads a machine's `timeout`, `decree prune --older-than` and `decree daemon --interval`; a bad duration fails V16 in a machine and exits 2 on the command line. `timeout_s` became `timeout` in the `script` and `person` invokes; `timeout_s` fails V19 naming `timeout: <n>s|m|h|d`. `events.jsonl` keeps `duration_ms` and `timeout_at`, and scripts get no new variables.
 
 **Consequences.** `timeout: 7d` reads as it means, and a string that one place rejects every place rejects. A duration in between units is written in the smaller one (`90m`, not `1h30m`). Evidence: migration 80.
+
+## D50: A versioned schema for every file
+
+**Context.** Only machines and message frontmatter had schemas ([D45](#d45-json-schema-for-shape-decree-check-for-meaning)). `events.jsonl`, which dashboards and pipelines consume, and `request.json` and `reply.json`, which routers in any language read and write, were described only in prose, and nothing tested the code against that prose: writing the events schema found a `run_finished` table lost from the reference and a child run's claim event writing `"file": null`. The schemas carried no version, so a breaking change could not be told from a mistake. Prior art: Kubernetes puts an API's version in its path (`apps/v1`); Semantic Versioning 2.0.0 lets major version zero change anything; Keep a Changelog 1.1.0 lists every change by release.
+
+**Decision.** decree ships a JSON Schema (draft 2020-12) for every file it reads or writes: `machine`, `message`, `events` (one line, a `oneOf` per `type`), `request` and `reply` (the general shape; each request's `reply_schema` stays exact). They live in `src/templates/schema/v1/` and `.decree/schema/v1/`; `decree schema` removes anything else in `.decree/schema/` and `decree check` warns about it. The events, request and reply schemas are closed, so decree's tests, which validate every recorded file and every line the property test writes, catch an undocumented field. Within `v1` changes are additive only; a rename, a removal or a change of meaning is `v2`, a new directory and a new `v`; decree 0.x may still change `v1`, and `CHANGELOG.md` lists every change ([Versioning](reference/README.md#versioning)). A child run's claim event now leaves `file` out instead of writing `null`.
+
+**Consequences.** A router or a pipeline in any language can validate what it reads and writes without decree, and the reference, the schemas and the code are held to each other by tests. Consumers must ignore fields and event types they do not know, since the closed schemas describe the current decree, not every future `v1`. Machines point at `../schema/v1/machine.schema.json`. This supersedes the location in D45. Evidence: migration 81.

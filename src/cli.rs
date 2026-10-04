@@ -48,7 +48,7 @@ pub enum Command {
     #[command(after_help = GRAPH_VIEWING)]
     Graph,
 
-    /// Write .decree/schema/: the JSON Schemas for machines and message frontmatter
+    /// Write .decree/schema/v1/: the JSON Schemas of machines, messages, events and router files
     #[command(after_help = SCHEMA_EDITORS)]
     Schema,
 
@@ -138,7 +138,7 @@ Viewing:
 /// How editors use `decree schema` output (docs/reference/machines.md, Schema).
 const SCHEMA_EDITORS: &str = "\
 Editors:
-  Every machine starts with `# yaml-language-server: $schema=../schema/machine.schema.json`.
+  Every machine starts with `# yaml-language-server: $schema=../schema/v1/machine.schema.json`.
   Editors with the YAML language server (VS Code's YAML extension by Red Hat, and others)
   then complete keys and underline mistakes as you type. `decree check` remains the authority:
   the schema checks shape, `decree check` also checks names, targets and reachability.";

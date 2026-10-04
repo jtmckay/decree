@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/triage.md
 # Routing a free-form request is an ordinary machine: a model picks an option,
 # and the target state's script forwards the message with `decree emit`.

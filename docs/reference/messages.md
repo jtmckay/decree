@@ -31,7 +31,7 @@ Given ... When ... Then ...
 | `to` | string | Reply messages only | Author, `decree event`, any tool | The wait id (or run id) of a run paused in a `person` state. Makes the message a reply, not a new run ([Replies](#replies)). |
 | `event` | string | Reply messages only | Author, `decree event`, any tool | The event to deliver. |
 
-`.decree/schema/message.schema.json` states these keys as a JSON Schema, with the two shapes a frontmatter takes: a message that names its `machine`, or a reply with `to` and `event` ([Schema](machines.md#schema)).
+`.decree/schema/v1/message.schema.json` states these keys as a JSON Schema, with the two shapes a frontmatter takes: a message that names its `machine`, or a reply with `to` and `event` ([Schemas](README.md#schemas)).
 
 Any other key is kept exactly as written and ignored by decree.
 

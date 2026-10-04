@@ -224,7 +224,7 @@ OpenAI's Decisions API would be a typed router: it takes context and questions w
 The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree init --ai claude` writes `machines/router.yml` and its script `scripts/router/ask_claude.sh`:
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/router.md
 name: router
 description: Ask Claude to pick one of the options in the request.

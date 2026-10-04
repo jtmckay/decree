@@ -1,6 +1,7 @@
 //! The documentation holds together: relative Markdown links resolve, the machine examples
-//! in `docs/reference/machines.md` are the files in `examples/feature/`, and nothing points at the
-//! removed implementation spec. Reads this repository's files only; writes nothing.
+//! in `docs/reference/machines.md` are the files in `examples/feature/`, nothing points at the
+//! removed implementation spec, and `CHANGELOG.md` has the 0.5.0 entry and links the
+//! versioning rule. Reads this repository's files only; writes nothing.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -285,4 +286,18 @@ fn slugs_follow_github() {
         link_targets("see [a](x.md#y) and `[b](no.md)` and [c](<z w.md>)"),
         ["x.md#y", "z w.md"]
     );
+}
+
+/// `CHANGELOG.md` follows Keep a Changelog, has a 0.5.0 entry, and links the versioning
+/// rule (docs/reference/README.md, Versioning), whose anchor exists.
+#[test]
+fn the_changelog_has_the_0_5_0_entry_and_links_the_versioning_rule() {
+    let changelog = std::fs::read_to_string(repo().join("CHANGELOG.md")).unwrap();
+    assert!(changelog.starts_with("# Changelog\n"));
+    assert!(changelog.contains("https://keepachangelog.com/en/1.1.0/"));
+    assert!(changelog.lines().any(|l| l.starts_with("## [0.5.0]")));
+    assert!(changelog.contains("(docs/reference/README.md#versioning)"));
+    let reference = std::fs::read_to_string(repo().join("docs/reference/README.md")).unwrap();
+    assert!(anchors(&reference).contains("versioning"));
+    assert!(reference.contains("(../../CHANGELOG.md)"));
 }

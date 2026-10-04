@@ -5,7 +5,7 @@ decree is built from three building blocks: **messages** (markdown), **machines*
 | File | Subject |
 | --- | --- |
 | [messages.md](messages.md) | Frontmatter, parsing, the lifecycle of a message, replies, the run lock, migrations, cron files |
-| [machines.md](machines.md) | Examples, `invoke`, keys, the SCXML subset, rules, the JSON Schema, validation V1–V21 and M1–M3 |
+| [machines.md](machines.md) | Examples, `invoke`, keys, the SCXML subset, rules, the machine schema, validation V1–V21 and M1–M3 |
 | [scripts.md](scripts.md) | Resolution, execution, environment, events from an invoke |
 | [runs.md](runs.md) | The step loop, `check`, `model` and routers, sub-machines, `person`, `events.jsonl` |
 | [cli.md](cli.md) | Every command and its exit codes |
@@ -13,7 +13,7 @@ decree is built from three building blocks: **messages** (markdown), **machines*
 | [observability.md](observability.md) | Shipping `events.jsonl` and script logs to Loki |
 | [standards.md](standards.md) | The standards and prior art decree draws from, and where it deviates |
 
-Related guides: [routers](../routers.md) (router machines for other models) and [services](../services.md) (long-running services next to decree).
+Related guides: [routers](../routers.md) (router machines for other models) and [services](../services.md) (long-running services next to decree). What changed between releases is in the [changelog](../../CHANGELOG.md); the files below are versioned as [Versioning](#versioning) says.
 
 ## Terms
 
@@ -90,8 +90,7 @@ Each building block has its own directory in `.decree/`:
   cron/                             # *.md cron templates (messages.md, Cron files)
   machines/<machine name>.yml         # statecharts (machines.md)
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
-  schema/machine.schema.json          # written by `decree schema`; committed, so editors check machines as you type (machines.md, Schema)
-  schema/message.schema.json          # the same for message frontmatter
+  schema/v1/*.schema.json             # written by `decree schema`; committed, so editors check machines as you type (Schemas, below)
   scripts/<name>                    # executables shared by every machine; optional extension: verify.sh (scripts.md)
   scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
 ```
@@ -112,3 +111,25 @@ A project is machines, scripts and messages; there is no configuration file. Eac
 | Sharing across projects | None in decree. To share machines or scripts across projects, symlink them into `machines/` and `scripts/`. |
 
 The daemon poll interval is the `decree daemon --interval` flag.
+
+## Schemas
+
+Every file decree reads or writes has a JSON Schema (draft 2020-12). `decree schema` writes them into `.decree/schema/v1/` and removes anything else in `.decree/schema/`, `decree init` writes them, and `decree check` warns when one is missing, out of date, or joined by a file decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds). Their single source is [`src/templates/schema/v1/`](../../src/templates/schema/v1/), compiled into decree; each schema's `$id` is its raw URL in the decree repository on GitHub. Every property has a description taken from this reference.
+
+| Schema | Covers | Documented in |
+| --- | --- | --- |
+| `machine.schema.json` | A machine file, `machines/<name>.yml`. Machines point editors at it ([Schema](machines.md#schema)). | [machines.md](machines.md) |
+| `message.schema.json` | The frontmatter of a migration, inbox message, cron file or reply. | [messages.md](messages.md#frontmatter-keys) |
+| `events.schema.json` | One line of `runs/<id>/events.jsonl`: the common fields, then one branch per `type`. | [runs.md](runs.md#eventsjsonl) |
+| `request.schema.json` | A router run's `request.json`, including `reply_schema`. | [runs.md](runs.md#model) |
+| `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
+
+The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
+
+## Versioning
+
+The files above are decree's contract with editors, routers, dashboards and pipelines. Its version is in the schema path, `v1`, and in the `v` field of every event and request. The rule follows Semantic Versioning 2.0.0, with the version in the path as Kubernetes API groups do (`apps/v1`):
+
+- Within `v1`, changes are additive only: new optional fields, new event types, new optional keys.
+- A rename, a removal, or a change of meaning is `v2`: a new directory, `.decree/schema/v2/`, and `v: 2` in events.
+- decree 0.x may still change `v1` before 1.0 (SemVer item 4: major version zero is for initial development), and every such change is listed in the [changelog](../../CHANGELOG.md).

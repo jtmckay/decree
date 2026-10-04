@@ -15,7 +15,8 @@ runs/<id>/
 ## events.jsonl
 
 The source of truth: the run's state is the `to` of its last `transition` event. Every line
-carries `v`, `seq`, `ts`, `type`, `run_id`, `machine` and `trigger`. Types:
+carries `v`, `seq`, `ts`, `type`, `run_id`, `machine` and `trigger`. Every field of every type,
+with its meaning, is in `.decree/schema/v1/events.schema.json`. Types:
 
 | `type` | Meaning |
 | --- | --- |
@@ -25,7 +26,7 @@ carries `v`, `seq`, `ts`, `type`, `run_id`, `machine` and `trigger`. Types:
 | `waiting` | Paused for a person (`wait_id`, `options`, `timeout_at`) or a child run (`child`). |
 | `received` | A reply, a timeout or a child's result arrived. |
 | `interrupted` | Stopped before a final state: `cause` is `signal` or `crash`. |
-| `run_finished` | Reached a root final state. |
+| `run_finished` | Reached a root final state: `state`, `duration_ms`. |
 
 To find out why a run failed, read its `events.jsonl` from the end, then the log the last
 `script` event names. `decree status <id>` shows the same as a table.

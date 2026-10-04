@@ -59,7 +59,7 @@ chmod +x .decree/scripts/greet.sh .decree/scripts/ask_person.sh
 
 ```bash
 cat > .decree/machines/hello.yml <<'EOF'
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 name: hello
 description: Greet, ask a person to approve, then finish.
 initial: greet
@@ -152,7 +152,7 @@ A reply to a waiting run is a message with `to:` (the wait id or run id) and `ev
 A machine is an SCXML statechart written in YAML, in `.decree/machines/<name>.yml`. Keys use SCXML's names: `initial`, `states`, `transitions`, `target`, `type`, `onentry`, `onexit`, `invoke`, `data`, `final`.
 
 ```yaml
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/deploy.md
 name: deploy
 description: Build, ask a person to approve, then ship.
@@ -202,7 +202,7 @@ Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, 
 
 ### Schema
 
-`decree schema` writes JSON Schemas for machines and message frontmatter to `.decree/schema/` (`decree init` writes them too). Every machine starts with `# yaml-language-server: $schema=../schema/machine.schema.json`, so VS Code with Red Hat's YAML extension, or any editor running the YAML language server, completes keys, shows what each one means and underlines mistakes as you type. A model reads the same file as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
+`decree schema` writes a JSON Schema for every file decree reads or writes to `.decree/schema/v1/` (`decree init` writes them too): machines, message frontmatter, `events.jsonl` lines, and a router's `request.json` and `reply.json`. They are versioned: within `v1` changes are additive only ([Versioning](docs/reference/README.md#versioning), [changelog](CHANGELOG.md)). Every machine starts with `# yaml-language-server: $schema=../schema/v1/machine.schema.json`, so VS Code with Red Hat's YAML extension, or any editor running the YAML language server, completes keys, shows what each one means and underlines mistakes as you type. A model reads the same file as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
 
 ### Routers
 
@@ -228,7 +228,7 @@ Model servers and other long-running processes are not scripts and decree does n
 | `decree init [--ai AI] [--permissions]` | Create `.decree/` with machines, scripts, the `router` machine and the decree skill |
 | `decree check` | Validate machines and pending messages |
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
-| `decree schema` | Write JSON Schemas for machines and messages to `.decree/schema/` |
+| `decree schema` | Write JSON Schemas for machines, messages, events and router files to `.decree/schema/v1/` |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
 | `decree daemon [--interval D]` | The same passes plus cron, every `D` (default `2s`) |
 | `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
@@ -257,7 +257,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   cron/                           # message templates queued on a schedule
   runs/<id>/                      # one folder per run: message.md, events.jsonl, logs
   graph/                          # written by decree graph; committed
-  schema/                         # written by decree schema; committed
+  schema/v1/                      # written by decree schema; committed
 ```
 
 There is no configuration file. Each setting is a convention or a fixed limit:

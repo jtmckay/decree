@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/competitive_landscape.md
 name: competitive_landscape
 description: Second step of a business evaluation. Map competitors and positioning, building on the market analysis, then hand off to financial_model.

@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema/machine.schema.json
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/financial_model.md
 name: financial_model
 description: Third step of a business evaluation. Build projections, unit economics and funding needs from the prior analyses, then hand off to executive_summary.
