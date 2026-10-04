@@ -1,4 +1,4 @@
-//! 0.4.2's hooks as machines (spec section 11, ticket M5.2): `beforeAll` is root
+//! 0.4.2's hooks as machines (docs/decisions.md, D15): `beforeAll` is root
 //! `onentry`, `afterAll` root `onexit`, `beforeEach` and `afterEach` the atomic state's
 //! `onentry` and `onexit`, and `onDeadLetter` `failed`'s `onentry`. They run once per
 //! visit to a state; `max_attempts` re-runs only the invoke. Each test builds its own

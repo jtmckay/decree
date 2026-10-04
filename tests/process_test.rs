@@ -1,4 +1,4 @@
-//! `decree process` (spec sections 4 and 8): inbox claim and validation, and the six
+//! `decree process` (docs/reference/messages.md, docs/reference/cli.md): inbox claim and validation, and the six
 //! migration rules. Each test builds its own `.decree/` in a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -128,7 +128,7 @@ fn stderr(output: &std::process::Output) -> String {
 }
 
 // ---------------------------------------------------------------
-// Inbox: claim and validation (section 4, Lifecycle)
+// Inbox: claim and validation (docs/reference/messages.md, Lifecycle)
 // ---------------------------------------------------------------
 
 #[test]
@@ -226,7 +226,7 @@ fn a_failed_inbox_run_stops_process() {
 }
 
 // ---------------------------------------------------------------
-// Migrations (section 4, rules 1–6)
+// Migrations (docs/reference/messages.md, Migrations, rules 1–6)
 // ---------------------------------------------------------------
 
 #[test]

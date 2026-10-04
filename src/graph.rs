@@ -1,4 +1,4 @@
-//! `decree graph`: Mermaid diagrams drawn from the machine arena (spec section 9), so the
+//! `decree graph`: Mermaid diagrams drawn from the machine arena (docs/reference/graph.md), so the
 //! picture cannot drift from what the interpreter runs. Output is byte-for-byte
 //! deterministic; decree renders no images.
 
@@ -102,7 +102,7 @@ pub fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
     Ok(out)
 }
 
-/// The label suffix for a transition of a state with this invoke (section 9).
+/// The label suffix for a transition of a state with this invoke (docs/reference/graph.md).
 fn invoke_suffix(invoke: &Invoke, is_error: bool) -> String {
     match invoke {
         Invoke::Script(_) => String::new(),
@@ -163,7 +163,7 @@ fn notes(m: &LoadedMachine, out: &mut String) {
     }
 }
 
-/// Section 9 steps 1–4 for container `c` (the root or a compound state) at `level`.
+/// docs/reference/graph.md steps 1–4 for container `c` (the root or a compound state) at `level`.
 fn container(
     m: &LoadedMachine,
     c: usize,
@@ -200,7 +200,7 @@ fn container(
     }
 }
 
-/// SCXML transition domain (section 5, Rules): the source itself for a `type: internal`
+/// SCXML transition domain (docs/reference/machines.md, Rules): the source itself for a `type: internal`
 /// transition to one of its descendants, else the deepest proper ancestor of both ends.
 fn domain(m: &LoadedMachine, source: usize, target: usize, internal: bool) -> usize {
     if internal && target != source && m.chain(target).any(|a| a == source) {

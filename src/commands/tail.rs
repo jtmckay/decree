@@ -1,4 +1,4 @@
-//! `decree tail [<id>]` (spec section 8): follow the live output of a run, by default the
+//! `decree tail [<id>]` (docs/reference/cli.md): follow the live output of a run, by default the
 //! `active` one. Prints each script's log as it is written, behind a header line
 //! (`== 0004 implement/implement ==`), moves on to the next script's log as the run
 //! proceeds, including into child runs, and stops when the run finishes, waits or is
@@ -191,7 +191,7 @@ fn log_number(name: &str) -> Option<u32> {
 }
 
 /// `0004 implement/implement ==` for `0004-implement-implement.log`. State and script
-/// names cannot contain `-` (section 9a).
+/// names cannot contain `-` (docs/reference/observability.md).
 fn header(name: &str) -> String {
     let stem = name.strip_suffix(".log").unwrap_or(name);
     let mut parts = stem.splitn(3, '-');

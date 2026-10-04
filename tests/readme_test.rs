@@ -1,10 +1,10 @@
-//! README and help (spec section 11, M5.5): both describe 0.5 only, and every
+//! README and help (docs/reference/cli.md, docs/reference/README.md): both describe 0.5 only, and every
 //! command in the README runs as written on a fresh project.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 
 /// 0.4 concepts that must not appear in 0.5's help or README outside the 0.4 to 0.5
-/// table (spec sections 3 and 10).
+/// table (docs/reference/README.md, File layout).
 const OLD_TERMS: &[&str] = &[
     "routine",
     "outbox",
@@ -18,7 +18,7 @@ const OLD_TERMS: &[&str] = &[
     "beforeEach",
 ];
 
-/// The 11 commands of spec section 8, plus `--version`.
+/// The 11 commands of docs/reference/cli.md, plus `--version`.
 const COMMANDS: &[&str] = &[
     "decree init",
     "decree process",
@@ -130,7 +130,7 @@ fn test_readme_mentions_no_0_4_concept_outside_the_upgrade_section() {
     }
 }
 
-/// Spec section 11, M5.5: every command in the README runs as written on a fresh
+/// Every command in the README runs as written on a fresh
 /// project. All ```bash blocks run in order in one shell, in an empty temp
 /// directory, with this build of decree first on PATH. `cargo install` is the one
 /// line skipped: it needs the network, and the build under test stands in for it.

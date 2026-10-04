@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 
 use crate::layout::DECREE_DIR;
 
-/// Exit codes following the spec convention.
+/// Exit codes (docs/reference/cli.md).
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_FAILURE: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
-/// SIGINT or SIGTERM stopped the run (section 8).
+/// SIGINT or SIGTERM stopped the run (docs/reference/cli.md).
 pub const EXIT_INTERRUPTED: i32 = 130;
 
 /// All error variants for the decree application.
@@ -60,11 +60,11 @@ pub fn find_project_root() -> Option<PathBuf> {
 }
 
 /// The 0.4 configuration file, which 0.5 replaced with conventions and fixed limits
-/// (section 3, No configuration file).
+/// (docs/reference/README.md, No configuration file).
 const LEGACY_CONFIG: &str = "config.yml";
 
 /// Require that we're inside a decree project, returning the root path. A project that still
-/// has a 0.4 configuration file is an error naming the layout migration script (M5.4).
+/// has a 0.4 configuration file is an error naming the layout migration script.
 pub fn require_project_root() -> Result<PathBuf, DecreeError> {
     let root = find_project_root().ok_or(DecreeError::NoProject)?;
     check_no_legacy_config(&root)?;

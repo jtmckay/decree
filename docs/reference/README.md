@@ -33,7 +33,7 @@ Machines follow W3C SCXML 1.0 (the State Chart XML recommendation): its terms, i
 | Data | A machine's typed, read-only values (`data:`), set from a message's `params`: SCXML `<data>`, initialised the way `<invoke><param>` initialises an invoked session. |
 | Decision | A built-in function a state can invoke instead of a script: `check` (a deterministic condition), `choose: model` (a router machine asks a model to pick an option) or `choose: person` (a person picks an option). See [Invoke](machines.md#invoke-the-states-function). |
 | Sub-machine | A machine a state invokes, `invoke: { machine: <name> }`: SCXML's nested session. It runs as a child run with its own folder and a `parent` reference; the final state it reaches is the parent state's event. |
-| Router | A machine that answers a `choose: model` request: it reads the request, asks a model however it likes, and writes a reply. Replaceable; `decree init` writes `claude_router`. |
+| Router | A machine that answers a `choose: model` request: it reads the request, asks a model however it likes, and writes a reply. Replaceable; `decree init` writes one named `router`. |
 | Run | One message moving through one machine (an SCXML session), stored in `.decree/runs/<message id>/`. |
 
 ## Architecture
@@ -76,7 +76,6 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  config.yml                        # global settings only (below)
   .gitignore                        # contains: inbox/ and runs/
   migrations/                       # ordered run-once messages, committed, never edited (messages.md)
   processed.md                      # committed ledger: one migration filename per line
@@ -96,17 +95,19 @@ Each building block has its own directory in `.decree/`:
 
 `migrations/` and `processed.md` are committed to git; `inbox/` and `runs/` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Choose: model](runs.md#choose-model)).
 
-**Shared machines.** If `shared_source` is set, that directory has the same `machines/` and `scripts/` layout. Machines resolve project-local first, then `shared_source`; a project-local machine with the same id hides the shared one. Scripts resolve as [Resolution](scripts.md#resolution) describes, project before shared, for every machine, so a project can override a script that a shared machine uses.
+decree 0.4's `outbox/`, `dead/`, `router.md`, `routines/`, `prompts/` and `config.yml` do not exist in 0.5.
 
-### config.yml
+### No configuration file
 
-```yaml
-default_router: claude_router    # router machine for choose: model invokes that name none (runs.md)
-max_attempts: 3                  # default attempts per invoke (scripts.md)
-max_depth: 10                    # max emit chain depth (cli.md, emit)
-max_log_size: 2097152            # max bytes per script log (scripts.md, Logs)
-default_machine: develop         # machine for messages with no machine: key
-shared_source: ~/.decree/shared  # shared machines and scripts (above)
-```
+A project is machines, scripts and messages; there is no `config.yml`. What 0.4 configured is a convention or a built-in limit:
 
-Unknown keys are an error, so a 0.4 config fails loudly and points to `scripts/migrate-0.4-to-0.5.sh`. The daemon poll interval is the `decree daemon --interval` flag.
+| 0.4 setting | 0.5 |
+| --- | --- |
+| Router for `choose: model` | A `choose: model` with no `router:` uses the machine named `router` ([Choose: model](runs.md#choose-model)). `decree init` writes it. |
+| Default routine | None: every message names its machine with `machine:` (or the `routine:` alias). `decree emit`, cron files and `decree init`'s examples always do. |
+| `max_retries` | `max_attempts` on the state; default 1 (no retry), as a Step Functions task without `Retry`. |
+| Emit depth | A fixed limit of 10 (`max_depth`). |
+| Log size | Each script log is capped at 2 MiB (2097152 bytes). |
+| Shared routines | None in decree. To share machines or scripts across projects, symlink them into `machines/` and `scripts/`. |
+
+The daemon poll interval is the `decree daemon --interval` flag. A `.decree/config.yml` left from 0.4 is an error that names `scripts/migrate-0.4-to-0.5.sh`: `.decree/config.yml is not used by decree 0.5; run scripts/migrate-0.4-to-0.5.sh`.

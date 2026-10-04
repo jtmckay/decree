@@ -1,4 +1,4 @@
-//! Spec section 11, M5.7: every project in `examples/` is a 0.5 project.
+//! Every project in `examples/` is a 0.5 project.
 //! `decree check` passes in each without a warning, no 0.4 term remains outside
 //! the history told in `examples/decree/README.md`, and each README's commands
 //! run as written, with stubs on `PATH` for the AI tools and services.

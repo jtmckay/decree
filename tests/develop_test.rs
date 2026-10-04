@@ -1,5 +1,5 @@
-//! The built-in `develop` and `rust_develop` machines `decree init` writes (spec
-//! section 11, ticket M5.1): they pass `decree check`, end in the same outcome as
+//! The built-in `develop` and `rust_develop` machines `decree init` writes (docs/reference/cli.md,
+//! `decree init`): they pass `decree check`, end in the same outcome as
 //! 0.4.2's routines on the same message, and their scripts wait out Claude's usage
 //! limit and resume the session. `claude`, `cargo`, `date` and `sleep` are stubs on
 //! `PATH`; no test calls a model.

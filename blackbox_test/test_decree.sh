@@ -235,7 +235,7 @@ test_init_writes_the_layout() {
     assert_file_exists ".decree/$p" || return 1
   done
   assert_eq $'inbox/\nruns/' "$(cat .decree/.gitignore)" || return 1
-  # 0.5 has no configuration file (spec section 3).
+  # 0.5 has no configuration file (docs/reference/README.md).
   [ "$(ls -A .decree | grep -c '\.yml$')" -eq 0 ] || return 1
 }
 

@@ -182,7 +182,7 @@ Every state does one thing: it invokes a function, and the function's result is 
 
 Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, or the whole run at the root), `data` (typed values set from a message's `params`), `emits` (machines a state's scripts may `decree emit` to), `timeout_s`, `max_attempts`, compound states (`initial` plus `states`, with transitions that bubble up) and `final`.
 
-`docs/0.5-spec.md` is the full contract, and `mock/` is a worked example of every feature with real files (start at `mock/README.md`).
+[The reference](docs/reference/README.md) is the full contract, [the decision log](docs/decisions.md) says why, and `mock/` is a worked example of every feature with real files (start at [`mock/README.md`](mock/README.md)).
 
 ### Graphs
 

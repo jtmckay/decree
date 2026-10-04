@@ -61,3 +61,4 @@
 61-v05-scxml-conformance.md
 62-v05-config-strict.md
 63-v05-no-config.md
+64-v05-reference-docs.md

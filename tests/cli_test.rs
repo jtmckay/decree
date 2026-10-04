@@ -1,4 +1,4 @@
-//! The 0.5 CLI end to end (spec section 8, ticket M4.4): `init`, `emit`, `process`,
+//! The 0.5 CLI end to end (docs/reference/cli.md): `init`, `emit`, `process`,
 //! `status`, `tail`, `retry` and `event` driven through the binary. Each test runs
 //! `decree init` in its own temp directory, then adds the machines and scripts it needs.
 //! No test calls a model: routers are test machines whose script writes a fixed reply.
@@ -281,7 +281,7 @@ fn init_emit_process_status_shows_the_run_done() {
 }
 
 /// AC: a failed run; `decree retry <id>` then `decree process`: it resumes at the retried
-/// state. Also the section 8 exit codes of `retry`.
+/// state. Also the docs/reference/cli.md exit codes of `retry`.
 #[test]
 fn retry_then_process_resumes_a_failed_run_at_the_retried_state() {
     let p = Project::init();

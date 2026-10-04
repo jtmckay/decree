@@ -1,6 +1,6 @@
 //! `decree graph`: write `.decree/graph/<machine>.md` for every machine and
 //! `.decree/graph/system.md`, each a Markdown document holding a Mermaid diagram, and remove
-//! stale `.md` files there (spec section 9). `decree check` uses `stale` to warn when the
+//! stale `.md` files there (docs/reference/graph.md). `decree check` uses `stale` to warn when the
 //! committed files are out of date.
 
 use std::collections::BTreeMap;

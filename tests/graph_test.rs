@@ -1,4 +1,4 @@
-//! `decree graph` (spec section 9) against the fixtures in `tests/fixtures/graph/` and the
+//! `decree graph` (docs/reference/graph.md) against the fixtures in `tests/fixtures/graph/` and the
 //! documents in `mock/.decree/graph/`. Each test copies its `.decree/` into a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;

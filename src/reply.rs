@@ -1,4 +1,4 @@
-//! Replies to runs waiting in a `choose: person` state (spec section 4, Replies): the
+//! Replies to runs waiting in a `choose: person` state (docs/reference/messages.md, Replies): the
 //! checks `decree event` makes before writing a reply, delivery when `process` claims one,
 //! and `timeout_s` deadlines. Both deliveries append a `received` event under the run lock,
 //! which makes the run `pending`; the caller then continues it.
@@ -43,7 +43,7 @@ pub struct Wait {
 
 /// Find the wait `to` names (a wait id, or a run id meaning its current wait) and check
 /// that `event` is one of its options. `Ok(Err(reason))` is a reply that fails a check
-/// (section 4, Replies, step 4): unknown run, run not waiting, stale wait id, unknown
+/// (docs/reference/messages.md, Replies, step 4): unknown run, run not waiting, stale wait id, unknown
 /// option. `locked` means the caller holds the run's lock, so its own lock is not a live one.
 pub fn check(
     runs_dir: &Path,
@@ -157,7 +157,7 @@ pub enum Delivery {
     Lost,
 }
 
-/// Deliver `inbox_dir/<file>`, a reply with frontmatter `to` and `event` (section 4,
+/// Deliver `inbox_dir/<file>`, a reply with frontmatter `to` and `event` (docs/reference/messages.md,
 /// Replies, step 3). Under the run's lock: check it, move it to
 /// `runs/<run id>/received/<file>`, and append a `received` event. The move never replaces
 /// an earlier reply of the same filename, whose `decision` event names it.
@@ -212,7 +212,7 @@ pub fn deliver(
     Ok(Delivery::Delivered(wait.run_id))
 }
 
-/// Section 4, Replies, step 5: every run waiting past its `timeout_at` gets a `received`
+/// docs/reference/messages.md, Replies, step 5: every run waiting past its `timeout_at` gets a `received`
 /// event for `error` with `timed_out: true`. Returns those runs, in `id` order, now
 /// `pending`. A run another process holds is skipped.
 pub fn deliver_timeouts(

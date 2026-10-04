@@ -1,4 +1,4 @@
-//! Conditions of `check` invokes (spec section 5, Conditions): typed objects with one
+//! Conditions of `check` invokes (docs/reference/machines.md, Conditions): typed objects with one
 //! subject and, except a bare `matches`, one operator, so the YAML parser and `decree check`
 //! catch mistakes.
 //!
@@ -10,7 +10,7 @@
 //! { confidence: big_model, at_least: 0.4 }
 //! ```
 //!
-//! The spec defines no type coercion, so evaluation refuses to compare values of different
+//! The reference defines no type coercion, so evaluation refuses to compare values of different
 //! types, and the ordering operators apply to integers only. `confidence` is the exception:
 //! it is a number from 0 to 1, the only place floats appear.
 
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn data_value_on_the_right() {
-        // The section 5 example: one visit to implement, max_rounds 2.
+        // The docs/reference/machines.md example: one visit to implement, max_rounds 2.
         let cond = parse("{ visits: implement, less_than: { data: max_rounds } }");
         assert_eq!(
             cond.less_than,

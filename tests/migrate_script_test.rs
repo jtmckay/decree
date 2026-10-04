@@ -1,4 +1,4 @@
-//! `scripts/migrate-0.4-to-0.5.sh` (spec section 11, M5.4) against the 0.4.2 project in
+//! `scripts/migrate-0.4-to-0.5.sh` (docs/reference/README.md, No configuration file) against the 0.4.2 project in
 //! `tests/fixtures/legacy-0.4/`, copied into a temp directory as its `.decree/`.
 
 use assert_cmd::cargo::cargo_bin_cmd;

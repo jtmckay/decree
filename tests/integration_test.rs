@@ -15,7 +15,7 @@ fn decree_cmd(dir: &TempDir) -> Command {
 
 // --- decree init ---
 
-/// After `init`, `.decree/` holds exactly the section 3 entries.
+/// After `init`, `.decree/` holds exactly the entries of docs/reference/README.md, File layout.
 #[test]
 fn test_init_creates_directory_structure() {
     let dir = TempDir::new().unwrap();
@@ -536,7 +536,7 @@ fn test_no_color_flag_overrides_forced_color() {
 
 // --- removed 0.4 routine commands ---
 
-/// `routine`, `verify` and `routine-sync` are gone (spec section 10, item 3).
+/// `routine`, `verify` and `routine-sync` are gone (docs/reference/cli.md).
 #[test]
 fn test_removed_routine_commands_exit_2() {
     let dir = TempDir::new().unwrap();
@@ -584,7 +584,7 @@ fn test_init_writes_decree_skill_for_claude_and_copilot() {
             )));
         let skill = dir.path().join(skill_dir);
         let text = fs::read_to_string(skill.join("SKILL.md")).unwrap();
-        // M5.6: no 0.4 concept in the skill.
+        // No 0.4 concept in the skill.
         for term in ["routine", "outbox", "hooks", "router.md"] {
             assert!(!text.to_lowercase().contains(term), "{ai}: {term}");
         }
@@ -607,7 +607,7 @@ fn test_init_opencode_writes_no_skill() {
     assert!(!dir.path().join(".github").exists());
 }
 
-/// M5.6: `init` never overwrites a skill file; here `SKILL.md` exists and `.decree/` does not.
+/// `init` never overwrites a skill file; here `SKILL.md` exists and `.decree/` does not.
 #[test]
 fn test_init_keeps_existing_skill_files() {
     let dir = TempDir::new().unwrap();
@@ -633,7 +633,7 @@ fn test_init_keeps_existing_skill_files() {
     );
 }
 
-/// The `skill` command is gone (spec section 10, item 12).
+/// The `skill` command is gone (docs/reference/cli.md).
 #[test]
 fn test_skill_command_is_removed() {
     let dir = TempDir::new().unwrap();

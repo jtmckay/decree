@@ -1,5 +1,5 @@
-//! `decree event <wait id | run id> <event> [-m <note>]` (spec section 8): queue a reply
-//! for a run waiting in a `choose: person` state (section 4, Replies), through the same
+//! `decree event <wait id | run id> <event> [-m <note>]` (docs/reference/cli.md): queue a reply
+//! for a run waiting in a `choose: person` state (docs/reference/messages.md, Replies), through the same
 //! writer as `decree emit`. The next `process` pass delivers it.
 
 use std::path::Path;

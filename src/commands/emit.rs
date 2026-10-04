@@ -1,4 +1,4 @@
-//! `decree emit --machine <id> [--param k=v]...` (spec section 8): queue a new message for
+//! `decree emit --machine <id> [--param k=v]...` (docs/reference/cli.md): queue a new message for
 //! `<id>` in `inbox/`, with the body read from stdin. Called by scripts: the emitting run
 //! is named by `DECREE_MESSAGE_ID`, its state by `DECREE_MACHINE` and `DECREE_STATE`.
 
@@ -53,7 +53,7 @@ pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), 
     Ok(())
 }
 
-/// `machine` must be in the `emits` of state `state` of machine `from` (section 2).
+/// `machine` must be in the `emits` of state `state` of machine `from` (docs/reference/README.md, Architecture).
 fn check_emits(
     project: &Project,
     from: &str,

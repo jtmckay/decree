@@ -1,4 +1,4 @@
-//! `decree emit` (spec section 8): parent, depth and trigger, `emits`, `max_depth` and
+//! `decree emit` (docs/reference/cli.md): parent, depth and trigger, `emits`, `max_depth` and
 //! `--param` checks. Each test builds its own `.decree/` in a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;

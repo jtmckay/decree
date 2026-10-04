@@ -1,9 +1,9 @@
-//! Runtime: resolving and running scripts (spec section 6).
+//! Runtime: resolving and running scripts (docs/reference/scripts.md).
 //!
 //! `resolve_script` turns a script name into exactly one executable file. Validation (V12)
 //! and the executor both call it, so a machine that passes `decree check` runs the same files.
 //! `Executor` runs scripts for one run: environment, log, process group, timeout, attempts,
-//! event parsing, and one `script` event in `events.jsonl` per execution (section 7).
+//! event parsing, and one `script` event in `events.jsonl` per execution (docs/reference/runs.md).
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -69,7 +69,7 @@ pub fn search_dirs(decree_dir: &Path, machine: &str) -> Vec<PathBuf> {
     vec![scripts.join(machine), scripts]
 }
 
-/// Resolve script `name` used by `machine` (section 6, Resolution). The first directory from
+/// Resolve script `name` used by `machine` (docs/reference/scripts.md, Resolution). The first directory from
 /// `search_dirs` holding a match wins; a match is a file named `name` or `name.<ext>` with one
 /// extension. The winner must be the only match in its directory, a regular file, and have
 /// an execute bit set. Lower directories are not read once a match is found.
@@ -161,16 +161,16 @@ fn check_executable(name: &str, path: PathBuf) -> Result<PathBuf, ScriptError> {
 /// `DECREE_STATE`, and the state in log names, for root `onentry` and `onexit` scripts.
 pub const ROOT_STATE: &str = "_root";
 
-/// The run's event log, in the run directory (section 7).
+/// The run's event log, in the run directory (docs/reference/runs.md).
 pub const EVENTS_FILE: &str = "events.jsonl";
 
-/// The claimed message, in the run directory (section 3).
+/// The claimed message, in the run directory (docs/reference/README.md).
 pub const MESSAGE_FILE: &str = "message.md";
 
-/// Folder in the run directory that delivered replies are moved into (section 4).
+/// Folder in the run directory that delivered replies are moved into (docs/reference/messages.md).
 pub const RECEIVED_DIR: &str = "received";
 
-/// `events.jsonl` schema version (section 7).
+/// `events.jsonl` schema version (docs/reference/runs.md).
 const EVENTS_VERSION: u64 = 1;
 
 /// How long a stopped script's process group gets between SIGTERM and SIGKILL.
@@ -182,7 +182,7 @@ const POLL: Duration = Duration::from_millis(10);
 /// Prefix of stderr lines in a script log, with one trailing space.
 const STDERR_PREFIX: &[u8] = b"[stderr] ";
 
-/// Events an invoke may not print and a `choose` option may not be (section 5, Rules).
+/// Events an invoke may not print and a `choose` option may not be (docs/reference/machines.md, Rules).
 pub fn is_reserved_event(event: &str) -> bool {
     matches!(event, "done" | "error" | "unsure")
         || event.starts_with("done.")
@@ -224,7 +224,7 @@ pub enum RuntimeError {
     Io { path: PathBuf, source: io::Error },
 
     /// SIGINT or SIGTERM arrived while the script ran. It was stopped and has no `script`
-    /// event; the caller interrupts the run (section 4, Stopping).
+    /// event; the caller interrupts the run (docs/reference/messages.md, Stopping).
     #[error("interrupted by a signal while script `{script}` was running")]
     Interrupted { script: String },
 }
@@ -236,7 +236,7 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> RuntimeError + '_ {
     }
 }
 
-/// Set `flag` on SIGINT and SIGTERM instead of terminating (section 6, Signals). The
+/// Set `flag` on SIGINT and SIGTERM instead of terminating (docs/reference/scripts.md, Signals). The
 /// executor polls the flag and stops the running script's process group.
 pub fn register_signals(flag: &Arc<AtomicBool>) -> io::Result<()> {
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
@@ -251,7 +251,7 @@ pub fn timestamp(t: chrono::DateTime<Utc>) -> String {
 }
 
 /// `runs/<id>/events.jsonl`: one JSON object per line, each appended with a single write
-/// to a file opened with `O_APPEND` (section 7).
+/// to a file opened with `O_APPEND` (docs/reference/runs.md).
 #[derive(Debug)]
 pub struct EventLog {
     file: File,
@@ -306,7 +306,7 @@ impl EventLog {
 }
 
 /// `DECREE_DATA_<NAME>` for each `data` entry: the message's `params` value, else the
-/// default. Ints as decimal, bools as `true` or `false` (section 6, Environment).
+/// default. Ints as decimal, bools as `true` or `false` (docs/reference/scripts.md, Environment).
 pub fn data_env(
     data: &BTreeMap<String, DataSpec>,
     params: &serde_norway::Mapping,
@@ -328,7 +328,7 @@ pub fn data_env(
         .collect()
 }
 
-/// Each script log is capped at 2 MiB (section 6, Execution).
+/// Each script log is capped at 2 MiB (docs/reference/scripts.md, Execution).
 pub const MAX_LOG_SIZE: u64 = 2_097_152;
 
 /// The run an `Executor` runs scripts for.
@@ -346,7 +346,7 @@ pub struct RunInfo {
     /// `DECREE_PARENT`: in a child run, the parent run's id.
     pub parent: Option<String>,
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
-    /// where the reply must go (section 7, Choose: model).
+    /// where the reply must go (docs/reference/runs.md, Choose: model).
     pub router: Option<RouterFiles>,
 }
 
@@ -427,7 +427,7 @@ impl Execution {
     }
 }
 
-/// The event an invoke raises (section 6, Events from an invoke).
+/// The event an invoke raises (docs/reference/scripts.md, Events from an invoke).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvokeEvent {
     /// From the exit code: `done` (exit 0, no printed event) or `error`.
@@ -447,7 +447,7 @@ pub struct InvokeOutcome {
     pub execution: Execution,
 }
 
-/// `runs/<id>/.running`: the script running now (section 6, Execution).
+/// `runs/<id>/.running`: the script running now (docs/reference/scripts.md, Execution).
 pub const RUNNING_FILE: &str = ".running";
 
 /// The contents of `.running`. `decree status` and `decree tail` read it; it is not part
@@ -490,7 +490,7 @@ impl Running {
     }
 }
 
-/// Runs the scripts of one run (section 6, Execution) and appends their `script` events.
+/// Runs the scripts of one run (docs/reference/scripts.md, Execution) and appends their `script` events.
 #[derive(Debug)]
 pub struct Executor {
     info: RunInfo,
@@ -526,7 +526,7 @@ impl Executor {
         &mut self.events
     }
 
-    /// Attempts allowed for `state`: its `max_attempts`, default 1 (section 6, Attempts).
+    /// Attempts allowed for `state`: its `max_attempts`, default 1 (docs/reference/scripts.md, Attempts).
     pub fn max_attempts(&self, machine: &LoadedMachine, state: usize) -> u32 {
         machine.nodes[state].max_attempts.unwrap_or(1).max(1)
     }
@@ -711,7 +711,7 @@ impl Executor {
         Ok(execution)
     }
 
-    /// The section 6 environment for `run`, added to the inherited one.
+    /// The environment for `run` (docs/reference/scripts.md, Environment), added to the inherited one.
     fn env(&self, run: &ScriptRun) -> Vec<(String, std::ffi::OsString)> {
         let info = &self.info;
         let mut events = run.events.to_vec();
@@ -788,7 +788,7 @@ fn next_log_number(run_dir: &Path) -> io::Result<u32> {
 }
 
 /// Copy `source` into `log` line by line, each line prefixed with `prefix`. With
-/// `keep_last`, returns the last non-empty line, trimmed (section 6, Events from an invoke).
+/// `keep_last`, returns the last non-empty line, trimmed (docs/reference/scripts.md, Events from an invoke).
 fn spawn_reader<R: Read + Send + 'static>(
     source: R,
     log: Arc<Mutex<File>>,
@@ -867,8 +867,8 @@ fn wait_child(
 }
 
 /// Send SIGTERM to the process group `child` leads, wait up to `KILL_GRACE` for every
-/// process in it to exit, then send SIGKILL (section 6, Execution). 0.4.2 sent SIGTERM
-/// and waited forever (`docs/0.5-inventory.md`, C3).
+/// process in it to exit, then send SIGKILL (docs/reference/scripts.md, Execution). 0.4.2 sent SIGTERM
+/// and waited forever (docs/decisions.md, D20).
 fn stop_group(child: &mut Child) -> io::Result<ExitStatus> {
     let pgid = child.id() as libc::pid_t;
     // SAFETY: kill(2) only sends a signal; a negative pid addresses the child's group.
@@ -894,7 +894,7 @@ fn stop_group(child: &mut Child) -> io::Result<ExitStatus> {
 }
 
 /// Keep only the last `max_size` bytes of the log at `path`, behind a marker line; 0
-/// disables truncation (section 6, Logs). Moved here unchanged from 0.4.2.
+/// disables truncation (docs/reference/scripts.md, Logs). Moved here unchanged from 0.4.2.
 pub fn truncate_log_if_needed(path: &Path, max_size: u64) -> io::Result<()> {
     let metadata = fs::metadata(path)?;
     if metadata.len() <= max_size {
@@ -1729,7 +1729,7 @@ mod executor_tests {
     }
 
     /// `.running` names the script while it runs, and is gone once its `script` event is
-    /// written (section 6, Execution).
+    /// written (docs/reference/scripts.md, Execution).
     #[test]
     fn running_file_exists_while_the_script_runs() {
         let p = Project::new(&["copy_running"]);

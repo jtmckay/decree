@@ -53,7 +53,7 @@ const AI_BACKENDS: &[Backend] = &[
     },
 ];
 
-/// The router machine `init` writes (spec section 7, The default router), and its script.
+/// The router machine `init` writes (docs/reference/runs.md, The default router), and its script.
 const ROUTER_YML: &str = include_str!("../templates/router/router.yml");
 const ROUTER_ASK_SH: &str = include_str!("../templates/router/ask.sh");
 
@@ -112,8 +112,8 @@ const DEVELOP_MACHINES: &[BuiltinMachine] = &[
     },
 ];
 
-/// Shared scripts `init` writes to the flat `scripts/` (spec section 6, Resolution):
-/// 0.4.2's git-stash hooks as per-visit scripts (M5.2). `git_baseline` is a root
+/// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution):
+/// 0.4.2's git-stash hooks as per-visit scripts (docs/decisions.md, D15). `git_baseline` is a root
 /// `onentry` that records `HEAD` once; `snapshot` is a working state's `onentry` that
 /// stashes a checkpoint on each visit. No built-in machine uses them; add them where wanted.
 const SHARED_SCRIPTS: &[(&str, &str)] = &[
@@ -131,7 +131,7 @@ const AI_PLAIN_SH: &str = include_str!("../templates/ai/plain.sh");
 
 const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
 
-/// The decree skill `init` writes (M5.6): path under the skill directory, and content.
+/// The decree skill `init` writes: path under the skill directory, and content.
 const DECREE_SKILL: &[(&str, &str)] = &[
     (
         "SKILL.md",
@@ -295,7 +295,7 @@ fn write_shared_scripts(decree_dir: &Path) -> Result<(), DecreeError> {
 }
 
 /// Write `machines/router.yml` and its executable script `scripts/router/ask_<ai>.sh`
-/// under `decree_dir` (section 7, The default router).
+/// under `decree_dir` (docs/reference/runs.md, The default router).
 fn write_router(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
     let machines = decree_dir.join(MACHINES_DIR);
     std::fs::create_dir_all(&machines)?;
@@ -339,7 +339,7 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     Ok(())
 }
 
-/// Write the section 3 layout under `decree_dir`: `.gitignore`,
+/// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
 /// `processed.md`, the empty queues, the router machine with its script, the
 /// `develop` and `rust_develop` machines with theirs, and the shared scripts.
 /// `graph/` is written by `decree graph`.
@@ -399,7 +399,7 @@ mod tests {
         backend_entry(AiBackend::Opencode)
     }
 
-    /// `write_layout` creates the section 3 entries except `graph/`, which `decree graph` writes.
+    /// `write_layout` creates the docs/reference/README.md layout entries except `graph/`, which `decree graph` writes.
     #[test]
     fn test_write_layout_writes_the_section_3_entries() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -472,7 +472,7 @@ mod tests {
         std::fs::read_to_string(root.join("mock/.decree").join(path)).unwrap()
     }
 
-    /// Claude's `router` and `ask_claude` are the mock's, byte for byte (section 7, The
+    /// Claude's `router` and `ask_claude` are the mock's, byte for byte (docs/reference/runs.md, The
     /// default router).
     #[test]
     fn test_router_for_claude_is_the_mocks() {
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(files_under(&dir), skill_names());
     }
 
-    /// The skill mentions no 0.4 concept (M5.6).
+    /// The skill mentions no 0.4 concept.
     #[test]
     fn test_decree_skill_mentions_no_0_4_concept() {
         for (name, content) in DECREE_SKILL {

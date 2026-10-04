@@ -1,5 +1,5 @@
-//! No configuration file (spec section 3): a `.decree/config.yml` left from 0.4 fails every
-//! command that opens the project and names the M5.4 script, and a message with no
+//! No configuration file (docs/reference/README.md): a `.decree/config.yml` left from 0.4 fails every
+//! command that opens the project and names the layout migration script, and a message with no
 //! `machine:` is invalid (M1–M3). Each test runs `decree init` in its own temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;

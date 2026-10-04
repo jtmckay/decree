@@ -1,19 +1,19 @@
-//! The step loop (spec section 7): moves one run through one machine with SCXML's exit
+//! The step loop (docs/reference/runs.md): moves one run through one machine with SCXML's exit
 //! and entry order, runs each state's invoke, and appends every step to the run's
-//! `events.jsonl`. State, status and visits are derived from that log (section 4, Source
+//! `events.jsonl`. State, status and visits are derived from that log (docs/reference/messages.md, Source
 //! of truth).
 //!
-//! Interpreted here: the whole section 5 subset. Transitions on compound states, with
+//! Interpreted here: the whole SCXML subset (docs/reference/machines.md). Transitions on compound states, with
 //! events bubbling from the atomic state outward; `type: internal`; final states at any
 //! level, a nested one raising `done.state.<parent>`; `choose: person`, which runs its
 //! `ask` script, appends `waiting` and stops until a `received` event continues the run;
-//! and child runs (section 7, Sub-machines): a `machine` invoke, and the router machine of
+//! and child runs (docs/reference/runs.md, Sub-machines): a `machine` invoke, and the router machine of
 //! a `choose: model` invoke. Replies and timeouts are delivered by `reply`.
 //!
-//! Each run is stepped under its run lock (section 4, Run lock). `recover` is what
+//! Each run is stepped under its run lock (docs/reference/messages.md, Run lock). `recover` is what
 //! `process` and `daemon` do first: it marks runs a crash left behind `interrupted` and
 //! lists the `pending` runs to continue. Only `decree retry` makes an interrupted run
-//! `pending` again; `continue_run` then re-runs its `onentry` scripts (section 7, step 1).
+//! `pending` again; `continue_run` then re-runs its `onentry` scripts (docs/reference/runs.md, step 1).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -41,13 +41,13 @@ use crate::runtime::{
 };
 
 /// The JSON file, in the run folder, mapping each option of the `choose: person` state the
-/// run waits in to its description: what `DECREE_CHOICES` names (section 6).
+/// run waits in to its description: what `DECREE_CHOICES` names (docs/reference/scripts.md).
 pub const CHOICES_FILE: &str = "choices.json";
 
-/// The request a `choose: model` invoke writes in its router run's folder (section 7).
+/// The request a `choose: model` invoke writes in its router run's folder (docs/reference/runs.md).
 pub const REQUEST_FILE: &str = "request.json";
 
-/// Where a router machine writes its reply, in its run folder (section 7).
+/// Where a router machine writes its reply, in its run folder (docs/reference/runs.md).
 pub const REPLY_FILE: &str = "reply.json";
 
 #[derive(Debug, thiserror::Error)]
@@ -74,7 +74,7 @@ pub enum InterpreterError {
     #[error("cannot continue the run: {0}")]
     NotReceived(String),
 
-    /// Another live process holds the run's lock: the run is `active` (section 4, Run lock).
+    /// Another live process holds the run's lock: the run is `active` (docs/reference/messages.md, Run lock).
     #[error("run `{0}` is active: another process holds its lock")]
     Active(String),
 
@@ -108,17 +108,17 @@ pub struct RunInput {
     pub depth: u32,
 }
 
-/// The deepest a message may sit in a chain of emits and child runs (section 3, `max_depth`).
+/// The deepest a message may sit in a chain of emits and child runs (docs/reference/README.md, `max_depth`).
 pub const MAX_DEPTH: u32 = 10;
 
 /// Everything stepping a run needs beyond the run itself: the project's machines, and the
-/// settings each run's executor and its child runs use (section 7, Sub-machines).
+/// settings each run's executor and its child runs use (docs/reference/runs.md, Sub-machines).
 pub struct Context<'a> {
     /// The directory containing `.decree/`.
     pub project_root: PathBuf,
     /// Every machine, by name: the children a run may start.
     pub machines: &'a BTreeMap<String, LoadedMachine>,
-    /// Set on SIGINT or SIGTERM; stops the running script (section 4, Stopping).
+    /// Set on SIGINT or SIGTERM; stops the running script (docs/reference/messages.md, Stopping).
     pub shutdown: Arc<AtomicBool>,
 }
 
@@ -129,14 +129,14 @@ pub enum Outcome {
     /// was appended.
     Finished(String),
     /// SIGINT or SIGTERM stopped a script in this state; an `interrupted` event was
-    /// appended (section 4, Stopping).
+    /// appended (docs/reference/messages.md, Stopping).
     Interrupted(String),
     /// The run entered this `choose: person` state, its `ask` script ran, and a `waiting`
-    /// event was appended. A reply must name `wait_id` (section 4, Replies).
+    /// event was appended. A reply must name `wait_id` (docs/reference/messages.md, Replies).
     Waiting { state: String, wait_id: String },
     /// The run waits in this `machine` or `choose: model` state for child run `child`, which
     /// stopped with `outcome` before finishing: it waits for a reply itself, or was
-    /// interrupted. The run continues when the child finishes (section 7, Sub-machines).
+    /// interrupted. The run continues when the child finishes (docs/reference/runs.md, Sub-machines).
     Child {
         state: String,
         child: String,
@@ -244,7 +244,7 @@ impl<'a> Interpreter<'a> {
     /// its invoke. Otherwise the last event is `received`, or `waiting` for a child run
     /// that has finished: take the event's transition at step 4, with `source: "person"`
     /// after a `decision` event for a reply, `source: "timeout"`, or `source: "machine"` for
-    /// a child's final state; a finished router run is validated as section 7, Choose:
+    /// a child's final state; a finished router run is validated as docs/reference/runs.md, Choose:
     /// model says. Nothing is re-run then, because the run only paused.
     pub fn resume(&mut self) -> Result<Outcome, InterpreterError> {
         let _lock = self.lock()?;
@@ -490,7 +490,7 @@ impl<'a> Interpreter<'a> {
         Ok(Next::Step(None))
     }
 
-    /// Step 2 for a `choose: person` state (section 4, Replies): write its options to
+    /// Step 2 for a `choose: person` state (docs/reference/messages.md, Replies): write its options to
     /// `choices.json`, run its `ask` script with the wait id, then append `waiting` and stop.
     /// An `ask` script that exits non-zero gives `error` instead, since nobody was told.
     fn ask(&mut self, s: usize, choose: &ChooseInvoke) -> Result<Invoked, InterpreterError> {
@@ -560,7 +560,7 @@ impl<'a> Interpreter<'a> {
         format!("{}.w{}", self.executor.info().run_id, self.entered_seq)
     }
 
-    /// Steps 2 and 3 for atomic state `s`: run its function (section 5, Invoke) and take
+    /// Steps 2 and 3 for atomic state `s`: run its function (docs/reference/machines.md, Invoke) and take
     /// its event. A state with no invoke produces `done`.
     fn invoke(&mut self, s: usize) -> Result<Invoked, InterpreterError> {
         let m = self.machine;
@@ -589,7 +589,7 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    /// Step 2 for a `machine` invoke (section 7, Sub-machines): run the machine as a child
+    /// Step 2 for a `machine` invoke (docs/reference/runs.md, Sub-machines): run the machine as a child
     /// run. Its final state is the event, `failed` as `error`.
     fn invoke_machine(
         &mut self,
@@ -613,7 +613,7 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    /// Step 2 for a `choose: model` invoke (section 7, Choose: model): write the request,
+    /// Step 2 for a `choose: model` invoke (docs/reference/runs.md, Choose: model): write the request,
     /// run the router machine as a child run, and validate its reply.
     fn choose_model(
         &mut self,
@@ -649,8 +649,8 @@ impl<'a> Interpreter<'a> {
             .unwrap_or_else(|| ROUTER_MACHINE.to_string())
     }
 
-    /// Section 7, Choose: model, step 1: the request for state `s`, as the text of
-    /// `request.json`, its keys in section 7's order.
+    /// docs/reference/runs.md, Choose: model, step 1: the request for state `s`, as the text of
+    /// `request.json`, its keys in docs/reference/runs.md's order.
     fn request(&self, s: usize, choose: &ChooseInvoke) -> Result<String, InterpreterError> {
         let m = self.machine;
         let node = &m.nodes[s];
@@ -714,7 +714,7 @@ impl<'a> Interpreter<'a> {
         self.model_decision(s, choose, &router, Some(child), reply, duration_ms)
     }
 
-    /// Section 7, Choose: model, step 4: the event from a validated `reply`, which is
+    /// docs/reference/runs.md, Choose: model, step 4: the event from a validated `reply`, which is
     /// `unsure` when `min_confidence` is set and the confidence is missing or lower, and
     /// the `decision` event that records it.
     fn model_decision(
@@ -790,7 +790,7 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Start machine `name` as a child run of state `s` and step it until it finishes, waits
-    /// or is interrupted (section 7, Sub-machines). The child's `message.md` holds `machine`,
+    /// or is interrupted (docs/reference/runs.md, Sub-machines). The child's `message.md` holds `machine`,
     /// `id`, `parent`, `depth`, `trigger: invoke`, any `params` and this run's body; a
     /// `request` is written to its `request.json`, which makes it a router run. Appends the
     /// `waiting` event naming the child first. `Err` holds why no child started: its
@@ -877,7 +877,7 @@ impl<'a> Interpreter<'a> {
             .unwrap_or(0))
     }
 
-    /// Section 7, Check: evaluate the condition against the input, `data` and visits,
+    /// docs/reference/runs.md, Check: evaluate the condition against the input, `data` and visits,
     /// append a `decision` event, and produce `yes` or `no`. No script runs.
     fn check(&mut self, s: usize, check: &CheckInvoke) -> Result<Decision, InterpreterError> {
         let m = self.machine;
@@ -914,7 +914,7 @@ impl<'a> Interpreter<'a> {
         Ok(Decision::new(event, "check", None))
     }
 
-    /// Section 5, Input: the log of the latest invoke script of state `input`, or, without
+    /// docs/reference/machines.md, Input: the log of the latest invoke script of state `input`, or, without
     /// `input`, of the most recent invoke script in the run. Empty if none has run.
     fn input_text(
         &self,
@@ -1122,7 +1122,7 @@ impl<'a> Interpreter<'a> {
     }
 
     /// The `processed.md` line to write before entering `t`: a migration entering a final
-    /// state other than `failed` (section 4, Migrations, rule 5). Only a root-level final
+    /// state other than `failed` (docs/reference/messages.md, Migrations, rule 5). Only a root-level final
     /// state finishes the run, so a nested one writes nothing.
     fn ledger_line(&self, t: usize) -> Option<String> {
         let finishes = is_root_final(self.machine, t) && self.machine.nodes[t].id != FAILED;
@@ -1202,8 +1202,8 @@ impl Context<'_> {
         Ok(Executor::open(info, Arc::clone(&self.shutdown))?)
     }
 
-    /// A run's status (section 4, Run status), where a run left `waiting` for a child that
-    /// has already finished is `pending` (section 7, Sub-machines).
+    /// A run's status (docs/reference/messages.md, Run status), where a run left `waiting` for a child that
+    /// has already finished is `pending` (docs/reference/runs.md, Sub-machines).
     pub fn status(
         &self,
         m: &LoadedMachine,
@@ -1234,7 +1234,7 @@ impl Context<'_> {
     }
 }
 
-/// Continue `pending` run `run_id` from its folder (section 7, step 1): its last event is
+/// Continue `pending` run `run_id` from its folder (docs/reference/runs.md, step 1): its last event is
 /// `received`, or `waiting` for a child run that has finished. A child run that finishes
 /// continues its parent, if the parent waits for it, and so on up: the result is that of
 /// the last run continued.
@@ -1309,7 +1309,7 @@ pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterE
     }
 }
 
-/// What `recover` found (section 4, Run status).
+/// What `recover` found (docs/reference/messages.md, Run status).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Recovery {
     /// Runs that just got an `interrupted` event with `cause: "crash"`, with the state each
@@ -1319,11 +1319,11 @@ pub struct Recovery {
     pub pending: Vec<String>,
 }
 
-/// What `process` and `daemon` do when they start (section 4, Run status). Every run that
+/// What `process` and `daemon` do when they start (docs/reference/messages.md, Run status). Every run that
 /// is `interrupted` but whose last event is not already `interrupted` gets one with
 /// `cause: "crash"`, so the stop is visible in the log; it is never continued. `active`
 /// runs (a live pid in `.lock`) are left alone. Every other run's `message.md` mirror is
-/// rewritten if it disagrees with `events.jsonl` (section 4, Source of truth). Runs with
+/// rewritten if it disagrees with `events.jsonl` (docs/reference/messages.md, Source of truth). Runs with
 /// no events yet (never claimed past the folder), or of a machine that no longer exists,
 /// are skipped: there is no state to record or continue.
 pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
@@ -1370,7 +1370,7 @@ pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
                 let Value::Object(mut fields) = json!({ "state": state, "cause": "crash" }) else {
                     unreachable!("event fields are a JSON object");
                 };
-                // A `.running` the crash left behind names the script (section 6).
+                // A `.running` the crash left behind names the script (docs/reference/scripts.md).
                 let running_path = run_dir.join(RUNNING_FILE);
                 if let Some(running) = Running::read(&run_dir).map_err(io_err(&running_path))? {
                     fields.insert("script".into(), json!(running.script));
@@ -1387,7 +1387,7 @@ pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
 }
 
 /// Rewrite the `state` mirror in `run_dir`'s `message.md` if it disagrees with the run's
-/// state, the `to` of the last `transition` event (section 4, Source of truth). A message
+/// state, the `to` of the last `transition` event (docs/reference/messages.md, Source of truth). A message
 /// whose frontmatter does not parse is left unchanged, as Lifecycle step 3 leaves it.
 /// Returns whether it was rewritten.
 pub fn repair_mirror(
@@ -1411,7 +1411,7 @@ pub fn repair_mirror(
     Ok(true)
 }
 
-/// `request.json` (section 7, Choose: model, step 1). Field order is the spec's.
+/// `request.json` (docs/reference/runs.md, Choose: model, step 1). Field order is the reference's.
 #[derive(serde::Serialize)]
 struct Request<'r> {
     v: u32,
@@ -1434,7 +1434,7 @@ struct RequestOption<'r> {
     description: &'r str,
 }
 
-/// A router's reply (section 7, Choose: model, steps 3 and 4).
+/// A router's reply (docs/reference/runs.md, Choose: model, steps 3 and 4).
 #[derive(Debug, PartialEq)]
 enum Reply {
     /// `reply.json` names one of the options.
@@ -1506,12 +1506,12 @@ fn is_root_final(m: &LoadedMachine, n: usize) -> bool {
     m.nodes[n].is_final && m.nodes[n].parent == Some(0)
 }
 
-/// The options of `choose` state `n`, in name order (section 5, Choices).
+/// The options of `choose` state `n`, in name order (docs/reference/machines.md, Choices).
 fn option_names(m: &LoadedMachine, n: usize) -> Vec<String> {
     m.options(n).map(|e| e.event.clone()).collect()
 }
 
-/// The run's `data`: each `params` value, else the default (section 5, Keys).
+/// The run's `data`: each `params` value, else the default (docs/reference/machines.md, Keys).
 fn data_values(
     m: &LoadedMachine,
     params: &serde_norway::Mapping,
@@ -1537,7 +1537,7 @@ fn data_values(
     Ok(data)
 }
 
-/// The transition domain (section 5, Rules): the deepest compound state, or the root, that
+/// The transition domain (docs/reference/machines.md, Rules): the deepest compound state, or the root, that
 /// is a proper ancestor of both the state declaring the transition and its target. For a
 /// `type: internal` transition from a compound state to one of its descendants, it is the
 /// source itself, so the source is neither exited nor re-entered.
@@ -1583,7 +1583,7 @@ fn is_transition(event: &Map<String, Value>) -> bool {
     event.get("type").and_then(Value::as_str) == Some("transition")
 }
 
-/// `visits.<state>` (section 7, Visits): the `transition` events whose `to` is that state,
+/// `visits.<state>` (docs/reference/runs.md, Visits): the `transition` events whose `to` is that state,
 /// except `source: "attempt"`.
 pub fn visits(events: &[Map<String, Value>]) -> BTreeMap<String, u32> {
     let mut visits = BTreeMap::new();
@@ -1599,7 +1599,7 @@ pub fn visits(events: &[Map<String, Value>]) -> BTreeMap<String, u32> {
 }
 
 /// Each state's confidence from its latest `decision` event, 0 when that event has none
-/// (section 5, Conditions). A state with no `decision` event is missing.
+/// (docs/reference/machines.md, Conditions). A state with no `decision` event is missing.
 pub fn confidences(events: &[Map<String, Value>]) -> BTreeMap<String, f64> {
     let mut confidences = BTreeMap::new();
     for event in events
@@ -1617,7 +1617,7 @@ pub fn confidences(events: &[Map<String, Value>]) -> BTreeMap<String, f64> {
     confidences
 }
 
-/// The run's state: the `to` of the last `transition` event (section 4, Source of truth).
+/// The run's state: the `to` of the last `transition` event (docs/reference/messages.md, Source of truth).
 pub fn current_state(events: &[Map<String, Value>]) -> Option<&str> {
     events
         .iter()
@@ -1627,7 +1627,7 @@ pub fn current_state(events: &[Map<String, Value>]) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
-/// Section 4, Run status.
+/// docs/reference/messages.md, Run status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunStatus {
     Finished,
@@ -1649,7 +1649,7 @@ impl RunStatus {
     }
 }
 
-/// A run's status, derived from its events in the section 4 order. `lock_alive` is whether
+/// A run's status, derived from its events in the docs/reference/messages.md order. `lock_alive` is whether
 /// the run's `.lock` holds a live pid.
 /// Only a root-level final state finishes a run: a nested one is passed through at once.
 pub fn run_status(m: &LoadedMachine, events: &[Map<String, Value>], lock_alive: bool) -> RunStatus {
@@ -1674,7 +1674,7 @@ pub fn run_status(m: &LoadedMachine, events: &[Map<String, Value>], lock_alive: 
     }
 }
 
-/// Section 4, Lifecycle step 3: an invalid message starts its run in `failed`. Appends the
+/// docs/reference/messages.md, Lifecycle step 3: an invalid message starts its run in `failed`. Appends the
 /// one `transition` event, and mirrors `state: failed` when `mirror` is set (it is not
 /// when the frontmatter itself did not parse). Nothing runs.
 pub fn reject(
@@ -1705,7 +1705,7 @@ pub fn reject(
 }
 
 /// Set frontmatter `state` in the message at `path`, keeping every other key, the key
-/// order and the body bytes (section 4, Parsing and writing).
+/// order and the body bytes (docs/reference/messages.md, Parsing and writing).
 pub fn mirror_state(path: &Path, state: &str) -> Result<(), InterpreterError> {
     let mut message = Message::read(path)?;
     message.set("state", state);
@@ -1962,7 +1962,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Exit and entry order (section 7, Step loop)
+    // Exit and entry order (docs/reference/runs.md, Step loop)
     // ---------------------------------------------------------------
 
     #[test]
@@ -2232,7 +2232,7 @@ mod tests {
         assert_eq!(p.run(), Outcome::Finished("failed".into()));
         assert_eq!(
             p.order(),
-            // Section 6: the remaining `onentry` scripts are skipped; the run still ends.
+            // docs/reference/scripts.md: the remaining `onentry` scripts are skipped; the run still ends.
             ["a_invoke_fail", "failed_entry_fail", "root_exit"]
         );
         assert_eq!(
@@ -2248,7 +2248,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Migrations: the ledger line (section 4, rule 5; section 7, step 7)
+    // Migrations: the ledger line (docs/reference/messages.md, rule 5; docs/reference/runs.md, step 7)
     // ---------------------------------------------------------------
 
     #[test]
@@ -2371,7 +2371,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Check (section 7, Check)
+    // Check (docs/reference/runs.md, Check)
     // ---------------------------------------------------------------
 
     /// Machine `step_check`: `work` runs `script` (a fixture name), then `decide` checks
@@ -2641,7 +2641,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Interrupts, run status and the run lock (M4.2)
+    // Interrupts, run status and the run lock
     // ---------------------------------------------------------------
 
     fn append(p: &Project, kind: &str, fields: Value) {
@@ -2650,7 +2650,7 @@ mod tests {
             .unwrap();
     }
 
-    /// The `transition` event `decree retry` writes (section 8) back into `state`.
+    /// The `transition` event `decree retry` writes (docs/reference/cli.md) back into `state`.
     fn retry(p: &Project, state: &str) {
         let fields = json!({
             "from": state, "event": "retry", "to": state, "source": "retry", "exit_code": null
@@ -2861,7 +2861,7 @@ machine: [
     }
 
     // ---------------------------------------------------------------
-    // Composition: bubbling, `type: internal`, nested final states (M3.4)
+    // Composition: bubbling, `type: internal`, nested final states
     // ---------------------------------------------------------------
 
     #[test]
@@ -3044,7 +3044,7 @@ machine: [
     }
 
     // ---------------------------------------------------------------
-    // Choose: person, interpreter side (section 4, Replies; section 7)
+    // Choose: person, interpreter side (docs/reference/messages.md, Replies; docs/reference/runs.md)
     // ---------------------------------------------------------------
 
     /// The `step_person` project, run until it waits. `ask_person` prints its environment.
@@ -3069,7 +3069,7 @@ machine: [
         (p, wait_id)
     }
 
-    /// Append a `received` event, as reply delivery (M4.3) does, then continue the run.
+    /// Append a `received` event, as reply delivery does, then continue the run.
     fn receive(p: &Project, fields: Value) -> Outcome {
         let mut executor = p.executor("inbox", &serde_norway::Mapping::new());
         executor
@@ -3182,7 +3182,7 @@ machine: [
         assert_eq!(d["event"], "approve");
         assert_eq!(d["options"], json!(["approve", "reject"]));
         assert_eq!(d["reply"], "reply.md");
-        // Then the `onexit` scripts, then the transition (section 7, steps 5 and 6).
+        // Then the `onexit` scripts, then the transition (docs/reference/runs.md, steps 5 and 6).
         let taken = events[i..]
             .iter()
             .find(|e| e["type"] == "transition")
@@ -3311,7 +3311,7 @@ machine: [
     }
 
     // ---------------------------------------------------------------
-    // Sub-machines (section 7)
+    // Sub-machines (docs/reference/runs.md)
     // ---------------------------------------------------------------
 
     fn fixture(name: &str) -> String {
@@ -3502,7 +3502,7 @@ machine: [
         (p, child, wait_id)
     }
 
-    /// Append a `received` event to run `id`, as reply delivery (M4.3) does.
+    /// Append a `received` event to run `id`, as reply delivery does.
     fn deliver(p: &Project, id: &str, fields: Value) {
         let m = &p.machines[p.child_events(id)[0]["machine"].as_str().unwrap()];
         let mut events = EventLog::open(&p.child_dir(id), id, &m.id, "invoke").unwrap();
@@ -3631,7 +3631,7 @@ machine: [
     }
 
     // ---------------------------------------------------------------
-    // Choose: model (section 7)
+    // Choose: model (docs/reference/runs.md)
     // ---------------------------------------------------------------
 
     /// `step_model`, whose `triage` state asks the machine named `router` (fixture
@@ -3708,7 +3708,7 @@ machine: [
             "history": ["work: done"],
         });
         assert_eq!(serde_json::from_str::<Value>(&copied).unwrap(), want);
-        // Keys in section 7's order.
+        // Keys in docs/reference/runs.md's order.
         let keys: Vec<usize> = [
             "\"v\"",
             "\"machine\"",
@@ -4014,7 +4014,7 @@ machine: [
     }
 
     // ---------------------------------------------------------------
-    // events.jsonl: every section 7 field of the four types
+    // events.jsonl: every docs/reference/runs.md field of the four types
     // ---------------------------------------------------------------
 
     #[test]
@@ -4116,7 +4116,7 @@ machine: [
     }
 
     // ---------------------------------------------------------------
-    // Run status (section 4)
+    // Run status (docs/reference/messages.md)
     // ---------------------------------------------------------------
 
     #[test]

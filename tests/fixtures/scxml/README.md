@@ -1,13 +1,13 @@
 # W3C SCXML 1.0 IRP tests
 
-Survey of the W3C SCXML 1.0 Implementation Report Plan tests (<https://www.w3.org/Voice/2013/scxml-irp/>, version of 10 March 2015) against decree's SCXML subset (`docs/0.5-spec.md`, section 5). Ticket M3.4.
+Survey of the W3C SCXML 1.0 Implementation Report Plan tests (<https://www.w3.org/Voice/2013/scxml-irp/>, version of 10 March 2015) against decree's SCXML subset ([SCXML subset](../../../docs/reference/machines.md#scxml-subset)).
 
 The manifest (`https://www.w3.org/Voice/2013/scxml-irp/manifest.xml`) and every test file it names were downloaded on 2026-10-02: 200 tests, 206 `.txml` documents and 5 `.txt` resources. Each test was checked for every SCXML element and attribute it uses, including the `conf:` placeholders the IRP substitutes per data model (`conf:id`, `conf:expr`, `conf:idVal`, … stand for `<datamodel>` locations, expressions and conditions; `conf:targetpass` and `conf:targetfail` stand for `target="pass"` and `target="fail"`; `conf:pass` and `conf:fail` are final states).
 
 A test could be ported if it uses nothing outside the subset, read this way:
 
 - `<state>`, `<final>`, `initial`, `type="internal"`, `done.state.<id>` and transitions with one event descriptor and one target are in the subset.
-- An eventless transition with a target and no `cond` is decree's pass-through `done` (section 5, Invoke).
+- An eventless transition with a target and no `cond` is decree's pass-through `done` ([Invoke](../../../docs/reference/machines.md#invoke-the-states-function)).
 - A missing `initial` attribute is written as an explicit `initial:` naming the first child in document order, because decree requires `initial`. The exception is test 355, which tests that default itself.
 - Executable content (`<raise>`, `<send>`, `<assign>`, `<log>`, `<if>`, `<foreach>`, `<script>`, `<cancel>`) is outside the subset even inside `<onentry>` or `<onexit>`: decree's `onentry` and `onexit` hold script names, never executable content.
 

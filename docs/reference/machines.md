@@ -1,5 +1,6 @@
 # Machines
 
+A machine is a YAML statechart in `.decree/machines/<name>.yml`: an SCXML document written as YAML. It holds only structure: states, what each state invokes, and transitions from events to states. It never contains code or paths. Keys use SCXML's names (`initial`, `states`, `transitions`, `target`, `type`, `onentry`, `onexit`, `invoke`, `data`, `final`); a few decree extensions are marked as such.
 
 Every state does one thing: it **invokes a function**, and the function's result is an event that picks the next state. A function is either a script, or one of decree's three built-in decision functions. As far as the machine is concerned, they are all just functions.
 
@@ -124,11 +125,11 @@ There are two retry mechanisms, and they mean different things. `max_attempts` r
 
 | `invoke` | SCXML `type` | What runs | Events it produces |
 | --- | --- | --- | --- |
-| `<script name>` | `decree:script` | The script (section 6). | `done` (exit 0), `error` (non-zero), or an event the script prints. |
+| `<script name>` | `decree:script` | The script ([scripts.md](scripts.md)). | `done` (exit 0), `error` (non-zero), or an event the script prints. |
 | `{ check: <condition>, input?: <state> }` | `decree:check` | decree evaluates the condition. Deterministic, no AI. | `yes` or `no`. |
-| `{ choose: model, question: <text>, router?: <machine>, min_confidence?: <0..1>, input?: <state> }` | `decree:model` | A router machine (default: the machine named `router`) asks a model to pick one of the state's transitions (section 7). | One of the state's events; `unsure` if its confidence is below `min_confidence`; `error` if the router fails or replies with something that is not an option. |
-| `{ machine: <name>, params?: {…} }` | `http://www.w3.org/TR/scxml/` (SCXML's own: a child state machine) | The machine runs as a child run (section 7, Sub-machines). | The id of the root final state the child reached; `failed` becomes `error`. |
-| `{ choose: person, question: <text>, ask: <script>, timeout_s?: <int> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions (section 4, Replies). | One of the state's events; `error` on timeout. |
+| `{ choose: model, question: <text>, router?: <machine>, min_confidence?: <0..1>, input?: <state> }` | `decree:model` | A router machine (default: the machine named `router`) asks a model to pick one of the state's transitions ([Choose: model](runs.md#choose-model)). | One of the state's events; `unsure` if its confidence is below `min_confidence`; `error` if the router fails or replies with something that is not an option. |
+| `{ machine: <name>, params?: {…} }` | `http://www.w3.org/TR/scxml/` (SCXML's own: a child state machine) | The machine runs as a child run ([Sub-machines](runs.md#sub-machines)). | The id of the root final state the child reached; `failed` becomes `error`. |
+| `{ choose: person, question: <text>, ask: <script>, timeout_s?: <int> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions ([Replies](messages.md#replies)). | One of the state's events; `error` on timeout. |
 
 A state with no `invoke` and a `done` transition passes straight through (SCXML's eventless transition).
 
@@ -165,7 +166,7 @@ A state with no `invoke` and a `done` transition passes straight through (SCXML'
 | State | `final` | `true` | `<final>` | Marks a final state. Final states may only have `description`, `onentry` and `emits`. |
 | State | `description` | string | extension | Optional. |
 | State | `invoke` | script name or decision object | `<invoke type>` | Optional on atomic states (above). |
-| State | `max_attempts` | int | extension | Optional on script states. Default 1. Section 6. |
+| State | `max_attempts` | int | extension | Optional on script states. Default 1. See [Execution](scripts.md#execution), Attempts. |
 | State | `timeout_s` | int | extension | Optional on script states (limit for the script). For `choose: person`, it goes inside `invoke`. |
 | State | `onentry`, `onexit` | list of script names | `<onentry>`, `<onexit>` | Optional. Run every time this state is entered or exited. |
 | State | `initial`, `states` | as root | `<state initial>`, child states | Present together on compound states, absent on all others. |
@@ -183,7 +184,7 @@ decree implements SCXML's semantics (the algorithm in Appendix D, "Algorithm for
 | Event matching | SCXML's: a transition's event matches an event with the same name, or one that extends it after a `.` (`done.state` matches `done.state.work`). The active state's transitions are checked first, then each ancestor's, innermost first. |
 | `done.state.<id>` | Yes: raised when a compound state's own final child is entered, and handled before anything else. |
 | `<invoke type>` | Yes: one per atomic state: a child machine (SCXML's own type), or `decree:script`, `decree:check`, `decree:model` or `decree:person` (above). The invoked function's result is an event sent to the machine, as SCXML invoked services send events to their parent. Script completion is `done` (SCXML `done.invoke.<id>`); failure is `error` (SCXML `error.execution`). |
-| External events | Yes: a `choose: person` invoke receives the reply as an external event (section 4, Replies). |
+| External events | Yes: a `choose: person` invoke receives the reply as an external event ([Replies](messages.md#replies)). |
 | `<onentry>`, `<onexit>` | Yes, as lists of scripts. |
 | Eventless transitions | Only `done` on a state with no `invoke`. |
 | Data model | A custom data model (SCXML allows these through the `datamodel` attribute): read-only typed `data`, plus `visits`. Conditions are evaluated by `check` invokes, not on transitions. |
@@ -194,28 +195,31 @@ decree implements SCXML's semantics (the algorithm in Appendix D, "Algorithm for
 | `<onentry>`, `<onexit>` on `<scxml>` | Not in SCXML. decree's root `onentry`/`onexit` (Keys) are an extension that behaves like a top-level compound state around all others. |
 | `<onexit>` on `<final>` | No (V7). A final state has `onentry` only. |
 | Unhandled events | Differs. SCXML discards an event no transition matches; decree turns it into `error`, and an unhandled `error` goes to `failed` (Rules), so a run never stalls on an invoke result. |
-| `error.execution` in `<onentry>` | As SCXML: the failing block stops, entry completes, then `error` is handled (section 6). One difference: a failing `onentry` on a root-level final state moves the run to `failed`, where SCXML would already have terminated. |
+| `error.execution` in `<onentry>` | As SCXML: the failing block stops, entry completes, then `error` is handled ([Events from an invoke](scripts.md#events-from-an-invoke)). One difference: a failing `onentry` on a root-level final state moves the run to `failed`, where SCXML would already have terminated. |
 | Result of a child machine | Differs. SCXML sends `done.invoke.<id>` (with `<donedata>`); decree sends the name of the child's root final state, `failed` as `error` (Invoke). |
 | XML | Never. YAML is the only syntax. |
 
-Where SCXML leaves a choice to the platform, decree's choice is in this spec. Anything outside the subset fails validation with a message that names the SCXML feature and the decree alternative, for example `cond on a transition is not supported: make the decision a state with invoke: { check: ... }`.
+Where SCXML leaves a choice to the platform, decree's choice is in this reference. Anything outside the subset fails validation with a message that names the SCXML feature and the decree alternative, for example `cond on a transition is not supported: make the decision a state with invoke: { check: ... }`.
 
 ## Rules
 
 - **State ids are unique across the whole machine,** as SCXML requires. A target is always a bare state id.
-- **Events.** Script events are described in section 6. Decision events are listed in the Invoke table. `done.state.<id>` is raised by decree. Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Events a script prints and `choose` options may not be `done`, `error`, `unsure`, or start with `done.` or `error.`; `yes` and `no` are free to use.
+- **Events.** Script events are described in [Events from an invoke](scripts.md#events-from-an-invoke). Decision events are listed in the Invoke table. `done.state.<id>` is raised by decree. Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Events a script prints and `choose` options may not be `done`, `error`, `unsure`, or start with `done.` or `error.`; `yes` and `no` are free to use.
 - **Selecting a transition.** For an event, check the current atomic state's `transitions`, then its parent's, up to the root, and take the first match (Event matching, above). Within one state, no transition's event may extend another's (`done` beside `done.state.work`): SCXML would pick by document order, which a YAML map does not keep (V21).
 - **Unhandled events.** If `error` matches nothing, the target is the root-level final state `failed`. Every machine must have it. (Like a Step Functions `Catch` on `States.ALL`.) Any other event that matches nothing becomes `error`.
-- **`visits.<state>`** is how many times that state has been entered in this run, derived from `events.jsonl` (section 7).
+- **`visits.<state>`** is how many times that state has been entered in this run, derived from `events.jsonl` ([Step loop](runs.md#step-loop), Visits).
 - **Exit and entry order** is SCXML's. The transition domain is the deepest compound state (or the root) that is a proper ancestor of both the source and the declared target; for a `type: internal` transition from a compound state to one of its descendants, it is the source itself. Exiting runs `onexit` from the innermost active state outward, stopping below the domain. Entering runs `onentry` from the outermost new state inward, then follows `initial` down to an atomic state. A self-transition therefore exits and re-enters its state.
 
-## Rust types
+
 ## YAML
 
+Machines are YAML 1.2. YAML 1.1 tools (PyYAML, some editors) read some bare words as booleans (`on`, `no`, `yes`), the "Norway problem" `serde_norway` is named after. decree reads them as strings, which matters here because `yes` and `no` are event names.
 
+Unknown keys fail validation everywhere: at the root, in a state, a `data` entry, a long-form transition, every `invoke` object and every condition, so a misspelled key never falls back to another meaning (V19). A condition's `<value>` is a literal (int, float, string, bool) or `{ data: <name> }`; floats appear only in `confidence` conditions.
 
+## Validation
 
-`decree check` runs every rule below, plus the message checks M1–M3, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write. `process` and `daemon` run V1–V21 at start; any failure stops startup. Each rule needs one passing and one failing fixture test. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
+`decree check` runs every rule below, plus the message checks M1–M3, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write. `process` and `daemon` run V1–V21 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
 
 | Rule | Check |
 | --- | --- |
@@ -230,7 +234,7 @@ Where SCXML leaves a choice to the platform, decree's choice is in this spec. An
 | V9 | Every `input` names a state with a script invoke. A `matches` check without `input` is in a machine that has a script state before it on some path. |
 | V10 | Every condition has exactly one subject (`matches`, `visits`, `data` or `confidence`) and, except for a bare `matches`, exactly one operator; `visits` names an atomic state; `confidence` names a `choose: model` state and compares to a number from 0 to 1; `data` names existing data, compared to a value of its type, or with `matches` to a regex when its type is `string`; every `matches` compiles as a regular expression. |
 | V11 | Every state is reachable from root `initial`, and every non-final state can reach a root-level final state. |
-| V12 | Every script name (`invoke`, `ask`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file (section 6). |
+| V12 | Every script name (`invoke`, `ask`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file ([Resolution](scripts.md#resolution)). |
 | V13 | Every `emits` entry is an existing machine name. |
 | V14 | Every `data` default matches its `type`. |
 | V15 | Every compound state with a final child handles `done.state.<id>`, itself or through an ancestor, so the run cannot stall. |
@@ -243,4 +247,3 @@ Where SCXML leaves a choice to the platform, decree's choice is in this spec. An
 | M1 | Every pending migration (not in `processed.md`) parses, names a known machine in `machine:` (or `routine:`), and has valid `params` for that machine's `data`. |
 | M2 | Every `inbox/*.md` passes the same checks. |
 | M3 | Every `cron/*.md` passes the same checks, and its `cron:` expression parses. |
-

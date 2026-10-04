@@ -1,7 +1,7 @@
-//! `decree retry <id> [--state <s>]` (spec section 8): make an `interrupted` or finished
+//! `decree retry <id> [--state <s>]` (docs/reference/cli.md): make an `interrupted` or finished
 //! run `pending` again. Appends a `transition` event with `source: "retry"` and mirrors
 //! `state`; the next `process` or `daemon` pass continues the run, re-running root
-//! `onentry` and the `onentry` of every ancestor of `<s>` and of `<s>` (section 7, step 1).
+//! `onentry` and the `onentry` of every ancestor of `<s>` and of `<s>` (docs/reference/runs.md, step 1).
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;

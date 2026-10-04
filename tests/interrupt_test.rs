@@ -1,5 +1,5 @@
-//! Interrupts, run status and the run lock (spec section 4: Lifecycle step 6, Source of
-//! truth, Run status, Stopping, Run lock; section 7, step 1). Each test builds its own
+//! Interrupts, run status and the run lock (docs/reference/messages.md: Lifecycle step 6, Source of
+//! truth, Run status, Stopping, Run lock; docs/reference/runs.md, step 1). Each test builds its own
 //! `.decree/` in a temp directory and drives the `decree` binary.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -144,7 +144,7 @@ impl Project {
     }
 
     /// The `transition` event `decree retry <id>` appends for an interrupted run (section
-    /// 8): back into the state it was in. The command itself is ticket M4.4.
+    /// 8): back into the state it was in. The command itself is tested in `cli_test.rs`.
     fn retry(&self, id: &str, machine: &str, trigger: &str, state: &str) {
         let fields = json!({
             "type": "transition", "from": state, "event": "retry", "to": state,

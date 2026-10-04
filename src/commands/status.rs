@@ -1,8 +1,8 @@
-//! `decree status [<id>] [--cron]` (spec section 8). Reads runs and queues; never touches
+//! `decree status [<id>] [--cron]` (docs/reference/cli.md). Reads runs and queues; never touches
 //! a run.
 //!
 //! - No id: the runs by status, with the script each `active` run is running now (from
-//!   `.running`, section 6) and the wait of each `waiting` run, then the queued messages.
+//!   `.running`, docs/reference/scripts.md) and the wait of each `waiting` run, then the queued messages.
 //! - With id: the run's frontmatter, status, and its events as a table.
 //! - `--cron`: the cron files and when each fires next.
 
@@ -202,7 +202,7 @@ fn show_run(ctx: &Context, id: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// The DETAIL column for one event (section 7, events.jsonl).
+/// The DETAIL column for one event (docs/reference/runs.md, events.jsonl).
 fn event_detail(kind: &str, e: &Event) -> String {
     let f = |key: &str| field(Some(e), key);
     let ms = |key: &str| e.get(key).and_then(Value::as_u64).map(duration);

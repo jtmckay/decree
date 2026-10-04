@@ -10,10 +10,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 // =================================================================
-// Message (spec section 4)
+// Message (docs/reference/messages.md)
 // =================================================================
 
-/// One message: YAML frontmatter plus a body (section 4). The frontmatter is a `Mapping`,
+/// One message: YAML frontmatter plus a body (docs/reference/messages.md). The frontmatter is a `Mapping`,
 /// so unknown keys and key order survive a read and write; the body is kept byte for byte.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Message {
@@ -47,7 +47,7 @@ impl Message {
         }
     }
 
-    /// Parse a message (section 4, Parsing and writing): an optional UTF-8 BOM, `\n` or
+    /// Parse a message (docs/reference/messages.md, Parsing and writing): an optional UTF-8 BOM, `\n` or
     /// `\r\n` line ends, fences that are `---` once trailing whitespace is removed, and a
     /// YAML mapping without duplicate keys between them. No opening fence means an empty
     /// map and the whole text is the body. Errors are `(file line, message)`.
@@ -170,7 +170,7 @@ pub fn create_run_dir(decree_dir: &Path) -> Result<(String, PathBuf), MessageErr
     Ok((id, dir))
 }
 
-/// A new message id (section 4, Frontmatter keys): the UTC time, `YYYYMMDDTHHMMSSZ`, then
+/// A new message id (docs/reference/messages.md, Frontmatter keys): the UTC time, `YYYYMMDDTHHMMSSZ`, then
 /// `-` and 6 lowercase hex chars, the low 24 bits of (sub-second nanoseconds XOR process
 /// id). While that id exists in `inbox/` or `runs/`, or `take` declines it, add 1.
 fn new_id(
@@ -195,7 +195,7 @@ fn new_id(
     ))))
 }
 
-/// Queue `message` in `inbox/` (section 4, Lifecycle step 1): give it a new `id` as its
+/// Queue `message` in `inbox/` (docs/reference/messages.md, Lifecycle step 1): give it a new `id` as its
 /// first key, and write `inbox/<id>.md` through `.<id>.md.tmp` and a rename, so no partial
 /// `*.md` is ever visible. The one writer for `decree emit`, `decree event` and cron.
 /// Returns the id.
@@ -221,7 +221,7 @@ fn write_queued(inbox: &Path, id: &str, message: &mut Message) -> Result<(), Mes
     message.write(&inbox.join(format!("{id}.md")))
 }
 
-/// A message claimed from `inbox/` (section 4, Lifecycle step 2): it was renamed to
+/// A message claimed from `inbox/` (docs/reference/messages.md, Lifecycle step 2): it was renamed to
 /// `runs/<id>/message.md`.
 #[derive(Debug)]
 pub struct Claim {
@@ -321,10 +321,10 @@ pub fn is_valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-/// The run lock in a run folder (section 4, Run lock).
+/// The run lock in a run folder (docs/reference/messages.md, Run lock).
 pub const LOCK_FILE: &str = ".lock";
 
-/// What a run's `.lock` says (section 4, Run lock).
+/// What a run's `.lock` says (docs/reference/messages.md, Run lock).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LockState {
     /// No lock: no process is stepping the run.
@@ -370,7 +370,7 @@ pub struct RunLock {
 }
 
 impl RunLock {
-    /// Take the lock of the run in `run_dir` (section 4, Run lock): create `.lock` with
+    /// Take the lock of the run in `run_dir` (docs/reference/messages.md, Run lock): create `.lock` with
     /// `create_new` and write the process id into it. A stale lock is deleted first; it
     /// never causes a takeover of a live one. `Ok(None)` means another live process holds
     /// the lock: the run is `active`.
@@ -424,7 +424,7 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> MessageError + '_ {
     }
 }
 
-/// Section 4, Lifecycle step 3: the message names a machine (`machine`, or its alias
+/// docs/reference/messages.md, Lifecycle step 3: the message names a machine (`machine`, or its alias
 /// `routine`) that exists, and its `params` fit that machine's `data`.
 /// `machine_ids` holds every machine, `machines` those that loaded; a machine that fails to
 /// load is reported on its own, so its `params` are not checked. Returns the machine name,
@@ -499,7 +499,7 @@ fn check_params(fm: &Message, m: &LoadedMachine) -> Vec<(usize, String)> {
     errors
 }
 
-/// Write `bytes` to `.<name>.tmp` beside `path`, then rename it over `path` (section 4).
+/// Write `bytes` to `.<name>.tmp` beside `path`, then rename it over `path` (docs/reference/messages.md).
 /// The error carries the path that failed.
 pub fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), (PathBuf, io::Error)> {
     let name = path
@@ -587,7 +587,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    // --- Message (section 4, Parsing and writing) ---
+    // --- Message (docs/reference/messages.md, Parsing and writing) ---
 
     fn parse_err(text: &str) -> (usize, String) {
         Message::parse(text).unwrap_err()
@@ -1011,7 +1011,7 @@ mod tests {
         );
     }
 
-    // --- Run lock (section 4) ---
+    // --- Run lock (docs/reference/messages.md) ---
 
     /// The pid of a process that has exited and been reaped.
     fn dead_pid() -> u32 {

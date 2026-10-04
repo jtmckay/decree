@@ -1,4 +1,4 @@
-//! `decree check` against the fixtures in `tests/fixtures/check/` (spec section 5,
+//! `decree check` against the fixtures in `tests/fixtures/check/` (docs/reference/machines.md,
 //! Validation). Each `<case>/pass/` and `<case>/fail/` is copied into a temp project as its
 //! `.decree/`; `<case>/expected.txt` is the exact stdout of the failing one.
 
@@ -296,7 +296,7 @@ fn check_warns_when_the_graph_directory_is_missing() {
     );
 }
 
-/// The section 5 messages for the shapes this model rejects (migration 47).
+/// The docs/reference/machines.md messages for the shapes this model rejects (migration 47).
 #[test]
 fn check_rejects_the_old_shapes_with_the_section_5_messages() {
     let cases = [

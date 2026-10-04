@@ -1,6 +1,6 @@
 # decree 0.5 mock project
 
-This directory is a decree 0.5 project frozen partway through its life: nine machines, their scripts, three finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs yet; it shows exactly what the files will look like once 0.5 ships. The contract is [`docs/0.5-spec.md`](../docs/0.5-spec.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `.decree/graph/*.md` byte for byte.
+This directory is a decree 0.5 project frozen partway through its life: nine machines, their scripts, three finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs yet; it shows exactly what the files will look like once 0.5 ships. The contract is the [reference](../docs/reference/README.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `.decree/graph/*.md` byte for byte.
 
 ## The three building blocks
 
@@ -139,7 +139,7 @@ stateDiagram-v2
 - Unhandled errors **bubble up**: the state's own transitions are checked first, then `work`'s, then the root's, and an `error` nobody handles goes to `failed` (the `(implicit)` edges).
 - Edge labels say who decided: `(check)`, `(model)`, `(person)`; plain labels are script results.
 
-A machine is an SCXML statechart written in YAML. The keys are SCXML's names; if you (or an AI) know SCXML, you know how this file behaves. decree implements a strict subset of SCXML (spec section 5), plus a few marked extensions:
+A machine is an SCXML statechart written in YAML. The keys are SCXML's names; if you (or an AI) know SCXML, you know how this file behaves. decree implements a strict subset of SCXML ([SCXML subset](../docs/reference/machines.md#scxml-subset)), plus a few marked extensions:
 
 | Key | SCXML | What decree does with it |
 | --- | --- | --- |
@@ -413,6 +413,6 @@ Because a router is just a machine, replacing it is ordinary work: edit or repla
 
 ## Standards this draws from
 
-W3C SCXML (terms, semantics and key names; Harel statecharts underneath), AWS Step Functions retry/timeout/catch, LangGraph-style edge selection by a model, typed-choice models (Jev), the Step Functions callback pattern for people, event sourcing over a JSON Lines log, Loki label practice and the OpenTelemetry span model, Maildir-style temp-then-rename delivery, Mermaid for diagrams. Spec section 13 lists each one, what decree takes from it, and where decree deliberately deviates.
+W3C SCXML (terms, semantics and key names; Harel statecharts underneath), AWS Step Functions retry/timeout/catch, LangGraph-style edge selection by a model, typed-choice models (Jev), the Step Functions callback pattern for people, event sourcing over a JSON Lines log, Loki label practice and the OpenTelemetry span model, Maildir-style temp-then-rename delivery, Mermaid for diagrams. [Standards and prior art](../docs/reference/standards.md) lists each one, what decree takes from it, and where decree deliberately deviates.
 
 In a real project `.decree/.gitignore` contains `inbox/` and `runs/`. This mock commits them so you can read them.

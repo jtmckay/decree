@@ -22,7 +22,7 @@ Given ... When ... Then ...
 | Key | Type | Required | Written by | Meaning |
 | --- | --- | --- | --- | --- |
 | `id` | string | No | decree, at claim, if missing | `YYYYMMDDTHHMMSSZ-xxxxxx`: UTC time plus 6 lowercase hex chars. Names the run folder. (Migrations: the file stem.) |
-| `machine` | string | Only if `default_machine` is unset | Author, `decree emit`, cron | Machine name, matching `machines/<name>.yml`. |
+| `machine` | string | Yes (or `routine`) | Author, `decree emit`, cron | Machine name, matching `machines/<name>.yml`. |
 | `state` | string | No | decree only | Mirror of the run's current state, in `runs/<id>/message.md` only. Authors never set it. |
 | `parent` | string | No | `decree emit`, decree | `id` of the run that emitted this message, or that invoked this child run. |
 | `depth` | int | No | `decree emit` | Parent's `depth` + 1. Absent means 0. |
@@ -100,4 +100,4 @@ Before stepping a run, decree creates `runs/<id>/.lock` exclusively (`O_EXCL`) a
 
 ## Cron files
 
-`.decree/cron/*.md` are message templates with a `cron:` key in their frontmatter, a standard cron expression. On each `decree daemon` tick, every cron file that is due is written to `inbox/` through the same writer as `decree emit`, with `trigger: cron`; the `cron` key is not copied. A cron file names its machine with `machine:` (or the `routine:` alias), else `default_machine` applies. `decree check` validates every cron file (M3, [Validation](machines.md#validation)), and `decree status --cron` lists them with their next fire time.
+`.decree/cron/*.md` are message templates with a `cron:` key in their frontmatter, a standard cron expression. On each `decree daemon` pass, every cron file that is due is written to `inbox/` through the same writer as `decree emit`: the new message has the cron file's `machine` (from `machine:` or the `routine:` alias), `trigger: cron`, the cron file's other keys and its body; the `cron` key is not copied. A cron file must name its machine. `decree check` validates every cron file (M3, [Validation](machines.md#validation)), and `decree status --cron` lists them with their next fire time.

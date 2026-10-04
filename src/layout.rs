@@ -1,4 +1,4 @@
-//! The `.decree/` layout (spec section 3): a project is machines, scripts and messages.
+//! The `.decree/` layout (docs/reference/README.md): a project is machines, scripts and messages.
 
 pub const DECREE_DIR: &str = ".decree";
 pub const CRON_DIR: &str = "cron";

@@ -1,4 +1,4 @@
-//! Replies to waiting runs (spec section 4, Replies): delivery and rejection when `process`
+//! Replies to waiting runs (docs/reference/messages.md, Replies): delivery and rejection when `process`
 //! claims a reply, `timeout_s` deadlines, and `decree event`. Each test builds its own
 //! `.decree/` in a temp directory.
 
@@ -163,7 +163,7 @@ fn invalid_message(events: &[Value]) -> String {
 }
 
 // ---------------------------------------------------------------
-// Delivery (section 4, Replies, steps 2 and 3)
+// Delivery (docs/reference/messages.md, Replies, steps 2 and 3)
 // ---------------------------------------------------------------
 
 #[test]
@@ -221,7 +221,7 @@ fn reply_naming_the_run_id_answers_its_current_wait() {
 }
 
 // ---------------------------------------------------------------
-// Rejection (section 4, Replies, step 4)
+// Rejection (docs/reference/messages.md, Replies, step 4)
 // ---------------------------------------------------------------
 
 /// A reply that fails a check: `process` exits 1, `run-a` stays waiting, and the reply
@@ -316,7 +316,7 @@ fn assert_rejected_keeping(p: &Project, expected: &str) {
 }
 
 // ---------------------------------------------------------------
-// Timeout (section 4, Replies, step 5)
+// Timeout (docs/reference/messages.md, Replies, step 5)
 // ---------------------------------------------------------------
 
 #[test]
@@ -351,7 +351,7 @@ fn no_timeout_before_the_deadline() {
 }
 
 // ---------------------------------------------------------------
-// decree event (section 8)
+// decree event (docs/reference/cli.md)
 // ---------------------------------------------------------------
 
 #[test]

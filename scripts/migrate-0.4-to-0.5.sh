@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Upgrade a decree 0.4 project's .decree/ to the 0.5 layout, once (docs/0.5-spec.md, M5.4).
+# Upgrade a decree 0.4 project's .decree/ to the 0.5 layout, once (docs/reference/README.md, No configuration file; docs/decisions.md, D17).
 #
 # Run from the project root: scripts/migrate-0.4-to-0.5.sh
 #
@@ -7,7 +7,7 @@
 # - Moves pending outbox/*.md into inbox/ (pending inbox/*.md stay where they are).
 # - Moves the removed paths (config.yml, outbox/, inbox/dead/, dead/, router.md, routines/,
 #   prompts/) and 0.4 run folders (runs/<id>/ without events.jsonl) into
-#   .decree/legacy-0.4/, keeping their paths. 0.5 has no configuration file (section 3).
+#   .decree/legacy-0.4/, keeping their paths. 0.5 has no configuration file (docs/reference/README.md).
 # - Rewrites .decree/.gitignore to inbox/ and runs/.
 # - Writes no machines. Lists each machine that a pending migration, inbox message or
 #   cron file asks for but machines/ lacks, with the files that ask for it, and each such
@@ -68,7 +68,7 @@ echo "rewrote $D/.gitignore"
 
 # --- List the machines that pending messages need but machines/ lacks. ---
 
-# Print the value of a top-level frontmatter key (section 4, Parsing), or nothing.
+# Print the value of a top-level frontmatter key (docs/reference/messages.md, Parsing), or nothing.
 frontmatter_value() {
     awk -v want="$2" -v bom="$(printf '\357\273\277')" '
         { sub(/\r$/, "") }
@@ -108,7 +108,7 @@ declare -A askers=()
 unnamed=""
 for f in "${pending[@]}"; do
     [[ -f $f ]] || continue
-    # A reply (section 4, Replies) names the run it answers, not a machine.
+    # A reply (docs/reference/messages.md, Replies) names the run it answers, not a machine.
     [[ -n $(frontmatter_value "$f" to) ]] && continue
     name=$(frontmatter_value "$f" machine)
     [[ -n $name ]] || name=$(frontmatter_value "$f" routine)

@@ -110,7 +110,7 @@ pub enum Command {
     Help,
 }
 
-/// How to view `decree graph` output (spec section 9, Viewing).
+/// How to view `decree graph` output (docs/reference/graph.md, Viewing).
 const GRAPH_VIEWING: &str = "\
 Viewing:
   1. Run `decree graph`, then open `.decree/graph/<machine>.md` (or `system.md`).

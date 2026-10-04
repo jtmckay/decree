@@ -1,4 +1,4 @@
-//! Machines: SCXML statecharts written as YAML (spec section 5).
+//! Machines: SCXML statecharts written as YAML (docs/reference/machines.md).
 //!
 //! `load_machines` reads `.decree/machines/*.yml` and flattens each machine into an arena of `Node`s. The interpreter, validator and graph
 //! exporter work on the arena, never on the raw structs.
@@ -19,7 +19,7 @@ pub const MACHINES_DIR: &str = "machines";
 /// Root-level final state an unhandled `error` goes to (V5).
 pub const FAILED: &str = "failed";
 
-/// Events a `choose` state handles beside its options (section 5, Choices).
+/// Events a `choose` state handles beside its options (docs/reference/machines.md, Choices).
 const NOT_OPTIONS: [&str; 2] = ["unsure", "error"];
 
 /// A machine file: one SCXML document (`<scxml>`), written as YAML.
@@ -78,7 +78,7 @@ pub struct State {
     pub emits: Vec<String>,
 }
 
-/// A state's function, SCXML `<invoke type>` (section 5, Invoke): a script name, or an
+/// A state's function, SCXML `<invoke type>` (docs/reference/machines.md, Invoke): a script name, or an
 /// object whose key `machine`, `check` or `choose` names the type.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Invoke {
@@ -163,7 +163,7 @@ impl Invoke {
         }
     }
 
-    /// The state whose output a `check` or `choose: model` reads (section 5, Input).
+    /// The state whose output a `check` or `choose: model` reads (docs/reference/machines.md, Input).
     pub fn input(&self) -> Option<&str> {
         match self {
             Invoke::Check(c) => c.input.as_deref(),
@@ -364,7 +364,7 @@ fn push_children(nodes: &mut Vec<Node>, parent: usize, states: BTreeMap<String, 
     }
 }
 
-/// Load every machine in `<decree_dir>/machines/*.yml` (section 3). A missing `machines/`
+/// Load every machine in `<decree_dir>/machines/*.yml` (docs/reference/README.md). A missing `machines/`
 /// directory holds no machines.
 pub fn load_machines(decree_dir: &Path) -> Result<BTreeMap<String, LoadedMachine>, DecreeError> {
     let mut machines = BTreeMap::new();
@@ -434,7 +434,7 @@ const UNSUPPORTED_STATE_KEYS: [(&str, &str); 13] = [
     ("donedata", "SCXML <donedata> is not supported: data is read-only"),
 ];
 
-/// The section 5 message for `cond` on a transition (V19).
+/// The docs/reference/machines.md message for `cond` on a transition (V19).
 const COND_ON_TRANSITION: &str =
     "cond on a transition is not supported: make the decision a state with invoke: { check: ... }";
 
@@ -552,10 +552,10 @@ fn locate_state_error(states: &serde_norway::Value, prefix: &str) -> Option<(Str
 }
 
 // =================================================================
-// Validation (section 5, Validation): rules V1–V21 on the arena
+// Validation (docs/reference/machines.md, Validation): rules V1–V21 on the arena
 // =================================================================
 
-/// The router of a `choose: model` that names none (section 7, The default router).
+/// The router of a `choose: model` that names none (docs/reference/runs.md, The default router).
 pub const ROUTER_MACHINE: &str = "router";
 
 /// Everything outside the machine file that validation reads.
@@ -602,7 +602,7 @@ pub(crate) fn is_ident(s: &str) -> bool {
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`, the pattern for event names (section 5, Rules).
+/// `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`, the pattern for event names (docs/reference/machines.md, Rules).
 pub(crate) fn is_event_name(s: &str) -> bool {
     let mut parts = s.split('.');
     parts.next().is_some_and(is_ident)
@@ -665,7 +665,7 @@ impl LoadedMachine {
         Some(cur)
     }
 
-    /// The options of `choose` state `i` (section 5, Choices): its own transitions except
+    /// The options of `choose` state `i` (docs/reference/machines.md, Choices): its own transitions except
     /// `unsure` and `error`, in name order.
     pub fn options(&self, i: usize) -> impl Iterator<Item = &Edge> {
         self.nodes[i]
@@ -674,7 +674,7 @@ impl LoadedMachine {
             .filter(|e| !NOT_OPTIONS.contains(&e.event.as_str()))
     }
 
-    /// `DECREE_EVENTS` for scripts of state `i` (section 6): the events of its own and its
+    /// `DECREE_EVENTS` for scripts of state `i` (docs/reference/scripts.md): the events of its own and its
     /// ancestors' transitions that a script may print, in name order. Empty for the root.
     pub fn accepted_events(&self, i: usize) -> Vec<String> {
         if i == 0 {
@@ -718,7 +718,7 @@ impl LoadedMachine {
         out
     }
 
-    /// The states an event raised in atomic or final state `i` leads to (section 5, Rules):
+    /// The states an event raised in atomic or final state `i` leads to (docs/reference/machines.md, Rules):
     /// the first matching transition of `i` or an ancestor; else the event becomes `error`;
     /// an unhandled `error` goes to `failed`.
     fn resolve(&self, i: usize, event: &str) -> Vec<usize> {
@@ -738,7 +738,7 @@ impl LoadedMachine {
     }
 
     /// Atomic and final states the run can move to from atomic or final state `i`: the
-    /// events its invoke can produce (section 5, Invoke), `error` from an invoke or an
+    /// events its invoke can produce (docs/reference/machines.md, Invoke), `error` from an invoke or an
     /// `onentry` script, and `done.state.<parent>` from a nested final state.
     fn successors(&self, i: usize) -> Vec<usize> {
         let node = &self.nodes[i];
@@ -1688,7 +1688,7 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    /// The section 5 examples, plus the router `feature` and `triage` name by default.
+    /// The docs/reference/machines.md examples, plus the router `feature` and `triage` name by default.
     const EXAMPLES: [&str; 5] = ["hello", "deploy", "ship", "feature", "router"];
 
     fn fixture(name: &str) -> String {
@@ -1946,7 +1946,7 @@ mod tests {
         assert!(err.starts_with("machines/bad.yml: line "), "{err}");
     }
 
-    // Keys outside the SCXML subset (V19), with the section 5 messages.
+    // Keys outside the SCXML subset (V19), with the docs/reference/machines.md messages.
 
     #[test]
     fn cond_on_a_transition_names_the_alternative() {

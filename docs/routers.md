@@ -1,6 +1,6 @@
 # Router machines
 
-A `choose: model` state asks a **router**: an ordinary machine that reads a request, asks a model however it likes, and writes a reply (spec section 7, Choose: model). decree writes the request, runs the router as a child run, and validates the reply. Prompts, models, retries and budgets all live in the router, so changing how a decision is made is a machine and script edit, never a decree release.
+A `choose: model` state asks a **router**: an ordinary machine that reads a request, asks a model however it likes, and writes a reply ([Choose: model](reference/runs.md#choose-model)). decree writes the request, runs the router as a child run, and validates the reply. Prompts, models, retries and budgets all live in the router, so changing how a decision is made is a machine and script edit, never a decree release.
 
 This page shows router machines for several backends. Running a model server is outside decree: these routers only talk to one (see `docs/services.md` for running services next to decree).
 
@@ -14,7 +14,7 @@ local_model:
   invoke: { choose: model, router: local_router, question: "Which kind of document is this?", min_confidence: 0.9 }
 ```
 
-Its scripts get two extra variables (spec section 6):
+Its scripts get two extra variables ([Environment](reference/scripts.md#environment)):
 
 | Variable | Value |
 | --- | --- |
@@ -68,7 +68,7 @@ The `decision` event records the router, the router's run id (`child_run`), the 
 | TypeSafe Jev | Computed from the shape of its probability distribution over the options. |
 | GLiNER2.5-Decide | The classifier's score for the label it picks. |
 
-So a threshold only means something for the router it was set with. When a state switches to another router, or `machines/router.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, spec section 9a) before trusting it.
+So a threshold only means something for the router it was set with. When a state switches to another router, or `machines/router.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, [Observability](reference/observability.md)) before trusting it.
 
 ## Claude, Copilot and OpenCode (written by `decree init`)
 
@@ -88,7 +88,7 @@ states:
   failed: { final: true }
 ```
 
-`ask_claude` renders the prompt in spec section 7 with `jq`, sends it to `claude -p`, takes the last JSON object from the reply (the last fenced block if there is one, which may span lines; else the last line holding an object), and exits non-zero unless its `event` is one of the options. It needs `jq` on `PATH`.
+`ask_claude` renders the prompt in [The default router](reference/runs.md#the-default-router) with `jq`, sends it to `claude -p`, takes the last JSON object from the reply (the last fenced block if there is one, which may span lines; else the last line holding an object), and exits non-zero unless its `event` is one of the options. It needs `jq` on `PATH`.
 
 `--ai copilot` and `--ai opencode` write the same `router` machine with `ask_copilot` or `ask_opencode` (`scripts/router/ask_<ai>.sh`). Only the script's name and the line that calls the CLI differ:
 

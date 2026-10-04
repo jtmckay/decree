@@ -1,5 +1,5 @@
 //! `decree check`: validate machines (V1–V21) and pending messages (M1–M3) before anything
-//! runs (spec section 5, Validation). Prints one line per error:
+//! runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write.
 
@@ -111,7 +111,7 @@ impl Project {
         })
     }
 
-    /// `migrations/*.md` not in `processed.md`, in byte order (section 4, Migrations).
+    /// `migrations/*.md` not in `processed.md`, in byte order (docs/reference/messages.md, Migrations).
     pub(crate) fn pending_migrations(&self) -> Result<Vec<String>, DecreeError> {
         let processed = read_processed(&self.decree_dir)?;
         Ok(md_files(&self.decree_dir.join(layout::MIGRATIONS_DIR))?
@@ -156,7 +156,7 @@ fn read_processed(decree_dir: &Path) -> Result<BTreeSet<String>, DecreeError> {
     }
 }
 
-/// `*.md` files in `dir` in byte order, skipping names that start with `.` (section 4).
+/// `*.md` files in `dir` in byte order, skipping names that start with `.` (docs/reference/messages.md).
 pub(crate) fn md_files(dir: &Path) -> Result<Vec<String>, DecreeError> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -201,7 +201,7 @@ impl Project {
                 Some(_) => errors.push((fm.line_of("cron"), "`cron` must be a string".to_string())),
             }
         }
-        // A reply (`to:`) is delivered to a waiting run, not started as one (section 4).
+        // A reply (`to:`) is delivered to a waiting run, not started as one (docs/reference/messages.md).
         if fm.frontmatter.contains_key("to") {
             return errors;
         }

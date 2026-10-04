@@ -1,4 +1,4 @@
-//! `decree daemon [--interval <s>]` (spec section 8): validate, mark crashed runs
+//! `decree daemon [--interval <s>]` (docs/reference/cli.md): validate, mark crashed runs
 //! `interrupted`, then loop: deliver replies and timeouts, continue `pending` runs, cron
 //! tick, drain the inbox, next migration, sleep. Every step is `process`'s own
 //! (`commands::process::Pipeline`); there is no second pipeline. A failed or interrupted

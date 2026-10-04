@@ -1,4 +1,4 @@
-//! `decree process` (spec sections 4 and 8): validate the machines and pending migrations,
+//! `decree process` (docs/reference/messages.md, docs/reference/cli.md): validate the machines and pending migrations,
 //! mark runs a crash left behind `interrupted` and continue `pending` runs, then repeat
 //! until nothing is left: claim the next `inbox/` message and run it through its machine,
 //! or start the next migration once the inbox is empty. Never continues an `interrupted`
@@ -7,7 +7,7 @@
 //!
 //! A queued message with `to:` is a reply: it is delivered to its waiting run instead,
 //! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
-//! `timeout_s` deadlines that have passed (section 4, Replies).
+//! `timeout_s` deadlines that have passed (docs/reference/messages.md, Replies).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -71,7 +71,7 @@ impl<E: Into<DecreeError>> From<E> for Stop {
     }
 }
 
-/// The steps `process` and `daemon` share (section 8): one pipeline, so the daemon has
+/// The steps `process` and `daemon` share (docs/reference/cli.md): one pipeline, so the daemon has
 /// no copy of its own. Each step runs to the end of one run before it returns.
 pub(crate) struct Pipeline<'a> {
     ctx: Context<'a>,
@@ -81,7 +81,7 @@ pub(crate) struct Pipeline<'a> {
 }
 
 impl<'a> Pipeline<'a> {
-    /// Validate every machine and pending migration (section 4, Migrations, rule 6), and
+    /// Validate every machine and pending migration (docs/reference/messages.md, Migrations, rule 6), and
     /// set up the context runs are stepped in. Nothing runs if anything is invalid.
     pub(crate) fn new(
         project_root: &Path,
@@ -111,7 +111,7 @@ impl<'a> Pipeline<'a> {
     }
 
     /// At start: mark runs a crash left behind `interrupted` (never continued), then
-    /// continue `pending` runs in `id` order (section 4, Run status).
+    /// continue `pending` runs in `id` order (docs/reference/messages.md, Run status).
     pub(crate) fn recover(&mut self) -> Result<(), Stop> {
         let recovery = interpreter::recover(&self.ctx).map_err(other)?;
         for (id, state) in &recovery.crashed {
@@ -204,7 +204,7 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Take the next `inbox/` file in filename order: deliver a reply and continue its
-    /// run, or claim a message and run it (section 4, Lifecycle). Returns `false` when the
+    /// run, or claim a message and run it (docs/reference/messages.md, Lifecycle). Returns `false` when the
     /// inbox is empty.
     pub(crate) fn next_inbox(&mut self) -> Result<bool, Stop> {
         if self.shutdown() {
@@ -252,7 +252,7 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    /// Start or continue the first pending migration (section 4, Migrations). Returns
+    /// Start or continue the first pending migration (docs/reference/messages.md, Migrations). Returns
     /// whether it finished, so the next may start; `false` when there is none, or it
     /// waits.
     pub(crate) fn next_migration(&self) -> Result<bool, Stop> {
@@ -265,7 +265,7 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    /// Print every waiting run (section 4, Replies).
+    /// Print every waiting run (docs/reference/messages.md, Replies).
     pub(crate) fn print_waiting(&self) -> Result<(), DecreeError> {
         print_waiting(&self.ctx)
     }
@@ -284,7 +284,7 @@ pub(crate) fn context<'a>(
     }
 }
 
-/// Run `id`'s status (section 4, Run status) and its events. A run whose machine is not
+/// Run `id`'s status (docs/reference/messages.md, Run status) and its events. A run whose machine is not
 /// loaded can never be stepped: it is `finished` in `failed` (an invalid message), else
 /// `active` while its lock is live, else `interrupted`.
 pub(crate) fn run_status(
@@ -330,7 +330,7 @@ fn run_machine<'m>(
         .and_then(|name| ctx.machines.get(name))
 }
 
-/// Section 4, Migrations, rule 6: parse every pending migration (frontmatter, machine,
+/// docs/reference/messages.md, Migrations, rule 6: parse every pending migration (frontmatter, machine,
 /// `params` against the machine's `data`) before any runs. Prints every error.
 fn validate_migrations(project: &Project) -> Result<(), DecreeError> {
     let mut invalid = 0;
@@ -401,7 +401,7 @@ fn run_claim(
 }
 
 /// Validate `message`, now `runs/<id>/message.md`, and start its run; an invalid message
-/// starts in `failed` (section 4, Lifecycle step 3).
+/// starts in `failed` (docs/reference/messages.md, Lifecycle step 3).
 fn start(
     ctx: &Context,
     project: &Project,
@@ -467,7 +467,7 @@ fn reject(
     Ok(Outcome::Finished(FAILED.to_string()))
 }
 
-/// Section 4, Migrations: start migration `file`, or continue or report the run it has.
+/// docs/reference/messages.md, Migrations: start migration `file`, or continue or report the run it has.
 /// Returns whether later migrations may start once this one is in `processed.md`; `false`
 /// means it waits.
 fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, Stop> {
@@ -544,7 +544,7 @@ fn blocked(file: &str, id: &str, what: &str) -> Stop {
 }
 
 /// Print every waiting run: its question (the state's `description`), its wait id and
-/// options, and a `decree event` command for each option (section 4, Replies).
+/// options, and a `decree event` command for each option (docs/reference/messages.md, Replies).
 fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
     let mut ids: Vec<String> = match std::fs::read_dir(ctx.runs_dir()) {
         Ok(entries) => entries
