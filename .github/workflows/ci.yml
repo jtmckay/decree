@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v0.5]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # The same commands as the gate script, .decree/scripts/rust_develop/gate.sh
+  # (tests/ci_test.rs keeps them equal).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  # `decree check --format sarif` on every decree project in the repository, uploaded to
+  # code scanning (docs/reference/cli.md, Machine-readable output).
+  decree-check:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload results to code scanning
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      # One SARIF file per project in sarif/. decree writes each uri relative to the project
+      # it checked; jq prefixes the project's directory, so code scanning resolves it from
+      # the repository root, and sets a per-project automationDetails.id, which code
+      # scanning takes as the category. A failing check is recorded and the loop goes on.
+      - name: decree check --format sarif
+        id: check
+        shell: bash
+        run: |
+          decree="$PWD/target/release/decree"
+          mkdir -p sarif
+          failed=""
+          for project in . examples/*/; do
+            [ -d "$project/.decree" ] || continue
+            if [ "$project" = . ]; then
+              prefix="" name="root"
+            else
+              prefix="$project" name="${project%/}"
+              name="${name//\//-}"
+            fi
+            echo "::group::$project"
+            if ! (cd "$project" && "$decree" check --format sarif) > "sarif/$name.raw"; then
+              failed="$failed $project"
+            fi
+            if ! jq --arg prefix "$prefix" --arg id "decree-check/$name/" '
+              .runs[] |= (
+                .automationDetails.id = $id
+                | .results[]?.locations[]?.physicalLocation.artifactLocation.uri |= $prefix + .
+              )' "sarif/$name.raw" > "sarif/$name.sarif"; then
+              echo "::error::$project: decree check wrote no valid SARIF"
+              rm -f "sarif/$name.sarif"
+              failed="$failed $project"
+            fi
+            rm "sarif/$name.raw"
+            echo "::endgroup::"
+          done
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif
+      - name: Fail on decree check errors
+        if: steps.check.outputs.failed != ''
+        env:
+          FAILED: ${{ steps.check.outputs.failed }}
+        run: |
+          echo "::error::decree check failed in:$FAILED"
+          exit 1

@@ -79,4 +79,6 @@ jobs:
       - run: decree check
 ```
 
+This repository's own [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) is a complete example: it checks the root project and every `examples/*/` project, prefixes each project's directory to its `uri`s and gives each its own category through `automationDetails.id`.
+
 Code scanning on a private repository needs GitHub Code Security (or Advanced Security).

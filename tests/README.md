@@ -1,9 +1,10 @@
 # Tests
 
-`cargo test` runs the unit tests in `src/` and the files below. Each test builds its own `.decree/` in a temp directory (or only reads this repository), drives the built `decree` binary, and calls no model and no network.
+`cargo test` runs the unit tests in `src/` and the files below. CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the same gate as `rust_develop`'s `gate` script, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`, on every push to `main` and `v0.5` and every pull request; `ci_test.rs` keeps the two equal. Each test builds its own `.decree/` in a temp directory (or only reads this repository), drives the built `decree` binary, and calls no model and no network.
 
 | File | Covers |
 | --- | --- |
+| `ci_test.rs` | `.github/workflows/ci.yml` parses as YAML, its `test` job runs exactly the gate script's three commands, and its `decree-check` job checks every project with `--format sarif` and uploads the results. |
 | `check_test.rs` | `decree check` on copies of `examples/feature/` and `examples/sort-documents/`: passes without a warning, graph warnings, and example machines broken to hit a rule. |
 | `cli_test.rs` | The CLI end to end: `init`, `emit`, `process`, `status`, `tail`, `retry`, `event` and `daemon`, and one duration format for a machine's `timeout`, `prune` and `daemon`. |
 | `develop_test.rs` | The `develop` and `rust_develop` machines `init` writes: their outcomes, QA, `STOP`, sessions and usage limits. |
