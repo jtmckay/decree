@@ -361,6 +361,32 @@ machines/m.yml: approval: a `person` state needs a `question`: what is being dec
 machines/m.yml: approval: option `reject` needs a `description`: write it as `reject: { target: failed, description: ... }` (V8)
 ",
     },
+    Case {
+        rule: "V8",
+        name: "a check still written with yes and no",
+        files: &[(
+            "machines/m.yml",
+            "\
+name: m
+description: A check whose transitions use the old yes and no.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: again, skip: done }
+  again:
+    invoke:
+      check: { visits: work, less_than: 2 }
+    transitions: { yes: work, no: done }
+  done: { final: true }
+  failed: { final: true }
+",
+        )],
+        scripts: &[],
+        expected: "\
+machines/m.yml: again: a `check` produces `true` and `false`: rename its `yes` and `no` transitions to `true` and `false` (V8)
+",
+    },
     // V9
     Case {
         rule: "V9",

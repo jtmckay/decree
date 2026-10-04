@@ -11,7 +11,7 @@ prompt=$(jq -r '
   "Workflow: \(.machine): \(.machine_description)\n" +
   "Current step: \(.state): \(.state_description)\n" +
   "Question: \(.question)\n\n" +
-  "Output of the previous step:\n\(.input)\n\n" +
+  "Output this decision reads (empty if none):\n\(.input)\n\n" +
   "Task message:\n\(.message_body)\n\n" +
   "Run so far:\n\(.history | map("- " + .) | join("\n"))\n\n" +
   "Options:\n\(.options | map("- \(.event): \(.description)") | join("\n"))"' "$req")

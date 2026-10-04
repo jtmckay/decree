@@ -370,11 +370,11 @@ fn dry_run_lists_pending_messages_and_runs_nothing() {
     );
 }
 
-/// AC: a run that reaches a `choose: person` state. `decree process` prints the wait id,
+/// AC: a run that reaches a `person` state. `decree process` prints the wait id,
 /// the options and a `decree event` command per option, and exits 0; after `decree event`
 /// and another `decree process`, the run is `done`.
 #[test]
-fn choose_person_prints_the_wait_and_a_reply_finishes_the_run() {
+fn person_prints_the_wait_and_a_reply_finishes_the_run() {
     let p = Project::init();
     p.machine("deploy", DEPLOY);
     p.script("ask_person", "#!/usr/bin/env bash\nexit 0\n");
@@ -610,7 +610,7 @@ fn tail_of_a_stopped_run_exits_0() {
     p.decree(&["tail", &done]).assert().success().stdout("");
 }
 
-/// `decree tail` moves on into the child run of a `choose: model` state, and back.
+/// `decree tail` moves on into the child run of a `model` state, and back.
 #[test]
 fn tail_follows_into_child_runs() {
     let p = Project::init();

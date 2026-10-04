@@ -5,7 +5,7 @@ Workflow: feature: Implement one feature spec with an AI agent, verify it, and c
 Current step: triage: 
 Question: Should we implement again or split the work?
 
-Output of the previous step:
+Output this decision reads (empty if none):
 running 14 tests
 test upload_limit::over_limit_returns_429 ... ok
 test upload_limit::window_slides ... FAILED

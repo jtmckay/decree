@@ -373,7 +373,7 @@ fn two_processes_at_once_the_second_skips_the_active_run() {
 }
 
 // ---------------------------------------------------------------
-// Choose: model (docs/reference/runs.md, Choose: model, step 4)
+// Model (docs/reference/runs.md, Model, step 4)
 // ---------------------------------------------------------------
 
 /// Run `pick` with the router replying `reply`; returns the `decision` event and the run's
@@ -463,7 +463,7 @@ fn machine_invoke_past_max_depth_gives_error_without_a_child() {
 }
 
 #[test]
-fn choose_model_past_max_depth_gives_error_without_a_router_run() {
+fn model_past_max_depth_gives_error_without_a_router_run() {
     let p = Project::new(&[("pick", PICK), ("router", ROUTER)], &[("reply", REPLY)]);
     fs::write(p.root().join("reply.json"), r#"{"event":"ship"}"#).unwrap();
     p.queue("a.md", "---\nid: run-a\nmachine: pick\ndepth: 10\n---\n");

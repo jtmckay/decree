@@ -80,7 +80,7 @@ Workflow: {machine}: {machine_description}
 Current step: {state}: {state_description}
 Question: {question}
 
-Output of the previous step:
+Output this decision reads (empty if none):
 {input}
 
 Task message:

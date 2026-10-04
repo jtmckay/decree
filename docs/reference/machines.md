@@ -244,7 +244,7 @@ Unknown keys fail validation everywhere: at the root, in a state, a `data` entry
 | V5 | A root-level final state named `failed` exists. |
 | V6 | Compound states have `initial` and `states`, and no `invoke`. |
 | V7 | Final states have only `final`, `description`, `onentry` and `emits`. |
-| V8 | Decision and sub-machine states cover their events: a `check` state handles `true` and `false`; a `model` state with `min_confidence` handles `unsure`; a `model` or `person` state has a `question` and at least two options, each with a `description`; a `machine` state handles every root final state of the child except `failed`. |
+| V8 | Decision and sub-machine states cover their events: a `check` state handles `true` and `false` (one still written with `yes` and `no` is told to rename them); a `model` state with `min_confidence` handles `unsure`; a `model` or `person` state has a `question` and at least two options, each with a `description`; a `machine` state handles every root final state of the child except `failed`. |
 | V9 | Every `output`, in a condition or a `model`, names a state with a script invoke. |
 | V10 | Every condition has exactly one subject (`output`, `data`, `visits` or `confidence`) and exactly one operator that subject takes; `visits` names an atomic state; `confidence` names a `model` state and compares to a number from 0 to 1; `data` names existing data, compared to a value of its type, or with `matches` to a regex when its type is `string`; every `matches` compiles as a regular expression. |
 | V11 | Every state is reachable from root `initial`, and every non-final state can reach a root-level final state. |

@@ -357,6 +357,14 @@ impl Validator<'_> {
             let at = self.m.state_path(i);
             match &self.m.nodes[i].invoke {
                 Some(Invoke::Check(_)) => {
+                    let own = |e: &str| self.m.nodes[i].transitions.iter().any(|t| t.event == e);
+                    if own("yes") || own("no") {
+                        self.push(
+                            at.clone(),
+                            "a `check` produces `true` and `false`: rename its `yes` and `no` transitions to `true` and `false` (V8)".to_string(),
+                        );
+                        continue;
+                    }
                     for event in ["true", "false"] {
                         if !self.m.handles(i, event) {
                             self.push(
