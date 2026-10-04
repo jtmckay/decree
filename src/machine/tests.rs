@@ -9,7 +9,7 @@ const EXAMPLES: [&str; 5] = ["hello", "deploy", "ship", "feature", "router"];
 
 fn fixture(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("mock/.decree/machines")
+        .join("examples/feature/.decree/machines")
         .join(format!("{name}.yml"));
     fs::read_to_string(path).unwrap()
 }

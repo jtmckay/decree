@@ -425,9 +425,10 @@ mod tests {
         assert!(!command_exists("definitely_not_a_real_command_xyz"));
     }
 
-    fn mock(path: &str) -> String {
+    /// A file under `examples/feature/.decree/`.
+    fn example(path: &str) -> String {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        std::fs::read_to_string(root.join("mock/.decree").join(path)).unwrap()
+        std::fs::read_to_string(root.join("examples/feature/.decree").join(path)).unwrap()
     }
 
     /// The copilot and opencode routers are claude's with their own script and CLI call.
@@ -498,9 +499,9 @@ mod tests {
         }
     }
 
-    /// `git_baseline` and `snapshot` are the mock's, byte for byte, and executable.
+    /// `git_baseline` and `snapshot` are `examples/feature`'s, byte for byte, and executable.
     #[test]
-    fn test_write_shared_scripts_writes_the_mocks_git_scripts() {
+    fn test_write_shared_scripts_writes_the_examples_git_scripts() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::TempDir::new().unwrap();
         write_shared_scripts(dir.path()).unwrap();
@@ -513,7 +514,7 @@ mod tests {
         for name in names {
             let path = dir.path().join(SCRIPTS_DIR).join(&name);
             let text = std::fs::read_to_string(&path).unwrap();
-            assert_eq!(text, mock(&format!("scripts/{name}")), "{name}");
+            assert_eq!(text, example(&format!("scripts/{name}")), "{name}");
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o755, "{name}");
         }
@@ -552,12 +553,12 @@ mod tests {
         assert_eq!(files_under(&dir), skill_names());
     }
 
-    /// The skill mentions no 0.4 concept.
+    /// The skill names no `outbox`, `hooks` or `router.md`: decree has none of them.
     #[test]
-    fn test_decree_skill_mentions_no_0_4_concept() {
+    fn test_decree_skill_names_no_removed_concept() {
         for (name, content) in DECREE_SKILL {
             let lower = content.to_lowercase();
-            for term in ["routine", "outbox", "hooks", "router.md"] {
+            for term in ["outbox", "hooks", "router.md"] {
                 assert!(!lower.contains(term), "{name} mentions {term}");
             }
         }
@@ -587,14 +588,14 @@ mod tests {
         }
     }
 
-    /// The skill's examples are the mock's: `hello` in SKILL.md, `feature`'s verify
-    /// script, and the cron file.
+    /// The skill's examples are `examples/feature`'s: `hello` in SKILL.md, `feature`'s
+    /// verify script, and the cron file.
     #[test]
-    fn test_decree_skill_examples_are_the_mocks() {
+    fn test_decree_skill_examples_are_the_feature_examples() {
         let text: String = DECREE_SKILL.iter().map(|(_, c)| *c).collect();
-        let hello = mock("machines/hello.yml");
+        let hello = example("machines/hello.yml");
         assert!(text.contains(&hello), "hello.yml");
-        let verify = mock("scripts/feature/verify.sh");
+        let verify = example("scripts/feature/verify.sh");
         let body = verify
             .lines()
             .filter(|l| !l.starts_with('#'))
@@ -602,7 +603,7 @@ mod tests {
             .join("\n");
         assert!(text.contains(body.trim()), "verify.sh");
         assert!(
-            text.contains(&mock("cron/nightly-audit.md")),
+            text.contains(&example("cron/nightly-audit.md")),
             "nightly-audit.md"
         );
     }

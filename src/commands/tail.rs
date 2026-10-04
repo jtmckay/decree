@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(log_number("0012-_root-setup.log"), Some(12));
         assert_eq!(log_number("10000-work-step.log"), Some(10000));
         for name in [
-            "routine.log",
+            "run.log",
             "04-a-b.log",
             "0004-a.log",
             "0004-a-b.txt",

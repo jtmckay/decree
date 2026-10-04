@@ -160,7 +160,7 @@ Check the authorization header against Jev's [API reference](https://docs.typesa
 
 ## Fastino GLiNER2.5-Decide, run locally
 
-[GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide-1B) is a 1B classifier built for operational decisions. It runs on CPU (Apache-2.0, `pip install gliner2`). Loading it takes far longer than one decision, so do not start Python per decision: run a small long-running server that loads the model once, and let the router talk to it. The `local_router` machine in `mock/` does exactly this.
+[GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide-1B) is a 1B classifier built for operational decisions. It runs on CPU (Apache-2.0, `pip install gliner2`). Loading it takes far longer than one decision, so do not start Python per decision: run a small long-running server that loads the model once, and let the router talk to it. The `local_router` machine in [`examples/sort-documents/`](../examples/sort-documents/README.md) does exactly this.
 
 The server (yours, not decree's; run it as a service, `docs/services.md`), `decide_server.py`:
 
@@ -193,7 +193,7 @@ class Classify(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", 8090), Classify).serve_forever()
 ```
 
-`machines/local_router.yml` (as in `mock/`):
+`machines/local_router.yml` (as in `examples/sort-documents/`):
 
 ```yaml
 name: local_router
@@ -260,4 +260,4 @@ jq -e '(.confidence // 0) >= 0.85' "$DECREE_REPLY" > /dev/null && echo '{"event"
 exit 0
 ```
 
-The `0.85` belongs to the cheap model, and the `min_confidence` on the deciding state then applies to whichever model answered last; calibrate both. The same ladder can also be built in the deciding machine instead, with two `model` states and an `unsure` transition between them, as `sort_document` in `mock/` does; that puts the escalation in the main machine's graph rather than inside the router.
+The `0.85` belongs to the cheap model, and the `min_confidence` on the deciding state then applies to whichever model answered last; calibrate both. The same ladder can also be built in the deciding machine instead, with two `model` states and an `unsure` transition between them, as `sort_document` in [`examples/sort-documents/`](../examples/sort-documents/README.md) does; that puts the escalation in the main machine's graph rather than inside the router.

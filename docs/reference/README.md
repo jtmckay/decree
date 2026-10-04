@@ -1,6 +1,6 @@
 # decree 0.5 reference
 
-decree is built from three building blocks: **messages** (markdown), **machines** (YAML statecharts) and **scripts** (executables, bash by default). This reference describes how each behaves. A worked example of everything here, with real files, lives in [`mock/`](../../mock/README.md). Why decree works this way is in [the decision log](../decisions.md).
+decree is built from three building blocks: **messages** (markdown), **machines** (YAML statecharts) and **scripts** (executables, bash by default). This reference describes how each behaves. Worked examples with real files, frozen partway through their runs, live in [`examples/feature/`](../../examples/feature/README.md) (every building block) and [`examples/sort-documents/`](../../examples/sort-documents/README.md) (an escalation ladder of models). Why decree works this way is in [the decision log](../decisions.md).
 
 | File | Subject |
 | --- | --- |
@@ -97,19 +97,17 @@ Each building block has its own directory in `.decree/`:
 
 `migrations/` and `processed.md` are committed to git; `inbox/` and `runs/` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
 
-decree 0.4's `outbox/`, `dead/`, `router.md`, `routines/`, `prompts/` and `config.yml` do not exist in 0.5.
-
 ### No configuration file
 
-A project is machines, scripts and messages; there is no `config.yml`. What 0.4 configured is a convention or a built-in limit:
+A project is machines, scripts and messages; there is no configuration file. Each setting is a convention or a built-in limit:
 
-| 0.4 setting | 0.5 |
+| Setting | Instead |
 | --- | --- |
 | Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)). `decree init` writes it. |
-| Default routine | None: every message names its machine with `machine:` (or the `routine:` alias). `decree emit`, cron files and `decree init`'s examples always do. |
+| Default machine | None: every message names its machine with `machine:`. `decree emit`, cron files and `decree init`'s examples always do. |
 | `max_retries` | `max_attempts` in the script invoke; default 1 (no retry), as a Step Functions task without `Retry`. |
 | Emit depth | A fixed limit of 10 (`max_depth`). |
 | Log size | Each script log is capped at 2 MiB (2097152 bytes). |
-| Shared routines | None in decree. To share machines or scripts across projects, symlink them into `machines/` and `scripts/`. |
+| Sharing across projects | None in decree. To share machines or scripts across projects, symlink them into `machines/` and `scripts/`. |
 
-The daemon poll interval is the `decree daemon --interval` flag. A `.decree/config.yml` left from 0.4 is an error that names `scripts/migrate-0.4-to-0.5.sh`: `.decree/config.yml is not used by decree 0.5; run scripts/migrate-0.4-to-0.5.sh`.
+The daemon poll interval is the `decree daemon --interval` flag.

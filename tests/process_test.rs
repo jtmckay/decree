@@ -178,11 +178,11 @@ fn unparsable_message_ends_failed_and_is_left_unchanged() {
 }
 
 #[test]
-fn routine_key_names_the_machine() {
+fn message_md_keeps_unknown_keys() {
     let p = Project::new();
     p.write(
         "inbox/a.md",
-        "---\nroutine: flow\nkeep: me\n---\r\nbody\r\n",
+        "---\nmachine: flow\nkeep: me\n---\r\nbody\r\n",
     );
     p.process().assert().success();
     let run = &p.runs()[0];
@@ -194,7 +194,7 @@ fn routine_key_names_the_machine() {
     assert_eq!(
         message,
         format!(
-            "---\nroutine: flow\nkeep: me\nid: {run}\ntrigger: inbox\nstate: done\n---\nbody\r\n"
+            "---\nmachine: flow\nkeep: me\nid: {run}\ntrigger: inbox\nstate: done\n---\nbody\r\n"
         )
     );
 }
@@ -371,7 +371,7 @@ fn rule6_invalid_pending_migration_runs_nothing() {
 fn dry_run_lists_and_runs_nothing() {
     let p = Project::new();
     p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
-    p.write("inbox/a.md", "---\nroutine: flow\n---\n");
+    p.write("inbox/a.md", "---\nmachine: flow\n---\n");
     let out = p
         .process()
         .arg("--dry-run")
@@ -385,4 +385,45 @@ fn dry_run_lists_and_runs_nothing() {
     assert!(stdout.contains("a.md"), "{stdout}");
     assert!(p.runs().is_empty());
     assert!(p.order().is_empty());
+}
+
+/// A migration, an inbox message and a cron file without `machine:`: `decree check` fails
+/// M1, M2 and M3 for them, and `decree process --dry-run` runs nothing.
+#[test]
+fn messages_without_machine_fail_m1_m2_m3() {
+    let p = Project::new();
+    fs::create_dir_all(p.decree().join("cron")).unwrap();
+    p.write("inbox/task.md", "# No machine key\n");
+    p.write(
+        "migrations/01-first.md",
+        "---\nparams: {}\n---\n# No machine key\n",
+    );
+    p.write(
+        "cron/nightly.md",
+        "---\ncron: \"0 2 * * *\"\n---\n# No machine key\n",
+    );
+
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(p.tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("check")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "migrations/01-first.md: line 1: no `machine` key (M1)\n\
+         inbox/task.md: line 1: no `machine` key (M2)\n\
+         cron/nightly.md: line 1: no `machine` key (M3)\n"
+    );
+
+    let out = p.process().arg("--dry-run").output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("no `machine` key"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(p.decree().join("inbox/task.md").is_file());
+    assert!(p.runs().is_empty());
 }

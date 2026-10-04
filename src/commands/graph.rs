@@ -83,8 +83,8 @@ fn render(project_root: &Path) -> Result<BTreeMap<String, String>, DecreeError> 
     Ok(documents)
 }
 
-/// `(stem, machine)` for every `cron/*.md` in filename order. A file without `machine:`
-/// (or its alias `routine:`) is an error.
+/// `(stem, machine)` for every `cron/*.md` in filename order. A file without `machine:` is
+/// an error.
 fn cron_machines(decree_dir: &Path) -> Result<Vec<(String, String)>, DecreeError> {
     let dir = decree_dir.join(layout::CRON_DIR);
     let mut crons = Vec::new();
@@ -93,11 +93,7 @@ fn cron_machines(decree_dir: &Path) -> Result<Vec<(String, String)>, DecreeError
         let text = std::fs::read_to_string(dir.join(&name))?;
         let fm = Message::parse(&text)
             .map_err(|(line, msg)| DecreeError::Other(format!("{rel}: line {line}: {msg}")))?;
-        let machine = match fm
-            .frontmatter
-            .get("machine")
-            .or_else(|| fm.frontmatter.get("routine"))
-        {
+        let machine = match fm.frontmatter.get("machine") {
             None => {
                 return Err(DecreeError::Other(format!(
                     "{rel}: no `machine` key (run `decree check`)"

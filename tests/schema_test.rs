@@ -1,7 +1,7 @@
 //! The JSON Schemas (docs/reference/machines.md, Schema): both are valid draft 2020-12 schemas;
-//! every machine in `mock/`, `examples/`, `src/templates/`, this repository and a fresh
+//! every machine in `examples/`, `src/templates/`, this repository and a fresh
 //! `decree init` for each `--ai` validates against `machine.schema.json`; every message in
-//! `mock/` validates against `message.schema.json`; `decree schema` writes both, and
+//! `examples/` validates against `message.schema.json`; `decree schema` writes both, and
 //! `decree check` warns when they are missing or stale. Whether the schemas reject what
 //! `decree check` rejects is tested case by case in `validation_test.rs`.
 
@@ -35,10 +35,10 @@ fn files_in(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     out
 }
 
-/// The machine files of every project in this repository: `mock/`, each of `examples/`, and
-/// the repository's own `.decree/`.
+/// The machine files of every project in this repository: each of `examples/`, and the
+/// repository's own `.decree/`.
 fn project_machines() -> Vec<PathBuf> {
-    let mut projects = vec![repo().join("mock"), repo()];
+    let mut projects = vec![repo()];
     for entry in fs::read_dir(repo().join("examples")).unwrap() {
         projects.push(entry.unwrap().path());
     }
@@ -227,28 +227,38 @@ fn every_machine_of_a_fresh_init_validates_for_each_ai() {
     }
 }
 
-/// Migrations, inbox messages, cron files, and the messages and replies in `mock/`'s runs.
+/// Migrations, inbox messages, cron files, and the messages and replies in the recorded runs
+/// of every project in `examples/`.
 #[test]
-fn every_message_in_mock_validates() {
-    let decree = repo().join("mock/.decree");
+fn every_message_in_examples_validates() {
     let mut paths = Vec::new();
-    for dir in ["migrations", "inbox", "cron"] {
-        paths.extend(files_in(&decree.join(dir), ".md"));
-    }
-    for run in fs::read_dir(decree.join("runs")).unwrap() {
-        let run = run.unwrap().path();
-        paths.extend(files_in(&run, "message.md"));
-        paths.extend(files_in(&run.join("received"), ".md"));
+    for project in fs::read_dir(repo().join("examples")).unwrap() {
+        let decree = project.unwrap().path().join(".decree");
+        for dir in ["migrations", "inbox", "cron"] {
+            paths.extend(files_in(&decree.join(dir), ".md"));
+        }
+        let Ok(runs) = fs::read_dir(decree.join("runs")) else {
+            continue;
+        };
+        for run in runs {
+            let run = run.unwrap().path();
+            paths.extend(files_in(&run, "message.md"));
+            paths.extend(files_in(&run.join("received"), ".md"));
+        }
     }
     let files = read(&paths);
-    assert!(
-        files.iter().any(|(n, _)| n.contains("/received/")),
-        "no reply in mock/"
-    );
-    assert!(
-        files.iter().any(|(n, _)| n.contains("/cron/")),
-        "no cron file in mock/"
-    );
+    for (what, part) in [
+        ("reply", "/received/"),
+        ("inbox message", "/inbox/"),
+        ("cron file", "/cron/"),
+        ("migration", "/migrations/"),
+        ("run", "/runs/"),
+    ] {
+        assert!(
+            files.iter().any(|(n, _)| n.contains(part)),
+            "no {what} in examples/"
+        );
+    }
     let validator = schema::message_validator();
     let found = rejected(&files, |text| schema::message_errors(&validator, text));
     assert!(found.is_empty(), "{found}");
@@ -414,7 +424,7 @@ fn project() -> TempDir {
     fs::create_dir_all(decree.join("machines")).unwrap();
     fs::write(
         decree.join("machines/hello.yml"),
-        fs::read_to_string(repo().join("mock/.decree/machines/hello.yml")).unwrap(),
+        fs::read_to_string(repo().join("examples/feature/.decree/machines/hello.yml")).unwrap(),
     )
     .unwrap();
     common_script(&decree.join("scripts/greet"));

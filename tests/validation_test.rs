@@ -1054,7 +1054,7 @@ states:
             ),
             (
                 "migrations/02-second.md",
-                "---\nroutine: m\n---\n# Uses the routine alias\n",
+                "---\nmachine: m\n---\n# Second\n",
             ),
         ],
         scripts: &[],
@@ -1072,7 +1072,7 @@ states:
             ),
             (
                 "migrations/02-second.md",
-                "---\nroutine: nope\n---\n# Unknown machine\n",
+                "---\nmachine: nope\n---\n# Unknown machine\n",
             ),
             ("migrations/03-third.md", "# No machine key\n"),
         ],
@@ -1330,7 +1330,7 @@ states:
   failed: { final: true }
 ";
 
-/// A 0.4 `router:` on a state inside a compound state (V19).
+/// A `router:` on a state inside a compound state (V19): only a `model` invoke takes one.
 const ROUTER_ON_A_STATE: &str = "\
 name: b
 description: A router state inside a compound state.

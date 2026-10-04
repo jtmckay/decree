@@ -304,10 +304,13 @@ mod tests {
 
     #[test]
     fn feature_matches_fixture() {
-        let m = load("feature", &fixture("mock/.decree/machines/feature.yml"));
+        let m = load(
+            "feature",
+            &fixture("examples/feature/.decree/machines/feature.yml"),
+        );
         assert_eq!(
             machine_document(&m).unwrap(),
-            fixture("mock/.decree/graph/feature.md")
+            fixture("examples/feature/.decree/graph/feature.md")
         );
     }
 

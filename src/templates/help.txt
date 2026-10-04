@@ -122,8 +122,7 @@ No configuration file; conventions and fixed limits instead:
   max_depth                       # 10: deepest chain of emits and child runs
   script logs                     # each capped at 2 MiB
   Share machines or scripts across projects by symlinking them into machines/
-  and scripts/. A configuration file left from 0.4 is an error: run
-  scripts/migrate-0.4-to-0.5.sh.
+  and scripts/.
 
 Cron (.decree/cron/<name>.md, run by `decree daemon`):
   ---

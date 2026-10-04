@@ -1,6 +1,6 @@
 //! `decree graph` (docs/reference/graph.md) against the `system` fixture in `tests/fixtures/graph/`
-//! and the machines and documents in `mock/.decree/`. Each test copies its `.decree/` into a temp
-//! directory.
+//! and the machines and documents of every project in `examples/`. Each test copies its `.decree/`
+//! into a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -43,7 +43,7 @@ fn machines_project(files: &[&str]) -> TempDir {
     fs::create_dir_all(&dir).unwrap();
     for file in files {
         fs::copy(
-            repo().join("mock/.decree/machines").join(file),
+            repo().join("examples/feature/.decree/machines").join(file),
             dir.join(file),
         )
         .unwrap();
@@ -93,7 +93,7 @@ fn graph_writes_one_file_per_machine_and_system_md() {
     );
     assert_eq!(
         written(&tmp, "feature.md"),
-        read("mock/.decree/graph/feature.md")
+        read("examples/feature/.decree/graph/feature.md")
     );
     assert!(written(&tmp, "hello.md")
         .contains("Machine: [machines/hello.yml](../machines/hello.yml)\n"));
@@ -110,21 +110,37 @@ fn graph_system_matches_fixture() {
     );
 }
 
+/// The example projects: each directory of `examples/` with a `.decree/`, in name order.
+fn example_projects() -> Vec<PathBuf> {
+    let mut projects: Vec<PathBuf> = fs::read_dir(repo().join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.join(".decree").is_dir())
+        .collect();
+    projects.sort();
+    projects
+}
+
 #[test]
-fn graph_mock_rewrites_mock_graph_unchanged() {
-    let tmp = project(&repo().join("mock/.decree"));
-    let (code, _, stderr) = graph(&tmp);
-    assert_eq!(code, 0, "{stderr}");
-    let mock = repo().join("mock/.decree/graph");
-    let names = md_names(&mock);
-    assert_eq!(names.len(), 10, "{names:?}");
-    assert_eq!(md_names(&tmp.path().join(".decree/graph")), names);
-    for name in &names {
-        assert_eq!(
-            written(&tmp, name),
-            fs::read_to_string(mock.join(name)).unwrap(),
-            "{name}"
-        );
+fn graph_rewrites_every_example_graph_unchanged() {
+    let projects = example_projects();
+    assert!(projects.len() >= 2, "{projects:?}");
+    for project_dir in projects {
+        let tmp = project(&project_dir.join(".decree"));
+        let (code, _, stderr) = graph(&tmp);
+        assert_eq!(code, 0, "{}: {stderr}", project_dir.display());
+        let committed = project_dir.join(".decree/graph");
+        let names = md_names(&committed);
+        assert!(names.contains(&"system.md".to_string()), "{names:?}");
+        assert_eq!(md_names(&tmp.path().join(".decree/graph")), names);
+        for name in &names {
+            assert_eq!(
+                written(&tmp, name),
+                fs::read_to_string(committed.join(name)).unwrap(),
+                "{}: {name}",
+                project_dir.display()
+            );
+        }
     }
 }
 

@@ -142,9 +142,9 @@ impl Message {
         self.frontmatter.get(key).and_then(Value::as_str)
     }
 
-    /// The machine the message names: `machine`, else its alias `routine`, as a string.
+    /// The machine the message names: `machine`, as a string.
     pub fn machine(&self) -> Option<&str> {
-        self.text("machine").or_else(|| self.text("routine"))
+        self.text("machine")
     }
 
     /// Frontmatter `params`, or an empty mapping if it is missing or not a mapping.
@@ -469,8 +469,7 @@ fn io_err(path: &Path) -> impl FnOnce(io::Error) -> MessageError + '_ {
     }
 }
 
-/// docs/reference/messages.md, Lifecycle step 3: the message names a machine (`machine`, or its alias
-/// `routine`) that exists, and its `params` fit that machine's `data`.
+/// docs/reference/messages.md, Lifecycle step 3: the message names a machine (`machine`) that exists, and its `params` fit that machine's `data`.
 /// `machine_ids` holds every machine, `machines` those that loaded; a machine that fails to
 /// load is reported on its own, so its `params` are not checked. Returns the machine name,
 /// or every error as `(file line, message)`.
@@ -479,24 +478,12 @@ pub fn validate(
     machines: &BTreeMap<String, LoadedMachine>,
     machine_ids: &BTreeSet<String>,
 ) -> Result<String, Vec<(usize, String)>> {
-    let machine = match (
-        msg.frontmatter.get("machine"),
-        msg.frontmatter.get("routine"),
-    ) {
-        (Some(_), Some(_)) => {
-            return Err(vec![(
-                msg.line_of("routine"),
-                "both `machine` and its alias `routine` are set".to_string(),
-            )]);
-        }
-        (Some(v), None) => ("machine", v),
-        (None, Some(v)) => ("routine", v),
-        (None, None) => return Err(vec![(1, "no `machine` key".to_string())]),
+    let Some(value) = msg.frontmatter.get("machine") else {
+        return Err(vec![(1, "no `machine` key".to_string())]);
     };
-    let (key, value) = machine;
-    let line = msg.line_of(key);
+    let line = msg.line_of("machine");
     let Value::String(name) = value else {
-        return Err(vec![(line, format!("`{key}` must be a string"))]);
+        return Err(vec![(line, "`machine` must be a string".to_string())]);
     };
     if !machine_ids.contains(name) {
         return Err(vec![(line, format!("unknown machine `{name}`"))]);
@@ -693,8 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_reads_routine_as_machine() {
-        assert_eq!(validated("---\nroutine: x\n---\n").unwrap(), "x");
+    fn validate_reads_machine() {
         assert_eq!(validated("---\nmachine: x\n---\n").unwrap(), "x");
     }
 
@@ -710,8 +696,6 @@ mod tests {
             "{errors:?}"
         );
         assert!(errors[1].1.contains("unknown param `other`"), "{errors:?}");
-        let errors = validated("---\nmachine: x\nroutine: x\n---\n").unwrap_err();
-        assert!(errors[0].1.contains("both"), "{errors:?}");
         assert_eq!(
             validated("body\n").unwrap_err(),
             [(1, "no `machine` key".to_string())]

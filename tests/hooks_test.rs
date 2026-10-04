@@ -1,6 +1,5 @@
-//! 0.4.2's hooks as machines (docs/decisions.md, D15): `beforeAll` is root
-//! `onentry`, `afterAll` root `onexit`, `beforeEach` and `afterEach` the atomic state's
-//! `onentry` and `onexit`, and `onDeadLetter` `failed`'s `onentry`. They run once per
+//! `onentry` and `onexit` (docs/reference/machines.md): the root's, the atomic state's, and
+//! `failed`'s `onentry`, which runs once when a run fails. They run once per
 //! visit to a state; `max_attempts` re-runs only the invoke. Each test builds its own
 //! `.decree/` in a temp directory.
 
@@ -16,7 +15,7 @@ use common::write_script;
 
 const MACHINE: &str = "\
 name: hooks
-description: 0.4.2's five hooks around one invoke.
+description: Root, state and failed onentry and onexit scripts around one invoke.
 data:
   succeed_on: { type: int, default: 1 }
   fail: { type: string, default: none }
@@ -186,10 +185,10 @@ fn two_attempts_run_the_invoke_twice_between_one_onentry_and_one_onexit() {
 }
 
 // ---------------------------------------------------------------
-// onDeadLetter: `failed`'s onentry, exactly once
+// `failed`'s onentry, exactly once
 // ---------------------------------------------------------------
 
-/// 0.4.2's `test_on_dead_letter_hook_fires_on_exhaustion`.
+/// Attempts run out: `failed`'s `onentry` runs once.
 #[test]
 fn failed_onentry_runs_once_when_attempts_run_out() {
     let p = Project::new();
@@ -209,8 +208,7 @@ fn failed_onentry_runs_once_when_attempts_run_out() {
     assert_eq!(last_state(&p.events()), "failed");
 }
 
-/// 0.4.2's `test_on_dead_letter_hook_does_not_fire_on_before_each_failure`, reversed on
-/// purpose: a failing `onentry` skips the invoke, and `failed`'s `onentry` runs once.
+/// A failing `onentry` skips the invoke, and `failed`'s `onentry` runs once.
 #[test]
 fn failed_onentry_runs_once_after_a_failing_onentry() {
     let p = Project::new();
@@ -230,7 +228,7 @@ fn failed_onentry_runs_once_after_a_failing_onentry() {
     assert_eq!(last_state(&p.events()), "failed");
 }
 
-/// A failing root `onentry` (0.4.2's `beforeAll`) is `error` from `work`, which does not
+/// A failing root `onentry` is `error` from `work`, which does not
 /// handle it: `work`'s own `onentry` still runs, its invoke does not, and the run fails.
 #[test]
 fn failed_onentry_runs_once_after_a_failing_root_onentry() {

@@ -190,7 +190,7 @@ Every state does one thing: it invokes a function, and the function's result is 
 
 Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, or the whole run at the root), `data` (typed values set from a message's `params`), `emits` (machines a state's scripts may `decree emit` to), compound states (`initial` plus `states`, with transitions that bubble up) and `final`.
 
-[The reference](docs/reference/README.md) is the full contract, [the decision log](docs/decisions.md) says why, and `mock/` is a worked example of every feature with real files (start at [`mock/README.md`](mock/README.md)).
+[The reference](docs/reference/README.md) is the full contract, [the decision log](docs/decisions.md) says why, and [`examples/`](examples/) holds worked projects with real files: start at [`examples/feature/`](examples/feature/README.md) for every building block, and [`examples/sort-documents/`](examples/sort-documents/README.md) for an escalation ladder of models.
 
 ### Graphs
 
@@ -260,7 +260,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   schema/                         # written by decree schema; committed
 ```
 
-There is no configuration file. What 0.4 configured is a convention or a fixed limit:
+There is no configuration file. Each setting is a convention or a fixed limit:
 
 | Setting | Instead |
 | --- | --- |
@@ -283,7 +283,7 @@ Run the weekday morning task.
 
 ## Observability
 
-`events.jsonl` is one JSON line per event, with `machine`, `state` and `run_id` on each, so any log shipper can read it. `mock/observability/config.alloy` ships it to Loki with Grafana Alloy, and `mock/README.md` has example queries.
+`events.jsonl` is one JSON line per event, with `machine`, `state` and `run_id` on each, so any log shipper can read it. [`examples/observability/`](examples/observability/README.md) ships it to Loki with Grafana Alloy and has example queries for Grafana.
 
 ## Docker
 
@@ -303,26 +303,6 @@ services:
 ```
 
 The image has no Rust toolchain, so the `rust_develop` machine, whose scripts run `cargo`, cannot run in it; use `develop`, or build an image with Rust on top of this one.
-
-## Upgrading from 0.4
-
-0.5.0 is a breaking release. `scripts/migrate-0.4-to-0.5.sh` moves a 0.4 project to the new layout: it moves pending inbox and outbox files into `inbox/`, moves the configuration file and other removed paths into `.decree/legacy-0.4/`, and lists the machines your pending messages ask for that you still have to write, and the messages that name no machine. Routines do not convert mechanically; write each as a machine plus scripts. Migrations are immutable, so messages still accept `routine:` as an alias of `machine:`.
-
-| Removed in 0.5.0 | Instead |
-| --- | --- |
-| `decree routine`, `decree routine sync`, `decree routine verify` | Machines in `machines/`, validated by `decree check` |
-| `decree cron list` | `decree status --cron` |
-| `decree log` | `decree status <id>` |
-| `decree skill` | `decree init` writes the skill |
-| `.decree/routines/` | `.decree/machines/` and `.decree/scripts/` |
-| `.decree/outbox/` | `decree emit` writes to `inbox/` |
-| `dead/` folders | Runs end in a `failed` state; see `decree status` |
-| `.decree/router.md` | A `model` state in a machine (see `mock/.decree/machines/triage.yml`) |
-| `.decree/prompts/` | Removed |
-| `hooks` | `onentry` and `onexit` scripts (`git_baseline`, `snapshot`) |
-| `routines`, `shared_routines`, `commands` | Removed; machines need no registry, and router machines call the AI tool |
-| The configuration file (`default_routine`, `routine_source`, `max_retries`) | Conventions: `machine:` on every message, `max_attempts` in script invokes, symlinks for sharing |
-| `run.json` | `events.jsonl` |
 
 ## License
 

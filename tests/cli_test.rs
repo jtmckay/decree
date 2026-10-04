@@ -254,7 +254,7 @@ fn init_emit_process_status_shows_the_run_done() {
     let p = Project::init();
     p.machine(
         "hello",
-        &fs::read_to_string("mock/.decree/machines/hello.yml").unwrap(),
+        &fs::read_to_string("examples/feature/.decree/machines/hello.yml").unwrap(),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let id = p.emit("hello", "Say hello.\n");
@@ -650,7 +650,7 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     p.script("work", FLAKY_WORK);
     p.machine(
         "hello",
-        &fs::read_to_string("mock/.decree/machines/hello.yml").unwrap(),
+        &fs::read_to_string("examples/feature/.decree/machines/hello.yml").unwrap(),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let failing = p.emit("flaky", "Fails.\n");
@@ -685,7 +685,7 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     );
 }
 
-/// Project commands outside a project exit non-zero (from the 0.4 blackbox walkthrough).
+/// Project commands outside a project exit non-zero.
 #[test]
 fn commands_without_a_project_fail() {
     let tmp = TempDir::new().unwrap();
@@ -698,8 +698,7 @@ fn commands_without_a_project_fail() {
     }
 }
 
-/// `--param` and the trigger reach the script as `DECREE_DATA_*` and `DECREE_TRIGGER` (from
-/// the 0.4 blackbox walkthrough).
+/// `--param` and the trigger reach the script as `DECREE_DATA_*` and `DECREE_TRIGGER`.
 #[test]
 fn emit_params_and_the_trigger_reach_the_script() {
     let p = Project::init();
@@ -730,8 +729,7 @@ fn emit_params_and_the_trigger_reach_the_script() {
     );
 }
 
-/// The event a script prints as its last line picks the transition (from the 0.4 blackbox
-/// walkthrough).
+/// The event a script prints as its last line picks the transition.
 #[test]
 fn a_printed_event_picks_the_transition() {
     let p = Project::init();

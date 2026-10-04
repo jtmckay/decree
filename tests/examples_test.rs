@@ -1,7 +1,7 @@
 //! Every project in `examples/` is a 0.5 project.
-//! `decree check` passes in each without a warning, no 0.4 term remains outside
-//! the history told in `examples/decree/README.md`, and each README's commands
-//! run as written, with stubs on `PATH` for the AI tools and services.
+//! `decree check` passes in each without a warning, no 0.4 word remains in the
+//! examples, `src/`, `docs/reference/`, `README.md` or `tests/`, and each README's
+//! commands run as written, with stubs on `PATH` for the AI tools and services.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,18 +10,37 @@ use std::process::Command;
 mod common;
 use common::write_script;
 
-/// 0.4 words that must not appear in `examples/`, matched as whole words.
-const OLD_TERMS: &[&str] = &["routine", "routines", "outbox", "hooks", "ai_router"];
+/// Words from decree 0.4 that must not appear in `src/`, `docs/reference/`, `README.md`,
+/// `tests/` or `examples/`, matched as whole words, ignoring case. `docs/decisions.md` and
+/// `docs/code-review.md` keep the history, and this file holds the list.
+/// Versions are named precisely (`0.4.2`, `decree 0.4`, `v0.4`), so a number such as a
+/// confidence threshold of `0.4` or a ComfyUI workflow's `"version": 0.4` is not one.
+const VERSION_TERMS: &[&str] = &[
+    "routine",
+    "config.yml",
+    "migrate-0.4",
+    "0.4.2",
+    "decree 0.4",
+    "v0.4",
+];
 
-/// The one file allowed to use them: it tells how decree was built under 0.4.
-const HISTORY: &str = "decree/README.md";
+/// 0.4 concepts that must not appear in `examples/` either.
+const OLD_TERMS: &[&str] = &["routines", "outbox", "hooks", "ai_router"];
 
-/// `.decree/schema/` holds decree's own schemas, written by `decree schema` and kept current
-/// by `decree check`; the message schema names `routine`, the alias decree still reads.
-const SCHEMA_DIR: &str = ".decree/schema";
+/// This file, which holds the word lists.
+const THIS_FILE: &str = "tests/examples_test.rs";
+
+/// The examples frozen partway through their life: they commit their queues, recorded runs
+/// and ledger so they can be read, and `replay_test.rs` replays the runs. The other examples
+/// start fresh.
+const RECORDED: &[&str] = &["feature", "sort-documents"];
+
+fn repo() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+}
 
 fn examples() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")
+    repo().join("examples")
 }
 
 /// The examples that are decree projects, in name order.
@@ -64,8 +83,9 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Whole-word matches of `term` in `line`, as `rg -w` finds them.
+/// Whole-word matches of `term` in `line`, ignoring case, as `rg -w -i` finds them.
 fn has_word(line: &str, term: &str) -> bool {
+    let line = line.to_lowercase();
     line.match_indices(term).any(|(i, _)| {
         let before = line[..i].chars().next_back();
         let after = line[i + term.len()..].chars().next();
@@ -81,6 +101,8 @@ fn every_example_passes_check_without_a_warning() {
         [
             "business-eval",
             "docker",
+            "feature",
+            "sort-documents",
             "text-to-media",
             "text-to-speech",
             "whisper-transcribe"
@@ -104,31 +126,69 @@ fn every_example_passes_check_without_a_warning() {
     }
 }
 
+/// The 0.4 words on one line of `rel` (a path relative to the repository).
+fn old_words(rel: &Path, line: &str) -> Vec<&'static str> {
+    let in_examples = rel.starts_with("examples");
+    VERSION_TERMS
+        .iter()
+        .chain(if in_examples { OLD_TERMS } else { &[] })
+        .copied()
+        .filter(|term| has_word(line, term))
+        .collect()
+}
+
 #[test]
-fn no_0_4_term_in_examples_outside_the_decree_history() {
+fn no_0_4_word_in_src_docs_readme_tests_or_examples() {
     let mut all = Vec::new();
-    files(&examples(), &mut all);
+    for root in ["src", "docs/reference", "tests", "examples"] {
+        files(&repo().join(root), &mut all);
+    }
+    all.push(repo().join("README.md"));
     let mut hits = Vec::new();
     for path in all {
-        let rel = path.strip_prefix(examples()).unwrap();
-        let in_project: PathBuf = rel.components().skip(1).collect();
-        if rel == Path::new(HISTORY) || in_project.starts_with(SCHEMA_DIR) {
+        let rel = path.strip_prefix(repo()).unwrap();
+        if rel == Path::new(THIS_FILE) {
             continue;
         }
         let Ok(text) = fs::read_to_string(&path) else {
             continue; // not text
         };
         for (n, line) in text.lines().enumerate() {
-            if OLD_TERMS.iter().any(|t| has_word(line, t)) {
-                hits.push(format!("examples/{}:{}: {line}", rel.display(), n + 1));
+            let words = old_words(rel, line);
+            if !words.is_empty() {
+                hits.push(format!("{}:{}: {words:?}: {line}", rel.display(), n + 1));
             }
         }
     }
-    assert!(hits.is_empty(), "0.4 terms remain:\n{}", hits.join("\n"));
+    assert!(hits.is_empty(), "0.4 words remain:\n{}", hits.join("\n"));
 }
 
 #[test]
-fn every_example_ships_its_graph_and_schema_and_starts_fresh() {
+fn the_0_4_scan_matches_versions_not_thresholds() {
+    let doc = Path::new("docs/reference/x.md");
+    assert_eq!(
+        old_words(doc, "as decree 0.4.2 did"),
+        ["0.4.2", "decree 0.4"]
+    );
+    assert_eq!(old_words(doc, "In v0.4, a Routine"), ["routine", "v0.4"]);
+    assert!(old_words(
+        Path::new("examples/text-to-media/workflows/a.json"),
+        "\"version\": 0.4"
+    )
+    .is_empty());
+    assert_eq!(old_words(doc, "no .decree/config.yml"), ["config.yml"]);
+    assert!(old_words(doc, "check: { confidence: c, at_least: 0.4 }").is_empty());
+    assert!(old_words(doc, "\"ts\":\"2026-10-01T14:43:30.410Z\", 0.45").is_empty());
+    assert!(old_words(doc, "a hooks list, the outbox").is_empty());
+    let example = Path::new("examples/x/README.md");
+    assert_eq!(
+        old_words(example, "hooks and routines"),
+        ["routines", "hooks"]
+    );
+}
+
+#[test]
+fn every_example_ships_its_graph_and_schema_and_starts_fresh_unless_recorded() {
     for name in projects() {
         let decree = examples().join(&name).join(".decree");
         assert!(decree.join("graph/system.md").is_file(), "{name}: no graph");
@@ -138,8 +198,19 @@ fn every_example_ships_its_graph_and_schema_and_starts_fresh() {
                 "{name}: no {schema}"
             );
         }
-        for gone in ["processed.md", "runs", "inbox", "routines", "outbox"] {
+        for gone in ["routines", "outbox"] {
             assert!(!decree.join(gone).exists(), "{name}: .decree/{gone} exists");
+        }
+        let recorded = RECORDED.contains(&name.as_str());
+        assert_eq!(
+            decree.join("runs").is_dir(),
+            recorded,
+            "{name}: .decree/runs"
+        );
+        if !recorded {
+            for gone in ["processed.md", "inbox"] {
+                assert!(!decree.join(gone).exists(), "{name}: .decree/{gone} exists");
+            }
         }
         let mut machines = Vec::new();
         files(&decree.join("machines"), &mut machines);
@@ -402,4 +473,35 @@ fn whisper_transcribe_readme_commands_run() {
     assert_eq!(processed(&project), ["01-transcribe-sample.md"]);
     assert_eq!(all_runs_done(&project), 2);
     assert!(project.join("audio/meeting-notes.txt").is_file());
+}
+
+/// The recorded examples' commands only read the project: nothing runs, and `decree graph`
+/// changes nothing.
+fn assert_readme_reads_only(name: &str) {
+    let dir = run_readme(name, "true");
+    let project = dir.path().join("examples").join(name);
+    let mut copied = Vec::new();
+    files(&project, &mut copied);
+    let mut original = Vec::new();
+    files(&examples().join(name), &mut original);
+    assert_eq!(copied.len(), original.len(), "{name}");
+    for path in original {
+        let rel = path.strip_prefix(examples().join(name)).unwrap();
+        assert_eq!(
+            fs::read(project.join(rel)).unwrap(),
+            fs::read(&path).unwrap(),
+            "{name}/{}",
+            rel.display()
+        );
+    }
+}
+
+#[test]
+fn feature_readme_commands_run() {
+    assert_readme_reads_only("feature");
+}
+
+#[test]
+fn sort_documents_readme_commands_run() {
+    assert_readme_reads_only("sort-documents");
 }

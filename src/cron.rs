@@ -22,7 +22,7 @@ pub struct CronFile {
 }
 
 impl CronFile {
-    /// The machine its messages name: frontmatter `machine`, or its alias `routine`.
+    /// The machine its messages name: frontmatter `machine`.
     pub fn machine(&self) -> Option<&str> {
         self.message.machine()
     }
@@ -135,19 +135,14 @@ impl CronTracker {
 }
 
 /// The message a fired cron job queues: the cron file's keys in the order written, without
-/// `cron`, with `routine` named `machine`, then `trigger: cron`; and its body.
+/// `cron` (and any `trigger`), then `trigger: cron`; and its body.
 /// `message::queue` writes it to `inbox/` and gives it its `id`.
 pub fn cron_to_inbox_message(cron_file: &CronFile) -> Message {
     let source = &cron_file.message;
-    let has_machine = source.text("machine").is_some();
     let mut frontmatter = Mapping::new();
     for (key, value) in &source.frontmatter {
         match key.as_str() {
             Some("cron" | "trigger") => {}
-            Some("routine") if has_machine => {}
-            Some("routine") => {
-                frontmatter.insert("machine".into(), value.clone());
-            }
             _ => {
                 frontmatter.insert(key.clone(), value.clone());
             }
@@ -173,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_parse_cron_file_basic() {
-        let content = "---\ncron: \"0 * * * *\"\nroutine: develop\n---\nRun hourly task.\n";
+        let content = "---\ncron: \"0 * * * *\"\nmachine: develop\n---\nRun hourly task.\n";
         let cf = parse_cron_file("hourly-task.md", content).unwrap();
         assert_eq!(cf.filename, "hourly-task.md");
         assert_eq!(cf.machine(), Some("develop"));
@@ -181,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_cron_file_no_routine() {
+    fn test_parse_cron_file_no_machine() {
         let content = "---\ncron: \"*/15 * * * *\"\n---\nEvery 15 minutes.\n";
         let cf = parse_cron_file("frequent.md", content).unwrap();
         assert!(cf.machine().is_none());
@@ -198,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_inbox_message_keeps_key_order_and_drops_cron() {
-        let content = "---\nzeta: 1\ncron: \"0 9 * * *\"\nroutine: develop\ntrigger: manual\nalpha: [a, b]\n---\nDaily task.\n";
+        let content = "---\nzeta: 1\ncron: \"0 9 * * *\"\nmachine: develop\ntrigger: manual\nalpha: [a, b]\n---\nDaily task.\n";
         let cf = parse_cron_file("daily.md", content).unwrap();
         let msg = cron_to_inbox_message(&cf);
         assert_eq!(
@@ -209,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_parse_cron_file_no_cron_field() {
-        let content = "---\nroutine: develop\n---\nBody.\n";
+        let content = "---\nmachine: develop\n---\nBody.\n";
         let result = parse_cron_file("test.md", content);
         assert!(result.is_err());
     }
@@ -286,7 +281,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             cron_dir.join("no-cron.md"),
-            "---\nroutine: develop\n---\nNo cron.\n",
+            "---\nmachine: develop\n---\nNo cron.\n",
         )
         .unwrap();
 
@@ -324,10 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cron_to_inbox_message_routine_alias_and_no_machine() {
-        let cf =
-            parse_cron_file("t.md", "---\ncron: \"0 * * * *\"\nroutine: dev\n---\nT.\n").unwrap();
-        assert_eq!(cron_to_inbox_message(&cf).text("machine"), Some("dev"));
+    fn test_cron_to_inbox_message_without_machine() {
         let cf = parse_cron_file("task.md", "---\ncron: \"0 * * * *\"\n---\nTask.\n").unwrap();
         let msg = cron_to_inbox_message(&cf);
         assert_eq!(msg.text("machine"), None);

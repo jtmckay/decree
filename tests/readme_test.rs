@@ -3,10 +3,9 @@
 
 use assert_cmd::cargo::cargo_bin_cmd;
 
-/// 0.4 concepts that must not appear in 0.5's help or README outside the 0.4 to 0.5
-/// table (docs/reference/README.md, File layout).
+/// Concepts decree no longer has, which must not appear in its help or README.
+/// (`tests/examples_test.rs` scans both for older terms.)
 const OLD_TERMS: &[&str] = &[
-    "routine",
     "outbox",
     "hooks",
     "router.md",
@@ -64,7 +63,7 @@ fn test_help_describes_the_three_blocks_and_links_docs() {
 }
 
 #[test]
-fn test_help_mentions_no_0_4_concept() {
+fn test_help_mentions_no_removed_concept() {
     let help = help_text();
     for term in OLD_TERMS {
         assert!(!help.contains(term), "help still mentions `{term}`");
@@ -73,18 +72,6 @@ fn test_help_mentions_no_0_4_concept() {
 
 fn readme() -> String {
     std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap()
-}
-
-/// The README without its "Upgrading from 0.4" section, the one place 0.4 terms belong.
-fn readme_without_upgrade() -> String {
-    let text = readme();
-    let start = text
-        .find("## Upgrading from 0.4")
-        .expect("README has an Upgrading from 0.4 section");
-    let end = text[start + 3..]
-        .find("\n## ")
-        .map_or(text.len(), |i| start + 3 + i);
-    format!("{}{}", &text[..start], &text[end..])
 }
 
 /// Every ```bash block of the README, in order.
@@ -115,7 +102,6 @@ fn test_readme_describes_the_three_blocks_and_links_docs() {
         "Scripts",
         "docs/routers.md",
         "docs/services.md",
-        "scripts/migrate-0.4-to-0.5.sh",
     ] {
         assert!(text.contains(word), "README does not mention {word}");
     }
@@ -125,8 +111,8 @@ fn test_readme_describes_the_three_blocks_and_links_docs() {
 }
 
 #[test]
-fn test_readme_mentions_no_0_4_concept_outside_the_upgrade_section() {
-    let text = readme_without_upgrade();
+fn test_readme_mentions_no_removed_concept() {
+    let text = readme();
     for term in OLD_TERMS {
         assert!(!text.contains(term), "README still mentions `{term}`");
     }

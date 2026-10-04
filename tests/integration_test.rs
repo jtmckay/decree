@@ -101,8 +101,7 @@ fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 fn test_init_stdin_closed_asks_nothing() {
     let dir = TempDir::new().unwrap();
 
-    // Empty PATH: nothing is detected, so the 0.4.2 multi-backend selector would
-    // have been the only remaining prompt path besides permissions/overwrite.
+    // Empty PATH: nothing is detected, and init asks nothing.
     let output = decree_cmd(&dir)
         .arg("init")
         .write_stdin("")
@@ -181,7 +180,6 @@ fn test_init_ai_claude_writes_router_and_check_passes() {
         .success();
 
     let decree = dir.path().join(".decree");
-    assert!(!decree.join("config.yml").exists());
     assert!(decree.join("machines/router.yml").is_file());
     assert!(decree.join("scripts/router/ask_claude.sh").is_file());
     assert!(decree.join("graph/router.md").is_file());
@@ -200,7 +198,6 @@ fn test_init_ai_opencode_and_copilot_write_their_routers() {
             .assert()
             .success();
         let decree = dir.path().join(".decree");
-        assert!(!decree.join("config.yml").exists());
         let machine = fs::read_to_string(decree.join("machines/router.yml")).unwrap();
         assert!(machine.contains("name: router\n"), "{machine}");
         assert!(
@@ -513,14 +510,6 @@ fn test_status_cron_lists_files_and_next_fire_time() {
     assert!(lines[1].contains(":00 (in "), "{out}");
 }
 
-#[test]
-fn test_log_and_cron_list_are_removed() {
-    let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
-    decree_cmd(&dir).arg("log").assert().code(2);
-    decree_cmd(&dir).args(["cron", "list"]).assert().code(2);
-}
-
 // --- decree --version ---
 
 #[test]
@@ -589,27 +578,6 @@ fn test_no_color_flag_overrides_forced_color() {
     assert!(!has_ansi(&out), "{}", String::from_utf8_lossy(&out));
 }
 
-// --- removed 0.4 routine commands ---
-
-/// `routine`, `verify` and `routine-sync` are gone (docs/reference/cli.md).
-#[test]
-fn test_removed_routine_commands_exit_2() {
-    let dir = TempDir::new().unwrap();
-    decree_cmd(&dir).arg("init").assert().success();
-    for args in [
-        &["routine"][..],
-        &["routine", "develop"],
-        &["verify"],
-        &["routine-sync"],
-    ] {
-        decree_cmd(&dir)
-            .args(args)
-            .assert()
-            .code(2)
-            .stderr(predicate::str::contains("unrecognized subcommand"));
-    }
-}
-
 // --- exit codes ---
 
 #[test]
@@ -639,8 +607,8 @@ fn test_init_writes_decree_skill_for_claude_and_copilot() {
             )));
         let skill = dir.path().join(skill_dir);
         let text = fs::read_to_string(skill.join("SKILL.md")).unwrap();
-        // No 0.4 concept in the skill.
-        for term in ["routine", "outbox", "hooks", "router.md"] {
+        // No removed concept in the skill.
+        for term in ["outbox", "hooks", "router.md"] {
             assert!(!text.to_lowercase().contains(term), "{ai}: {term}");
         }
         for name in ["machines", "messages", "runs", "scripts"] {

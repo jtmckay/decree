@@ -16,12 +16,6 @@
       "description": "The machine that runs this message: the name of .decree/machines/<name>.yml (M1-M3). Required on every message that is not a reply.",
       "examples": ["feature"]
     },
-    "routine": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*$",
-      "deprecated": true,
-      "description": "Alias of `machine`, read so that migrations written before decree 0.5, which are immutable, still run. Write `machine` instead; a message may not set both."
-    },
     "state": {
       "type": "string",
       "description": "Written by decree only: a mirror of the run's current state, in runs/<id>/message.md. Authors never set it; the run's events.jsonl is the record."
@@ -65,9 +59,9 @@
   "oneOf": [
     {
       "title": "message",
-      "description": "A message that starts a run of a machine: `machine` (or its alias `routine`, not both), and no `to`.",
-      "not": { "required": ["to"] },
-      "oneOf": [{ "required": ["machine"] }, { "required": ["routine"] }]
+      "description": "A message that starts a run of a machine: `machine`, and no `to`.",
+      "required": ["machine"],
+      "not": { "required": ["to"] }
     },
     {
       "title": "reply",

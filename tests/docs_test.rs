@@ -1,5 +1,5 @@
 //! The documentation holds together: relative Markdown links resolve, the machine examples
-//! in `docs/reference/machines.md` are the files in `mock/`, and nothing points at the
+//! in `docs/reference/machines.md` are the files in `examples/feature/`, and nothing points at the
 //! removed implementation spec. Reads this repository's files only; writes nothing.
 
 use std::collections::BTreeSet;
@@ -29,12 +29,12 @@ fn files_under(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The Markdown files whose links must resolve: `README.md`, `docs/`, `mock/README.md`,
-/// `examples/*/README.md` and the decree skill (`src/templates/skills/`; `.claude/skills/decree`
-/// and `.github/skills/decree` are symlinks to it).
+/// The Markdown files whose links must resolve: `README.md`, `docs/`, `examples/*/README.md`
+/// and the decree skill (`src/templates/skills/`; `.claude/skills/decree` and
+/// `.github/skills/decree` are symlinks to it).
 fn markdown_files() -> Vec<PathBuf> {
     let root = repo();
-    let mut all = vec![root.join("README.md"), root.join("mock/README.md")];
+    let mut all = vec![root.join("README.md")];
     for entry in std::fs::read_dir(root.join("examples")).unwrap() {
         let readme = entry.unwrap().path().join("README.md");
         if readme.is_file() {
@@ -180,7 +180,7 @@ fn relative_markdown_links_resolve() {
 }
 
 #[test]
-fn machine_examples_are_the_mock_machines() {
+fn machine_examples_are_the_feature_example_machines() {
     let root = repo();
     let text = std::fs::read_to_string(root.join("docs/reference/machines.md")).unwrap();
     let mut examples = Vec::new();
@@ -206,11 +206,11 @@ fn machine_examples_are_the_mock_machines() {
     let names: Vec<&str> = examples.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names, ["hello", "deploy", "ship", "feature"]);
     for (name, example) in &examples {
-        let file = root.join(format!("mock/.decree/machines/{name}.yml"));
-        let mock = std::fs::read_to_string(&file).unwrap();
+        let file = root.join(format!("examples/feature/.decree/machines/{name}.yml"));
+        let machine = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
             example,
-            &mock,
+            &machine,
             "docs/reference/machines.md example `{name}` differs from {}",
             file.display()
         );

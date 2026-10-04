@@ -1,6 +1,6 @@
 //! The built-in `develop` and `rust_develop` machines `decree init` writes (docs/reference/cli.md,
-//! `decree init`): they pass `decree check`, `develop` ends in the same outcome as
-//! 0.4.2's routine on the same message, `rust_develop` runs QA only when its gate
+//! `decree init`): they pass `decree check`, `develop` ends in `done` or `failed` as its
+//! steps succeed or fail, `rust_develop` runs QA only when its gate
 //! fails and stops on a `STOP` file, and their scripts wait out Claude's usage
 //! limit and resume the session. `claude`, `cargo`, `date` and `sleep` are stubs on
 //! `PATH`; no test calls a model.
@@ -156,36 +156,9 @@ impl Project {
             .map(String::from)
             .collect()
     }
-
-    /// Run 0.4.2's routine (filled for claude, as its `init` wrote it) the way 0.4.2
-    /// ran it, `bash <script>` with its variables: `done` if it exits 0, else `failed`
-    /// (0.4.2 re-ran it on failure, which ends the same way with these stubs).
-    fn run_0_4_2(&self, routine: &str, env: &[(&str, &str)]) -> String {
-        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/scripts/v0_4_2")
-            .join(format!("{routine}.sh"));
-        let run_dir = self.root().join("run-0.4.2");
-        fs::create_dir_all(&run_dir).unwrap();
-        let message = run_dir.join("message.md");
-        fs::write(&message, MESSAGE).unwrap();
-        let mut cmd = std::process::Command::new("bash");
-        cmd.arg(&script)
-            .current_dir(self.root())
-            .env("PATH", self.path())
-            .env("message_file", &message)
-            .env("message_dir", &run_dir)
-            .env("message_id", "D0001-1200-01-add-greeting-0")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        let status = cmd.status().unwrap();
-        if status.success() { "done" } else { "failed" }.to_string()
-    }
 }
 
-/// AC: each ported machine passes `decree check` (with every backend `init` supports).
+/// AC: each built-in machine passes `decree check` (with every backend `init` supports).
 #[test]
 fn init_writes_develop_and_rust_develop_and_they_pass_check() {
     for ai in ["claude", "opencode", "copilot"] {
@@ -213,33 +186,19 @@ fn init_writes_develop_and_rust_develop_and_they_pass_check() {
 /// Environment variables for the stubs.
 type Env = &'static [(&'static str, &'static str)];
 
-/// AC: on the same message with the same stub `claude`, 0.4.2's routine and the
-/// ported machine end in the same outcome. (`rust_develop` no longer ends like 0.4.2's
-/// `rust-develop`, which ignored a failed build and tests: see the tests below.)
+/// `develop` ends in `done` when every step succeeds, and in `failed` when the agent fails
+/// to implement or to verify.
 #[test]
-fn develop_ends_like_0_4_2() {
-    let cases: &[(&str, &str, Env, &str)] = &[
-        ("develop", "develop", &[], "done"),
-        (
-            "develop",
-            "develop",
-            &[("CLAUDE_FAIL_ON", "Read")],
-            "failed",
-        ),
-        (
-            "develop",
-            "develop",
-            &[("CLAUDE_FAIL_ON", "Verify that")],
-            "failed",
-        ),
+fn develop_ends_done_or_failed() {
+    let cases: &[(Env, &str)] = &[
+        (&[], "done"),
+        (&[("CLAUDE_FAIL_ON", "Read")], "failed"),
+        (&[("CLAUDE_FAIL_ON", "Verify that")], "failed"),
     ];
-    for (routine, machine, env, want) in cases {
+    for (env, want) in cases {
         let p = Project::init();
-        let old = p.run_0_4_2(routine, env);
-        let id = p.run(machine, env);
-        let new = p.outcome(&id);
-        assert_eq!(old, *want, "0.4.2 {routine} {env:?}");
-        assert_eq!(new, *want, "{machine} {env:?}: {:?}", p.events(&id));
+        let id = p.run("develop", env);
+        assert_eq!(p.outcome(&id), *want, "{env:?}: {:?}", p.events(&id));
     }
 }
 
@@ -373,7 +332,7 @@ fn session(call: &str) -> (&str, &str) {
 }
 
 /// AC: a stub `claude` prints a usage-limit message with a reset time; the script
-/// waits until the reset, then resumes the same session. Also 0.4.2's fallbacks: a
+/// waits until the reset, then resumes the same session. A
 /// reset time already passed today waits until tomorrow, and no time waits an hour.
 #[test]
 fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
@@ -459,7 +418,7 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
 }
 
 /// A failure that is not a usage limit does not wait: decree's attempts run again with
-/// a new session each, as 0.4.2's retries did.
+/// a new session each.
 #[test]
 fn other_failures_do_not_wait() {
     let p = Project::init();

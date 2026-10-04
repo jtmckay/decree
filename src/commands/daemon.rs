@@ -154,7 +154,7 @@ mod tests {
         // Write a cron file that fires every minute
         std::fs::write(
             dir.path().join(".decree/cron/every-minute.md"),
-            "---\ncron: \"* * * * *\"\nroutine: develop\n---\nMinutely task.\n",
+            "---\ncron: \"* * * * *\"\nmachine: develop\n---\nMinutely task.\n",
         )
         .unwrap();
 

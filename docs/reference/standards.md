@@ -21,5 +21,5 @@ decree 0.5 composes existing, well-specified ideas. Nothing here is new; the val
 | Process control | POSIX process groups; SIGTERM, grace period, SIGKILL (as `docker stop`, 10 s default) | Kill the whole script tree on stop or timeout. | None. |
 | Exit codes and events | POSIX exit status; `128 + n` for signals (130 = SIGINT) | 0 is `done`, non-zero is `error`. | An optional JSON line names a richer event. |
 | Ids and timestamps | ISO 8601 basic format; RFC 3339 | Sortable, human-readable ids and log times. | 6 hex chars instead of a UUIDv7 (RFC 9562) suffix, to stay readable without a dependency. |
-| Cron files | Standard cron expressions (the `cron` crate, as in 0.4.2) | Unchanged. | None. |
+| Cron files | Standard cron expressions (the `cron` crate) | Unchanged. | None. |
 | Graph | Mermaid `stateDiagram-v2` in Markdown (renders in VS Code 1.121+, GitHub, GitLab, Obsidian, mermaid.live; MIT, self-hostable) | Generated from the arena the interpreter runs; viewing is left to existing tools. | No built-in image rendering, to keep decree small. SCXML (XML), DOT and other exports are out of scope. |

@@ -1,3 +1,0 @@
-{"v":1,"seq":1,"ts":"2026-10-01T12:00:00.100Z","type":"transition","run_id":"20261001T120000Z-0b12aa","machine":"develop","trigger":"inbox","from":null,"event":"claimed","to":"work","source":"claim","exit_code":null,"file":null}
-{"v":1,"seq":2,"ts":"2026-10-01T12:00:01.100Z","type":"transition","run_id":"20261001T120000Z-0b12aa","machine":"develop","trigger":"inbox","from":"work","event":"done","to":"done","source":"exit_code","exit_code":0}
-{"v":1,"seq":3,"ts":"2026-10-01T12:00:01.200Z","type":"run_finished","run_id":"20261001T120000Z-0b12aa","machine":"develop","trigger":"inbox","state":"done","duration_ms":1100}

@@ -1,6 +1,6 @@
 # Observability
 
-`events.jsonl` is the telemetry interface: decree adds no metrics endpoint and no exporter. Any log shipper that tails files can read it; the reference setup is Grafana Alloy into Loki, shown in [`mock/observability/config.alloy`](../../mock/observability/config.alloy).
+`events.jsonl` is the telemetry interface: decree adds no metrics endpoint and no exporter. Any log shipper that tails files can read it; the reference setup is Grafana Alloy into Loki, shown in [`examples/observability/`](../../examples/observability/README.md).
 
 - **Ship** `.decree/runs/*/events.jsonl` (events) and, optionally, `.decree/runs/*/*.log` (script output).
 - **Timestamps.** Use the event's `ts` as the log timestamp, so back-filled and late-shipped events land at the right time.
@@ -9,7 +9,7 @@
 - **Retention.** Loki's retention is the history. `decree prune --older-than <age>` deletes finished run folders ([cli.md](cli.md)), and nothing else does, so the local `runs/` is a working copy: ship runs before pruning them, and prune with an age longer than the shipper's lag.
 - **Stability.** Field names and meanings in [events.jsonl](runs.md#eventsjsonl) are a public contract under `v: 1`. Dashboards may depend on them.
 
-Example LogQL, also in [`mock/README.md`](../../mock/README.md):
+Example LogQL, also in [`examples/observability/README.md`](../../examples/observability/README.md):
 
 ```logql
 # p95 script duration by script, last 24 h

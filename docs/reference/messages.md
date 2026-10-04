@@ -22,7 +22,7 @@ Given ... When ... Then ...
 | Key | Type | Required | Written by | Meaning |
 | --- | --- | --- | --- | --- |
 | `id` | string | No | decree, at claim, if missing | `YYYYMMDDTHHMMSSZ-xxxxxx`: UTC time plus 6 lowercase hex chars. Names the run folder. (Migrations: the file stem.) |
-| `machine` | string | Yes (or `routine`) | Author, `decree emit`, cron | Machine name, matching `machines/<name>.yml`. |
+| `machine` | string | Yes | Author, `decree emit`, cron | Machine name, matching `machines/<name>.yml`. |
 | `state` | string | No | decree only | Mirror of the run's current state, in `runs/<id>/message.md` only. Authors never set it. |
 | `parent` | string | No | `decree emit`, decree | `id` of the run that emitted this message, or that invoked this child run. |
 | `depth` | int | No | `decree emit` | Parent's `depth` + 1. Absent means 0. |
@@ -33,7 +33,7 @@ Given ... When ... Then ...
 
 `.decree/schema/message.schema.json` states these keys as a JSON Schema, with the two shapes a frontmatter takes: a message that names its `machine`, or a reply with `to` and `event` ([Schema](machines.md#schema)).
 
-`routine` is read as an alias of `machine`: migration files are immutable, and existing projects have unprocessed migrations that still carry it. Any other key is kept exactly as written and ignored by decree.
+Any other key is kept exactly as written and ignored by decree.
 
 The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). If that id already exists in `inbox/` or `runs/`, decree adds 1 and retries.
 
@@ -104,4 +104,4 @@ Before stepping a run, decree creates `runs/<id>/.lock` exclusively (`O_EXCL`) a
 
 ## Cron files
 
-`.decree/cron/*.md` are message templates with a `cron:` key in their frontmatter, a standard cron expression. On each `decree daemon` pass, every cron file that is due is written to `inbox/` through the same writer as `decree emit`: the new message has the cron file's `machine` (from `machine:` or the `routine:` alias), `trigger: cron`, the cron file's other keys and its body; the `cron` key is not copied. A cron file must name its machine. `decree check` validates every cron file (M3, [Validation](machines.md#validation)), and `decree status --cron` lists them with their next fire time.
+`.decree/cron/*.md` are message templates with a `cron:` key in their frontmatter, a standard cron expression. On each `decree daemon` pass, every cron file that is due is written to `inbox/` through the same writer as `decree emit`: the new message has the cron file's `machine`, `trigger: cron`, the cron file's other keys and its body; the `cron` key is not copied. A cron file must name its machine. `decree check` validates every cron file (M3, [Validation](machines.md#validation)), and `decree status --cron` lists them with their next fire time.

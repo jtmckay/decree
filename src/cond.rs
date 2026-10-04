@@ -730,14 +730,14 @@ mod tests {
             Some(Operand::Int(1))
         );
         assert_eq!(
-            parse("{ confidence: a, at_least: 0.4 }").at_least,
-            Some(Operand::Float(0.4))
+            parse("{ confidence: a, at_least: 0.25 }").at_least,
+            Some(Operand::Float(0.25))
         );
     }
 
     #[test]
     fn confidence_operand_is_a_number_from_0_to_1() {
-        assert_eq!(confidence_operand(&Operand::Float(0.4)), Ok(0.4));
+        assert_eq!(confidence_operand(&Operand::Float(0.25)), Ok(0.25));
         assert_eq!(confidence_operand(&Operand::Int(1)), Ok(1.0));
         assert_eq!(
             confidence_operand(&Operand::Float(1.5)),

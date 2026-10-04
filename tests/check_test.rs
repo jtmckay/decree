@@ -1,6 +1,6 @@
-//! `decree check` on `mock/` (docs/reference/machines.md, Validation): it passes without a
-//! warning, warns when `graph/` is out of date, and names the rule when a mock machine is
-//! broken. The rule-by-rule cases are in `validation_test.rs`.
+//! `decree check` on `examples/feature/` and `examples/sort-documents/` (docs/reference/machines.md,
+//! Validation): it passes without a warning, warns when `graph/` is out of date, and names the
+//! rule when an example machine is broken. The rule-by-rule cases are in `validation_test.rs`.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -8,8 +8,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-fn mock() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("mock/.decree")
+/// `examples/<name>/.decree`.
+fn example(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join(name)
+        .join(".decree")
 }
 
 /// Copy `src` to `dst` recursively; `fs::copy` keeps the execute bits.
@@ -26,10 +30,10 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
-/// Run `decree check` in a copy of `mock/`: (exit code, stdout, stderr).
-fn check_mock(edit: impl FnOnce(&Path)) -> (i32, String, String) {
+/// Run `decree check` in a copy of `examples/<name>/`: (exit code, stdout, stderr).
+fn check_example(name: &str, edit: impl FnOnce(&Path)) -> (i32, String, String) {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&mock(), &tmp.path().join(".decree"));
+    copy_dir(&example(name), &tmp.path().join(".decree"));
     edit(&tmp.path().join(".decree"));
     let out = cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
@@ -45,8 +49,14 @@ fn check_mock(edit: impl FnOnce(&Path)) -> (i32, String, String) {
 }
 
 #[test]
-fn check_passes_on_mock_without_a_warning() {
-    assert_eq!(check_mock(|_| {}), (0, String::new(), String::new()));
+fn check_passes_on_the_recorded_examples_without_a_warning() {
+    for name in ["feature", "sort-documents"] {
+        assert_eq!(
+            check_example(name, |_| {}),
+            (0, String::new(), String::new()),
+            "{name}"
+        );
+    }
 }
 
 /// The docs/reference/machines.md examples, alone, with a stub `scripts/<name>` for each script.
@@ -57,7 +67,7 @@ fn check_passes_on_the_reference_examples() {
     fs::create_dir_all(decree.join("machines")).unwrap();
     for name in ["hello", "deploy", "ship", "feature", "router"] {
         let file = format!("machines/{name}.yml");
-        fs::copy(mock().join(&file), decree.join(&file)).unwrap();
+        fs::copy(example("feature").join(&file), decree.join(&file)).unwrap();
     }
     let scripts = decree.join("scripts");
     fs::create_dir_all(&scripts).unwrap();
@@ -95,7 +105,7 @@ fn check_passes_on_the_reference_examples() {
 
 #[test]
 fn check_warns_when_the_graph_files_are_out_of_date() {
-    let (code, stdout, stderr) = check_mock(|decree| {
+    let (code, stdout, stderr) = check_example("feature", |decree| {
         let graph = decree.join("graph");
         fs::remove_file(graph.join("hello.md")).unwrap();
         fs::write(graph.join("deploy.md"), "# deploy\n").unwrap();
@@ -110,12 +120,11 @@ fn check_warns_when_the_graph_files_are_out_of_date() {
     );
 }
 
-/// A new machine makes `graph/` stale until `decree graph` rewrites it (from the 0.4
-/// blackbox walkthrough).
+/// A new machine makes `graph/` stale until `decree graph` rewrites it.
 #[test]
 fn check_warns_until_the_graph_is_rewritten() {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&mock(), &tmp.path().join(".decree"));
+    copy_dir(&example("feature"), &tmp.path().join(".decree"));
     fs::write(
         tmp.path().join(".decree/machines/greet.yml"),
         "name: greet\ndescription: Run hello.\ninitial: work\nstates:\n  \
@@ -147,9 +156,11 @@ fn check_warns_until_the_graph_is_rewritten() {
 
 #[test]
 fn check_warns_when_the_graph_directory_is_missing() {
-    let (code, _, stderr) = check_mock(|decree| fs::remove_dir_all(decree.join("graph")).unwrap());
+    let (code, _, stderr) = check_example("feature", |decree| {
+        fs::remove_dir_all(decree.join("graph")).unwrap()
+    });
     assert_eq!(code, 0);
-    assert_eq!(stderr.lines().count(), 10, "{stderr}");
+    assert_eq!(stderr.lines().count(), 8, "{stderr}");
     assert!(
         stderr.contains("warning: graph/system.md: missing"),
         "{stderr}"
@@ -186,7 +197,7 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
         ),
     ];
     for (file, from, to, expected) in cases {
-        let (code, stdout, _) = check_mock(|decree| {
+        let (code, stdout, _) = check_example("feature", |decree| {
             let path = decree.join("machines").join(file);
             let text = fs::read_to_string(&path).unwrap();
             assert!(text.contains(from), "{file}: {from}");
@@ -196,7 +207,7 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
         assert_eq!(stdout, format!("{expected}\n"));
     }
     // A router state inside a compound state, as in the V19 case of `validation_test.rs`.
-    let (code, stdout, _) = check_mock(|decree| {
+    let (code, stdout, _) = check_example("feature", |decree| {
         fs::write(
             decree.join("machines/b.yml"),
             "name: b\ndescription: A router state inside a compound state.\ninitial: work\n\
@@ -236,7 +247,7 @@ fn check_rejects_bad_escalation_conditions_with_v10() {
         ),
     ];
     for (from, to, expected) in cases {
-        let (code, stdout, _) = check_mock(|decree| {
+        let (code, stdout, _) = check_example("sort-documents", |decree| {
             let path = decree.join("machines/sort_document.yml");
             let text = fs::read_to_string(&path).unwrap();
             assert!(text.contains(from), "{from}");

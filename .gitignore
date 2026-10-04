@@ -1,6 +1,7 @@
 /target
 /decree.backup
 
-# mock/ commits its queues and runs so they can be read
-!mock/.decree/inbox/
-!mock/.decree/runs/
+# The recorded examples commit their queues and runs so they can be read
+!examples/feature/.decree/inbox/
+!examples/feature/.decree/runs/
+!examples/sort-documents/.decree/runs/
