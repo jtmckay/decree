@@ -1,8 +1,9 @@
 use crate::error::DecreeError;
 use crate::layout;
-use crate::message::{parse_frontmatter, Message};
+use crate::message::Message;
 use chrono::Utc;
-use std::collections::{BTreeMap, HashMap};
+use serde_norway::{Mapping, Value};
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -15,12 +16,16 @@ pub struct CronFile {
     pub cron_expr: String,
     /// Parsed cron schedule.
     pub schedule: cron::Schedule,
+    /// The file as a message, parsed as every other message is (docs/reference/messages.md,
+    /// Parsing and writing).
+    pub message: Message,
+}
+
+impl CronFile {
     /// The machine its messages name: frontmatter `machine`, or its alias `routine`.
-    pub machine: Option<String>,
-    /// Custom frontmatter fields (cron field stripped).
-    pub custom_fields: BTreeMap<String, serde_norway::Value>,
-    /// Markdown body.
-    pub body: String,
+    pub fn machine(&self) -> Option<&str> {
+        self.message.machine()
+    }
 }
 
 /// Scan `.decree/cron/` for valid cron files.
@@ -57,39 +62,19 @@ pub fn scan_cron_files(project_root: &Path) -> Result<Vec<CronFile>, DecreeError
 
 /// Parse a single cron file from its filename and content.
 fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeError> {
-    let (fields, body) = parse_frontmatter(content)?;
-
-    let cron_expr = fields
-        .get("cron")
-        .and_then(|v| match v {
-            serde_norway::Value::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .ok_or_else(|| DecreeError::Other(format!("no cron field in {filename}")))?;
-
+    let message = Message::parse(content)
+        .map_err(|(line, e)| DecreeError::Other(format!("{filename}: line {line}: {e}")))?;
+    let cron_expr = message
+        .text("cron")
+        .ok_or_else(|| DecreeError::Other(format!("no cron field in {filename}")))?
+        .to_string();
     let schedule = parse_schedule(&cron_expr)
         .map_err(|e| DecreeError::Other(format!("invalid cron expression in {filename}: {e}")))?;
-
-    let as_string = |key: &str| match fields.get(key) {
-        Some(serde_norway::Value::String(s)) => Some(s.clone()),
-        _ => None,
-    };
-    let machine = as_string("machine").or_else(|| as_string("routine"));
-
-    // Collect custom fields, stripping "cron" and the machine keys
-    let strip_fields: &[&str] = &["cron", "machine", "routine"];
-    let custom_fields: BTreeMap<String, serde_norway::Value> = fields
-        .into_iter()
-        .filter(|(k, _)| !strip_fields.contains(&k.as_str()))
-        .collect();
-
     Ok(CronFile {
         filename: filename.to_string(),
         cron_expr,
         schedule,
-        machine,
-        custom_fields,
-        body,
+        message,
     })
 }
 
@@ -149,19 +134,28 @@ impl CronTracker {
     }
 }
 
-/// The message a fired cron job queues: `machine`, `trigger: cron`, the cron file's other
-/// keys and its body. `message::queue` writes it to `inbox/` and gives it its `id`.
+/// The message a fired cron job queues: the cron file's keys in the order written, without
+/// `cron`, with `routine` named `machine`, then `trigger: cron`; and its body.
+/// `message::queue` writes it to `inbox/` and gives it its `id`.
 pub fn cron_to_inbox_message(cron_file: &CronFile) -> Message {
-    let mut message = Message::new(cron_file.body.as_str());
-    if let Some(machine) = &cron_file.machine {
-        message.set("machine", machine.as_str());
-    }
-    message.set("trigger", "cron");
-    for (key, value) in &cron_file.custom_fields {
-        if key != "trigger" {
-            message.set(key, value.clone());
+    let source = &cron_file.message;
+    let has_machine = source.text("machine").is_some();
+    let mut frontmatter = Mapping::new();
+    for (key, value) in &source.frontmatter {
+        match key.as_str() {
+            Some("cron" | "trigger") => {}
+            Some("routine") if has_machine => {}
+            Some("routine") => {
+                frontmatter.insert("machine".into(), value.clone());
+            }
+            _ => {
+                frontmatter.insert(key.clone(), value.clone());
+            }
         }
     }
+    frontmatter.insert("trigger".into(), Value::from("cron"));
+    let mut message = Message::new(source.body.as_str());
+    message.frontmatter = frontmatter;
     message
 }
 
@@ -182,37 +176,35 @@ mod tests {
         let content = "---\ncron: \"0 * * * *\"\nroutine: develop\n---\nRun hourly task.\n";
         let cf = parse_cron_file("hourly-task.md", content).unwrap();
         assert_eq!(cf.filename, "hourly-task.md");
-        assert_eq!(cf.machine, Some("develop".to_string()));
-        assert_eq!(cf.body, "Run hourly task.\n");
-        assert!(cf.custom_fields.is_empty());
+        assert_eq!(cf.machine(), Some("develop"));
+        assert_eq!(cf.message.body, "Run hourly task.\n");
     }
 
     #[test]
     fn test_parse_cron_file_no_routine() {
         let content = "---\ncron: \"*/15 * * * *\"\n---\nEvery 15 minutes.\n";
         let cf = parse_cron_file("frequent.md", content).unwrap();
-        assert!(cf.machine.is_none());
+        assert!(cf.machine().is_none());
     }
 
     #[test]
-    fn test_parse_cron_file_custom_fields() {
-        let content = "---\ncron: \"0 9 * * *\"\npriority: high\ntags: daily\n---\nDaily task.\n";
+    fn test_parse_cron_file_crlf() {
+        let content = "---\r\ncron: \"0 * * * *\"\r\nmachine: develop\r\n---\r\nBody.\r\n";
+        let cf = parse_cron_file("crlf.md", content).unwrap();
+        assert_eq!(cf.cron_expr, "0 * * * *");
+        assert_eq!(cf.machine(), Some("develop"));
+        assert_eq!(cf.message.body, "Body.\r\n");
+    }
+
+    #[test]
+    fn test_inbox_message_keeps_key_order_and_drops_cron() {
+        let content = "---\nzeta: 1\ncron: \"0 9 * * *\"\nroutine: develop\ntrigger: manual\nalpha: [a, b]\n---\nDaily task.\n";
         let cf = parse_cron_file("daily.md", content).unwrap();
-        assert_eq!(cf.custom_fields.len(), 2);
+        let msg = cron_to_inbox_message(&cf);
         assert_eq!(
-            cf.custom_fields.get("priority"),
-            Some(&serde_norway::Value::String("high".into()))
+            String::from_utf8(msg.to_bytes()).unwrap(),
+            "---\nzeta: 1\nmachine: develop\nalpha:\n- a\n- b\ntrigger: cron\n---\nDaily task.\n"
         );
-    }
-
-    #[test]
-    fn test_parse_cron_file_strips_cron_field() {
-        let content = "---\ncron: \"0 * * * *\"\nroutine: develop\n---\nBody.\n";
-        let cf = parse_cron_file("test.md", content).unwrap();
-        // "cron" should NOT be in custom_fields
-        assert!(!cf.custom_fields.contains_key("cron"));
-        // "routine" is read as `machine`, also not in custom_fields
-        assert!(!cf.custom_fields.contains_key("routine"));
     }
 
     #[test]
@@ -327,7 +319,7 @@ mod tests {
         let msg = cron_to_inbox_message(&cf);
         assert_eq!(
             String::from_utf8(msg.to_bytes()).unwrap(),
-            "---\nmachine: develop\ntrigger: cron\npriority: high\n---\nHourly maintenance.\n"
+            "---\nmachine: develop\npriority: high\ntrigger: cron\n---\nHourly maintenance.\n"
         );
     }
 

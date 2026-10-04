@@ -5,7 +5,7 @@
 - **Ship** `.decree/runs/*/events.jsonl` (events) and, optionally, `.decree/runs/*/*.log` (script output).
 - **Timestamps.** Use the event's `ts` as the log timestamp, so back-filled and late-shipped events land at the right time.
 - **Labels** must stay low-cardinality: `machine`, `type`, and for script output `script`. `run_id`, `state` and `seq` are fields or structured metadata, never labels, because a label per run makes Loki slow.
-- **Script output files** carry their context in the path: `runs/<run_id>/<NNNN>-<state>-<script>.log`. State and script names cannot contain `-`, so the regex `/runs/(?P<run_id>[^/]+)/(?P<n>\d{4})-(?P<state>[^-]+)-(?P<script>[^/]+)\.log$` is unambiguous.
+- **Script output files** carry their context in the path: `runs/<run_id>/<NNNN>-<state>-<script>.log`. State and script names cannot contain `-`, so the regex `/runs/(?P<run_id>[^/]+)/(?P<n>\d{4,})-(?P<state>[^-]+)-(?P<script>[^/]+)\.log$` is unambiguous.
 - **Stability.** Field names and meanings in [events.jsonl](runs.md#eventsjsonl) are a public contract under `v: 1`. Dashboards may depend on them.
 
 Example LogQL, also in [`mock/README.md`](../../mock/README.md):

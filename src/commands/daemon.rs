@@ -184,4 +184,26 @@ mod tests {
             crate::commands::check::md_files(&dir.path().join(".decree/inbox")).unwrap();
         assert_eq!(inbox_files2.len(), 1); // Still just one
     }
+
+    #[test]
+    fn test_fire_due_cron_jobs_reads_crlf_files() {
+        let dir = TempDir::new().unwrap();
+        setup_decree_dir(&dir);
+        std::fs::write(
+            dir.path().join(".decree/cron/every-minute.md"),
+            "---\r\ncron: \"* * * * *\"\r\nmachine: develop\r\n---\r\nMinutely task.\r\n",
+        )
+        .unwrap();
+        fire_due_cron_jobs(dir.path(), &mut CronTracker::new());
+        let inbox_files =
+            crate::commands::check::md_files(&dir.path().join(".decree/inbox")).unwrap();
+        assert_eq!(inbox_files.len(), 1);
+        let content =
+            std::fs::read_to_string(dir.path().join(".decree/inbox").join(&inbox_files[0]))
+                .unwrap();
+        assert!(
+            content.ends_with("trigger: cron\n---\nMinutely task.\r\n"),
+            "{content}"
+        );
+    }
 }

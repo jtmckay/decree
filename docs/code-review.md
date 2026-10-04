@@ -51,8 +51,8 @@ Non-test lines (`#[cfg(test)]` items and `tests.rs` files excluded), before and 
 | 12 | `src/reply.rs:19`, `src/interpreter.rs:90` | `ReplyError` was a copy of `InterpreterError::Io` with its own `io_err`. | Fixed: replies use `InterpreterError`; `reply` takes the `Context`. |
 | 13 | `src/commands/process.rs:636`, `src/commands/emit.rs:161`, `src/commands/event.rs:41` | Three copies of "any error to `DecreeError::Other`". | Fixed: `DecreeError` converts `MessageError` and `InterpreterError` with `#[from]` (same message, same exit code). |
 | 14 | `src/cond.rs:161`, `:438` | Int comparison and confidence comparison were two copies of the operator table. | Fixed: one generic `Op::compare`. |
-| 15 | `src/message.rs:546`, `src/cron.rs:60` | A second frontmatter parser, `parse_frontmatter`, from 0.4, used only by cron files. It differs from `Message::parse`: no BOM or CRLF, an unclosed fence is body, keys come back sorted. `decree check` (`src/commands/check.rs:186`) and `decree graph` (`src/commands/graph.rs:94`) read cron files with `Message::parse`, so a CRLF cron file passes `check` but never fires, and a fired message's keys are sorted, not as written. | **Kept**: switching changes behaviour (CRLF cron files start firing, key order of fired messages changes). Current lines `src/message.rs:586`, `src/cron.rs:60`. For a decision. |
-| 16 | `src/commands/tail.rs:180`, `src/runtime.rs:550` | Two parsers of the `NNNN-` log number: tail wants exactly 4 digits, the executor 4 or more, so `tail` would skip logs from 10000 on. | **Kept**: unifying changes `tail`'s output in that case. |
+| 15 | `src/message.rs:546`, `src/cron.rs:60` | A second frontmatter parser, `parse_frontmatter`, from 0.4, used only by cron files. It differs from `Message::parse`: no BOM or CRLF, an unclosed fence is body, keys come back sorted. `decree check` (`src/commands/check.rs:186`) and `decree graph` (`src/commands/graph.rs:94`) read cron files with `Message::parse`, so a CRLF cron file passes `check` but never fires, and a fired message's keys are sorted, not as written. | **Fixed** after review, by decision: cron files are parsed with `Message::parse`; a fired message keeps the cron file's keys in the order written, then `trigger: cron`. `parse_frontmatter` is deleted. |
+| 16 | `src/commands/tail.rs:180`, `src/runtime.rs:550` | Two parsers of the `NNNN-` log number: tail wants exactly 4 digits, the executor 4 or more, so `tail` would skip logs from 10000 on. | **Fixed** after review, by decision: `tail` accepts 4 or more digits, as the executor writes them; the reference docs say so too. |
 | 17 | `src/runtime.rs:97`, `src/interpreter.rs:748` | `data_env` (strings for `DECREE_DATA_*`) and `data_values` (typed values for `check`) both resolve `params` over defaults. | Kept: two outputs for two consumers; `data_env` cannot fail while `data_values` can, and the executor is built before the interpreter. |
 | 18 | `src/commands/graph.rs:88`, `src/cron.rs:59` | `decree graph` reads a cron file's machine itself instead of through `cron.rs`. | Kept: tied to finding 15; `cron.rs` skips a cron file without `cron:`, where `graph` must still fail on a missing machine. |
 
@@ -67,7 +67,7 @@ Non-test lines (`#[cfg(test)]` items and `tests.rs` files excluded), before and 
 | 23 | `src/machine.rs:312`, `:445` | `flatten` and `parse_machine` were `pub` for one graph unit test. | Fixed: private; the test loads through `load_machine_text`. |
 | 24 | `src/interpreter/decide.rs:194` (`wait_id`), `src/commands/init.rs:192` (`router_yml`, `router_ask_sh`) | One-line helpers with one non-test caller. | Kept: they name a reference concept (the wait id, the two router templates) and the init tests use them. |
 | 25 | `src/commands/process.rs:256` (`context`), `src/commands/check.rs:61` (`Project`) | Shared project loading and the `Context` constructor live in command modules. | Kept: moving them changes no behaviour and no line count; `process` and `check` are where both start. |
-| 26 | `src/error.rs:25` | `DecreeError::Yaml` exists only for `parse_frontmatter`. | Kept: goes with finding 15. |
+| 26 | `src/error.rs:25` | `DecreeError::Yaml` exists only for `parse_frontmatter`. | Kept: `decree status` still uses it to print a run's frontmatter. |
 
 ### Names and shapes from 0.4 or earlier designs
 
@@ -130,4 +130,4 @@ Non-test lines (`#[cfg(test)]` items and `tests.rs` files excluded), before and 
 
 ## Summary
 
-60 findings: 47 fixed, 13 kept. Two of the kept ones change behaviour if fixed and need a decision: the 0.4 frontmatter parser used for cron files (15) and the 4-digit log number in `tail` (16).
+60 findings: 49 fixed, 11 kept. Findings 15 (cron files used 0.4's frontmatter parser) and 16 (`tail` read only 4-digit log numbers) changed behaviour and were fixed after the review, by decision.

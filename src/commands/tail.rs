@@ -176,10 +176,10 @@ fn logs(run_dir: &Path) -> io::Result<Vec<(u32, String)>> {
     Ok(logs)
 }
 
-/// The `NNNN` of a script log's filename.
+/// The `NNNN` of a script log's filename: 4 digits, more past 9999.
 fn log_number(name: &str) -> Option<u32> {
     let (number, rest) = name.strip_suffix(".log")?.split_once('-')?;
-    if number.len() != 4 || !number.bytes().all(|b| b.is_ascii_digit()) || !rest.contains('-') {
+    if number.len() < 4 || !number.bytes().all(|b| b.is_ascii_digit()) || !rest.contains('-') {
         return None;
     }
     number.parse().ok()
@@ -225,6 +225,7 @@ mod tests {
     fn test_log_number_and_header() {
         assert_eq!(log_number("0004-implement-implement.log"), Some(4));
         assert_eq!(log_number("0012-_root-setup.log"), Some(12));
+        assert_eq!(log_number("10000-work-step.log"), Some(10000));
         for name in [
             "routine.log",
             "04-a-b.log",
