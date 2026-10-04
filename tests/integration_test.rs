@@ -595,6 +595,47 @@ fn test_init_writes_decree_skill_for_claude_and_copilot() {
     }
 }
 
+/// The skill `init` writes is regular files with the content of `src/templates/skills/decree/`,
+/// even though this repository's own `.claude/skills/decree` is a symlink to that directory.
+#[test]
+fn test_init_writes_skill_as_regular_files_matching_the_template() {
+    let template =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/templates/skills/decree");
+    let names = [
+        "SKILL.md",
+        "reference/machines.md",
+        "reference/messages.md",
+        "reference/runs.md",
+        "reference/scripts.md",
+    ];
+    for (ai, skill_dir) in [
+        ("claude", ".claude/skills/decree"),
+        ("copilot", ".github/skills/decree"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        decree_cmd(&dir)
+            .args(["init", "--ai", ai])
+            .assert()
+            .success();
+        let mut path = dir.path().to_path_buf();
+        for part in skill_dir.split('/') {
+            path.push(part);
+            let kind = fs::symlink_metadata(&path).unwrap().file_type();
+            assert!(kind.is_dir(), "{ai}: {} is not a directory", path.display());
+        }
+        for name in names {
+            let written = path.join(name);
+            let kind = fs::symlink_metadata(&written).unwrap().file_type();
+            assert!(kind.is_file(), "{ai}: {name} is not a regular file");
+            assert_eq!(
+                fs::read(&written).unwrap(),
+                fs::read(template.join(name)).unwrap(),
+                "{ai}: {name}"
+            );
+        }
+    }
+}
+
 #[test]
 fn test_init_opencode_writes_no_skill() {
     let dir = TempDir::new().unwrap();

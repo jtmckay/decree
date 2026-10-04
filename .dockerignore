@@ -1,10 +1,5 @@
-target/
-.decree/
-.git/
-.github/
-tests/
-blackbox_test/
-examples/
-*.md
-LICENSE
-.dockerignore
+# The image builds from Cargo.toml, Cargo.lock and src/ (src/templates/ is compiled in).
+*
+!Cargo.toml
+!Cargo.lock
+!src/
