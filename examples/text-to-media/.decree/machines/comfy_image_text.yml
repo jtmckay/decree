@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/comfy_image_text.md
 name: comfy_image_text
 description: Generate an image from a text prompt with the ComfyUI FLUX2 workflow.

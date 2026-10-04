@@ -80,6 +80,7 @@ So a threshold only means something for the router it was set with. When a `mode
 `decree init --ai claude` writes `machines/router.yml` and its script `scripts/router/ask_claude.sh`:
 
 ```yaml
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/router.md
 name: router
 description: Ask Claude to pick one of the options in the request.

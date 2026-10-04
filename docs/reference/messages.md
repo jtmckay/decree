@@ -31,6 +31,8 @@ Given ... When ... Then ...
 | `to` | string | Reply messages only | Author, `decree event`, any tool | The wait id (or run id) of a run paused in a `person` state. Makes the message a reply, not a new run ([Replies](#replies)). |
 | `event` | string | Reply messages only | Author, `decree event`, any tool | The event to deliver. |
 
+`.decree/schema/message.schema.json` states these keys as a JSON Schema, with the two shapes a frontmatter takes: a message that names its `machine`, or a reply with `to` and `event` ([Schema](machines.md#schema)).
+
 `routine` is read as an alias of `machine`: migration files are immutable, and existing projects have unprocessed migrations that still carry it. Any other key is kept exactly as written and ignored by decree.
 
 The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). If that id already exists in `inbox/` or `runs/`, decree adds 1 and retries.

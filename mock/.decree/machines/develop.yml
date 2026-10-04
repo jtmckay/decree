@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
 description: Make a small code change with an AI agent, then run the tests.

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/deploy.md
 name: deploy
 description: Build, ask a person to approve, then ship.

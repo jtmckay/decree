@@ -6,7 +6,7 @@ This directory is a decree 0.5 project frozen partway through its life: nine mac
 
 ```text
 mock/.decree/
-  machines/                       MACHINES: control flow, no code (first line: # Graph: ../graph/<name>.md)
+  machines/                       MACHINES: control flow, no code (first lines: the $schema line, then # Graph: ../graph/<name>.md)
     hello.yml                       the smallest machine: one script
     deploy.yml                      build, wait for a person to approve, ship
     develop.yml                     small change, then tests (the default machine)
@@ -23,6 +23,7 @@ mock/.decree/
   cron/                           message templates that drop into inbox/ on a schedule
   runs/<id>/                      one folder per run: message copy, events.jsonl, numbered logs
   graph/                          written by `decree graph`: one Markdown file per machine, plus system.md
+  schema/                         written by `decree schema`: the JSON Schemas machines and messages are checked against
 observability/config.alloy        shipping events and logs to Loki
 ```
 
@@ -309,7 +310,7 @@ flowchart LR
 
 ## Viewing the graphs
 
-`decree graph` writes one Markdown file per machine into [`.decree/graph/`](.decree/graph/), plus [`system.md`](.decree/graph/system.md), which links to all of them. They are committed, so they render on GitHub as they are. Each starts with a link back to its machine file, and each machine file's first line points to its graph: `# Graph: ../graph/feature.md`.
+`decree graph` writes one Markdown file per machine into [`.decree/graph/`](.decree/graph/), plus [`system.md`](.decree/graph/system.md), which links to all of them. They are committed, so they render on GitHub as they are. Each starts with a link back to its machine file, and each machine file's second line points to its graph: `# Graph: ../graph/feature.md`, below the line that points editors at [`.decree/schema/`](.decree/schema/) ([Schema](../docs/reference/machines.md#schema)).
 
 1. Run `decree graph` after changing a machine; `decree check` warns when the files are out of date.
 2. Open a file in VS Code and press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS). VS Code 1.121 and later render Mermaid in the Markdown preview with no extension. GitHub, GitLab and Obsidian render it as it is.

@@ -55,10 +55,11 @@ EOF
 chmod +x .decree/scripts/greet.sh .decree/scripts/ask_person.sh
 ```
 
-**3. Write a machine.** It names scripts, never paths: `greet` resolves to `scripts/hello/greet*`, else `scripts/greet*`.
+**3. Write a machine.** It names scripts, never paths: `greet` resolves to `scripts/hello/greet*`, else `scripts/greet*`. The first line points your editor at the machine schema `decree init` wrote, so it completes keys and underlines mistakes.
 
 ```bash
 cat > .decree/machines/hello.yml <<'EOF'
+# yaml-language-server: $schema=../schema/machine.schema.json
 name: hello
 description: Greet, ask a person to approve, then finish.
 initial: greet
@@ -151,6 +152,7 @@ A reply to a waiting run is a message with `to:` (the wait id or run id) and `ev
 A machine is an SCXML statechart written in YAML, in `.decree/machines/<name>.yml`. Keys use SCXML's names: `initial`, `states`, `transitions`, `target`, `type`, `onentry`, `onexit`, `invoke`, `data`, `final`.
 
 ```yaml
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/deploy.md
 name: deploy
 description: Build, ask a person to approve, then ship.
@@ -198,6 +200,10 @@ Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, 
 2. In VS Code, press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS) for the preview; VS Code 1.121 and later render Mermaid in Markdown without an extension. GitHub, GitLab and Obsidian render the committed files as they are.
 3. Without any of those, copy the lines inside the `mermaid` fence into https://mermaid.live.
 
+### Schema
+
+`decree schema` writes JSON Schemas for machines and message frontmatter to `.decree/schema/` (`decree init` writes them too). Every machine starts with `# yaml-language-server: $schema=../schema/machine.schema.json`, so VS Code with Red Hat's YAML extension, or any editor running the YAML language server, completes keys, shows what each one means and underlines mistakes as you type. A model reads the same file as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
+
 ### Routers
 
 A `model` state asks a **router**: an ordinary machine that reads `request.json`, asks a model however it likes and writes `reply.json`. decree validates the reply against the state's transitions, so the model never names a state. A state names its router with `router:`; without one it uses the machine named `router`, which `decree init` writes to ask Claude, Copilot or OpenCode (`scripts/router/ask_<ai>.sh`). [docs/routers.md](docs/routers.md) shows routers for other models and local classifiers.
@@ -222,6 +228,7 @@ Model servers and other long-running processes are not scripts and decree does n
 | `decree init [--ai AI] [--permissions]` | Create `.decree/` with machines, scripts, the `router` machine and the decree skill |
 | `decree check` | Validate machines and pending messages |
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
+| `decree schema` | Write JSON Schemas for machines and messages to `.decree/schema/` |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
 | `decree daemon [--interval S]` | The same passes plus cron, every `S` seconds |
 | `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
@@ -250,6 +257,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   cron/                           # message templates queued on a schedule
   runs/<id>/                      # one folder per run: message.md, events.jsonl, logs
   graph/                          # written by decree graph; committed
+  schema/                         # written by decree schema; committed
 ```
 
 There is no configuration file. What 0.4 configured is a convention or a fixed limit:

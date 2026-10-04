@@ -5,7 +5,18 @@ YAML. Keys are SCXML's names (`initial`, `states`, `transitions`, `onentry`, `on
 `data`, `final`); decree implements a strict subset of SCXML, plus a few marked extensions. If
 you know SCXML, you know how a machine behaves.
 
-The first line links the machine to its graph: `# Graph: ../graph/<name>.md`.
+The first two lines point editors at the schema and link the machine to its graph:
+
+```yaml
+# yaml-language-server: $schema=../schema/machine.schema.json
+# Graph: ../graph/<name>.md
+```
+
+**Read `.decree/schema/machine.schema.json` before writing a machine.** It is the precise
+contract for every key below: types, required keys, each `invoke` kind and condition, name
+patterns and ranges, with a description and examples for each key. Write against it, then run
+`decree check`, which also checks what a schema cannot: that names resolve, targets exist and
+every state is reachable. `decree schema` rewrites `.decree/schema/` if it is missing.
 
 ## Keys
 
@@ -125,6 +136,7 @@ a state, `{ machine: x, params: ... }`).
 ## Example: everything at once
 
 ```yaml
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/feature.md
 name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.
@@ -186,6 +198,7 @@ states:
 ## Example: composing machines
 
 ```yaml
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/ship.md
 name: ship
 description: Implement a feature, then deploy it.

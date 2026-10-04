@@ -1,5 +1,5 @@
 use crate::cli::AiBackend;
-use crate::commands::graph;
+use crate::commands::{graph, schema};
 use crate::error::DecreeError;
 use crate::layout;
 use crate::machine::{MACHINES_DIR, ROUTER_MACHINE};
@@ -326,6 +326,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     write_skill(Path::new("."), backend)?;
     // Draw the machines, so `.decree/graph/` is current from the start.
     graph::write(Path::new("."))?;
+    // The schemas the machines' `$schema` line points at.
+    schema::write(Path::new("."))?;
 
     println!("Decree initialized successfully.");
     Ok(())
@@ -334,7 +336,7 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
 /// `processed.md`, the empty queues, the router machine with its script, the
 /// `develop` and `rust_develop` machines with theirs, and the shared scripts.
-/// `graph/` is written by `decree graph`.
+/// `graph/` and `schema/` are written by `decree graph` and `decree schema`.
 fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
     for dir in [
         layout::MIGRATIONS_DIR,

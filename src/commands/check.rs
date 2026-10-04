@@ -1,14 +1,15 @@
 //! `decree check`: validate machines (V1–V21) and pending messages (M1–M3) before anything
 //! runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
-//! without failing, when `.decree/graph/` differs from what `decree graph` would write.
+//! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
+//! `.decree/schema/` from what `decree schema` would write.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_norway::Value;
 
-use crate::commands::graph;
+use crate::commands::{graph, schema};
 use crate::cron;
 use crate::error::DecreeError;
 use crate::layout::{self, DECREE_DIR};
@@ -29,6 +30,12 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
                 colored::Colorize::yellow("warning")
             );
         }
+    }
+    for line in schema::stale(project_root)? {
+        eprintln!(
+            "{}: {line}; run `decree schema`",
+            colored::Colorize::yellow("warning")
+        );
     }
     match problems.len() {
         0 => Ok(()),

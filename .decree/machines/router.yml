@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/router.md
 name: router
 description: Ask Claude to pick one of the options in the request.

@@ -69,3 +69,4 @@
 69-finished-runs-from-the-last-line.md
 70-decree-prune.md
 71-one-shape-per-machine-key.md
+72-json-schema.md

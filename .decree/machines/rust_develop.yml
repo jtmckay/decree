@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/rust_develop.md
 name: rust_develop
 description: Implement a message in a Rust project with Claude in small, logged steps, run the gate (fmt, clippy, tests), and have Claude fix failures only if the gate fails.

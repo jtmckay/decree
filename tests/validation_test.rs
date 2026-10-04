@@ -3,6 +3,10 @@
 //! exact stdout of `decree check` (or `PASSES`: exit 0 and no output). The helper writes the
 //! case into a temp project and adds a stub executable for every script the machines
 //! reference, except where the case places a script itself or says it is missing.
+//!
+//! The same cases hold the JSON Schemas to `decree check` (docs/reference/machines.md, Schema):
+//! every file of a passing case validates, and every file a failing case reports is rejected
+//! by the schema, unless `CHECK_ONLY` lists it with the reason only `decree check` can tell.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_norway::Value;
@@ -10,6 +14,9 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tempfile::TempDir;
+
+#[path = "common/schema.rs"]
+mod schema;
 
 /// `decree check` exits 0 and prints nothing.
 const PASSES: &str = "";
@@ -1499,6 +1506,192 @@ rule_tests! {
     m1_migrations => "M1",
     m2_inbox => "M2",
     m3_cron => "M3",
+}
+
+/// Files of failing cases that the schemas accept: what is wrong is beyond what a JSON Schema
+/// of one file can say, so only `decree check` catches it. (rule, case name, file, reason).
+const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
+    (
+        "V1",
+        "name differs from the file stem",
+        "machines/m.yml",
+        "a schema sees the document, not its file name",
+    ),
+    (
+        "V3",
+        "initial names no child",
+        "machines/m.yml",
+        "a schema cannot require a value to be one of the document's own keys",
+    ),
+    (
+        "V4",
+        "a target that does not exist",
+        "machines/m.yml",
+        "a target may be any state in the machine, at any depth: a cross-reference",
+    ),
+    (
+        "V9",
+        "output names a state that runs no script",
+        "machines/m.yml",
+        "whether the named state has a script invoke is a cross-reference",
+    ),
+    (
+        "V10",
+        "a condition on unknown data",
+        "machines/m.yml",
+        "whether `data` names an entry of the machine's `data`, and its type, is a cross-reference",
+    ),
+    (
+        "V11",
+        "an unreachable state and a stall",
+        "machines/m.yml",
+        "reachability is a property of the whole graph",
+    ),
+    (
+        "V12",
+        "a missing script and one that is not executable",
+        "machines/m.yml",
+        "scripts are files on disk, outside the document",
+    ),
+    (
+        "V13",
+        "emits names an unknown machine",
+        "machines/m.yml",
+        "other machines are other files",
+    ),
+    (
+        "V15",
+        "nothing handles done.state",
+        "machines/m.yml",
+        "the event is named after the state's own key, done.state.<id>, and may be handled by an ancestor",
+    ),
+    (
+        "V20",
+        "two machines that invoke each other",
+        "machines/m.yml",
+        "a cycle runs through other machines, which are other files",
+    ),
+    (
+        "V20",
+        "two machines that invoke each other",
+        "machines/n.yml",
+        "a cycle runs through other machines, which are other files",
+    ),
+    (
+        "V21",
+        "done and done.state overlap",
+        "machines/m.yml",
+        "a schema cannot compare one key of a map with the others",
+    ),
+    (
+        "M1",
+        "an unknown param, an unknown machine, no machine key",
+        "migrations/01-first.md",
+        "valid params depend on the machine's `data`, in another file",
+    ),
+    (
+        "M1",
+        "an unknown param, an unknown machine, no machine key",
+        "migrations/02-second.md",
+        "which machines exist depends on other files",
+    ),
+    (
+        "M2",
+        "no machine, a param of the wrong type, no closing fence, a duplicate key",
+        "inbox/b.md",
+        "a param's type depends on the machine's `data`, in another file",
+    ),
+    (
+        "M2",
+        "no machine, a param of the wrong type, no closing fence, a duplicate key",
+        "inbox/c.md",
+        "with no closing `---` there is no frontmatter to validate",
+    ),
+    (
+        "M2",
+        "no machine, a param of the wrong type, no closing fence, a duplicate key",
+        "inbox/d.md",
+        "a duplicate key is a YAML error, before any schema; YAML parsers and editors report it",
+    ),
+    (
+        "M3",
+        "no cron key, an unknown machine, no machine key",
+        "cron/a.md",
+        "one message schema covers every message; only the directory makes a file a cron file",
+    ),
+    (
+        "M3",
+        "no cron key, an unknown machine, no machine key",
+        "cron/b.md",
+        "which machines exist depends on other files",
+    ),
+];
+
+/// The schema errors of one case file: `Some(errors)` for a machine or a message (empty when
+/// it validates), `None` when the file is neither or does not parse.
+fn schema_errors(
+    path: &str,
+    text: &str,
+    machine: &jsonschema::Validator,
+    message: &jsonschema::Validator,
+) -> Option<Vec<String>> {
+    let file = path.rsplit('/').next().unwrap();
+    if file.starts_with('.') || !file.ends_with(".yml") && !file.ends_with(".md") {
+        return None;
+    }
+    match path.split('/').next() {
+        Some("machines") => schema::machine_errors(machine, text),
+        Some("migrations" | "inbox" | "cron") => schema::message_errors(message, text),
+        _ => None,
+    }
+}
+
+/// The schemas never reject what `decree check` accepts, and reject every file a failing case
+/// reports, except the ones in `CHECK_ONLY`, which they accept.
+#[test]
+fn schemas_agree_with_decree_check_on_every_case() {
+    let (machine, message) = (schema::machine_validator(), schema::message_validator());
+    let mut wrong = Vec::new();
+    let mut listed = 0;
+    for case in CASES {
+        let label = format!("{}: {}", case.rule, case.name);
+        for (path, text) in case.files {
+            let errors = schema_errors(path, text, &machine, &message);
+            let reported = case
+                .expected
+                .lines()
+                .any(|l| l.starts_with(&format!("{path}: ")));
+            let check_only = CHECK_ONLY
+                .iter()
+                .any(|(r, n, f, _)| (*r, *n, *f) == (case.rule, case.name, *path));
+            listed += usize::from(check_only);
+            match (reported, check_only, errors) {
+                // Not reported (or a passing case): the schema accepts it too.
+                (false, false, Some(errors)) if !errors.is_empty() => {
+                    wrong.push(format!("{label}: {path}: valid, but the schema rejects it: {errors:?}"))
+                }
+                (false, true, _) => wrong.push(format!("{label}: {path}: in CHECK_ONLY, but decree check does not report it")),
+                // Reported, and only decree check can tell: the schema accepts it, or cannot read it.
+                (true, true, Some(errors)) if !errors.is_empty() => wrong.push(format!(
+                    "{label}: {path}: the schema now rejects it; remove it from CHECK_ONLY: {errors:?}"
+                )),
+                // Reported: the schema rejects it.
+                (true, false, None) => {
+                    wrong.push(format!("{label}: {path}: not YAML; list it in CHECK_ONLY"))
+                }
+                (true, false, Some(errors)) if errors.is_empty() => wrong.push(format!(
+                    "{label}: {path}: the schema accepts it; reject it, or list it in CHECK_ONLY"
+                )),
+                _ => {}
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert_eq!(
+        listed,
+        CHECK_ONLY.len(),
+        "a CHECK_ONLY entry names no case file"
+    );
 }
 
 /// Four machines, each wrong in its own way: every error is its own line.

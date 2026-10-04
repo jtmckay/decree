@@ -5,7 +5,7 @@ decree is built from three building blocks: **messages** (markdown), **machines*
 | File | Subject |
 | --- | --- |
 | [messages.md](messages.md) | Frontmatter, parsing, the lifecycle of a message, replies, the run lock, migrations, cron files |
-| [machines.md](machines.md) | Examples, `invoke`, keys, the SCXML subset, rules, validation V1–V21 and M1–M3 |
+| [machines.md](machines.md) | Examples, `invoke`, keys, the SCXML subset, rules, the JSON Schema, validation V1–V21 and M1–M3 |
 | [scripts.md](scripts.md) | Resolution, execution, environment, events from an invoke |
 | [runs.md](runs.md) | The step loop, `check`, `model` and routers, sub-machines, `person`, `events.jsonl` |
 | [cli.md](cli.md) | Every command and its exit codes |
@@ -89,6 +89,8 @@ Each building block has its own directory in `.decree/`:
   cron/                             # *.md cron templates (messages.md, Cron files)
   machines/<machine name>.yml         # statecharts (machines.md)
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
+  schema/machine.schema.json          # written by `decree schema`; committed, so editors check machines as you type (machines.md, Schema)
+  schema/message.schema.json          # the same for message frontmatter
   scripts/<name>                    # executables shared by every machine; optional extension: verify.sh (scripts.md)
   scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
 ```

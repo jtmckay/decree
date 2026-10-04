@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
 description: Implement a message with Claude, then have it verify the acceptance criteria.

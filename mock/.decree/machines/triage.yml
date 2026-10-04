@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/triage.md
 # 0.4's global router, rebuilt as an ordinary machine: a model picks an option,
 # and the target state's script forwards the message with `decree emit`.

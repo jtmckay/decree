@@ -7,6 +7,7 @@ pub mod init;
 pub mod process;
 pub mod prune;
 pub mod retry;
+pub mod schema;
 pub mod status;
 pub mod tail;
 

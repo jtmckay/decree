@@ -10,7 +10,7 @@
 | `develop_test.rs` | The `develop` and `rust_develop` machines `init` writes, against 0.4.2's outcomes. |
 | `docs_test.rs` | The docs hold together: links resolve, the machine examples are the `mock/` files. |
 | `emit_test.rs` | `decree emit`: parent, depth, trigger, `emits`, `max_depth` and `--param`. |
-| `examples_test.rs` | Every project in `examples/` checks, has no 0.4 term, and its README commands run. |
+| `examples_test.rs` | Every project in `examples/` checks, ships its graph and schema, has no 0.4 term, and its README commands run. |
 | `failure_test.rs` | Failure scenarios not covered elsewhere: SIGTERM then `decree retry`, two `process` at once, router replies rejected or below `min_confidence`, `max_depth`, `onexit` failures and the 2 MiB log cap. |
 | `graph_test.rs` | `decree graph`: one file per machine, `system.md`, stale files, and the `mock/` graph byte for byte. |
 | `hooks_test.rs` | `onentry`/`onexit` order, attempts, and `failed`'s `onentry` (0.4.2's hooks). |
@@ -22,9 +22,10 @@
 | `mock_templates_test.rs` | Every `mock/` file that `init` also writes is byte-identical to it. |
 | `process_test.rs` | `decree process`: inbox claim and validation, and the six migration rules. |
 | `prune_test.rs` | `decree prune`: only finished runs older than the age, `--dry-run`, the runs it keeps (not finished, failed migration, child of an unfinished parent, locked), bad ages, and a pruned migration not run again. |
+| `schema_test.rs` | The JSON Schemas: valid draft 2020-12, a description on every key, every machine in `mock/`, `examples/`, the templates, this repository and a fresh `init` validates, every `mock/` message validates, and `decree schema` and the `check` warning. |
 | `readme_test.rs` | `README.md` and `--help` describe 0.5 only; every README command runs. |
 | `reply_test.rs` | Replies to waiting runs, `timeout_s`, and `decree event`. |
-| `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, plus a failing case for each machine shape that migration 71 replaced (V19), as a table. |
+| `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, plus a failing case for each machine shape that migration 71 replaced (V19), as a table. The same cases hold the JSON Schemas to `decree check`: `CHECK_ONLY` lists, with the reason, each failing file only `decree check` can catch. |
 
 `fixtures/` holds only what is not in `mock/`: the graph `system` project, the 0.4.2 project for the migrate script, the `step_*` machines and the scripts that unit tests in `src/` run, 0.4.2's routines for `develop_test.rs` (`scripts/v0_4_2/`), and the SCXML IRP notes.
 
@@ -48,3 +49,4 @@ Case {
 - Every script a machine names (`invoke`, `script`, `ask`, `onentry`, `onexit`) gets an executable stub at `scripts/<name>`. List a script in `scripts` to change that: `Script::Missing("setup")`, `Script::At("m/snapshot.sh")` or `Script::NotExecutable("snapshot.sh")`.
 - `expected` is the exact stdout of `decree check`, or `PASSES` for exit 0 and no output. Each line of a failing case must end with `(<rule>)`.
 - A new rule also needs a line in `RULES` and in `rule_tests!`; `every_rule_has_a_passing_and_a_failing_case` fails until it has both.
+- `schemas_agree_with_decree_check_on_every_case` validates the case's machines and messages against the JSON Schemas: a passing case must validate, and every file a failing case reports must be rejected, unless the case's file is in `CHECK_ONLY` with the reason only `decree check` catches it.

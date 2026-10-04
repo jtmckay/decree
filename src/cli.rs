@@ -48,6 +48,10 @@ pub enum Command {
     #[command(after_help = GRAPH_VIEWING)]
     Graph,
 
+    /// Write .decree/schema/: the JSON Schemas for machines and message frontmatter
+    #[command(after_help = SCHEMA_EDITORS)]
+    Schema,
+
     /// Queue a message for a machine in inbox/; the body is read from stdin. Prints its id
     Emit {
         /// Machine the message names
@@ -130,6 +134,14 @@ Viewing:
      VS Code 1.121 and later render Mermaid in Markdown without an extension.
      GitHub, GitLab and Obsidian render the committed files as they are.
   3. Without any of those, copy the lines inside the `mermaid` fence into https://mermaid.live.";
+
+/// How editors use `decree schema` output (docs/reference/machines.md, Schema).
+const SCHEMA_EDITORS: &str = "\
+Editors:
+  Every machine starts with `# yaml-language-server: $schema=../schema/machine.schema.json`.
+  Editors with the YAML language server (VS Code's YAML extension by Red Hat, and others)
+  then complete keys and underline mistakes as you type. `decree check` remains the authority:
+  the schema checks shape, `decree check` also checks names, targets and reachability.";
 
 /// AI backends `init` can configure, in the order it looks for them on `PATH`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

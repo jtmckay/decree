@@ -20,7 +20,7 @@ Machine: [machines/<machine name>.yml](../machines/<machine name>.yml)
 
 and `.decree/graph/system.md`, whose heading is `# All machines`, whose line under it is `Every machine, the \`emits\` and \`invokes\` edges between them, and cron entry points.`, followed by one line per machine in name order, `- [<name>](<name>.md): <description>`, a blank line, and the `<diagram>` block. Every file ends with one newline after the closing fence. Files are deterministic, so committing them shows real changes only. The sections below define `<diagram>`.
 
-**Linking back.** YAML has no link type, so a machine links to its graph with a first-line comment, which decree ignores: `# Graph: ../graph/<machine name>.md`. `decree init` writes it into the machines it creates.
+**Linking back.** YAML has no link type, so a machine links to its graph with a comment, which decree ignores: `# Graph: ../graph/<machine name>.md`, on the line after the `$schema` comment ([Schema](machines.md#schema)). `decree init` writes both into the machines it creates.
 
 ## Single machine: emission order
 

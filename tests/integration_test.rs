@@ -46,6 +46,7 @@ fn test_init_creates_directory_structure() {
             "migrations",
             "processed.md",
             "runs",
+            "schema",
             "scripts"
         ]
     );

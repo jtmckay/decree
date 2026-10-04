@@ -37,6 +37,11 @@ appear only where a machine invokes `model` or `person`.
 - **One concern per migration**, day-sized, with Given / When / Then acceptance criteria whose
   outcomes are observable (exit codes, file contents, output).
 - **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
+- **Read `.decree/schema/machine.schema.json` before writing a machine**, and write against it.
+  It is the JSON Schema of every machine key: types, required keys, each `invoke` kind and
+  condition, name patterns, with a description and examples for each. Every machine starts
+  with `# yaml-language-server: $schema=../schema/machine.schema.json`, so editors check it
+  too. Run `decree schema` if `.decree/schema/` is missing.
 - **Machines decide, scripts work.** A script makes no routing decision beyond printing one
   event; a decision is a state of its own (`check`, `model` or `person`), never logic hidden in a script.
 - **Queue follow-up work with `decree emit`**, never by writing into `.decree/inbox/` by hand
@@ -52,6 +57,7 @@ appear only where a machine invokes `model` or `person`.
 | --- | --- |
 | `decree check` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line. |
 | `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
+| `decree schema` | Write the JSON Schemas for machines and message frontmatter to `.decree/schema/`. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
 | `decree daemon [--interval <s>]` | The same, in a loop, with cron. |
@@ -85,6 +91,7 @@ Limit each API key to 10 uploads per minute on `POST /api/upload`.
 The smallest machine:
 
 ```yaml
+# yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/hello.md
 name: hello
 description: Run one script.
@@ -103,7 +110,7 @@ Read the one you need; don't load them all upfront:
 
 - **`reference/messages.md`**: frontmatter keys, migrations and `processed.md`, the inbox,
   cron files, `decree emit`, replies to a waiting run.
-- **`reference/machines.md`**: every machine key, the invoke types, conditions, choices and
+- **`reference/machines.md`**: the schema line, every machine key, the invoke types, conditions, choices and
   routers, composition, events and transitions, validation rules, full examples.
 - **`reference/scripts.md`**: where scripts live, how they run, how they report an event,
   every `DECREE_*` variable.

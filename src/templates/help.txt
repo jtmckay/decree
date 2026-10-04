@@ -18,6 +18,8 @@ Commands:
                               opencode). claude and copilot also get the skill
   decree check                Validate machines and pending messages
   decree graph                Write .decree/graph/: Mermaid diagrams in Markdown
+  decree schema               Write .decree/schema/: JSON Schemas for machines
+                              and messages, for editors and models
   decree process [--dry-run]  Deliver replies, continue pending runs, drain
                               inbox/, then run pending migrations in order
   decree daemon [--interval S]
@@ -46,6 +48,8 @@ Files (.decree/):
   cron/                       Message templates queued on a schedule
   runs/<id>/                  One folder per run: message.md, events.jsonl, logs
   graph/                      Written by `decree graph`; commit it
+  schema/                     Written by `decree schema`; commit it. Each machine's
+                              first line points editors at it
 
 Messages:
   ---
@@ -62,6 +66,7 @@ Messages:
   filename order, and a failed one blocks the ones after it.
 
 Machines:
+  # yaml-language-server: $schema=../schema/machine.schema.json
   # Graph: ../graph/deploy.md
   name: deploy
   description: Build, ask a person to approve, then ship.

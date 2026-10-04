@@ -16,6 +16,10 @@ const OLD_TERMS: &[&str] = &["routine", "routines", "outbox", "hooks", "ai_route
 /// The one file allowed to use them: it tells how decree was built under 0.4.
 const HISTORY: &str = "decree/README.md";
 
+/// `.decree/schema/` holds decree's own schemas, written by `decree schema` and kept current
+/// by `decree check`; the message schema names `routine`, the alias decree still reads.
+const SCHEMA_DIR: &str = ".decree/schema";
+
 fn examples() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")
 }
@@ -107,7 +111,8 @@ fn no_0_4_term_in_examples_outside_the_decree_history() {
     let mut hits = Vec::new();
     for path in all {
         let rel = path.strip_prefix(examples()).unwrap();
-        if rel == Path::new(HISTORY) {
+        let in_project: PathBuf = rel.components().skip(1).collect();
+        if rel == Path::new(HISTORY) || in_project.starts_with(SCHEMA_DIR) {
             continue;
         }
         let Ok(text) = fs::read_to_string(&path) else {
@@ -123,10 +128,16 @@ fn no_0_4_term_in_examples_outside_the_decree_history() {
 }
 
 #[test]
-fn every_example_ships_its_graph_and_starts_fresh() {
+fn every_example_ships_its_graph_and_schema_and_starts_fresh() {
     for name in projects() {
         let decree = examples().join(&name).join(".decree");
         assert!(decree.join("graph/system.md").is_file(), "{name}: no graph");
+        for schema in ["machine.schema.json", "message.schema.json"] {
+            assert!(
+                decree.join("schema").join(schema).is_file(),
+                "{name}: no {schema}"
+            );
+        }
         for gone in ["processed.md", "runs", "inbox", "routines", "outbox"] {
             assert!(!decree.join(gone).exists(), "{name}: .decree/{gone} exists");
         }
@@ -135,9 +146,13 @@ fn every_example_ships_its_graph_and_starts_fresh() {
         for machine in machines {
             let text = fs::read_to_string(&machine).unwrap();
             let stem = machine.file_stem().unwrap().to_string_lossy();
+            let head: Vec<&str> = text.lines().take(2).collect();
             assert_eq!(
-                text.lines().next(),
-                Some(format!("# Graph: ../graph/{stem}.md").as_str()),
+                head,
+                [
+                    "# yaml-language-server: $schema=../schema/machine.schema.json",
+                    format!("# Graph: ../graph/{stem}.md").as_str()
+                ],
                 "{}",
                 machine.display()
             );
