@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # illustrated_post's write: ask Ollama for a short post from the message body,
-# and write post.md to the run directory, linking the image if render made one.
+# and write post.md to the run directory, linking the images wait_for_empty collected.
 set -euo pipefail
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:e4b}"
@@ -17,8 +17,10 @@ reply=$(curl -fsS --max-time "$OLLAMA_TIMEOUT_S" -H 'content-type: application/j
 
 post="$DECREE_RUN_DIR/post.md"
 jq -r .response <<<"$reply" > "$post"
-if [ -f "$DECREE_RUN_DIR/image.txt" ]; then
-  printf '\n![picture](%s)\n' "$(cat "$DECREE_RUN_DIR/image.txt")" >> "$post"
+if [ -f "$DECREE_RUN_DIR/images.txt" ]; then
+  while read -r image; do
+    printf '\n![picture](%s)\n' "$image" >> "$post"
+  done < "$DECREE_RUN_DIR/images.txt"
 fi
 cat "$post"
 echo "wrote $post"

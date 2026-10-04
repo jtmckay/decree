@@ -37,14 +37,14 @@ stateDiagram-v2
         onentry: use_comfyui
     end note
     note right of write
-        onentry: use_ollama
+        onentry: wait_for_empty, use_ollama
     end note
 ```
 
 1. The root `onentry`, `use_gliner`, uses or starts the `gliner` session, running the one copy of [`decide_server.py`](../route-by-complexity/gliner/decide_server.py), and waits for its `GET /health`.
 2. `needs_picture` asks [`gliner_router`](.decree/machines/gliner_router.yml) (the same file as in `route-by-complexity`) "Does this post need a picture?". `with_picture` goes to `render`; `text_only`, and `unsure` below `min_confidence: 0.7`, go straight to `write`.
-3. `render`'s `onentry`, `use_comfyui`, ends the `ollama` session and uses or starts `comfyui`. `render` queues the FLUX2 text-to-image workflow from [`text-to-media`](../text-to-media/README.md) with the message as its prompt, waits on `/history/<prompt_id>` until it has finished (the next state ends ComfyUI, and must not cut a render short), and writes the image's path to `image.txt` in the run directory.
-4. `write`'s `onentry`, `use_ollama`, ends the `comfyui` session and uses or starts `ollama serve`. `write` asks Ollama's `/api/generate` for the post and writes `post.md` in the run directory, linking the image if there is one.
+3. `render`'s `onentry`, `use_comfyui`, ends the `ollama` session and uses or starts `comfyui`. `render` queues the FLUX2 text-to-image workflow from [`text-to-media`](../text-to-media/README.md) with the message as its prompt and returns at once: ComfyUI renders in the background, and the prompt id goes to `comfy-prompts.txt` in the run directory. Queue as many jobs as you like this way; nothing waits until something is about to end ComfyUI.
+4. `write`'s `onentry` runs two scripts, in order. [`wait_for_empty`](.decree/scripts/wait_for_empty.sh) polls ComfyUI's `GET /queue` until nothing is running or pending, so ending ComfyUI cuts no job short; then, while ComfyUI still holds its history, it writes the images this run's prompts made to `images.txt`, and fails if one of them failed or ComfyUI lost it (a restart forgets the queue and the history). If ComfyUI is not running it returns at once, unless this run queued prompts. Only then does `use_ollama` end the `comfyui` session and use or start `ollama serve`. `write` asks Ollama's `/api/generate` for the post and writes `post.md` in the run directory, linking the images.
 
 An `onentry` failure is the state's `error` event, and these states have no `error` transition, so a service that does not start ends the run in `failed`, with the reason in that script's log.
 
@@ -65,7 +65,8 @@ Every name, command, URL and timeout is a variable with a default at the top of 
 | [`use_gliner`](.decree/scripts/use_gliner.sh) | `GLINER_SESSION` (`gliner`), `GLINER_SERVER` (`../route-by-complexity/gliner/decide_server.py` from this example), `GLINER_PYTHON` (`python3`), `GLINER_HEALTH` (`http://127.0.0.1:8090/health`), `GLINER_START_TIMEOUT_S` (600: the first start downloads the model) |
 | [`use_ollama`](.decree/scripts/use_ollama.sh) | `OLLAMA_SESSION` (`ollama`), `OLLAMA_COMMAND` (`ollama serve`), `OLLAMA_HEALTH` (`http://127.0.0.1:11434/api/version`), `OLLAMA_START_TIMEOUT_S` (60), and ComfyUI's session and health URL |
 | [`use_comfyui`](.decree/scripts/use_comfyui.sh) | `COMFYUI_SESSION` (`comfyui`), `COMFYUI_DIR` (`$HOME/ComfyUI`), `COMFYUI_PYTHON` (`python3`), `COMFYUI_HOST` (`127.0.0.1`), `COMFYUI_PORT` (8188), `COMFYUI_COMMAND` (`main.py` in `COMFYUI_DIR`), `COMFYUI_HEALTH` (`/system_stats`), `COMFYUI_START_TIMEOUT_S` (180), and Ollama's session and health URL |
-| [`illustrated_post/render`](.decree/scripts/illustrated_post/render.sh) | `COMFY_URL`, `COMFY_WORKFLOW` (`../text-to-media/workflows/image_flux2_text_landscape.json` from this example), `COMFY_RENDER_TIMEOUT_S` (1800), `COMFYUI_DIR` |
+| [`wait_for_empty`](.decree/scripts/wait_for_empty.sh) | `COMFY_URL` (`http://127.0.0.1:8188`), `COMFYUI_DIR` (its `output/` holds the images), `COMFY_DRAIN_TIMEOUT_S` (1800) |
+| [`illustrated_post/render`](.decree/scripts/illustrated_post/render.sh) | `COMFY_URL`, `COMFY_WORKFLOW` (`../text-to-media/workflows/image_flux2_text_landscape.json` from this example) |
 | [`illustrated_post/write`](.decree/scripts/illustrated_post/write.sh) | `OLLAMA_URL`, `OLLAMA_MODEL` (`gemma4:e4b`), `OLLAMA_TIMEOUT_S` (300) |
 
 A new tmux session gets the tmux server's environment, which may not be your shell's. If GLiNER or ComfyUI live in a virtual environment, point `GLINER_PYTHON` or `COMFYUI_PYTHON` at its `python` (or set `GLINER_PYTHON="uv run --with 'gliner2[local]' python"`).
@@ -133,7 +134,8 @@ examples/tmux-services/
       use_gliner.sh                    root onentry: the gliner session
       use_comfyui.sh                   onentry: ends ollama, then the comfyui session
       use_ollama.sh                    onentry: ends comfyui, then the ollama session
-      illustrated_post/render.sh       queues the workflow, waits for it, writes image.txt
+      wait_for_empty.sh                onentry: waits until ComfyUI's queue is empty, writes images.txt
+      illustrated_post/render.sh       queues the workflow and returns; ComfyUI renders in the background
       illustrated_post/write.sh        asks Ollama for the post, writes post.md
       gliner_router/ask_gliner.sh      posts the request to the classifier server, writes the reply
     graph/  schema/                    written by `decree graph` and `decree schema`

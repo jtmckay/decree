@@ -4,9 +4,9 @@
 //! The stub `tmux` keeps sessions as files in `stub/sessions/` and logs each call to
 //! `stub/tmux.log`. The stub `curl` answers a service's URLs while its stub session exists
 //! (unless `stub/never/<service>` exists), or always when `stub/outside/<service>` exists: a
-//! service running outside tmux. It answers ComfyUI's `/prompt` and `/history/<id>` (`{}`
-//! the first time, as ComfyUI does until the prompt has finished) and Ollama's
-//! `/api/generate`. The example sits at `examples/tmux-services/` in a temp directory next
+//! service running outside tmux. It answers ComfyUI's `/prompt`, `/queue` (one job running the
+//! first time, then empty) and `/history/<id>` (`stub/history.json` if the test wrote one,
+//! else a finished image), and Ollama's `/api/generate`. The example sits at `examples/tmux-services/` in a temp directory next
 //! to the two files it reuses by path, so its defaults resolve as in the repository.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -49,12 +49,18 @@ case "$url" in
   */prompt)
     cp "${data#@}" "$STUB/comfy-payload.json"
     echo '{"prompt_id": "p1", "number": 0, "node_errors": {}}' ;;
-  */history/p1)
-    if [ -f "$STUB/history-asked" ]; then
-      echo '{"p1": {"outputs": {"9": {"images": [{"filename": "decree_00001_.png", "subfolder": "", "type": "output"}]}}, "status": {"status_str": "success", "completed": true, "messages": []}}}'
+  */queue)
+    if [ -f "$STUB/queue-asked" ]; then
+      echo '{"queue_running": [], "queue_pending": []}'
     else
-      touch "$STUB/history-asked"
-      echo '{}'
+      touch "$STUB/queue-asked"
+      echo '{"queue_running": [[0, "p1", {}, {}, []]], "queue_pending": []}'
+    fi ;;
+  */history/p1)
+    if [ -f "$STUB/history.json" ]; then
+      cat "$STUB/history.json"
+    else
+      echo '{"p1": {"outputs": {"9": {"images": [{"filename": "decree_00001_.png", "subfolder": "", "type": "output"}]}}, "status": {"status_str": "success", "completed": true, "messages": []}}}'
     fi ;;
   */api/generate)
     printf '%s\n' "$data" > "$STUB/generate.json"
@@ -282,7 +288,8 @@ fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
     let ollama = fs::read_to_string(p.stub().join("sessions/ollama")).unwrap();
     assert_eq!(ollama, "ollama serve\n");
 
-    // The workflow carries the message as its prompt, and render waited for /history.
+    // The workflow carries the message as its prompt; render only queued it, and
+    // wait_for_empty drained the queue before use_ollama ended ComfyUI.
     let payload: Value =
         serde_json::from_str(&fs::read_to_string(p.stub().join("comfy-payload.json")).unwrap())
             .unwrap();
@@ -290,9 +297,13 @@ fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
         payload["prompt"]["6"]["inputs"]["text"],
         PICTURE_POST.trim_end()
     );
-    assert!(p.stub().join("history-asked").is_file());
+    assert!(p.stub().join("queue-asked").is_file());
     assert_eq!(
-        fs::read_to_string(run.join("image.txt")).unwrap(),
+        fs::read_to_string(run.join("comfy-prompts.txt")).unwrap(),
+        "p1\n"
+    );
+    assert_eq!(
+        fs::read_to_string(run.join("images.txt")).unwrap(),
         "/opt/ComfyUI/output/decree_00001_.png\n"
     );
     let generate: Value =
@@ -405,5 +416,40 @@ fn a_service_still_answering_after_its_session_ended_runs_outside_tmux() {
         "sudo systemctl stop ollama",
     ] {
         assert!(log.contains(want), "{want:?} not in:\n{log}");
+    }
+}
+
+/// `wait_for_empty` fails `write`'s onentry, before `use_ollama` ends ComfyUI, when this run's
+/// prompt failed or ComfyUI lost it.
+#[test]
+fn a_failed_or_lost_prompt_fails_wait_for_empty_before_comfyui_ends() {
+    if !has_jq() {
+        return;
+    }
+    for (history, expected) in [
+        (
+            r#"{"p1": {"outputs": {}, "status": {"status_str": "error", "completed": false, "messages": []}}}"#,
+            "comfyui: prompt p1 failed",
+        ),
+        (
+            "{}",
+            "comfyui: prompt p1 is neither queued nor in its history: it was lost",
+        ),
+    ] {
+        let p = Project::new(WITH_PICTURE);
+        fs::write(p.stub().join("history.json"), history).unwrap();
+        let run = p.run(PICTURE_POST, &[]);
+        assert_eq!(final_state(&run), "failed");
+        assert_eq!(path(&run).last().unwrap(), "write error failed");
+        assert!(
+            log(&run, "-write-wait_for_empty.log").contains(expected),
+            "{history}"
+        );
+        // use_ollama never ran, so ComfyUI was not ended.
+        assert_eq!(
+            p.switches(),
+            ["new-session gliner", "new-session comfyui"],
+            "{history}"
+        );
     }
 }

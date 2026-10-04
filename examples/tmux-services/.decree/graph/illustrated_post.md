@@ -27,6 +27,6 @@ stateDiagram-v2
         onentry: use_comfyui
     end note
     note right of write
-        onentry: use_ollama
+        onentry: wait_for_empty, use_ollama
     end note
 ```

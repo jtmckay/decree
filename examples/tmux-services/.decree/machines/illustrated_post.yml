@@ -24,14 +24,14 @@ states:
         description: The message asks for text only, with no picture.
       unsure: write                # when in doubt, text only: no GPU switch
 
-  render:                          # queues the FLUX2 workflow, waits until it is finished, writes image.txt
+  render:                          # queues the FLUX2 workflow and returns; ComfyUI renders in the background
     invoke: render
     onentry: [use_comfyui]         # ends Ollama, then uses or starts ComfyUI
     transitions: { done: write }
 
   write:                           # asks Ollama for the post, writes post.md
     invoke: write
-    onentry: [use_ollama]          # ends ComfyUI, then uses or starts Ollama
+    onentry: [wait_for_empty, use_ollama]   # ComfyUI's queue drains, then Ollama replaces it
     transitions: { done: done }
 
   done:   { final: true }
