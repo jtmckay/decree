@@ -39,6 +39,11 @@ Read `docs/reference/cli.md` (Machine-readable output, including its GitHub Acti
 - Print the evidence for each acceptance criterion (test names or command output) at the end of your reply, so it lands in the run log.
 - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass.
 
+## Decided (answers to the questions raised on the first attempt)
+
+- **SARIF paths.** `decree check --format sarif` writes each `artifactLocation.uri` relative to the project it checked (`.decree/machines/x.yml`), while GitHub resolves them from the repository root. The workflow prefixes each example project's directory (for example `examples/feature/`) to every `uri` with `jq` before uploading. The root project needs no prefix. decree itself does not change.
+- **One category per project.** Set each SARIF file's `runs[].automationDetails.id` to a per-project id (for example `decree-check/examples-feature/`) in the same `jq` pass. Then upload the whole folder of SARIF files with one `upload-sarif` step: code scanning takes each file's category from `automationDetails.id`. Do not also set the action's `category` input.
+
 ## Acceptance Criteria
 
 - **Given** `.github/workflows/ci.yml`
