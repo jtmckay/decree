@@ -1,1 +1,0 @@
-machines/m.yml: work: events `done` and `done.state.work` overlap: `done` also matches `done.state.work`, so at most one transition per state may match an event (V21)

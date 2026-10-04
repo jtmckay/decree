@@ -1,9 +1,0 @@
-name: m
-description: A script that prints pass or fail.
-initial: work
-states:
-  work:
-    invoke: work
-    transitions: { pass: done, fail: failed }
-  done: { final: true }
-  failed: { final: true }

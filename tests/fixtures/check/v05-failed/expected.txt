@@ -1,1 +1,0 @@
-machines/m.yml: line 4: no root-level final state `failed`: every machine needs one for unhandled errors (V5)

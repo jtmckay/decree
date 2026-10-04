@@ -1,4 +1,0 @@
----
-machine: m
----
-# Plain message

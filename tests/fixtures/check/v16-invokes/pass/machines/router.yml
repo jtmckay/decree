@@ -1,9 +1,0 @@
-name: router
-description: Answers a model request.
-initial: ask
-states:
-  ask:
-    invoke: work
-    transitions: { done: done }
-  done: { final: true }
-  failed: { final: true }

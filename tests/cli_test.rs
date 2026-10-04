@@ -245,7 +245,7 @@ fn init_emit_process_status_shows_the_run_done() {
     let p = Project::init();
     p.machine(
         "hello",
-        &fs::read_to_string("tests/fixtures/machines/hello.yml").unwrap(),
+        &fs::read_to_string("mock/.decree/machines/hello.yml").unwrap(),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let id = p.emit("hello", "Say hello.\n");
@@ -411,7 +411,7 @@ fn choose_person_prints_the_wait_and_a_reply_finishes_the_run() {
 }
 
 /// AC: SIGINT during a run under `decree process`: exit 130, the run is `interrupted`, and
-/// a later `decree process` leaves it alone.
+/// a later `decree process` leaves it alone until `decree retry` continues it.
 #[test]
 fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     let p = Project::init();
@@ -442,6 +442,14 @@ fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
 
     p.decree(&["process"]).assert().success();
     assert_eq!(p.events(&id), events);
+
+    // `decree retry` continues it, and the next `decree process` finishes it.
+    p.decree(&["retry", &id]).assert().success();
+    p.decree(&["process"]).assert().success();
+    assert_eq!(p.events(&id).last().unwrap()["type"], "run_finished");
+    assert!(p
+        .stdout(&["status", &id], 0)
+        .contains("status: finished in `done`"));
 }
 
 /// AC: a finished run; `decree status <id>` shows the transitions, each script with its
@@ -582,6 +590,13 @@ fn tail_of_a_stopped_run_exits_0() {
     let id = p.emit("deploy", "Ship v1.\n");
     p.decree(&["process"]).assert().success();
     p.decree(&["tail", &id]).assert().success().stdout("");
+
+    p.machine("flaky", FLAKY);
+    p.script("work", FLAKY_WORK);
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+    let done = p.emit("flaky", "Do the work.\n");
+    p.decree(&["process"]).assert().success();
+    p.decree(&["tail", &done]).assert().success().stdout("");
 }
 
 /// `decree tail` moves on into the child run of a `choose: model` state, and back.
@@ -624,7 +639,7 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     p.script("work", FLAKY_WORK);
     p.machine(
         "hello",
-        &fs::read_to_string("tests/fixtures/machines/hello.yml").unwrap(),
+        &fs::read_to_string("mock/.decree/machines/hello.yml").unwrap(),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let failing = p.emit("flaky", "Fails.\n");
@@ -656,5 +671,74 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     assert!(
         status.contains("  finished: 2\n    done: 1\n") && status.contains("    failed: 1\n"),
         "{status}"
+    );
+}
+
+/// Project commands outside a project exit non-zero (from the 0.4 blackbox walkthrough).
+#[test]
+fn commands_without_a_project_fail() {
+    let tmp = TempDir::new().unwrap();
+    for cmd in ["process", "check", "graph", "status"] {
+        cargo_bin_cmd!("decree")
+            .current_dir(tmp.path())
+            .arg(cmd)
+            .assert()
+            .failure();
+    }
+}
+
+/// `--param` and the trigger reach the script as `DECREE_DATA_*` and `DECREE_TRIGGER` (from
+/// the 0.4 blackbox walkthrough).
+#[test]
+fn emit_params_and_the_trigger_reach_the_script() {
+    let p = Project::init();
+    p.machine(
+        "hello",
+        "name: hello\ndescription: Run one script.\ndata:\n  who: { type: string, default: world }\n\
+         initial: greet\nstates:\n  greet:\n    invoke: greet\n    transitions: { done: done }\n  \
+         done: { final: true }\n  failed: { final: true }\n",
+    );
+    p.script(
+        "greet",
+        "#!/usr/bin/env bash\necho \"hello ${DECREE_DATA_WHO} from ${DECREE_MACHINE}/${DECREE_STATE} \
+         trigger=${DECREE_TRIGGER} attempt=${DECREE_ATTEMPT}\"\n",
+    );
+    let out = p
+        .decree(&["emit", "--machine", "hello", "--param", "who=decree"])
+        .write_stdin("# Say hello\n")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let id = String::from_utf8(out).unwrap().trim().to_string();
+    p.decree(&["process"]).assert().success();
+    assert_eq!(
+        fs::read_to_string(p.run_dir(&id).join("0001-greet-greet.log")).unwrap(),
+        "hello decree from hello/greet trigger=emit attempt=1\n"
+    );
+}
+
+/// The event a script prints as its last line picks the transition (from the 0.4 blackbox
+/// walkthrough).
+#[test]
+fn a_printed_event_picks_the_transition() {
+    let p = Project::init();
+    p.machine(
+        "verify",
+        "name: verify\ndescription: A script that prints its event.\ninitial: verify\nstates:\n  \
+         verify:\n    invoke: verify\n    transitions: { pass: passed, fail: failed }\n  \
+         passed: { final: true }\n  failed: { final: true }\n",
+    );
+    fs::create_dir(p.decree_dir().join("scripts/verify")).unwrap();
+    p.script(
+        "verify/verify.sh",
+        "#!/usr/bin/env bash\necho checking\necho '{\"event\":\"pass\"}'\n",
+    );
+    let id = p.emit("verify", "# Verify\n");
+    p.decree(&["process"]).assert().success();
+    assert_eq!(
+        transitions(&p.events(&id)),
+        ["- -> verify (claim)", "verify -> passed (stdout)"]
     );
 }

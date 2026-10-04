@@ -1,1 +1,0 @@
-machines/m.yml: work: transition `done`: `type: internal` is only allowed from a compound state to one of its descendants (V17)

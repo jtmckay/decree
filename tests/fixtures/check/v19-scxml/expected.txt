@@ -1,2 +1,0 @@
-machines/a.yml: work: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)
-machines/b.yml: work.step: router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... } (V19)

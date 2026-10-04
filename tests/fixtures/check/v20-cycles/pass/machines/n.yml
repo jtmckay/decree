@@ -1,9 +1,0 @@
-name: n
-description: Runs a script.
-initial: work
-states:
-  work:
-    invoke: work
-    transitions: { done: done }
-  done: { final: true }
-  failed: { final: true }

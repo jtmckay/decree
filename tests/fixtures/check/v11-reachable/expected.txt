@@ -1,2 +1,0 @@
-machines/m.yml: orphan: state is unreachable from the root `initial` (V11)
-machines/m.yml: wait: state cannot reach a root-level final state (V11)

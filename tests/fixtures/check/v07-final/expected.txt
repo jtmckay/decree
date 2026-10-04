@@ -1,1 +1,0 @@
-machines/m.yml: done: final state may only have `final`, `description`, `onentry` and `emits`, not `transitions` (V7)

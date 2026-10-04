@@ -1,9 +1,0 @@
-name: m
-description: An internal transition from an atomic state.
-initial: work
-states:
-  work:
-    invoke: work
-    transitions: { done: { target: done, type: internal } }
-  done: { final: true }
-  failed: { final: true }

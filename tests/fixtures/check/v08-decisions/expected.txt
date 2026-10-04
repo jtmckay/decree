@@ -1,3 +1,0 @@
-machines/m.yml: again: a `check` state must handle `no`, itself or through an ancestor (V8)
-machines/m.yml: approval: a `choose: person` state needs a `question`: what is being decided (V8)
-machines/m.yml: approval: option `reject` needs a `description`: write it as `reject: { target: failed, description: ... }` (V8)

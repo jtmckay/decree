@@ -1,5 +1,6 @@
-//! `decree graph` (docs/reference/graph.md) against the fixtures in `tests/fixtures/graph/` and the
-//! documents in `mock/.decree/graph/`. Each test copies its `.decree/` into a temp directory.
+//! `decree graph` (docs/reference/graph.md) against the `system` fixture in `tests/fixtures/graph/`
+//! and the machines and documents in `mock/.decree/`. Each test copies its `.decree/` into a temp
+//! directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -42,7 +43,7 @@ fn machines_project(files: &[&str]) -> TempDir {
     fs::create_dir_all(&dir).unwrap();
     for file in files {
         fs::copy(
-            repo().join("tests/fixtures/machines").join(file),
+            repo().join("mock/.decree/machines").join(file),
             dir.join(file),
         )
         .unwrap();
@@ -92,7 +93,7 @@ fn graph_writes_one_file_per_machine_and_system_md() {
     );
     assert_eq!(
         written(&tmp, "feature.md"),
-        read("tests/fixtures/graph/feature.md")
+        read("mock/.decree/graph/feature.md")
     );
     assert!(written(&tmp, "hello.md")
         .contains("Machine: [machines/hello.yml](../machines/hello.yml)\n"));

@@ -1693,7 +1693,7 @@ mod tests {
 
     fn fixture(name: &str) -> String {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/machines")
+            .join("mock/.decree/machines")
             .join(format!("{name}.yml"));
         fs::read_to_string(path).unwrap()
     }
@@ -1963,11 +1963,14 @@ mod tests {
 
     #[test]
     fn router_llm_on_a_state_names_the_alternative() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/check/v19-scxml/fail/machines/b.yml");
-        let text = fs::read_to_string(path).unwrap();
+        let text = "name: b\ndescription: A router state inside a compound state.\ninitial: work\n\
+                    states:\n  work:\n    initial: step\n    transitions: { done.state.work: done }\n    \
+                    states:\n      step:\n        invoke: work\n        router: llm\n        transitions:\n          \
+                    pass: { target: fin, description: The work is finished. }\n          \
+                    retry: { target: step, description: Run the work again. }\n      fin: { final: true }\n  \
+                    done: { final: true }\n  failed: { final: true }\n";
         assert_eq!(
-            parse_machine(&text).unwrap_err(),
+            parse_machine(text).unwrap_err(),
             "work.step: router on a state is not supported: make the decision a state with invoke: { choose: model, question: ... } (V19)"
         );
     }

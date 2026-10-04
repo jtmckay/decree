@@ -1,1 +1,0 @@
-machines/m.yml: work: compound state has a final state, but nothing handles `done.state.work`, itself or through an ancestor (V15)
