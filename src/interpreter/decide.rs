@@ -347,6 +347,10 @@ impl Interpreter<'_> {
         });
         if let Some(child) = child {
             fields["child_run"] = json!(child);
+            // The router run's span parent (docs/reference/observability.md, Traces).
+            if let Some(span) = self.child_span(child)? {
+                fields["span_id"] = json!(span);
+            }
         }
         let event = match reply {
             Reply::Rejected(reason) => {

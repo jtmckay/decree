@@ -97,6 +97,7 @@ EOF
 | `DECREE_WAIT_ID`, `DECREE_QUESTION`, `DECREE_CHOICES` | For a `person` `ask` script: the wait id, the question, and a JSON file of options and descriptions. |
 | `DECREE_RECEIVED` | The last reply this run received (`runs/<id>/received/<file>`), or empty. |
 | `DECREE_DATA_<NAME>` | Each `data` value: the message's `params`, else the default. |
+| `TRACEPARENT`, `TRACESTATE` | W3C Trace Context: the run's trace and this script's span (`00-<trace id>-<span id>-01`), and the message's `tracestate` if it had one. OpenTelemetry SDKs read them, so the script's own spans join the run's trace; `decree emit` copies them into the new message. |
 
 ## An ask script
 

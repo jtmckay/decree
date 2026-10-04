@@ -6,6 +6,7 @@ One message moving through one machine is a run, stored in `.decree/runs/<id>/`:
 runs/<id>/
   message.md                 the claimed message; decree mirrors `state:` into it
   events.jsonl               one JSON line per event: the record and the telemetry
+  traces.jsonl               one OTLP/JSON span per line, for OpenTelemetry tools
   0001-<state>-<script>.log  output of each script execution, numbered in run order
   request.json, reply.json   in a router's child run
   received/                  replies delivered to this run
@@ -15,7 +16,9 @@ runs/<id>/
 ## events.jsonl
 
 The source of truth: the run's state is the `to` of its last `transition` event. Every line
-carries `v`, `seq`, `ts`, `type`, `run_id`, `machine` and `trigger`. Every field of every type,
+carries `v`, `seq`, `ts`, `type`, `run_id`, `machine`, `trigger` and `trace_id`; `script`,
+`decision` and `received` events and the claim carry the `span_id` of their span in
+`traces.jsonl`. Every field of every type,
 with its meaning, is in `.decree/schema/v1/events.schema.json`. Types:
 
 | `type` | Meaning |

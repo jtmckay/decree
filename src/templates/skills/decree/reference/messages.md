@@ -23,6 +23,7 @@ Given ... When ... Then ...
 | `state` | decree only | Mirror of the run's current state, in `runs/<id>/message.md`. Never set it. |
 | `parent`, `depth` | `decree emit`, decree | The run that emitted this message (or invoked this child run), and the chain depth. |
 | `trigger` | decree | `migration`, `cron`, `emit`, `inbox` or `invoke`. |
+| `traceparent`, `tracestate` | decree, `decree emit`, any tool | W3C Trace Context: the run joins this trace, under this span. An invalid `traceparent` is ignored and the run starts a new trace. |
 | `to`, `event` | `decree event`, any tool | Only in a reply to a waiting run (below). |
 
 Any other key is kept as written and ignored.

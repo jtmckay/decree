@@ -22,6 +22,7 @@ use serde_json::{json, Map, Value};
 use crate::events::{timestamp, EventLog, EVENTS_FILE};
 use crate::layout::MESSAGE_FILE;
 use crate::machine::{is_reserved_event, DataSpec, LoadedMachine, ScriptInvoke};
+use crate::trace::{self, TraceParent, TRACEPARENT_ENV, TRACESTATE_ENV};
 use resolve::{resolve_script, ScriptError};
 
 /// `DECREE_STATE`, and the state in log names, for root `onentry` and `onexit` scripts.
@@ -406,12 +407,16 @@ impl Executor {
             File::create(event_path).map_err(io_err(event_path))?;
         }
 
+        // The script's span, named in its `TRACEPARENT` before it starts.
+        let span_id = trace::new_span_id();
         let mut cmd = Command::new(&path);
         cmd.current_dir(&self.info.project_root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .envs(self.env(run, event_path.as_deref()))
+            // An inherited `TRACESTATE` belongs to another trace.
+            .env_remove(TRACESTATE_ENV)
+            .envs(self.env(run, event_path.as_deref(), &span_id))
             // Its own process group, so a stop reaches the whole tree.
             .process_group(0);
         // The background group must not be stopped for touching the TTY.
@@ -503,14 +508,22 @@ impl Executor {
             fields.insert("timed_out".into(), json!(true));
         }
         fields.insert("log".into(), json!(execution.log));
+        fields.insert("span_id".into(), json!(span_id));
         self.append("script", Value::Object(fields))?;
         Running::remove(&self.info.run_dir).map_err(io_err(&running_path))?;
         Ok(execution)
     }
 
     /// The environment for `run` (docs/reference/scripts.md, Environment), added to the inherited one.
-    /// `event_file` is `DECREE_EVENT_FILE`, if the script names its event.
-    fn env(&self, run: &ScriptRun, event_file: Option<&Path>) -> Vec<(String, std::ffi::OsString)> {
+    /// `event_file` is `DECREE_EVENT_FILE`, if the script names its event. `span_id` is the
+    /// script's span, which `TRACEPARENT` names in the run's trace (W3C Trace Context through
+    /// OpenTelemetry's environment variable carrier), with the message's `TRACESTATE`.
+    fn env(
+        &self,
+        run: &ScriptRun,
+        event_file: Option<&Path>,
+        span_id: &str,
+    ) -> Vec<(String, std::ffi::OsString)> {
         let info = &self.info;
         let mut events = run.events.to_vec();
         events.sort();
@@ -556,6 +569,11 @@ impl Executor {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.into())),
         );
+        let traceparent = TraceParent::format(self.events.trace_id(), span_id);
+        vars.push((TRACEPARENT_ENV.to_string(), traceparent.into()));
+        if let Some(tracestate) = self.events.tracestate() {
+            vars.push((TRACESTATE_ENV.to_string(), tracestate.into()));
+        }
         vars
     }
 

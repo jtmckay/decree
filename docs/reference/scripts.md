@@ -57,6 +57,10 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 | `DECREE_CHOICES` | For the `ask` script: absolute path of a JSON file mapping each option to its description. Empty otherwise. |
 | `DECREE_RECEIVED` | Absolute path of the last reply this run received (`runs/<id>/received/<file>`), or empty. |
 | `DECREE_DATA_<NAME>` | One per `data` entry, `<NAME>` uppercased: the message's `params` value, else the default. Ints as decimal, bools as `true` or `false`. |
+| `TRACEPARENT` | W3C Trace Context `00-<trace id>-<span id>-01`: the run's trace and this script execution's own span, the `span_id` of its `script` event. Set for every script, replacing any `TRACEPARENT` decree inherited ([Traces](observability.md#traces)). |
+| `TRACESTATE` | The message's `tracestate`, when it carried one beside a valid `traceparent`; unset otherwise. |
+
+`TRACEPARENT` and `TRACESTATE` follow OpenTelemetry's environment variable carrier (the `traceparent` and `tracestate` keys of W3C Trace Context, uppercased), so an OpenTelemetry SDK in the script, or a tool that reads them, makes its own spans children of the script's span, and `decree emit` puts them in the message it queues ([Traces](observability.md#traces)).
 
 ## Events from an invoke
 

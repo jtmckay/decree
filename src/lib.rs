@@ -12,6 +12,7 @@ pub(crate) mod machine;
 pub(crate) mod message;
 pub(crate) mod reply;
 pub(crate) mod runtime;
+pub(crate) mod trace;
 
 use clap::Parser;
 use cli::{Cli, Command, Format};

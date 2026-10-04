@@ -1,0 +1,19 @@
+# OpenTelemetry Collector (contrib distribution): read decree's traces.jsonl files and export
+# them over OTLP/HTTP. Each line of runs/<id>/traces.jsonl is one OTLP/JSON
+# ExportTraceServiceRequest, the format the otlp_json_file receiver reads
+# (docs/reference/observability.md, Traces).
+receivers:
+  otlp_json_file:
+    include:
+      - /srv/project/.decree/runs/*/traces.jsonl
+    start_at: beginning   # the default, end, would skip spans written before the Collector started
+
+exporters:
+  otlp_http:
+    endpoint: http://jaeger:4318   # any OTLP/HTTP endpoint: Jaeger, Grafana Tempo, a vendor
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp_json_file]
+      exporters: [otlp_http]

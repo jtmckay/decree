@@ -1577,7 +1577,9 @@ fn every_decision_waiting_and_received_field_appears() {
     );
     let c = check_project("{ visits: work, equals: 1 }", "exit_zero");
     c.run();
-    let common = ["v", "seq", "ts", "type", "run_id", "machine", "trigger"];
+    let common = [
+        "v", "seq", "ts", "type", "run_id", "machine", "trigger", "trace_id",
+    ];
     let keys = |kind: &str| -> HashSet<String> {
         p.events_of(kind)
             .into_iter()
@@ -1591,10 +1593,21 @@ fn every_decision_waiting_and_received_field_appears() {
             "waiting",
             &["state", "wait_id", "options", "timeout_at"][..],
         ),
-        ("received", &["wait_id", "event", "file", "timed_out"][..]),
+        (
+            "received",
+            &["wait_id", "event", "file", "timed_out", "span_id"][..],
+        ),
         (
             "decision",
-            &["state", "kind", "event", "condition", "options", "reply"][..],
+            &[
+                "state",
+                "kind",
+                "event",
+                "condition",
+                "options",
+                "reply",
+                "span_id",
+            ][..],
         ),
     ] {
         let want: HashSet<String> = common.iter().chain(fields).map(|s| s.to_string()).collect();
@@ -1656,13 +1669,20 @@ fn machine_invoke_runs_a_child_run_in_its_own_folder() {
     let child = p.child_id();
     assert!(is_run_id(&child), "{child}");
 
-    // The child's message.md: machine, id, parent, depth, trigger, params, the body.
+    // The child's message.md: machine, id, parent, depth, trigger, params, the
+    // traceparent naming the invoke's span in the parent's trace, the body.
     let message = fs::read_to_string(p.child_dir(&child).join(MESSAGE_FILE)).unwrap();
+    let trace_id = p.events()[0]["trace_id"].as_str().unwrap().to_string();
+    let span = p.events_of("received")[0]["span_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert_eq!(
         message,
         format!(
             "---\nmachine: step_child\nid: {child}\nparent: {RUN_ID}\ndepth: 1\n\
-             trigger: invoke\nparams:\n  label: release\nstate: done\n---\n{BODY}"
+             trigger: invoke\nparams:\n  label: release\n\
+             traceparent: 00-{trace_id}-{span}-01\nstate: done\n---\n{BODY}"
         )
     );
     // An ordinary run with its own events and logs.
@@ -2358,7 +2378,9 @@ fn every_transition_script_and_run_finished_field_appears() {
     .unwrap();
     collect(&p);
 
-    let common = ["v", "seq", "ts", "type", "run_id", "machine", "trigger"];
+    let common = [
+        "v", "seq", "ts", "type", "run_id", "machine", "trigger", "trace_id",
+    ];
     let expected: [(&str, &[&str]); 3] = [
         (
             "transition",
@@ -2372,6 +2394,7 @@ fn every_transition_script_and_run_finished_field_appears() {
                 "exit_failures",
                 "file",
                 "error",
+                "span_id",
             ],
         ),
         (
@@ -2387,6 +2410,7 @@ fn every_transition_script_and_run_finished_field_appears() {
                 "exit_code",
                 "timed_out",
                 "log",
+                "span_id",
             ],
         ),
         ("run_finished", &["state", "duration_ms"]),

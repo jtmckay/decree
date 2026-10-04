@@ -1,6 +1,7 @@
 //! `decree emit --machine <id> [--param k=v]...` (docs/reference/cli.md): queue a new message for
 //! `<id>` in `inbox/`, with the body read from stdin. Called by scripts: the emitting run
-//! is named by `DECREE_MESSAGE_ID`, its state by `DECREE_MACHINE` and `DECREE_STATE`.
+//! is named by `DECREE_MESSAGE_ID`, its state by `DECREE_MACHINE` and `DECREE_STATE`, and its
+//! span by `TRACEPARENT`.
 
 use std::io::Read;
 use std::path::Path;
@@ -15,6 +16,9 @@ use crate::layout::{DECREE_DIR, INBOX_DIR, MESSAGE_FILE, RUNS_DIR};
 use crate::machine::{DataType, LoadedMachine};
 use crate::message::{self, Message, MAX_DEPTH};
 use crate::runtime::ROOT_STATE;
+use crate::trace::{
+    Incoming, TraceParent, TRACEPARENT_ENV, TRACEPARENT_KEY, TRACESTATE_ENV, TRACESTATE_KEY,
+};
 
 /// Run `decree emit`: check the emit against the emitting state's `emits`, `max_depth` and
 /// the target machine's `data`, then read stdin and queue the message. Prints the new id.
@@ -47,6 +51,21 @@ pub fn run(
     let params = parse_params(target, params)?;
     if !params.is_empty() {
         message.set("params", Value::Mapping(params));
+    }
+    // A script's `TRACEPARENT` names its span: the new message's run joins the trace under
+    // it (docs/reference/observability.md, Traces). An invalid one is left out.
+    let incoming = Incoming::new(
+        var(TRACEPARENT_ENV).as_deref(),
+        var(TRACESTATE_ENV).as_deref(),
+    );
+    if let Some(parent) = &incoming.parent {
+        message.set(
+            TRACEPARENT_KEY,
+            TraceParent::format(&parent.trace_id, &parent.parent_id),
+        );
+    }
+    if let Some(tracestate) = incoming.tracestate {
+        message.set(TRACESTATE_KEY, tracestate);
     }
     if let Err(errors) = message::validate(&message, &project.machines, &project.machine_ids) {
         let errors: Vec<String> = errors.into_iter().map(|(_, e)| e).collect();

@@ -10,7 +10,7 @@ decree is built from three building blocks: **messages** (markdown), **machines*
 | [runs.md](runs.md) | The step loop, `check`, `model` and routers, sub-machines, `person`, `events.jsonl` |
 | [cli.md](cli.md) | Every command and its exit codes |
 | [graph.md](graph.md) | `decree graph`: the Mermaid documents and how to view them |
-| [observability.md](observability.md) | Shipping `events.jsonl` and script logs to Loki |
+| [observability.md](observability.md) | Shipping `events.jsonl` and script logs to Loki; traces: W3C Trace Context, `TRACEPARENT` and `traces.jsonl` for the OpenTelemetry Collector |
 | [standards.md](standards.md) | The standards and prior art decree draws from, and where it deviates |
 
 Related guides: [routers](../routers.md) (router machines for other models) and [services](../services.md) (long-running services next to decree). What changed between releases is in the [changelog](../../CHANGELOG.md); the files below are versioned as [Versioning](#versioning) says.
@@ -83,6 +83,7 @@ Each building block has its own directory in `.decree/`:
   runs/<message id>/                # one folder per run, created when the message is claimed
     message.md                      # the claimed message; decree mirrors frontmatter `state`
     events.jsonl                    # one JSON line per event: the run's record and its telemetry (runs.md)
+    traces.jsonl                    # one OTLP/JSON span per line, as each span ends (observability.md, Traces)
     0001-<state>-<script>.log       # stdout+stderr of each script execution, numbered in run order
     .lock                           # pid of the process stepping this run (messages.md, Run lock)
     .running                        # the script running now: pid, state, phase, script, started_at, log (scripts.md)

@@ -6,10 +6,14 @@ use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::FileExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{json, Map, Value};
+
+use crate::layout::MESSAGE_FILE;
+use crate::message::Message;
+use crate::trace::{self, Attr, Span};
 
 /// One line of `events.jsonl`.
 pub type Event = Map<String, Value>;
@@ -26,18 +30,24 @@ pub fn timestamp(t: chrono::DateTime<Utc>) -> String {
 }
 
 /// `runs/<id>/events.jsonl`: one JSON object per line, each appended with a single write
-/// to a file opened with `O_APPEND` (docs/reference/runs.md).
+/// to a file opened with `O_APPEND` (docs/reference/runs.md). Every event carries the run's
+/// `trace_id`, and each event that ends a span also appends the span to `traces.jsonl`
+/// (docs/reference/observability.md, Traces), so every writer of the log writes the trace.
 #[derive(Debug)]
 pub struct EventLog {
     file: File,
+    run_dir: PathBuf,
     next_seq: u64,
     run_id: String,
     machine: String,
     trigger: String,
+    trace: RunTrace,
 }
 
 impl EventLog {
-    /// Open or create the log in `run_dir`. `seq` continues after the lines already in it.
+    /// Open or create the log in `run_dir`. `seq` continues after the lines already in it,
+    /// and the trace after their ids. A run with no events yet takes its trace id from its
+    /// `message.md`'s `traceparent` if valid, else a new random one.
     pub fn open(run_dir: &Path, run_id: &str, machine: &str, trigger: &str) -> io::Result<Self> {
         let mut file = OpenOptions::new()
             .read(true)
@@ -46,28 +56,61 @@ impl EventLog {
             .open(run_dir.join(EVENTS_FILE))?;
         let mut existing = Vec::new();
         file.read_to_end(&mut existing)?;
-        let lines = existing
+        let lines: Vec<&[u8]> = existing
             .split(|&b| b == b'\n')
             .filter(|line| !line.trim_ascii().is_empty())
-            .count();
+            .collect();
+        let events: Vec<Event> = lines
+            .iter()
+            .filter_map(|line| parse_event(line).ok())
+            .collect();
         Ok(EventLog {
             file,
-            next_seq: lines as u64 + 1,
+            run_dir: run_dir.to_path_buf(),
+            next_seq: lines.len() as u64 + 1,
             run_id: run_id.to_string(),
             machine: machine.to_string(),
             trigger: trigger.to_string(),
+            trace: RunTrace::new(run_dir, &events),
         })
     }
 
+    /// The run's trace id.
+    pub fn trace_id(&self) -> &str {
+        &self.trace.trace_id
+    }
+
+    /// The `tracestate` the run's message carried beside a valid `traceparent`.
+    pub fn tracestate(&self) -> Option<&str> {
+        self.trace.tracestate.as_deref()
+    }
+
     /// Append one event of type `kind`: the fields every event carries, plus those of
-    /// `fields`, a JSON object. Returns its `seq`.
+    /// `fields`, a JSON object. Returns its `seq`. A `script`, `decision` or `received`
+    /// event without a `span_id` gets a new one; the claim `transition` (`from: null`)
+    /// gets the run span's `span_id` and its `parent_span_id`, and a `retry` transition
+    /// a new run span's `span_id`. A span the event ends is then appended to
+    /// `traces.jsonl`.
     pub fn append(&mut self, kind: &str, fields: Value) -> io::Result<u64> {
-        let Value::Object(fields) = fields else {
+        let Value::Object(mut fields) = fields else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "event fields are not a JSON object",
             ));
         };
+        let starts_run = kind == "transition"
+            && (fields.get("from") == Some(&Value::Null)
+                || fields.get("source") == Some(&json!("retry")));
+        if starts_run || matches!(kind, "script" | "decision" | "received") {
+            fields
+                .entry("span_id")
+                .or_insert_with(|| json!(trace::new_span_id()));
+        }
+        if starts_run && fields.get("from") == Some(&Value::Null) {
+            if let Some(parent) = &self.trace.parent {
+                fields.insert("parent_span_id".into(), json!(parent));
+            }
+        }
         let seq = self.next_seq;
         let mut event = Map::new();
         event.insert("v".into(), json!(EVENTS_VERSION));
@@ -77,13 +120,189 @@ impl EventLog {
         event.insert("run_id".into(), json!(self.run_id));
         event.insert("machine".into(), json!(self.machine));
         event.insert("trigger".into(), json!(self.trigger));
+        event.insert("trace_id".into(), json!(self.trace.trace_id));
         event.extend(fields);
-        let mut line = serde_json::to_vec(&Value::Object(event)).map_err(io::Error::other)?;
+        let mut line = serde_json::to_vec(&event).map_err(io::Error::other)?;
         line.push(b'\n');
         self.file.write_all(&line)?;
         self.next_seq += 1;
+        if let Some(span) = self.trace.span_of(&event) {
+            trace::append_span(&self.run_dir, &span)?;
+        }
+        self.trace.observe(&event);
         Ok(seq)
     }
+}
+
+/// What the spans of one run need from its events so far (docs/reference/observability.md,
+/// Traces).
+#[derive(Debug, Default)]
+struct RunTrace {
+    trace_id: String,
+    /// The run span's parent: the span named by the message's `traceparent`.
+    parent: Option<String>,
+    tracestate: Option<String>,
+    /// The open run span: its id and the `ts` of the claim or `retry` event that started it.
+    run_span: Option<(String, String)>,
+    /// The run span before a `retry`, which the new one links to.
+    previous_run_span: Option<String>,
+    /// The last `waiting` event, which a `received` event or a router's `decision` ends.
+    waiting: Option<Event>,
+}
+
+impl RunTrace {
+    /// The trace of the run in `run_dir`, whose log holds `events`. The record decides the
+    /// trace id once there is one; before that, the message's `traceparent`.
+    fn new(run_dir: &Path, events: &[Event]) -> RunTrace {
+        let incoming = Message::read(&run_dir.join(MESSAGE_FILE))
+            .map(|m| {
+                trace::Incoming::new(
+                    m.text(trace::TRACEPARENT_KEY),
+                    m.text(trace::TRACESTATE_KEY),
+                )
+            })
+            .unwrap_or_default();
+        let recorded = events.iter().find_map(|e| text(e, "trace_id"));
+        let trace_id = match (recorded, &incoming.parent) {
+            (Some(id), _) => id.to_string(),
+            (None, Some(parent)) => parent.trace_id.clone(),
+            (None, None) => trace::new_trace_id(),
+        };
+        let same_trace = incoming
+            .parent
+            .as_ref()
+            .is_some_and(|p| p.trace_id == trace_id);
+        let mut run = RunTrace {
+            parent: incoming
+                .parent
+                .filter(|_| events.is_empty())
+                .map(|p| p.parent_id),
+            tracestate: incoming.tracestate.filter(|_| same_trace),
+            trace_id,
+            ..RunTrace::default()
+        };
+        for event in events {
+            run.observe(event);
+        }
+        run
+    }
+
+    /// Follow the run span and the open wait through `event`.
+    fn observe(&mut self, event: &Event) {
+        let span = || text(event, "span_id").map(String::from);
+        let ts = || text(event, "ts").unwrap_or_default().to_string();
+        if is_transition(event) && event.get("from") == Some(&Value::Null) {
+            self.parent = text(event, "parent_span_id").map(String::from);
+            self.run_span = span().map(|id| (id, ts()));
+        } else if is_transition(event) && text(event, "source") == Some("retry") {
+            self.previous_run_span = self.run_span.take().map(|(id, _)| id);
+            self.run_span = span().map(|id| (id, ts()));
+        } else if is_type(event, "waiting") {
+            self.waiting = Some(event.clone());
+        }
+    }
+
+    /// The span `event`, just written, ends, if any: a script, a decision, a wait (ended by
+    /// `received`) or the run (ended by `run_finished` or `interrupted`). Its times are the
+    /// events' own, so the trace and the log agree.
+    fn span_of(&self, event: &Event) -> Option<Span> {
+        let (run_span, run_start) = self.run_span.as_ref()?;
+        let kind = text(event, "type")?;
+        let ts = parse_ts(text(event, "ts")?)?;
+        let field = |key: &str| text(event, key).unwrap_or_default();
+        let mut attributes = vec![
+            ("decree.run_id", Attr::Str(field("run_id").into())),
+            ("decree.machine", Attr::Str(field("machine").into())),
+            ("decree.state", Attr::Str(field("state").into())),
+        ];
+        let span_id = text(event, "span_id").map(String::from);
+        let waited = || {
+            let waiting = self.waiting.as_ref()?;
+            Some((parse_ts(text(waiting, "ts")?)?, text(waiting, "state")?))
+        };
+        let mut span = Span {
+            trace_id: self.trace_id.clone(),
+            span_id: span_id.clone().unwrap_or_default(),
+            parent_span_id: Some(run_span.clone()),
+            name: String::new(),
+            start: ts,
+            end: ts,
+            attributes: Vec::new(),
+            links: Vec::new(),
+            error: None,
+        };
+        match kind {
+            "script" => {
+                span.start = parse_ts(text(event, "started_at")?)?;
+                let ms = event.get("duration_ms").and_then(Value::as_i64)?;
+                span.end = span.start + chrono::TimeDelta::milliseconds(ms);
+                span.name = format!("script {}/{}", field("state"), field("script"));
+                let attempt = event.get("attempt").and_then(Value::as_i64).unwrap_or(1);
+                attributes.push(("decree.attempt", Attr::Int(attempt)));
+                let exit_code = event.get("exit_code").and_then(Value::as_i64);
+                if let Some(code) = exit_code {
+                    attributes.push(("process.exit.code", Attr::Int(code)));
+                }
+                span.error = if event.get("timed_out") == Some(&json!(true)) {
+                    Some("timed out".to_string())
+                } else {
+                    match exit_code {
+                        Some(0) => None,
+                        Some(code) => Some(format!("exit code {code}")),
+                        None => Some("killed by a signal".to_string()),
+                    }
+                };
+            }
+            "decision" => {
+                let child = text(event, "child_run");
+                let router_wait = self
+                    .waiting
+                    .as_ref()
+                    .filter(|w| child.is_some() && text(w, "child") == child);
+                if router_wait.is_some() {
+                    span.start = waited()?.0;
+                }
+                span.name = format!("decision {} {}", field("kind"), field("state"));
+                attributes.push(("decree.event", Attr::Str(field("event").into())));
+                span.error = text(event, "router_error").map(String::from);
+            }
+            "received" => {
+                let (start, state) = waited()?;
+                span.start = start;
+                span.name = format!("wait {state}");
+                attributes[2] = ("decree.state", Attr::Str(state.into()));
+                attributes.push(("decree.event", Attr::Str(field("event").into())));
+            }
+            "run_finished" | "interrupted" => {
+                span.span_id = run_span.clone();
+                span.parent_span_id = self.parent.clone();
+                span.start = parse_ts(run_start)?;
+                span.name = format!("run {}", field("machine")).trim_end().to_string();
+                span.links = self.previous_run_span.iter().cloned().collect();
+                span.error = match (kind, field("state")) {
+                    ("interrupted", _) => Some(format!("interrupted ({})", field("cause"))),
+                    (_, FAILED_STATE) => Some(format!("the run ended in `{FAILED_STATE}`")),
+                    _ => None,
+                };
+            }
+            _ => return None,
+        }
+        if span.span_id.is_empty() {
+            return None;
+        }
+        span.attributes = attributes;
+        Some(span)
+    }
+}
+
+/// The root final state a failed run ends in (docs/reference/machines.md).
+const FAILED_STATE: &str = crate::machine::FAILED;
+
+/// An event timestamp, RFC 3339.
+fn parse_ts(ts: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(ts)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 /// Every event in `runs/<id>/events.jsonl`, in order. A missing file holds no events.

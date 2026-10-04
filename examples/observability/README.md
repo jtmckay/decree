@@ -1,6 +1,6 @@
-# Observability: decree runs in Loki and Grafana
+# Observability: decree runs in Loki, Grafana and Jaeger
 
-decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record ([Observability](../../docs/reference/observability.md)). This example ships it, and optionally each script's output, to Loki with Grafana Alloy, and lists LogQL queries to explore it in Grafana. It has no `.decree/` of its own: point it at the recorded runs in [`feature`](../feature/README.md) or [`sort-documents`](../sort-documents/README.md), or at your own project.
+decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record, and `traces.jsonl` holds the same run as OpenTelemetry spans ([Observability](../../docs/reference/observability.md)). This example ships the events, and optionally each script's output, to Loki with Grafana Alloy, and lists LogQL queries to explore them in Grafana; and it ships the traces to Jaeger with the OpenTelemetry Collector ([Traces](#traces)). It has no `.decree/` of its own: point it at the recorded runs in [`feature`](../feature/README.md) or [`sort-documents`](../sort-documents/README.md), or at your own project.
 
 ## What gets shipped
 
@@ -50,3 +50,14 @@ topk(10, max_over_time({job="decree", type="script", machine="feature"} | json |
 ```
 
 `state`, `run_id` and `machine` on every event are also what a UI built outside decree needs to link each node of a [graph](../../docs/reference/graph.md) to its logs here.
+
+## Traces
+
+[`otel-collector.yaml`](otel-collector.yaml) is an OpenTelemetry Collector configuration: its `otlp_json_file` receiver reads every `/srv/project/.decree/runs/*/traces.jsonl`, one OTLP/JSON request per line, and its `otlp_http` exporter sends the spans to an OTLP endpoint, here Jaeger ([Traces](../../docs/reference/observability.md#traces)). Run Jaeger and the Collector (contrib distribution, which has the receiver) on the same Docker network:
+
+```bash
+docker run -d --name jaeger --network decree-observability -p 16686:16686 jaegertracing/jaeger
+docker run -d --name otelcol --network decree-observability -v "$PWD/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" -v "$PWD/../feature:/srv/project:ro" otel/opentelemetry-collector-contrib
+```
+
+Open Jaeger at http://localhost:16686, pick the service `decree`, and set the time range to include 2026-10-01. Each recorded run is one trace: `run feature` holds its scripts and decisions, and the router run sits under the `decision model triage` span that started it. A script that calls an instrumented service or model with the `TRACEPARENT` decree gives it adds its own spans under its `script` span.

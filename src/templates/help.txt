@@ -122,7 +122,9 @@ Scripts:
   DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS, DECREE_FINAL_ATTEMPT, DECREE_TRIGGER,
   DECREE_EVENTS, DECREE_EVENT_FILE, DECREE_PARENT, DECREE_RECEIVED,
   DECREE_DATA_<NAME>; in a router run DECREE_REQUEST and DECREE_REPLY; for an
-  ask script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES.
+  ask script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES; and TRACEPARENT
+  (W3C Trace Context: the run's trace and the script's span), with TRACESTATE
+  when the message carried one.
 
 No configuration file; conventions and fixed limits instead:
   machines/router.yml             # answers every model invoke that names no router:

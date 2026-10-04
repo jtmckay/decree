@@ -257,7 +257,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   processed.md                    # ledger of migrations that ran; committed
   inbox/                          # queued messages
   cron/                           # message templates queued on a schedule
-  runs/<id>/                      # one folder per run: message.md, events.jsonl, logs
+  runs/<id>/                      # one folder per run: message.md, events.jsonl, traces.jsonl, logs
   graph/                          # written by decree graph; committed
   schema/v1/                      # written by decree schema; committed
 ```
@@ -285,7 +285,7 @@ Run the weekday morning task.
 
 ## Observability
 
-`events.jsonl` is one JSON line per event, with `machine`, `state` and `run_id` on each, so any log shipper can read it. [`examples/observability/`](examples/observability/README.md) ships it to Loki with Grafana Alloy and has example queries for Grafana.
+`events.jsonl` is one JSON line per event, with `machine`, `state` and `run_id` on each, so any log shipper can read it. Each run is also an OpenTelemetry trace: spans for the run, its scripts, decisions and child runs go to `traces.jsonl` as OTLP/JSON, scripts get `TRACEPARENT` so their own instrumented calls join the trace, and a message's `traceparent` continues an upstream one ([Traces](docs/reference/observability.md#traces)). [`examples/observability/`](examples/observability/README.md) ships the events to Loki with Grafana Alloy, with example queries for Grafana, and the traces to Jaeger with the OpenTelemetry Collector.
 
 ## Docker
 

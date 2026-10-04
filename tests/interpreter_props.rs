@@ -5,7 +5,9 @@
 //! each script execution does (exit code, an event it names, declared or not). For
 //! each case, `decree check` passes, `decree process` runs one message, and the run's
 //! events, hooks and mirror must hold the invariants listed on `check_case`, and every
-//! line of its `events.jsonl` must validate against `events.schema.json`.
+//! line of its `events.jsonl` must validate against `events.schema.json`, carry the run's
+//! one `trace_id`, name a `span_id` no other event names, and agree with `traces.jsonl`
+//! (docs/reference/observability.md, Traces).
 //!
 //! Termination: every transition goes forward in state order except a `check`'s `true`,
 //! which may go back only when it tests `visits` of its own state with `less_than`, so
@@ -22,6 +24,9 @@ mod common;
 use common::write_script;
 #[path = "common/schema.rs"]
 mod schema;
+
+#[path = "common/traces.rs"]
+mod traces;
 
 /// `events.schema.json`, compiled once for every case.
 fn events_validator() -> &'static jsonschema::Validator {
@@ -458,6 +463,8 @@ struct Outcome {
     events: Vec<Value>,
     /// Every way a line of `events.jsonl` breaks `events.schema.json`.
     schema_errors: Vec<String>,
+    /// How `traces.jsonl` disagrees with `events.jsonl`, if it does.
+    traces_error: Option<String>,
     trace: Vec<String>,
     mirror: Option<String>,
 }
@@ -499,6 +506,13 @@ fn run_case(spec: &Spec) -> Outcome {
     let run = decree.join("runs/run-a");
     let log = fs::read_to_string(run.join("events.jsonl")).unwrap_or_default();
     let schema_errors = schema::events_errors(events_validator(), &log);
+    let traces_error = std::panic::catch_unwind(|| traces::agree_with_events(&run))
+        .err()
+        .map(|e| {
+            e.downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_else(|| "traces.jsonl disagrees with events.jsonl".to_string())
+        });
     let events = log
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
@@ -518,6 +532,7 @@ fn run_case(spec: &Spec) -> Outcome {
         process_code: process.status.code(),
         events,
         schema_errors,
+        traces_error,
         trace,
         mirror,
     }
@@ -538,6 +553,8 @@ fn compare(op: &str, left: i64, right: i64) -> bool {
 /// The invariants, checked against an oracle that walks the events:
 /// - `decree check` passes, and the run ends in a root-level final state;
 /// - every line validates against `events.schema.json`;
+/// - every event has the run's one `trace_id`, every `span_id` is unique within the run, and
+///   `traces.jsonl` has the spans the events name, at their times;
 /// - `seq` is 1, 2, 3, … with no gaps;
 /// - every `transition`'s `to` is a state of the machine and its `from` is the previous
 ///   transition's `to`; its event follows from the invoke's result (scripts.md, Events from
@@ -562,6 +579,23 @@ fn check_case(spec: &Spec, out: &Outcome) -> Result<(), TestCaseError> {
         "events.schema.json: {:?}",
         out.schema_errors
     );
+    prop_assert!(out.traces_error.is_none(), "{:?}", out.traces_error);
+    let trace_id = &events[0]["trace_id"];
+    prop_assert!(trace_id.is_string(), "no trace_id: {}", events[0]);
+    let mut span_ids = std::collections::BTreeSet::new();
+    for e in events {
+        prop_assert_eq!(&e["trace_id"], trace_id, "{}", e);
+        if let Some(span) = e["span_id"].as_str() {
+            prop_assert!(span_ids.insert(span), "span_id {} twice", span);
+        }
+        if let Some(parent) = e["parent_span_id"].as_str() {
+            prop_assert!(
+                !span_ids.contains(parent),
+                "parent {} is in the run",
+                parent
+            );
+        }
+    }
 
     let mut visits: BTreeMap<String, i64> = BTreeMap::new();
     let mut execs: BTreeMap<String, usize> = BTreeMap::new();

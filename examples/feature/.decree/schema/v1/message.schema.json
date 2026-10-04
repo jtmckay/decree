@@ -39,6 +39,17 @@
       "additionalProperties": { "type": ["string", "integer", "boolean"] },
       "examples": [{ "max_rounds": 3 }]
     },
+    "traceparent": {
+      "type": "string",
+      "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+      "description": "W3C Trace Context: the span this message's run continues, 00-<trace id>-<parent span id>-<flags>. The run takes its trace id and its run span's parent from it; an invalid one is ignored and the run starts a new trace. Written by decree for child runs and by `decree emit` from TRACEPARENT; any tool may set it, such as a webhook relaying an upstream trace (docs/reference/observability.md, Traces).",
+      "examples": ["00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"]
+    },
+    "tracestate": {
+      "type": "string",
+      "description": "W3C Trace Context: vendor data passed on unchanged beside a valid `traceparent`, to every script as TRACESTATE and to child runs and emitted messages. Ignored without a valid `traceparent`.",
+      "examples": ["congo=t61rcWkgMzE"]
+    },
     "to": {
       "type": "string",
       "description": "Makes this message a reply, not a new run: the wait id (<run id>.w<seq>) of a run paused in a `person` state, or the run id meaning its current wait. `decree event` writes replies.",

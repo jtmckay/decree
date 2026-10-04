@@ -243,6 +243,17 @@ fn emit_with_bad_params_or_machine_exits_1() {
     assert!(p.inbox().is_empty());
 }
 
+/// The events of run `id`.
+fn events(p: &Project, id: &str) -> Vec<serde_json::Value> {
+    fs::read_to_string(p.decree().join("runs").join(id).join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+/// The emitted message carries the emitting script's `TRACEPARENT`, so its run joins the
+/// trace under that script's span (docs/reference/observability.md, Traces).
 #[test]
 fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
     let p = Project::new();
@@ -274,12 +285,20 @@ fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
         .collect();
     assert_eq!(runs.len(), 1, "{runs:?}");
     let child = runs.pop().unwrap();
+    let a = events(&p, "a");
+    let trace = a[0]["trace_id"].as_str().unwrap();
+    let script = a.iter().find(|e| e["type"] == "script").unwrap();
+    let span = script["span_id"].as_str().unwrap();
     let text = fs::read_to_string(p.decree().join("runs").join(&child).join("message.md")).unwrap();
     assert_eq!(
         text,
         format!(
             "---\nid: {child}\nmachine: other\nparent: a\ndepth: 1\ntrigger: emit\n\
-             params:\n  n: 7\nstate: done\n---\nFollow-up from a\n"
+             params:\n  n: 7\ntraceparent: 00-{trace}-{span}-01\nstate: done\n---\n\
+             Follow-up from a\n"
         )
     );
+    let claim = &events(&p, &child)[0];
+    assert_eq!(claim["trace_id"], trace);
+    assert_eq!(claim["parent_span_id"], span);
 }

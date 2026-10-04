@@ -4,8 +4,10 @@
 //! stub that replays, execution by execution, the exit code and output recorded for it (a
 //! router's script also writes the recorded `reply.json`). The run's message is queued,
 //! `decree process` runs, and the events it writes must equal the recorded ones once
-//! timestamps, durations, deadlines and generated ids are normalised. The same holds for
-//! every child run, its `message.md` and its `request.json`, and every recorded `reply.json`
+//! timestamps, durations, deadlines and generated ids (run ids, and the random trace and span
+//! ids) are normalised. The same holds for every child run, its `message.md` (with the
+//! `traceparent` a child run gets), its `request.json` and its `traces.jsonl`, whose spans
+//! must equal the recorded ones but for their times; and every recorded `reply.json`
 //! validates against its request's `reply_schema`.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -292,11 +294,41 @@ impl Replay {
                 .zip(names(&recorded_runs.join(&self.run))),
         );
 
+        // The trace and span ids are random: map each generated one to the recorded one at
+        // the same place, so a mismatch anywhere else shows as a difference.
+        let mut trace_ids = BTreeMap::new();
         for (id, recorded_id) in &ids {
             let (dir, recorded_dir) = (runs.join(id), recorded_runs.join(recorded_id));
             if !recorded_dir.is_dir() {
                 continue;
             }
+            for (got, want) in read_events(&dir).iter().zip(read_events(&recorded_dir)) {
+                for key in ["trace_id", "span_id", "parent_span_id"] {
+                    if let (Some(got), Some(want)) = (got[key].as_str(), want[key].as_str()) {
+                        trace_ids.insert(got.to_string(), want.to_string());
+                    }
+                }
+            }
+        }
+        ids.extend(trace_ids);
+
+        for (id, recorded_id) in &ids {
+            let (dir, recorded_dir) = (runs.join(id), recorded_runs.join(recorded_id));
+            if !recorded_dir.is_dir() {
+                continue;
+            }
+            let spans = |dir: &Path, ids: &BTreeMap<String, String>| -> Vec<String> {
+                fs::read_to_string(dir.join("traces.jsonl"))
+                    .unwrap_or_default()
+                    .lines()
+                    .map(|l| normalise_span(serde_json::from_str(l).unwrap(), ids))
+                    .collect()
+            };
+            assert_eq!(
+                spans(&dir, &ids),
+                spans(&recorded_dir, &BTreeMap::new()),
+                "traces.jsonl of {recorded_id}"
+            );
             let produced: Vec<String> = read_events(&dir)
                 .into_iter()
                 .map(|e| normalise(e, &ids))
@@ -360,6 +392,24 @@ fn normalise(mut event: Value, ids: &BTreeMap<String, String>) -> String {
         }
     }
     let mut line = event.to_string();
+    for (id, recorded_id) in ids {
+        line = line.replace(id.as_str(), recorded_id);
+    }
+    line
+}
+
+/// One `traces.jsonl` line as JSON, with each span's start and end times replaced by their
+/// key, and generated ids replaced by the recorded ones.
+fn normalise_span(mut line: Value, ids: &BTreeMap<String, String>) -> String {
+    for span in line["resourceSpans"][0]["scopeSpans"][0]["spans"]
+        .as_array_mut()
+        .unwrap()
+    {
+        for key in ["startTimeUnixNano", "endTimeUnixNano"] {
+            span[key] = Value::String(format!("<{key}>"));
+        }
+    }
+    let mut line = line.to_string();
     for (id, recorded_id) in ids {
         line = line.replace(id.as_str(), recorded_id);
     }

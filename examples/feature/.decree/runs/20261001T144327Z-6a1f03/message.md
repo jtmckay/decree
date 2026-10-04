@@ -4,6 +4,7 @@ id: 20261001T144327Z-6a1f03
 parent: 01-rate-limit-upload
 depth: 1
 trigger: invoke
+traceparent: 00-94b30376f6a9be8a642b186df56c40ec-a2b5f05fc10a9ee3-01
 state: done
 ---
 # Rate-limit /api/upload

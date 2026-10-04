@@ -15,6 +15,7 @@ use crate::layout::DECREE_DIR;
 use crate::layout::MESSAGE_FILE;
 use crate::machine::{MachineInvoke, FAILED};
 use crate::message::{create_run_dir, Message, MAX_DEPTH};
+use crate::trace::{self, TraceParent, TRACEPARENT_KEY, TRACESTATE_KEY};
 
 /// A child run this run started, and how stepping it ended.
 pub(super) struct Child {
@@ -103,7 +104,11 @@ impl Interpreter<'_> {
         state: &str,
     ) -> Result<Decision, InterpreterError> {
         let event = if state == FAILED { "error" } else { state };
-        self.append("received", json!({ "event": event, "child": child }))?;
+        let mut fields = json!({ "event": event, "child": child });
+        if let Some(span) = self.child_span(child)? {
+            fields["span_id"] = json!(span);
+        }
+        self.append("received", fields)?;
         Ok(Decision::new(event, "machine", None))
     }
     /// Start machine `name` as a child run of state `s` and step it until it finishes, waits
@@ -139,6 +144,16 @@ impl Interpreter<'_> {
         if !params.is_empty() {
             message.set("params", params.clone());
         }
+        // The child's run span is a child of this state's span: the router's `decision`, or
+        // the `machine` invoke's wait (docs/reference/observability.md, Traces). Its claim
+        // event records that span as `parent_span_id`, where `child_span` finds it.
+        let events = self.executor.events();
+        let traceparent = TraceParent::format(events.trace_id(), &trace::new_span_id());
+        let tracestate = events.tracestate().map(String::from);
+        message.set(TRACEPARENT_KEY, traceparent);
+        if let Some(tracestate) = tracestate {
+            message.set(TRACESTATE_KEY, tracestate);
+        }
         message.write(&run_dir.join(MESSAGE_FILE))?;
         if let Some(request) = request {
             write_replace(&run_dir.join(REQUEST_FILE), request.as_bytes())?;
@@ -162,6 +177,14 @@ impl Interpreter<'_> {
             outcome,
             duration_ms: started.elapsed().as_millis() as u64,
         }))
+    }
+    /// The span child run `child` was started under: the `parent_span_id` of its claim
+    /// event, set from the `traceparent` `run_child` wrote. The `decision` (router) or the
+    /// wait (`machine` invoke) that ends takes it as its `span_id`.
+    pub(super) fn child_span(&self, child: &str) -> Result<Option<String>, InterpreterError> {
+        Ok(claim_event(&self.ctx.events(child)?)
+            .and_then(|e| text(e, "parent_span_id"))
+            .map(String::from))
     }
     /// How long finished child run `child` took: its `run_finished` event's `duration_ms`.
     pub(super) fn child_duration(&self, child: &str) -> Result<u64, InterpreterError> {

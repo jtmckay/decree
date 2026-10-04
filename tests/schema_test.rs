@@ -17,6 +17,8 @@ use tempfile::TempDir;
 mod common;
 #[path = "common/schema.rs"]
 mod schema;
+#[path = "common/traces.rs"]
+mod traces;
 
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -584,6 +586,36 @@ fn every_event_in_examples_validates() {
     assert!(found.is_empty(), "{found}");
 }
 
+/// Every recorded run's `traces.jsonl` is OTLP/JSON and agrees with its `events.jsonl`, and
+/// a child run shares its parent's trace id (docs/reference/observability.md, Traces).
+#[test]
+fn every_recorded_trace_agrees_with_its_events() {
+    let paths = recorded("events.jsonl");
+    let mut spans = 0;
+    for path in &paths {
+        let run_dir = path.parent().unwrap();
+        spans += traces::agree_with_events(run_dir).len();
+        let events = traces::json_lines(path);
+        let message = fs::read_to_string(run_dir.join("message.md")).unwrap();
+        if let Some(parent) = message.lines().find_map(|l| l.strip_prefix("parent: ")) {
+            let parent = traces::json_lines(&run_dir.with_file_name(parent).join("events.jsonl"));
+            assert_eq!(
+                events[0]["trace_id"],
+                parent[0]["trace_id"],
+                "{}",
+                path.display()
+            );
+            let traceparent = format!(
+                "traceparent: 00-{}-{}-01",
+                events[0]["trace_id"].as_str().unwrap(),
+                events[0]["parent_span_id"].as_str().unwrap()
+            );
+            assert!(message.contains(&traceparent), "{}", path.display());
+        }
+    }
+    assert!(spans >= 40, "only {spans} spans");
+}
+
 #[test]
 fn every_request_and_reply_in_examples_validates() {
     for (file, schema_text) in [
@@ -601,7 +633,7 @@ fn every_request_and_reply_in_examples_validates() {
 #[test]
 fn wrong_events_requests_and_replies_are_rejected() {
     let events = schema::events_validator();
-    let common = r#""v": 1, "seq": 1, "ts": "2026-10-01T14:30:05.123Z", "run_id": "r", "machine": "m", "trigger": "inbox""#;
+    let common = r#""v": 1, "seq": 1, "ts": "2026-10-01T14:30:05.123Z", "run_id": "r", "machine": "m", "trigger": "inbox", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736""#;
     for wrong in [
         // An unknown field, a v2 line, an unknown type, a field of another type.
         r#""type": "run_finished", "state": "done", "duration_ms": 1, "extra": 1"#,
@@ -614,6 +646,14 @@ fn wrong_events_requests_and_replies_are_rejected() {
         // A person wait without its deadline; a child wait with options.
         r#""type": "waiting", "state": "s", "wait_id": "r.w1", "options": ["a"]"#,
         r#""type": "waiting", "state": "s", "child": "c", "options": ["a"]"#,
+        // No trace id, or one in uppercase or all zeros.
+        r#""type": "run_finished", "state": "done", "duration_ms": 1, "trace_id": null"#,
+        r#""type": "run_finished", "state": "done", "duration_ms": 1, "trace_id": "4BF92F3577B34DA6A3CE929D0E0E4736""#,
+        r#""type": "run_finished", "state": "done", "duration_ms": 1, "trace_id": "00000000000000000000000000000000""#,
+        // A script without its span; a span on a waiting event; a parent on a non-claim.
+        r#""type": "script", "state": "s", "phase": "invoke", "script": "x", "path": "x", "attempt": 1, "started_at": "2026-10-01T14:30:05.123Z", "duration_ms": 1, "exit_code": 0, "log": "0001-s-x.log""#,
+        r#""type": "waiting", "state": "s", "child": "c", "span_id": "00f067aa0ba902b7""#,
+        r#""type": "transition", "from": "a", "event": "done", "to": "b", "source": "exit_code", "exit_code": 0, "parent_span_id": "00f067aa0ba902b7""#,
     ] {
         // The fields of `wrong` replace the common ones of the same name.
         let mut line: serde_json::Map<String, serde_json::Value> =
