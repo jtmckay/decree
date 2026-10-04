@@ -287,6 +287,8 @@ services:
     restart: unless-stopped
 ```
 
+The image has no Rust toolchain, so the `rust_develop` machine, whose scripts run `cargo`, cannot run in it; use `develop`, or build an image with Rust on top of this one.
+
 ## Upgrading from 0.4
 
 0.5.0 is a breaking release. `scripts/migrate-0.4-to-0.5.sh` moves a 0.4 project to the new layout: it moves pending inbox and outbox files into `inbox/`, moves the configuration file and other removed paths into `.decree/legacy-0.4/`, and lists the machines your pending messages ask for that you still have to write, and the messages that name no machine. Routines do not convert mechanically; write each as a machine plus scripts. Migrations are immutable, so messages still accept `routine:` as an alias of `machine:`.

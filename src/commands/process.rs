@@ -14,19 +14,18 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use serde_json::Value;
-
 use crate::commands::check::{md_files, Project};
 use crate::error::DecreeError;
-use crate::interpreter::{
-    self, continue_run, read_events, Context, Interpreter, InterpreterError, Outcome, RunInput,
-    RunStatus,
-};
+use crate::events::{current_state, first_text, is_type, strings, text, EventLog};
+use crate::interpreter::child::continue_run;
+use crate::interpreter::recover::{self, RunStatus};
+use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
+use crate::layout::MESSAGE_FILE;
 use crate::layout::{self, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
 use crate::machine::FAILED;
 use crate::message::{self, Claim, LockState, Message};
 use crate::reply::{self, Delivery};
-use crate::runtime::{self, EventLog, MESSAGE_FILE};
+use crate::runtime::{self};
 
 /// Run `decree process [--dry-run]`.
 pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
@@ -38,7 +37,7 @@ pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
     runtime::register_signals(&shutdown)?;
     let mut pipeline = Pipeline::new(project_root, &project, shutdown)?;
     let result = pipeline.recover().and_then(|()| pipeline.drain());
-    pipeline.print_waiting()?;
+    print_waiting(&pipeline.ctx)?;
     result.map_err(Stop::into_error)
 }
 
@@ -113,7 +112,7 @@ impl<'a> Pipeline<'a> {
     /// At start: mark runs a crash left behind `interrupted` (never continued), then
     /// continue `pending` runs in `id` order (docs/reference/messages.md, Run status).
     pub(crate) fn recover(&mut self) -> Result<(), Stop> {
-        let recovery = interpreter::recover(&self.ctx).map_err(other)?;
+        let recovery = recover::recover(&self.ctx)?;
         for (id, state) in &recovery.crashed {
             eprintln!(
                 "run {id} was interrupted in `{state}` (crash); \
@@ -152,14 +151,8 @@ impl<'a> Pipeline<'a> {
     /// process made. A run another process holds is `active`, not `pending`.
     pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
         let mut pending = Vec::new();
-        for id in run_ids(&self.ctx.runs_dir())? {
-            let run_dir = self.ctx.runs_dir().join(&id);
-            let events = read_events(&run_dir)?;
-            let Some(machine) = run_machine(&self.ctx, &events) else {
-                continue;
-            };
-            let alive = matches!(message::lock_state(&run_dir)?, LockState::Live(_));
-            if self.ctx.status(machine, &events, alive) == RunStatus::Pending {
+        for id in message::run_ids(&self.ctx.runs_dir())? {
+            if self.ctx.status_of(&id)?.0 == RunStatus::Pending {
                 pending.push(id);
             }
         }
@@ -174,14 +167,12 @@ impl<'a> Pipeline<'a> {
         let outcome = match continue_run(&self.ctx, id) {
             Ok(outcome) => outcome,
             Err(InterpreterError::Active(_)) => return Ok(()),
-            Err(e) => return Err(other(e).into()),
+            Err(e) => return Err(e.into()),
         };
         match outcome {
             Outcome::Finished(state) if state == FAILED => {
-                let run_dir = self.ctx.runs_dir().join(id);
-                let migration = read_events(&run_dir)?
-                    .first()
-                    .is_some_and(|e| e.get("trigger").and_then(Value::as_str) == Some("migration"));
+                let events = self.ctx.events(id)?;
+                let migration = first_text(&events, "trigger") == Some("migration");
                 Err(if migration {
                     blocked(&format!("{id}.md"), id, &format!("ended in `{FAILED}`"))
                 } else {
@@ -197,9 +188,7 @@ impl<'a> Pipeline<'a> {
 
     /// Deliver every `timeout_s` deadline that has passed, and continue those runs.
     pub(crate) fn deliver_timeouts(&self) -> Result<(), Stop> {
-        let timed_out =
-            reply::deliver_timeouts(&self.ctx.runs_dir(), self.ctx.machines, chrono::Utc::now())
-                .map_err(other)?;
+        let timed_out = reply::deliver_timeouts(&self.ctx, chrono::Utc::now())?;
         self.continue_runs(&timed_out)
     }
 
@@ -222,10 +211,7 @@ impl<'a> Pipeline<'a> {
         if let Ok(m) = Message::read(&inbox.join(&file)) {
             if m.frontmatter.contains_key("to") {
                 let (to, event) = (m.text("to"), m.text("event"));
-                let runs = self.ctx.runs_dir();
-                match reply::deliver(&runs, self.ctx.machines, &inbox, &file, to, event)
-                    .map_err(other)?
-                {
+                match reply::deliver(&self.ctx, &inbox, &file, to, event)? {
                     Delivery::Delivered(run_id) => {
                         self.continue_one(&run_id)?;
                         return Ok(true);
@@ -238,7 +224,7 @@ impl<'a> Pipeline<'a> {
                 }
             }
         }
-        let Some(claim) = message::claim(&decree_dir, &file).map_err(other)? else {
+        let Some(claim) = message::claim(&decree_dir, &file)? else {
             self.lost.insert(file);
             return Ok(true);
         };
@@ -264,11 +250,6 @@ impl<'a> Pipeline<'a> {
             None => Ok(false),
         }
     }
-
-    /// Print every waiting run (docs/reference/messages.md, Replies).
-    pub(crate) fn print_waiting(&self) -> Result<(), DecreeError> {
-        print_waiting(&self.ctx)
-    }
 }
 
 /// The context runs of `project` are stepped, or their status derived, in.
@@ -282,52 +263,6 @@ pub(crate) fn context<'a>(
         machines: &project.machines,
         shutdown,
     }
-}
-
-/// Run `id`'s status (docs/reference/messages.md, Run status) and its events. A run whose machine is not
-/// loaded can never be stepped: it is `finished` in `failed` (an invalid message), else
-/// `active` while its lock is live, else `interrupted`.
-pub(crate) fn run_status(
-    ctx: &Context,
-    id: &str,
-) -> Result<(RunStatus, Vec<serde_json::Map<String, Value>>), DecreeError> {
-    let run_dir = ctx.runs_dir().join(id);
-    let events = read_events(&run_dir)?;
-    let alive = matches!(message::lock_state(&run_dir)?, LockState::Live(_));
-    let status = match run_machine(ctx, &events) {
-        Some(m) => ctx.status(m, &events, alive),
-        None if interpreter::current_state(&events) == Some(FAILED) => RunStatus::Finished,
-        None if alive => RunStatus::Active,
-        None => RunStatus::Interrupted,
-    };
-    Ok((status, events))
-}
-
-/// The run folders in `runs_dir`, in `id` order.
-pub(crate) fn run_ids(runs_dir: &Path) -> std::io::Result<Vec<String>> {
-    let mut ids: Vec<String> = match std::fs::read_dir(runs_dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e),
-    };
-    ids.sort();
-    Ok(ids)
-}
-
-/// The machine a run's first event names, if it is loaded.
-fn run_machine<'m>(
-    ctx: &Context<'m>,
-    events: &[serde_json::Map<String, Value>],
-) -> Option<&'m crate::machine::LoadedMachine> {
-    events
-        .first()
-        .and_then(|e| e.get("machine"))
-        .and_then(Value::as_str)
-        .and_then(|name| ctx.machines.get(name))
 }
 
 /// docs/reference/messages.md, Migrations, rule 6: parse every pending migration (frontmatter, machine,
@@ -380,13 +315,9 @@ fn run_claim(
     if !message.frontmatter.contains_key("trigger") {
         message.set("trigger", trigger.as_str());
     }
-    message.write(&run_dir.join(MESSAGE_FILE)).map_err(other)?;
+    message.write(&run_dir.join(MESSAGE_FILE))?;
 
-    let name = message
-        .text("machine")
-        .or_else(|| message.text("routine"))
-        .unwrap_or_default()
-        .to_string();
+    let name = message.machine().unwrap_or_default().to_string();
     if let Some(problem) = id_problem {
         return reject(&run_dir, &id, &name, &trigger, &file, &problem, true);
     }
@@ -419,35 +350,18 @@ fn start(
                 .map(|(line, msg)| format!("line {line}: {msg}"))
                 .collect::<Vec<_>>()
                 .join("; ");
-            let name = message
-                .text("machine")
-                .or_else(|| message.text("routine"))
-                .unwrap_or_default();
+            let name = message.machine().unwrap_or_default();
             return reject(&run_dir, id, name, trigger, file, &reason, true);
         }
     };
-    let machine = &project.machines[&name];
-    let params = match message.frontmatter.get("params") {
-        Some(serde_norway::Value::Mapping(params)) => params.clone(),
-        _ => serde_norway::Mapping::new(),
-    };
-    let depth = message
-        .frontmatter
-        .get("depth")
-        .and_then(serde_norway::Value::as_u64)
-        .map_or(0, |d| u32::try_from(d).unwrap_or(u32::MAX));
-    let executor = ctx
-        .executor(machine, id, trigger, &params, message.text("parent"))
-        .map_err(other)?;
-    let input = RunInput {
-        params,
-        message_body: message.body.clone(),
-        file: Some(file.to_string()),
-        depth,
-    };
-    Interpreter::new(ctx, machine, executor, input)
-        .and_then(|mut run| run.start())
-        .map_err(other)
+    // `Pipeline::new` refuses a project with a machine that does not load.
+    let machine = project
+        .machines
+        .get(&name)
+        .ok_or_else(|| DecreeError::Other(format!("machine `{name}` does not load")))?;
+    let input = RunInput::new(message, Some(file.to_string()));
+    let executor = ctx.executor(machine, id, trigger, &input.params, message.text("parent"))?;
+    Ok(Interpreter::new(ctx, machine, executor, input)?.start()?)
 }
 
 /// Fail a run at its claim with `invalid_message` and `reason`: one `transition` event to
@@ -462,7 +376,7 @@ fn reject(
     mirror: bool,
 ) -> Result<Outcome, DecreeError> {
     let mut events = EventLog::open(run_dir, id, machine, trigger)?;
-    interpreter::reject(&mut events, run_dir, file, reason, mirror).map_err(other)?;
+    recover::reject(&mut events, run_dir, file, reason, mirror)?;
     eprintln!("{file}: invalid message: {reason}");
     Ok(Outcome::Finished(FAILED.to_string()))
 }
@@ -475,20 +389,20 @@ fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, 
     let run_dir = ctx.runs_dir().join(id);
     let outcome = if run_dir.exists() {
         // Rule 4: the migration has a run already.
-        let events = read_events(&run_dir)?;
-        let lock = message::lock_state(&run_dir)?;
-        let alive = matches!(lock, LockState::Live(_));
-        let status = run_machine(ctx, &events)
+        let events = ctx.events(id)?;
+        let alive = matches!(message::lock_state(&run_dir)?, LockState::Live(_));
+        let status = ctx
+            .run_machine(&events)
             .map_or(RunStatus::Interrupted, |m| ctx.status(m, &events, alive));
         match status {
             RunStatus::Pending => match continue_run(ctx, id) {
                 Ok(outcome) => outcome,
                 Err(InterpreterError::Active(_)) => return Ok(false),
-                Err(e) => return Err(other(e).into()),
+                Err(e) => return Err(e.into()),
             },
             RunStatus::Waiting | RunStatus::Active => return Ok(false),
             RunStatus::Finished | RunStatus::Interrupted => {
-                let state = interpreter::current_state(&events).unwrap_or("no state");
+                let state = current_state(&events).unwrap_or("no state");
                 return Err(blocked(
                     file,
                     id,
@@ -526,12 +440,10 @@ fn start_migration(
         .join(DECREE_DIR)
         .join(layout::MIGRATIONS_DIR)
         .join(file);
-    let mut message = Message::read(&source).map_err(other)?;
+    let mut message = Message::read(&source)?;
     message.set("id", id);
     message.set("trigger", "migration");
-    message
-        .write(&runs.join(id).join(MESSAGE_FILE))
-        .map_err(other)?;
+    message.write(&runs.join(id).join(MESSAGE_FILE))?;
     start(ctx, project, id, "migration", file, &message)
 }
 
@@ -546,39 +458,21 @@ fn blocked(file: &str, id: &str, what: &str) -> Stop {
 /// Print every waiting run: its question (the state's `description`), its wait id and
 /// options, and a `decree event` command for each option (docs/reference/messages.md, Replies).
 fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
-    let mut ids: Vec<String> = match std::fs::read_dir(ctx.runs_dir()) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
-    };
-    ids.sort();
-    for id in ids {
-        let events = read_events(&ctx.runs_dir().join(&id))?;
-        let Some(last) = events.last() else { continue };
-        let text = |key: &str| last.get(key).and_then(Value::as_str);
-        if text("type") != Some("waiting") {
+    for id in message::run_ids(&ctx.runs_dir())? {
+        let events = ctx.events(&id)?;
+        let Some(last) = events.last().filter(|e| is_type(e, "waiting")) else {
             continue;
-        }
-        let (Some(state), Some(wait_id)) = (text("state"), text("wait_id")) else {
+        };
+        let (Some(state), Some(wait_id)) = (text(last, "state"), text(last, "wait_id")) else {
             continue;
         };
         let question = ctx
             .machines
-            .get(text("machine").unwrap_or_default())
+            .get(text(last, "machine").unwrap_or_default())
             .and_then(|m| m.find(state).map(|s| &m.nodes[s]))
             .and_then(|node| node.description.as_deref())
             .unwrap_or(state);
-        let options: Vec<&str> = last
-            .get("options")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .collect();
+        let options = strings(last, "options");
         println!("Waiting: run {id} in `{state}`: {question}");
         println!("  wait id {wait_id}, options: {}", options.join(", "));
         for option in options {
@@ -631,8 +525,4 @@ fn run_dry(project: &Project) -> Result<(), DecreeError> {
             "{n} error(s); nothing would run"
         ))),
     }
-}
-
-fn other(e: impl std::fmt::Display) -> DecreeError {
-    DecreeError::Other(e.to_string())
 }

@@ -119,7 +119,7 @@ Viewing:
      GitHub, GitLab and Obsidian render the committed files as they are.
   3. Without any of those, copy the lines inside the `mermaid` fence into https://mermaid.live.";
 
-/// AI backends `init` can configure, in 0.4.2's detection order.
+/// AI backends `init` can configure, in the order it looks for them on `PATH`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AiBackend {
     Opencode,

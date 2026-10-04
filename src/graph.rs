@@ -52,7 +52,7 @@ struct Line {
 }
 
 /// The `stateDiagram-v2` for one machine, every line ending in `\n`.
-pub fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
+fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
     let mut edges: BTreeMap<usize, Vec<Line>> = BTreeMap::new();
     for (i, node) in m.nodes.iter().enumerate().skip(1) {
         for edge in &node.transitions {
@@ -73,7 +73,7 @@ pub fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
                 label.push_str(" (internal)");
             }
             edges
-                .entry(domain(m, i, target, edge.internal))
+                .entry(m.transition_domain(i, target, edge.internal))
                 .or_default()
                 .push(Line {
                     source: node.id.clone(),
@@ -200,18 +200,6 @@ fn container(
     }
 }
 
-/// SCXML transition domain (docs/reference/machines.md, Rules): the source itself for a `type: internal`
-/// transition to one of its descendants, else the deepest proper ancestor of both ends.
-fn domain(m: &LoadedMachine, source: usize, target: usize, internal: bool) -> usize {
-    if internal && target != source && m.chain(target).any(|a| a == source) {
-        return source;
-    }
-    m.chain(source)
-        .skip(1)
-        .find(|&a| a != target && m.chain(target).any(|t| t == a))
-        .unwrap_or(0)
-}
-
 /// Whether to draw ` (implicit)` `error` to `failed`: a non-final atomic state that
 /// invokes a script, a machine, `choose: model` or `choose: person`, or has an `onentry`,
 /// where nothing in its chain handles `error`. A `check` cannot fail.
@@ -244,7 +232,7 @@ fn push(out: &mut String, level: usize, line: &str) {
 }
 
 /// The system `flowchart LR`, every line ending in `\n`.
-pub fn flowchart(machines: &BTreeMap<String, LoadedMachine>, crons: &[(String, String)]) -> String {
+fn flowchart(machines: &BTreeMap<String, LoadedMachine>, crons: &[(String, String)]) -> String {
     let mut out = String::from("flowchart LR\n");
     for id in machines.keys() {
         push(&mut out, 1, &format!("{id}[\"{id}\"]"));
@@ -303,11 +291,11 @@ fn cron_node(stem: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machine::{flatten, parse_machine};
+    use crate::machine::load_machine_text;
     use std::path::Path;
 
     fn load(id: &str, yaml: &str) -> LoadedMachine {
-        flatten(id, parse_machine(yaml).unwrap())
+        load_machine_text(id, yaml).unwrap()
     }
 
     fn fixture(rel: &str) -> String {

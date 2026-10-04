@@ -3,31 +3,18 @@
 //! and `timeout_s` deadlines. Both deliveries append a `received` event under the run lock,
 //! which makes the run `pending`; the caller then continues it.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
-use crate::interpreter::{read_events, run_status, RunStatus};
-use crate::machine::LoadedMachine;
-use crate::message::{self, lock_state, LockState, RunLock, LOCK_FILE};
-use crate::runtime::{EventLog, EVENTS_FILE, RECEIVED_DIR};
-
-#[derive(Debug, thiserror::Error)]
-pub enum ReplyError {
-    #[error("{}: {source}", path.display())]
-    Io { path: PathBuf, source: io::Error },
-}
-
-fn io_err(path: &Path) -> impl FnOnce(io::Error) -> ReplyError + '_ {
-    move |source| ReplyError::Io {
-        path: path.to_path_buf(),
-        source,
-    }
-}
+use crate::events::{first_text, is_type, strings, text, Event, EventLog, EVENTS_FILE};
+use crate::interpreter::recover::{run_status, RunStatus};
+use crate::interpreter::{io_err, Context, InterpreterError};
+use crate::layout::RECEIVED_DIR;
+use crate::message::{self, lock_state, run_ids, LockState, RunLock, LOCK_FILE};
 
 /// The wait a reply answers: a run whose status is `waiting` for a reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,13 +33,12 @@ pub struct Wait {
 /// (docs/reference/messages.md, Replies, step 4): unknown run, run not waiting, stale wait id, unknown
 /// option. `locked` means the caller holds the run's lock, so its own lock is not a live one.
 pub fn check(
-    runs_dir: &Path,
-    machines: &BTreeMap<String, LoadedMachine>,
+    ctx: &Context,
     to: &str,
     event: &str,
     locked: bool,
-) -> Result<Result<Wait, String>, ReplyError> {
-    Ok(find_wait(runs_dir, machines, to, locked)?.and_then(|wait| {
+) -> Result<Result<Wait, String>, InterpreterError> {
+    Ok(find_wait(ctx, to, locked)?.and_then(|wait| {
         if wait.options.iter().any(|o| o == event) {
             Ok(wait)
         } else {
@@ -67,26 +53,18 @@ pub fn check(
 
 /// The wait `to` names, if its run is `waiting` for a reply and `to` is not stale.
 fn find_wait(
-    runs_dir: &Path,
-    machines: &BTreeMap<String, LoadedMachine>,
+    ctx: &Context,
     to: &str,
     locked: bool,
-) -> Result<Result<Wait, String>, ReplyError> {
-    let Some((run_id, wanted)) = resolve(runs_dir, to) else {
+) -> Result<Result<Wait, String>, InterpreterError> {
+    let runs_dir = ctx.runs_dir();
+    let Some((run_id, wanted)) = resolve(&runs_dir, to) else {
         return Ok(Err(format!("`to` {to} names no run")));
     };
     let run_dir = runs_dir.join(run_id);
-    let events = read_events(&run_dir).map_err(io_err(&run_dir.join(EVENTS_FILE)))?;
-    let first = |key: &str| {
-        events
-            .first()
-            .and_then(|e| e.get(key))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    };
-    let machine = first("machine");
-    let Some(m) = machines.get(&machine) else {
+    let events = ctx.events(run_id)?;
+    let machine = first_text(&events, "machine").unwrap_or_default();
+    let Some(m) = ctx.machines.get(machine) else {
         return Ok(Err(format!(
             "run {run_id} is not waiting: its machine `{machine}` does not load"
         )));
@@ -103,9 +81,12 @@ fn find_wait(
             status.as_str()
         )));
     }
-    let last = events.last().expect("a waiting run has events");
-    let Some(wait_id) = last.get("wait_id").and_then(Value::as_str) else {
-        let child = last.get("child").and_then(Value::as_str).unwrap_or("?");
+    // `waiting` is the status of a run whose last event is `waiting`.
+    let Some(last) = events.last() else {
+        return Ok(Err(format!("run {run_id} has no events")));
+    };
+    let Some(wait_id) = text(last, "wait_id") else {
+        let child = text(last, "child").unwrap_or("?");
         return Ok(Err(format!(
             "run {run_id} waits for child run {child}, not for a reply"
         )));
@@ -115,21 +96,18 @@ fn find_wait(
             "stale wait id {to}: run {run_id} now waits as {wait_id}"
         )));
     }
-    let options: Vec<String> = last
-        .get("options")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(String::from)
-        .collect();
     Ok(Ok(Wait {
         run_id: run_id.to_string(),
         run_dir,
         wait_id: wait_id.to_string(),
-        options,
-        machine,
-        trigger: first("trigger"),
+        options: strings(last, "options")
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        machine: machine.to_string(),
+        trigger: first_text(&events, "trigger")
+            .unwrap_or_default()
+            .to_string(),
     }))
 }
 
@@ -162,19 +140,19 @@ pub enum Delivery {
 /// `runs/<run id>/received/<file>`, and append a `received` event. The move never replaces
 /// an earlier reply of the same filename, whose `decision` event names it.
 pub fn deliver(
-    runs_dir: &Path,
-    machines: &BTreeMap<String, LoadedMachine>,
+    ctx: &Context,
     inbox_dir: &Path,
     file: &str,
     to: Option<&str>,
     event: Option<&str>,
-) -> Result<Delivery, ReplyError> {
+) -> Result<Delivery, InterpreterError> {
     let (Some(to), Some(event)) = (to, event) else {
         return Ok(Delivery::Rejected(
             "a reply needs string `to` and `event` keys".to_string(),
         ));
     };
-    let Some((run_id, _)) = resolve(runs_dir, to) else {
+    let runs_dir = ctx.runs_dir();
+    let Some((run_id, _)) = resolve(&runs_dir, to) else {
         return Ok(Delivery::Rejected(format!("`to` {to} names no run")));
     };
     let run_dir = runs_dir.join(run_id);
@@ -183,7 +161,7 @@ pub fn deliver(
             "run {run_id} is not waiting: it is active"
         )));
     };
-    let wait = match check(runs_dir, machines, to, event, true)? {
+    let wait = match check(ctx, to, event, true)? {
         Ok(wait) => wait,
         Err(reason) => return Ok(Delivery::Rejected(reason)),
     };
@@ -216,25 +194,14 @@ pub fn deliver(
 /// event for `error` with `timed_out: true`. Returns those runs, in `id` order, now
 /// `pending`. A run another process holds is skipped.
 pub fn deliver_timeouts(
-    runs_dir: &Path,
-    machines: &BTreeMap<String, LoadedMachine>,
+    ctx: &Context,
     now: DateTime<Utc>,
-) -> Result<Vec<String>, ReplyError> {
-    let mut ids: Vec<String> = match fs::read_dir(runs_dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect(),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(io_err(runs_dir)(e)),
-    };
-    ids.sort();
+) -> Result<Vec<String>, InterpreterError> {
+    let runs_dir = ctx.runs_dir();
     let mut timed_out = Vec::new();
-    for id in ids {
+    for id in run_ids(&runs_dir).map_err(io_err(&runs_dir))? {
         let run_dir = runs_dir.join(&id);
-        let events = read_events(&run_dir).map_err(io_err(&run_dir.join(EVENTS_FILE)))?;
-        if !past_deadline(events.last(), now) {
+        if !past_deadline(ctx.events(&id)?.last(), now) {
             continue;
         }
         let Some(_lock) = RunLock::acquire(&run_dir).map_err(io_err(&run_dir.join(LOCK_FILE)))?
@@ -242,15 +209,12 @@ pub fn deliver_timeouts(
             continue;
         };
         // Checked again under the lock: a reply may have arrived meanwhile.
-        let events = read_events(&run_dir).map_err(io_err(&run_dir.join(EVENTS_FILE)))?;
+        let events = ctx.events(&id)?;
         let Some(last) = events.last().filter(|&e| past_deadline(Some(e), now)) else {
             continue;
         };
-        let wait_id = last
-            .get("wait_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let Ok(wait) = find_wait(runs_dir, machines, wait_id, true)? else {
+        let wait_id = text(last, "wait_id").unwrap_or_default();
+        let Ok(wait) = find_wait(ctx, wait_id, true)? else {
             continue;
         };
         append_received(
@@ -263,24 +227,19 @@ pub fn deliver_timeouts(
 }
 
 /// Whether `last` is a `waiting` event for a reply whose `timeout_at` is at or before `now`.
-fn past_deadline(last: Option<&Map<String, Value>>, now: DateTime<Utc>) -> bool {
+fn past_deadline(last: Option<&Event>, now: DateTime<Utc>) -> bool {
     let Some(last) = last else { return false };
-    last.get("type").and_then(Value::as_str) == Some("waiting")
-        && last.get("wait_id").and_then(Value::as_str).is_some()
-        && last
-            .get("timeout_at")
-            .and_then(Value::as_str)
+    is_type(last, "waiting")
+        && text(last, "wait_id").is_some()
+        && text(last, "timeout_at")
             .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
             .is_some_and(|deadline| deadline <= now)
 }
 
-fn append_received(wait: &Wait, fields: Value) -> Result<(), ReplyError> {
+fn append_received(wait: &Wait, fields: Value) -> Result<(), InterpreterError> {
     let path = wait.run_dir.join(EVENTS_FILE);
     let mut log = EventLog::open(&wait.run_dir, &wait.run_id, &wait.machine, &wait.trigger)
         .map_err(io_err(&path))?;
-    let Value::Object(fields) = fields else {
-        unreachable!("event fields are a JSON object");
-    };
     log.append("received", fields).map_err(io_err(&path))?;
     Ok(())
 }

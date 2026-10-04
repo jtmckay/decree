@@ -7,3 +7,9 @@ pub const RUNS_DIR: &str = "runs";
 pub const MIGRATIONS_DIR: &str = "migrations";
 pub const PROCESSED_FILE: &str = "processed.md";
 pub const GITIGNORE_FILE: &str = ".gitignore";
+
+/// The claimed message, in the run directory (docs/reference/README.md).
+pub const MESSAGE_FILE: &str = "message.md";
+
+/// Folder in the run directory that delivered replies are moved into (docs/reference/messages.md).
+pub const RECEIVED_DIR: &str = "received";

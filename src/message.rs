@@ -1,8 +1,8 @@
 use crate::error::DecreeError;
 use crate::layout;
+use crate::layout::MESSAGE_FILE;
 use crate::layout::{INBOX_DIR, RUNS_DIR};
 use crate::machine::LoadedMachine;
-use crate::runtime::MESSAGE_FILE;
 use chrono::Utc;
 use serde_norway::{Mapping, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -143,6 +143,27 @@ impl Message {
         self.frontmatter.get(key).and_then(Value::as_str)
     }
 
+    /// The machine the message names: `machine`, else its alias `routine`, as a string.
+    pub fn machine(&self) -> Option<&str> {
+        self.text("machine").or_else(|| self.text("routine"))
+    }
+
+    /// Frontmatter `params`, or an empty mapping if it is missing or not a mapping.
+    pub fn params(&self) -> Mapping {
+        match self.frontmatter.get("params") {
+            Some(Value::Mapping(params)) => params.clone(),
+            _ => Mapping::new(),
+        }
+    }
+
+    /// Frontmatter `depth`: 0 if it is missing or not a non-negative integer.
+    pub fn depth(&self) -> u32 {
+        self.frontmatter
+            .get("depth")
+            .and_then(Value::as_u64)
+            .map_or(0, |d| u32::try_from(d).unwrap_or(u32::MAX))
+    }
+
     /// Set frontmatter `key`, keeping its position if it exists, else appending it.
     pub fn set(&mut self, key: &str, value: impl Into<Value>) {
         self.frontmatter.insert(key.into(), value.into());
@@ -152,6 +173,25 @@ impl Message {
     pub fn line_of(&self, key: &str) -> usize {
         self.key_lines.get(key).copied().unwrap_or(1)
     }
+}
+
+/// The deepest a message may sit in a chain of emits and child runs (docs/reference/README.md,
+/// No configuration file).
+pub const MAX_DEPTH: u32 = 10;
+
+/// The run folders in `runs_dir`, in `id` order. A missing `runs_dir` holds none.
+pub fn run_ids(runs_dir: &Path) -> io::Result<Vec<String>> {
+    let mut ids: Vec<String> = match std::fs::read_dir(runs_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    ids.sort();
+    Ok(ids)
 }
 
 /// Create `runs/<id>/` for a new run, with a new id (`new_id`).

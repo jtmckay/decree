@@ -1,6 +1,6 @@
 # decree 0.5 mock project
 
-This directory is a decree 0.5 project frozen partway through its life: nine machines, their scripts, three finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs yet; it shows exactly what the files will look like once 0.5 ships. The contract is the [reference](../docs/reference/README.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `.decree/graph/*.md` byte for byte.
+This directory is a decree 0.5 project frozen partway through its life: nine machines, their scripts, three finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply). Nothing here runs on its own: it is a snapshot that shows exactly what the files of a 0.5 project look like. The contract is the [reference](../docs/reference/README.md). Tests hold the mock to it: `decree check` must pass with `mock/` as the project root, and `decree graph` must reproduce `.decree/graph/*.md` byte for byte.
 
 ## The three building blocks
 

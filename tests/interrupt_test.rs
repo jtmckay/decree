@@ -143,8 +143,9 @@ impl Project {
         fs::write(path, text).unwrap();
     }
 
-    /// The `transition` event `decree retry <id>` appends for an interrupted run (section
-    /// 8): back into the state it was in. The command itself is tested in `cli_test.rs`.
+    /// The `transition` event `decree retry <id>` appends for an interrupted run
+    /// (docs/reference/cli.md): back into the state it was in. The command itself is tested
+    /// in `cli_test.rs`.
     fn retry(&self, id: &str, machine: &str, trigger: &str, state: &str) {
         let fields = json!({
             "type": "transition", "from": state, "event": "retry", "to": state,

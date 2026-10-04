@@ -51,7 +51,7 @@ fn check_passes_on_mock_without_a_warning() {
 
 /// The docs/reference/machines.md examples, alone, with a stub `scripts/<name>` for each script.
 #[test]
-fn check_passes_on_the_section_5_examples() {
+fn check_passes_on_the_reference_examples() {
     let tmp = TempDir::new().unwrap();
     let decree = tmp.path().join(".decree");
     fs::create_dir_all(decree.join("machines")).unwrap();
@@ -156,9 +156,9 @@ fn check_warns_when_the_graph_directory_is_missing() {
     );
 }
 
-/// The docs/reference/machines.md messages for the shapes this model rejects (migration 47).
+/// The docs/reference/machines.md messages for the shapes this model rejects.
 #[test]
-fn check_rejects_the_old_shapes_with_the_section_5_messages() {
+fn check_rejects_the_old_shapes_with_the_reference_messages() {
     let cases = [
         (
             "feature.yml",
@@ -215,7 +215,7 @@ fn check_rejects_the_old_shapes_with_the_section_5_messages() {
     );
 }
 
-/// The escalation conditions in `sort_document` broken one at a time (migration 48, V10).
+/// The escalation conditions in `sort_document` broken one at a time (V10).
 #[test]
 fn check_rejects_bad_escalation_conditions_with_v10() {
     let cases = [

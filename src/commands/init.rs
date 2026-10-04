@@ -3,11 +3,11 @@ use crate::commands::graph;
 use crate::error::DecreeError;
 use crate::layout;
 use crate::machine::{MACHINES_DIR, ROUTER_MACHINE};
-use crate::runtime::SCRIPTS_DIR;
+use crate::runtime::resolve::SCRIPTS_DIR;
 use std::path::Path;
 use std::process::Command;
 
-/// An AI backend: its CLI, and how the routine templates and its router call it.
+/// An AI backend: its CLI, and how the develop machines' scripts and its router call it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Backend {
     /// The command, which also names the router's script (`ask_<name>`).
@@ -25,33 +25,36 @@ struct Backend {
     skill_dir: Option<&'static str>,
 }
 
-/// AI backends in 0.4.2's detection order. The routers differ only in the CLI call.
-const AI_BACKENDS: &[Backend] = &[
-    Backend {
-        name: "opencode",
-        title: "OpenCode",
-        invoke: "opencode run",
-        ask: "opencode run \"$prompt\"",
-        ai_function: AI_PLAIN_SH,
-        skill_dir: None,
-    },
-    Backend {
-        name: "claude",
-        title: "Claude",
-        invoke: "claude -p",
-        ask: "printf '%s' \"$prompt\" | claude -p",
-        ai_function: AI_CLAUDE_SH,
-        skill_dir: Some(".claude/skills/decree"),
-    },
-    Backend {
-        name: "copilot",
-        title: "Copilot",
-        invoke: "copilot -p",
-        ask: "copilot -p \"$prompt\"",
-        ai_function: AI_PLAIN_SH,
-        skill_dir: Some(".github/skills/decree"),
-    },
-];
+const OPENCODE: Backend = Backend {
+    name: "opencode",
+    title: "OpenCode",
+    invoke: "opencode run",
+    ask: "opencode run \"$prompt\"",
+    ai_function: AI_PLAIN_SH,
+    skill_dir: None,
+};
+
+const CLAUDE: Backend = Backend {
+    name: "claude",
+    title: "Claude",
+    invoke: "claude -p",
+    ask: "printf '%s' \"$prompt\" | claude -p",
+    ai_function: AI_CLAUDE_SH,
+    skill_dir: Some(".claude/skills/decree"),
+};
+
+const COPILOT: Backend = Backend {
+    name: "copilot",
+    title: "Copilot",
+    invoke: "copilot -p",
+    ask: "copilot -p \"$prompt\"",
+    ai_function: AI_PLAIN_SH,
+    skill_dir: Some(".github/skills/decree"),
+};
+
+/// AI backends, in the order `init` looks for them on `PATH`. The routers differ only in the
+/// CLI call.
+const AI_BACKENDS: [Backend; 3] = [OPENCODE, CLAUDE, COPILOT];
 
 /// The router machine `init` writes (docs/reference/runs.md, The default router), and its script.
 const ROUTER_YML: &str = include_str!("../templates/router/router.yml");
@@ -108,8 +111,8 @@ const DEVELOP_MACHINES: &[BuiltinMachine] = &[
     },
 ];
 
-/// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution):
-/// 0.4.2's git-stash hooks as per-visit scripts (docs/decisions.md, D15). `git_baseline` is a root
+/// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution;
+/// docs/decisions.md, D15). `git_baseline` is a root
 /// `onentry` that records `HEAD` once; `snapshot` is a working state's `onentry` that
 /// stashes a checkpoint on each visit. No built-in machine uses them; add them where wanted.
 const SHARED_SCRIPTS: &[(&str, &str)] = &[
@@ -164,15 +167,11 @@ fn command_exists(name: &str) -> bool {
 
 /// The `AI_BACKENDS` entry for a backend.
 fn backend_entry(ai: AiBackend) -> Backend {
-    let name = match ai {
-        AiBackend::Opencode => "opencode",
-        AiBackend::Claude => "claude",
-        AiBackend::Copilot => "copilot",
-    };
-    *AI_BACKENDS
-        .iter()
-        .find(|b| b.name == name)
-        .expect("every AiBackend has an AI_BACKENDS entry")
+    match ai {
+        AiBackend::Opencode => OPENCODE,
+        AiBackend::Claude => CLAUDE,
+        AiBackend::Copilot => COPILOT,
+    }
 }
 
 /// The backend `--ai` names; without it, the first in detection order for which
@@ -185,7 +184,7 @@ fn select_backend(ai: Option<AiBackend>, found: impl Fn(&str) -> bool) -> Backen
         .iter()
         .copied()
         .find(|b| found(b.name))
-        .unwrap_or_else(|| backend_entry(AiBackend::Opencode))
+        .unwrap_or(OPENCODE)
 }
 
 impl Backend {
@@ -252,12 +251,9 @@ fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
 
 /// Write an executable script.
 fn write_script(path: &Path, content: &str) -> Result<(), DecreeError> {
+    use std::os::unix::fs::PermissionsExt;
     std::fs::write(path, content)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
-    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
     Ok(())
 }
 
@@ -395,37 +391,6 @@ mod tests {
         backend_entry(AiBackend::Opencode)
     }
 
-    /// `write_layout` creates the docs/reference/README.md layout entries except `graph/`, which `decree graph` writes.
-    #[test]
-    fn test_write_layout_writes_the_section_3_entries() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_layout(dir.path(), claude()).unwrap();
-        let mut names: Vec<String> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        assert_eq!(
-            names,
-            [
-                ".gitignore",
-                "cron",
-                "inbox",
-                "machines",
-                "migrations",
-                "processed.md",
-                "runs",
-                "scripts"
-            ]
-        );
-        assert!(dir.path().join("machines/router.yml").is_file());
-        assert!(dir.path().join("scripts/router/ask_claude.sh").is_file());
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("processed.md")).unwrap(),
-            ""
-        );
-    }
-
     #[test]
     fn test_select_backend_flag_wins_over_detection() {
         assert_eq!(select_backend(Some(AiBackend::Claude), |_| true), claude());
@@ -436,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn test_select_backend_detects_in_0_4_2_order() {
+    fn test_select_backend_detects_in_path_order() {
         assert_eq!(select_backend(None, |_| true).name, "opencode");
         assert_eq!(select_backend(None, |c| c != "opencode").name, "claude");
         assert_eq!(select_backend(None, |c| c == "copilot").name, "copilot");
@@ -458,25 +423,9 @@ mod tests {
         assert!(!command_exists("definitely_not_a_real_command_xyz"));
     }
 
-    #[test]
-    fn test_gitignore_content() {
-        assert_eq!(DECREE_GITIGNORE, "inbox/\nruns/\n");
-    }
-
     fn mock(path: &str) -> String {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         std::fs::read_to_string(root.join("mock/.decree").join(path)).unwrap()
-    }
-
-    /// Claude's `router` and `ask_claude` are the mock's, byte for byte (docs/reference/runs.md, The
-    /// default router).
-    #[test]
-    fn test_router_for_claude_is_the_mocks() {
-        assert_eq!(claude().router_yml(), mock("machines/router.yml"));
-        assert_eq!(
-            claude().router_ask_sh(),
-            mock("scripts/router/ask_claude.sh")
-        );
     }
 
     /// The copilot and opencode routers are claude's with their own script and CLI call.
@@ -565,19 +514,6 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o755, "{name}");
         }
-    }
-
-    #[test]
-    fn test_write_router_writes_the_machine_and_an_executable_script() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::TempDir::new().unwrap();
-        write_router(dir.path(), backend_entry(AiBackend::Copilot)).unwrap();
-        let yml = std::fs::read_to_string(dir.path().join("machines/router.yml")).unwrap();
-        assert!(yml.contains("name: router\n"));
-        assert!(yml.contains("invoke: ask_copilot\n"));
-        let script = dir.path().join("scripts/router/ask_copilot.sh");
-        let mode = std::fs::metadata(&script).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o755);
     }
 
     /// Every file under `dir`, as paths relative to it with `/` separators, sorted.

@@ -3,10 +3,12 @@
 //! writer as `decree emit`. The next `process` pass delivers it.
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use crate::commands::check::Project;
+use crate::commands::process::context;
 use crate::error::DecreeError;
-use crate::layout::RUNS_DIR;
 use crate::message::{self, Message};
 use crate::reply;
 
@@ -19,10 +21,8 @@ pub fn run(
     note: Option<&str>,
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
-    let runs_dir = project.decree_dir.join(RUNS_DIR);
-    reply::check(&runs_dir, &project.machines, target, event, false)
-        .map_err(fail)?
-        .map_err(fail)?;
+    let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
+    reply::check(&ctx, target, event, false)?.map_err(DecreeError::Other)?;
 
     let body = match note {
         Some(note) if !note.ends_with('\n') => format!("{note}\n"),
@@ -32,11 +32,7 @@ pub fn run(
     let mut message = Message::new(body);
     message.set("to", target);
     message.set("event", event);
-    let id = message::queue(&project.decree_dir, &mut message).map_err(fail)?;
+    let id = message::queue(&project.decree_dir, &mut message)?;
     println!("{id}");
     Ok(())
-}
-
-fn fail(e: impl std::fmt::Display) -> DecreeError {
-    DecreeError::Other(e.to_string())
 }

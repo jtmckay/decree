@@ -4,10 +4,10 @@ use crate::layout::DECREE_DIR;
 
 /// Exit codes (docs/reference/cli.md).
 pub const EXIT_SUCCESS: i32 = 0;
-pub const EXIT_FAILURE: i32 = 1;
-pub const EXIT_USAGE: i32 = 2;
+const EXIT_FAILURE: i32 = 1;
+const EXIT_USAGE: i32 = 2;
 /// SIGINT or SIGTERM stopped the run (docs/reference/cli.md).
-pub const EXIT_INTERRUPTED: i32 = 130;
+const EXIT_INTERRUPTED: i32 = 130;
 
 /// All error variants for the decree application.
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +23,12 @@ pub enum DecreeError {
 
     #[error("yaml error: {0}")]
     Yaml(#[from] serde_norway::Error),
+
+    #[error(transparent)]
+    Message(#[from] crate::message::MessageError),
+
+    #[error(transparent)]
+    Interpreter(#[from] crate::interpreter::InterpreterError),
 
     #[error(".decree/ already exists; decree init does not touch an existing project")]
     AlreadyInitialized,
@@ -47,7 +53,7 @@ impl DecreeError {
 }
 
 /// Find the project root by searching upward for `.decree/`.
-pub fn find_project_root() -> Option<PathBuf> {
+fn find_project_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
         if dir.join(DECREE_DIR).is_dir() {
@@ -72,7 +78,7 @@ pub fn require_project_root() -> Result<PathBuf, DecreeError> {
 }
 
 /// Fail if `root/.decree/` holds a 0.4 configuration file.
-pub fn check_no_legacy_config(root: &Path) -> Result<(), DecreeError> {
+fn check_no_legacy_config(root: &Path) -> Result<(), DecreeError> {
     if root.join(DECREE_DIR).join(LEGACY_CONFIG).exists() {
         return Err(DecreeError::Other(format!(
             "{DECREE_DIR}/{LEGACY_CONFIG} is not used by decree 0.5; run scripts/migrate-0.4-to-0.5.sh"

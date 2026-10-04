@@ -12,13 +12,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use serde_json::Value;
-
 use crate::commands::check::Project;
-use crate::commands::process::{context, run_ids, run_status};
+use crate::commands::process::context;
 use crate::error::DecreeError;
-use crate::interpreter::{read_events, Context, RunStatus};
-use crate::message::is_valid_id;
+use crate::events::{first_text, waiting_child};
+use crate::interpreter::recover::RunStatus;
+use crate::interpreter::Context;
+use crate::message::{is_valid_id, run_ids};
 use crate::runtime::Running;
 
 /// How often the run folder is read again.
@@ -48,12 +48,11 @@ pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
 fn active_run(ctx: &Context) -> Result<Option<String>, DecreeError> {
     let mut child = None;
     for id in run_ids(&ctx.runs_dir())? {
-        let (status, events) = run_status(ctx, &id)?;
+        let (status, events) = ctx.status_of(&id)?;
         if status != RunStatus::Active {
             continue;
         }
-        let trigger = events.first().and_then(|e| e.get("trigger"));
-        if trigger.and_then(Value::as_str) != Some("invoke") {
+        if first_text(&events, "trigger") != Some("invoke") {
             return Ok(Some(id));
         }
         child.get_or_insert(id);
@@ -114,14 +113,14 @@ impl Cursor {
 fn follow(ctx: &Context, id: &str, out: &mut impl Write) -> Result<(), DecreeError> {
     let mut stack = vec![Cursor::join(ctx, id)?];
     // Join the child runs the run is waiting for now.
-    while let Some(child) = waiting_child(ctx, &stack[stack.len() - 1].run)? {
+    while let Some(child) = child_of(ctx, &stack[stack.len() - 1].run)? {
         stack.push(Cursor::join(ctx, &child)?);
     }
     loop {
         // Observe first, then print: what the run did before it stopped is all printed.
         let top = &stack[stack.len() - 1].run;
-        let child = waiting_child(ctx, top)?;
-        let top_finished = run_status(ctx, top)?.0 == RunStatus::Finished;
+        let child = child_of(ctx, top)?;
+        let top_finished = ctx.status_of(top)?.0 == RunStatus::Finished;
         let live = is_live(ctx, id)?;
         let depth = stack.len();
         stack[depth - 1].pump(ctx, out)?;
@@ -148,9 +147,9 @@ fn follow(ctx: &Context, id: &str, out: &mut impl Write) -> Result<(), DecreeErr
 /// Whether run `id` goes on: `active` or `pending`, or waiting for a child run that goes on
 /// itself. A finished child leaves its parent `pending` until it is continued.
 fn is_live(ctx: &Context, id: &str) -> Result<bool, DecreeError> {
-    Ok(match run_status(ctx, id)?.0 {
+    Ok(match ctx.status_of(id)?.0 {
         RunStatus::Active | RunStatus::Pending => true,
-        RunStatus::Waiting => match waiting_child(ctx, id)? {
+        RunStatus::Waiting => match child_of(ctx, id)? {
             Some(child) => is_live(ctx, &child)?,
             None => false,
         },
@@ -159,14 +158,10 @@ fn is_live(ctx: &Context, id: &str) -> Result<bool, DecreeError> {
 }
 
 /// The child run `run` waits for, if its last event is a `waiting` that names one.
-fn waiting_child(ctx: &Context, run: &str) -> Result<Option<String>, DecreeError> {
-    let events = read_events(&ctx.runs_dir().join(run))?;
-    let child = events
-        .last()
-        .filter(|e| e.get("type").and_then(Value::as_str) == Some("waiting"))
-        .and_then(|e| e.get("child"))
-        .and_then(Value::as_str)
-        .filter(|c| is_valid_id(c) && ctx.runs_dir().join(c).is_dir());
+fn child_of(ctx: &Context, run: &str) -> Result<Option<String>, DecreeError> {
+    let events = ctx.events(run)?;
+    let child =
+        waiting_child(&events).filter(|c| is_valid_id(c) && ctx.runs_dir().join(c).is_dir());
     Ok(child.map(String::from))
 }
 
@@ -204,7 +199,7 @@ fn header(name: &str) -> String {
 }
 
 /// Copy `path` from byte `offset` to its end into `out`; returns the new offset. A log
-/// truncated under `max_log_size` after it was printed is skipped to its end.
+/// truncated to its 2 MiB cap after it was printed is skipped to its end.
 fn copy_from(path: &Path, offset: u64, out: &mut impl Write) -> io::Result<u64> {
     let mut file = match File::open(path) {
         Ok(file) => file,

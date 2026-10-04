@@ -3,6 +3,7 @@ pub(crate) mod commands;
 pub(crate) mod cond;
 pub(crate) mod cron;
 pub(crate) mod error;
+pub(crate) mod events;
 pub(crate) mod graph;
 pub(crate) mod interpreter;
 pub(crate) mod layout;
@@ -36,36 +37,23 @@ pub fn run() -> i32 {
 }
 
 fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
-    match command {
-        // `decree init` and `decree help` don't require an existing project
-        Some(Command::Init { ai, permissions }) => commands::init::run(ai, permissions),
-        Some(Command::Help) => commands::help(),
-
-        // Bare `decree` defaults to `decree process`
-        None => {
-            let root = error::require_project_root()?;
-            commands::process::run(&root, false)
-        }
-
-        // All other commands require an existing project
-        Some(cmd) => {
-            let root = error::require_project_root()?;
-            match cmd {
-                Command::Process { dry_run } => commands::process::run(&root, dry_run),
-                Command::Check => commands::check::run(&root),
-                Command::Graph => commands::graph::run(&root),
-                Command::Emit { machine, params } => commands::emit::run(&root, &machine, &params),
-                Command::Event {
-                    target,
-                    event,
-                    note,
-                } => commands::event::run(&root, &target, &event, note.as_deref()),
-                Command::Daemon { interval } => commands::daemon::run(&root, interval),
-                Command::Tail { id } => commands::tail::run(&root, id.as_deref()),
-                Command::Retry { id, state } => commands::retry::run(&root, &id, state.as_deref()),
-                Command::Status { id, cron } => commands::status::run(&root, id.as_deref(), cron),
-                Command::Init { .. } | Command::Help => unreachable!(),
-            }
-        }
+    let root = error::require_project_root;
+    // Bare `decree` runs `decree process`; every command but `init` and `help` needs a project.
+    match command.unwrap_or(Command::Process { dry_run: false }) {
+        Command::Init { ai, permissions } => commands::init::run(ai, permissions),
+        Command::Help => commands::help(),
+        Command::Process { dry_run } => commands::process::run(&root()?, dry_run),
+        Command::Check => commands::check::run(&root()?),
+        Command::Graph => commands::graph::run(&root()?),
+        Command::Emit { machine, params } => commands::emit::run(&root()?, &machine, &params),
+        Command::Event {
+            target,
+            event,
+            note,
+        } => commands::event::run(&root()?, &target, &event, note.as_deref()),
+        Command::Daemon { interval } => commands::daemon::run(&root()?, interval),
+        Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
+        Command::Retry { id, state } => commands::retry::run(&root()?, &id, state.as_deref()),
+        Command::Status { id, cron } => commands::status::run(&root()?, id.as_deref(), cron),
     }
 }

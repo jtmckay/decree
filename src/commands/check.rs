@@ -12,7 +12,8 @@ use crate::commands::graph;
 use crate::cron;
 use crate::error::DecreeError;
 use crate::layout::{self, DECREE_DIR};
-use crate::machine::{self, CheckEnv, LoadedMachine};
+use crate::machine::validate::CheckEnv;
+use crate::machine::{self, LoadedMachine};
 use crate::message::{validate, Message};
 
 pub fn run(project_root: &Path) -> Result<(), DecreeError> {
@@ -39,7 +40,7 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
 
 /// Every error `decree check` reports, in order: machines by id, then pending migrations,
 /// `inbox/` and `cron/`, each by filename.
-pub fn check(project_root: &Path) -> Result<Vec<String>, DecreeError> {
+fn check(project_root: &Path) -> Result<Vec<String>, DecreeError> {
     let project = Project::load(project_root)?;
     let mut problems = project.problems.clone();
     let decree_dir = &project.decree_dir;

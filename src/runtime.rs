@@ -1,14 +1,13 @@
-//! Runtime: resolving and running scripts (docs/reference/scripts.md).
-//!
-//! `resolve_script` turns a script name into exactly one executable file. Validation (V12)
-//! and the executor both call it, so a machine that passes `decree check` runs the same files.
-//! `Executor` runs scripts for one run: environment, log, process group, timeout, attempts,
-//! event parsing, and one `script` event in `events.jsonl` per execution (docs/reference/runs.md).
+//! Runtime: running scripts (docs/reference/scripts.md, Execution). `resolve` finds the file
+//! a script name stands for; `Executor` runs scripts for one run: environment, log, process
+//! group, timeout, attempts, event parsing, and one `script` event in `events.jsonl` per
+//! execution (docs/reference/runs.md).
+
+pub(crate) mod resolve;
 
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -17,177 +16,25 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use serde_json::{json, Map, Value};
 
-use crate::machine::{is_ident, DataSpec, LoadedMachine};
-
-/// Directory holding scripts, relative to `.decree/`.
-pub const SCRIPTS_DIR: &str = "scripts";
-
-/// Why a script name does not resolve to exactly one executable file (V12).
-#[derive(Debug, thiserror::Error)]
-pub enum ScriptError {
-    #[error("script name `{0}` does not match ^[a-z][a-z0-9_]*$")]
-    InvalidName(String),
-
-    #[error("script `{name}` not found; searched {}", join_paths(searched))]
-    Missing {
-        name: String,
-        searched: Vec<PathBuf>,
-    },
-
-    #[error("script `{name}` is ambiguous: {}", join_paths(matches))]
-    Ambiguous { name: String, matches: Vec<PathBuf> },
-
-    #[error("script `{name}`: {} is not a regular file", path.display())]
-    NotRegularFile { name: String, path: PathBuf },
-
-    #[error("script `{name}`: {} is not executable", path.display())]
-    NotExecutable { name: String, path: PathBuf },
-
-    #[error("script `{name}`: cannot read {}: {source}", dir.display())]
-    Io {
-        name: String,
-        dir: PathBuf,
-        source: io::Error,
-    },
-}
-
-fn join_paths(paths: &[PathBuf]) -> String {
-    paths
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// The directories script `name` is looked up in for `machine`, in order:
-/// `scripts/<machine>/`, then `scripts/`.
-pub fn search_dirs(decree_dir: &Path, machine: &str) -> Vec<PathBuf> {
-    let scripts = decree_dir.join(SCRIPTS_DIR);
-    vec![scripts.join(machine), scripts]
-}
-
-/// Resolve script `name` used by `machine` (docs/reference/scripts.md, Resolution). The first directory from
-/// `search_dirs` holding a match wins; a match is a file named `name` or `name.<ext>` with one
-/// extension. The winner must be the only match in its directory, a regular file, and have
-/// an execute bit set. Lower directories are not read once a match is found.
-pub fn resolve_script(
-    decree_dir: &Path,
-    machine: &str,
-    name: &str,
-) -> Result<PathBuf, ScriptError> {
-    if !is_ident(name) {
-        return Err(ScriptError::InvalidName(name.to_string()));
-    }
-    let searched = search_dirs(decree_dir, machine);
-    for dir in &searched {
-        let mut matches = matches_in(dir, name).map_err(|source| ScriptError::Io {
-            name: name.to_string(),
-            dir: dir.clone(),
-            source,
-        })?;
-        match matches.len() {
-            0 => continue,
-            1 => return check_executable(name, matches.remove(0)),
-            _ => {
-                return Err(ScriptError::Ambiguous {
-                    name: name.to_string(),
-                    matches,
-                })
-            }
-        }
-    }
-    Err(ScriptError::Missing {
-        name: name.to_string(),
-        searched,
-    })
-}
-
-/// Entries of `dir` named `name` or `name.<ext>`, sorted. Directories are skipped: they are
-/// per-machine script directories, never scripts. A missing `dir` holds no matches.
-fn matches_in(dir: &Path, name: &str) -> io::Result<Vec<PathBuf>> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e),
-    };
-    let mut matches = Vec::new();
-    for entry in entries {
-        let path = entry?.path();
-        let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if is_match(file_name, name) && !path.is_dir() {
-            matches.push(path);
-        }
-    }
-    matches.sort();
-    Ok(matches)
-}
-
-/// `file_name` is `name`, or `name.<ext>` where `<ext>` is non-empty and has no dot.
-fn is_match(file_name: &str, name: &str) -> bool {
-    match file_name.strip_prefix(name) {
-        Some("") => true,
-        Some(rest) => rest
-            .strip_prefix('.')
-            .is_some_and(|ext| !ext.is_empty() && !ext.contains('.')),
-        None => false,
-    }
-}
-
-/// The single match must be a regular file (symlinks followed) with `mode & 0o111` non-zero.
-fn check_executable(name: &str, path: PathBuf) -> Result<PathBuf, ScriptError> {
-    let meta = match fs::metadata(&path) {
-        Ok(meta) if meta.is_file() => meta,
-        _ => {
-            return Err(ScriptError::NotRegularFile {
-                name: name.to_string(),
-                path,
-            })
-        }
-    };
-    if meta.permissions().mode() & 0o111 == 0 {
-        return Err(ScriptError::NotExecutable {
-            name: name.to_string(),
-            path,
-        });
-    }
-    Ok(path)
-}
+use crate::events::{timestamp, EventLog, EVENTS_FILE};
+use crate::layout::MESSAGE_FILE;
+use crate::machine::{is_reserved_event, DataSpec, LoadedMachine};
+use resolve::{resolve_script, ScriptError};
 
 /// `DECREE_STATE`, and the state in log names, for root `onentry` and `onexit` scripts.
 pub const ROOT_STATE: &str = "_root";
 
-/// The run's event log, in the run directory (docs/reference/runs.md).
-pub const EVENTS_FILE: &str = "events.jsonl";
-
-/// The claimed message, in the run directory (docs/reference/README.md).
-pub const MESSAGE_FILE: &str = "message.md";
-
-/// Folder in the run directory that delivered replies are moved into (docs/reference/messages.md).
-pub const RECEIVED_DIR: &str = "received";
-
-/// `events.jsonl` schema version (docs/reference/runs.md).
-const EVENTS_VERSION: u64 = 1;
-
 /// How long a stopped script's process group gets between SIGTERM and SIGKILL.
-pub const KILL_GRACE: Duration = Duration::from_secs(10);
+const KILL_GRACE: Duration = Duration::from_secs(10);
 
 /// How often a running script is checked for exit, timeout and signals.
 const POLL: Duration = Duration::from_millis(10);
 
 /// Prefix of stderr lines in a script log, with one trailing space.
 const STDERR_PREFIX: &[u8] = b"[stderr] ";
-
-/// Events an invoke may not print and a `choose` option may not be (docs/reference/machines.md, Rules).
-pub fn is_reserved_event(event: &str) -> bool {
-    matches!(event, "done" | "error" | "unsure")
-        || event.starts_with("done.")
-        || event.starts_with("error.")
-}
 
 /// When a script runs: SCXML `<onentry>`, `<invoke>` or `<onexit>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,66 +92,6 @@ pub fn register_signals(flag: &Arc<AtomicBool>) -> io::Result<()> {
     Ok(())
 }
 
-/// RFC 3339 UTC with milliseconds, as every timestamp in `events.jsonl` is written.
-pub fn timestamp(t: chrono::DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Millis, true)
-}
-
-/// `runs/<id>/events.jsonl`: one JSON object per line, each appended with a single write
-/// to a file opened with `O_APPEND` (docs/reference/runs.md).
-#[derive(Debug)]
-pub struct EventLog {
-    file: File,
-    next_seq: u64,
-    run_id: String,
-    machine: String,
-    trigger: String,
-}
-
-impl EventLog {
-    /// Open or create the log in `run_dir`. `seq` continues after the lines already in it.
-    pub fn open(run_dir: &Path, run_id: &str, machine: &str, trigger: &str) -> io::Result<Self> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(run_dir.join(EVENTS_FILE))?;
-        let mut existing = Vec::new();
-        file.read_to_end(&mut existing)?;
-        let lines = existing
-            .split(|&b| b == b'\n')
-            .filter(|line| !line.trim_ascii().is_empty())
-            .count();
-        Ok(EventLog {
-            file,
-            next_seq: lines as u64 + 1,
-            run_id: run_id.to_string(),
-            machine: machine.to_string(),
-            trigger: trigger.to_string(),
-        })
-    }
-
-    /// Append one event of type `kind`: the fields every event carries, plus `fields`.
-    /// Returns its `seq`.
-    pub fn append(&mut self, kind: &str, fields: Map<String, Value>) -> io::Result<u64> {
-        let seq = self.next_seq;
-        let mut event = Map::new();
-        event.insert("v".into(), json!(EVENTS_VERSION));
-        event.insert("seq".into(), json!(seq));
-        event.insert("ts".into(), json!(timestamp(Utc::now())));
-        event.insert("type".into(), json!(kind));
-        event.insert("run_id".into(), json!(self.run_id));
-        event.insert("machine".into(), json!(self.machine));
-        event.insert("trigger".into(), json!(self.trigger));
-        event.extend(fields);
-        let mut line = serde_json::to_vec(&Value::Object(event)).map_err(io::Error::other)?;
-        line.push(b'\n');
-        self.file.write_all(&line)?;
-        self.next_seq += 1;
-        Ok(seq)
-    }
-}
-
 /// `DECREE_DATA_<NAME>` for each `data` entry: the message's `params` value, else the
 /// default. Ints as decimal, bools as `true` or `false` (docs/reference/scripts.md, Environment).
 pub fn data_env(
@@ -329,7 +116,7 @@ pub fn data_env(
 }
 
 /// Each script log is capped at 2 MiB (docs/reference/scripts.md, Execution).
-pub const MAX_LOG_SIZE: u64 = 2_097_152;
+const MAX_LOG_SIZE: u64 = 2_097_152;
 
 /// The run an `Executor` runs scripts for.
 #[derive(Debug, Clone)]
@@ -417,7 +204,7 @@ impl Execution {
     }
 
     /// The `event` string of a JSON object on the last non-empty stdout line.
-    pub fn printed_event(&self) -> Option<String> {
+    fn printed_event(&self) -> Option<String> {
         let value: Value = serde_json::from_str(self.last_line.as_deref()?).ok()?;
         value
             .as_object()?
@@ -526,25 +313,18 @@ impl Executor {
         &mut self.events
     }
 
-    /// Attempts allowed for `state`: its `max_attempts`, default 1 (docs/reference/scripts.md, Attempts).
-    pub fn max_attempts(&self, machine: &LoadedMachine, state: usize) -> u32 {
-        machine.nodes[state].max_attempts.unwrap_or(1).max(1)
-    }
-
-    /// Run `state`'s script invoke, re-running it in place while it fails and attempts
-    /// remain, and pick its event. Each failed attempt but the last appends a `transition`
-    /// event with `source: "attempt"`. `None` if the state does not invoke a script.
+    /// Run `script`, the invoke of `state`, re-running it in place while it fails and
+    /// attempts remain, and pick its event. Each failed attempt but the last appends a
+    /// `transition` event with `source: "attempt"`.
     pub fn run_invoke(
         &mut self,
         machine: &LoadedMachine,
         state: usize,
+        script: &str,
         visits: u32,
-    ) -> Result<Option<InvokeOutcome>, RuntimeError> {
+    ) -> Result<InvokeOutcome, RuntimeError> {
         let node = &machine.nodes[state];
-        let Some(script) = node.invoke.as_ref().and_then(|i| i.script()) else {
-            return Ok(None);
-        };
-        let max_attempts = self.max_attempts(machine, state);
+        let max_attempts = machine.max_attempts(state);
         let events = machine.accepted_events(state);
         let mut attempt = 1;
         let execution = loop {
@@ -573,7 +353,7 @@ impl Executor {
                 None => InvokeEvent::ExitCode("done"),
             }
         };
-        Ok(Some(InvokeOutcome { event, execution }))
+        Ok(InvokeOutcome { event, execution })
     }
 
     /// A failed attempt that will be re-run: `error`, with `from` and `to` equal.
@@ -585,13 +365,10 @@ impl Executor {
             "source": "attempt",
             "exit_code": exit_code,
         });
-        self.append(
-            "transition",
-            fields.as_object().cloned().unwrap_or_default(),
-        )
+        self.append("transition", fields)
     }
 
-    fn append(&mut self, kind: &str, fields: Map<String, Value>) -> Result<(), RuntimeError> {
+    fn append(&mut self, kind: &str, fields: Value) -> Result<(), RuntimeError> {
         let path = self.info.run_dir.join(EVENTS_FILE);
         self.events
             .append(kind, fields)
@@ -600,7 +377,7 @@ impl Executor {
     }
 
     /// The next `NNNN-<state>-<name>.log` filename in the run folder.
-    pub fn reserve_log(&mut self, state: &str, name: &str) -> String {
+    fn reserve_log(&mut self, state: &str, name: &str) -> String {
         let log = format!("{:04}-{state}-{name}.log", self.next_log);
         self.next_log += 1;
         log
@@ -629,9 +406,9 @@ impl Executor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .envs(self.env(run))
-            // Reused from 0.4.2: its own process group, so a stop reaches the whole tree.
+            // Its own process group, so a stop reaches the whole tree.
             .process_group(0);
-        // Also from 0.4.2: the background group must not be stopped for touching the TTY.
+        // The background group must not be stopped for touching the TTY.
         // SAFETY: signal(2) is async-signal-safe, and the closure allocates nothing.
         unsafe {
             cmd.pre_exec(|| {
@@ -659,7 +436,7 @@ impl Executor {
         let running_path = self.info.run_dir.join(RUNNING_FILE);
         if let Err(e) = running.write(&self.info.run_dir) {
             // The script runs on without its `.running`; stop it rather than leak it.
-            stop_group(&mut child).map_err(io_err(&path))?;
+            stop_group(&mut child, KILL_GRACE).map_err(io_err(&path))?;
             return Err(io_err(&running_path)(e));
         }
         let log_file = Arc::new(Mutex::new(log_file));
@@ -706,7 +483,7 @@ impl Executor {
             fields.insert("timed_out".into(), json!(true));
         }
         fields.insert("log".into(), json!(execution.log));
-        self.append("script", fields)?;
+        self.append("script", Value::Object(fields))?;
         Running::remove(&self.info.run_dir).map_err(io_err(&running_path))?;
         Ok(execution)
     }
@@ -862,18 +639,18 @@ fn wait_child(
             thread::sleep(POLL);
             continue;
         };
-        return Ok((stop_group(child)?, stop));
+        return Ok((stop_group(child, KILL_GRACE)?, stop));
     }
 }
 
-/// Send SIGTERM to the process group `child` leads, wait up to `KILL_GRACE` for every
-/// process in it to exit, then send SIGKILL (docs/reference/scripts.md, Execution). 0.4.2 sent SIGTERM
-/// and waited forever (docs/decisions.md, D20).
-fn stop_group(child: &mut Child) -> io::Result<ExitStatus> {
+/// Send SIGTERM to the process group `child` leads, wait up to `grace` (`KILL_GRACE`) for
+/// every process in it to exit, then send SIGKILL (docs/reference/scripts.md, Execution;
+/// docs/decisions.md, D20).
+fn stop_group(child: &mut Child, grace: Duration) -> io::Result<ExitStatus> {
     let pgid = child.id() as libc::pid_t;
     // SAFETY: kill(2) only sends a signal; a negative pid addresses the child's group.
     unsafe { libc::kill(-pgid, libc::SIGTERM) };
-    let deadline = Instant::now() + KILL_GRACE;
+    let deadline = Instant::now() + grace;
     let mut status = None;
     while Instant::now() < deadline {
         if status.is_none() {
@@ -893,9 +670,9 @@ fn stop_group(child: &mut Child) -> io::Result<ExitStatus> {
     }
 }
 
-/// Keep only the last `max_size` bytes of the log at `path`, behind a marker line; 0
-/// disables truncation (docs/reference/scripts.md, Logs). Moved here unchanged from 0.4.2.
-pub fn truncate_log_if_needed(path: &Path, max_size: u64) -> io::Result<()> {
+/// Keep only the last `max_size` bytes of the log at `path`, behind a marker line
+/// (docs/reference/scripts.md, Execution, Logs).
+fn truncate_log_if_needed(path: &Path, max_size: u64) -> io::Result<()> {
     let metadata = fs::metadata(path)?;
     if metadata.len() <= max_size {
         return Ok(());
@@ -923,207 +700,6 @@ fn format_bytes(bytes: u64) -> String {
         format!("{}KB", bytes / 1024)
     } else {
         format!("{bytes}B")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    /// A temp directory with an empty `project/.decree/`.
-    struct Fixture {
-        tmp: TempDir,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let tmp = TempDir::new().unwrap();
-            fs::create_dir_all(tmp.path().join("project/.decree")).unwrap();
-            Fixture { tmp }
-        }
-
-        fn decree_dir(&self) -> PathBuf {
-            self.tmp.path().join("project/.decree")
-        }
-
-        /// Write a script at `rel` (relative to the temp root) with the given mode.
-        fn script(&self, rel: &str, mode: u32) -> PathBuf {
-            let path = self.tmp.path().join(rel);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, "#!/usr/bin/env bash\nexit 0\n").unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
-            path
-        }
-
-        fn resolve(&self, machine: &str, name: &str) -> Result<PathBuf, ScriptError> {
-            resolve_script(&self.decree_dir(), machine, name)
-        }
-    }
-
-    #[test]
-    fn exact_name_resolves() {
-        let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), x);
-    }
-
-    #[test]
-    fn one_extension_resolves() {
-        let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x.sh", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), x);
-    }
-
-    #[test]
-    fn machine_dir_overrides_flat_dir_for_that_machine_only() {
-        let f = Fixture::new();
-        let own = f.script("project/.decree/scripts/m/x.sh", 0o755);
-        let flat = f.script("project/.decree/scripts/x.sh", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), own);
-        assert_eq!(f.resolve("n", "x").unwrap(), flat);
-    }
-
-    #[test]
-    fn full_precedence_order() {
-        let f = Fixture::new();
-        let paths = [
-            f.script("project/.decree/scripts/x", 0o755),
-            f.script("project/.decree/scripts/m/x", 0o755),
-        ];
-        // Remove the winner each time; the next directory down must win.
-        for winner in paths.iter().rev() {
-            assert_eq!(&f.resolve("m", "x").unwrap(), winner);
-            fs::remove_file(winner).unwrap();
-        }
-        assert!(matches!(
-            f.resolve("m", "x"),
-            Err(ScriptError::Missing { .. })
-        ));
-    }
-
-    #[test]
-    fn two_matches_in_one_dir_fail_naming_both() {
-        let f = Fixture::new();
-        let sh = f.script("project/.decree/scripts/x.sh", 0o755);
-        let py = f.script("project/.decree/scripts/x.py", 0o755);
-        let err = f.resolve("m", "x").unwrap_err();
-        match &err {
-            ScriptError::Ambiguous { matches, .. } => assert_eq!(matches, &vec![py, sh]),
-            other => panic!("expected Ambiguous, got {other:?}"),
-        }
-        let msg = err.to_string();
-        assert!(msg.contains("x.sh") && msg.contains("x.py"), "{msg}");
-    }
-
-    #[test]
-    fn higher_match_hides_lower_ambiguous_pair() {
-        let f = Fixture::new();
-        f.script("project/.decree/scripts/x.sh", 0o755);
-        f.script("project/.decree/scripts/x.py", 0o755);
-        let own = f.script("project/.decree/scripts/m/x", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), own);
-    }
-
-    #[test]
-    fn not_executable_fails() {
-        let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x.sh", 0o644);
-        match f.resolve("m", "x").unwrap_err() {
-            ScriptError::NotExecutable { path, .. } => assert_eq!(path, x),
-            other => panic!("expected NotExecutable, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn any_execute_bit_is_enough() {
-        let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x", 0o640 | 0o001);
-        assert_eq!(f.resolve("m", "x").unwrap(), x);
-    }
-
-    #[test]
-    fn non_executable_winner_does_not_fall_through() {
-        let f = Fixture::new();
-        f.script("project/.decree/scripts/x.sh", 0o755);
-        f.script("project/.decree/scripts/m/x.sh", 0o644);
-        assert!(matches!(
-            f.resolve("m", "x"),
-            Err(ScriptError::NotExecutable { .. })
-        ));
-    }
-
-    #[test]
-    fn missing_fails_listing_searched_dirs() {
-        let f = Fixture::new();
-        f.script("project/.decree/scripts/y.sh", 0o755);
-        let err = f.resolve("m", "x").unwrap_err();
-        match &err {
-            ScriptError::Missing { searched, .. } => {
-                assert_eq!(searched, &search_dirs(&f.decree_dir(), "m"));
-                assert_eq!(searched.len(), 2);
-            }
-            other => panic!("expected Missing, got {other:?}"),
-        }
-        assert!(err.to_string().contains("not found"));
-    }
-
-    #[test]
-    fn similar_names_do_not_match() {
-        let f = Fixture::new();
-        f.script("project/.decree/scripts/xy.sh", 0o755);
-        f.script("project/.decree/scripts/x.tar.gz", 0o755);
-        f.script("project/.decree/scripts/x.", 0o755);
-        f.script("project/.decree/scripts/.x", 0o755);
-        assert!(matches!(
-            f.resolve("m", "x"),
-            Err(ScriptError::Missing { .. })
-        ));
-    }
-
-    #[test]
-    fn machine_dir_named_like_script_is_not_a_match() {
-        let f = Fixture::new();
-        // `scripts/x/` is machine x's directory, not script x.
-        f.script("project/.decree/scripts/x/other.sh", 0o755);
-        let flat = f.script("project/.decree/scripts/x.sh", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), flat);
-    }
-
-    #[test]
-    fn non_regular_file_fails() {
-        let f = Fixture::new();
-        let dir = f.decree_dir().join("scripts");
-        fs::create_dir_all(&dir).unwrap();
-        let link = dir.join("x");
-        std::os::unix::fs::symlink(dir.join("nowhere"), &link).unwrap();
-        match f.resolve("m", "x").unwrap_err() {
-            ScriptError::NotRegularFile { path, .. } => assert_eq!(path, link),
-            other => panic!("expected NotRegularFile, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn symlink_to_executable_resolves() {
-        let f = Fixture::new();
-        let target = f.script("elsewhere/real.sh", 0o755);
-        let dir = f.decree_dir().join("scripts");
-        fs::create_dir_all(&dir).unwrap();
-        let link = dir.join("x.sh");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-        assert_eq!(f.resolve("m", "x").unwrap(), link);
-    }
-
-    #[test]
-    fn invalid_names_fail() {
-        let f = Fixture::new();
-        f.script("project/.decree/scripts/X.sh", 0o755);
-        for name in ["", "X", "../x", "m/x", "x.sh", "1x", "x-y"] {
-            assert!(
-                matches!(f.resolve("m", name), Err(ScriptError::InvalidName(_))),
-                "{name:?}"
-            );
-        }
     }
 }
 
@@ -1236,6 +812,12 @@ pub(crate) mod executor_tests {
         load_machine_text("m", &text).unwrap()
     }
 
+    /// The script state `s` of `m` invokes.
+    fn script_of(m: &LoadedMachine) -> &str {
+        let s = m.find("s").unwrap();
+        m.nodes[s].invoke.as_ref().and_then(|i| i.script()).unwrap()
+    }
+
     fn run_dir_choices(project: &Project) -> PathBuf {
         project.run_dir().join("choices.json")
     }
@@ -1243,7 +825,10 @@ pub(crate) mod executor_tests {
     fn invoke(project: &Project, state: &str) -> InvokeOutcome {
         let m = machine(state);
         let s = m.find("s").unwrap();
-        project.executor().run_invoke(&m, s, 1).unwrap().unwrap()
+        project
+            .executor()
+            .run_invoke(&m, s, script_of(&m), 1)
+            .unwrap()
     }
 
     /// Whether `pid` is a live process: it exists and is not a zombie.
@@ -1373,8 +958,7 @@ pub(crate) mod executor_tests {
         let m = load_machine_text("m", text).unwrap();
         let out = p
             .executor()
-            .run_invoke(&m, m.find("s").unwrap(), 1)
-            .unwrap()
+            .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 1)
             .unwrap();
         assert_eq!(out.event, InvokeEvent::Stdout("pass".to_string()));
     }
@@ -1387,36 +971,6 @@ pub(crate) mod executor_tests {
             "{ invoke: print_unsure, transitions: { done: done, unsure: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Invalid("unsure".to_string()));
-    }
-
-    #[test]
-    fn decision_states_run_no_script() {
-        let p = Project::new(&[]);
-        for state in [
-            "{ invoke: { check: { visits: s, less_than: 2 } }, transitions: { yes: done, no: done } }",
-            "{ invoke: { choose: person, question: \"Q?\", ask: x }, transitions: { a: done, b: done } }",
-            "{ invoke: { machine: other }, transitions: { done: done } }",
-        ] {
-            let m = machine(state);
-            let out = p
-                .executor()
-                .run_invoke(&m, m.find("s").unwrap(), 1)
-                .unwrap();
-            assert!(out.is_none(), "{state}");
-        }
-        assert!(p.events().is_empty());
-    }
-
-    #[test]
-    fn state_without_invoke_runs_nothing() {
-        let p = Project::new(&[]);
-        let m = machine("{ transitions: { done: done } }");
-        let out = p
-            .executor()
-            .run_invoke(&m, m.find("s").unwrap(), 1)
-            .unwrap();
-        assert!(out.is_none());
-        assert!(p.events().is_empty());
     }
 
     #[test]
@@ -1465,7 +1019,7 @@ pub(crate) mod executor_tests {
     }
 
     #[test]
-    fn every_section_6_variable_is_set() {
+    fn every_environment_variable_is_set() {
         let p = Project::new(&["print_env"]);
         let mut info = p.info();
         let m = load_machine_text(
@@ -1553,8 +1107,7 @@ pub(crate) mod executor_tests {
         let m = machine("{ invoke: print_env, transitions: { pass: done, fail: s, done: done } }");
         let out = p
             .executor()
-            .run_invoke(&m, m.find("s").unwrap(), 1)
-            .unwrap()
+            .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 1)
             .unwrap();
         let log = p.log(&out.execution.log);
         assert!(log.lines().any(|l| l == "DECREE_EVENTS=fail pass"), "{log}");
@@ -1566,8 +1119,7 @@ pub(crate) mod executor_tests {
         let m = machine("{ invoke: print_env, max_attempts: 2, transitions: { done: done } }");
         let mut exec = p.executor();
         let out = exec
-            .run_invoke(&m, m.find("s").unwrap(), 4)
-            .unwrap()
+            .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 4)
             .unwrap();
         let log = p.log(&out.execution.log);
         for line in [
@@ -1597,7 +1149,7 @@ pub(crate) mod executor_tests {
     }
 
     #[test]
-    fn script_event_has_every_section_7_field() {
+    fn script_event_has_every_reference_field() {
         let p = Project::new(&["sleep_one"]);
         let out = invoke(&p, "{ invoke: sleep_one, transitions: { done: done } }");
         assert_eq!(out.event, InvokeEvent::ExitCode("done"));
@@ -1690,21 +1242,28 @@ pub(crate) mod executor_tests {
     #[test]
     fn stop_escalates_to_sigkill_after_the_grace_period() {
         let p = Project::new(&["ignore_term"]);
+        let script = p.root().join(".decree/scripts/ignore_term.sh");
+        let mut child = Command::new(&script)
+            .env("DECREE_RUN_DIR", p.run_dir())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid_file = p.run_dir().join("child.pid");
+        assert!(wait_until(Duration::from_secs(10), || pid_file.exists()));
+        let grace = Duration::from_millis(300);
         let start = Instant::now();
-        let out = invoke(
-            &p,
-            "{ invoke: ignore_term, timeout_s: 1, max_attempts: 1, transitions: { done: done } }",
-        );
+        let status = stop_group(&mut child, grace).unwrap();
         let elapsed = start.elapsed();
-        assert!(
-            elapsed >= Duration::from_secs(1) + KILL_GRACE,
-            "took {elapsed:?}"
-        );
-        assert!(elapsed < Duration::from_secs(14), "took {elapsed:?}");
-        assert!(out.execution.timed_out);
-        assert_eq!(out.event, InvokeEvent::ExitCode("error"));
-        let child = p.child_pid().unwrap();
-        assert!(wait_until(Duration::from_secs(2), || !alive(child)));
+        assert!(elapsed >= grace, "took {elapsed:?}");
+        assert!(elapsed < grace + Duration::from_secs(3), "took {elapsed:?}");
+        assert!(status.code().is_none(), "{status:?}");
+        let sleeper = p.child_pid().unwrap();
+        assert!(wait_until(Duration::from_secs(2), || !alive(sleeper)));
+    }
+
+    #[test]
+    fn the_grace_period_is_ten_seconds() {
+        assert_eq!(KILL_GRACE, Duration::from_secs(10));
     }
 
     /// The only test that signals the test process. `register_signals` replaces SIGTERM's
@@ -1723,7 +1282,7 @@ pub(crate) mod executor_tests {
         let m = machine("{ invoke: sleep_long, transitions: { done: done } }");
         let err = p
             .executor()
-            .run_invoke(&m, m.find("s").unwrap(), 1)
+            .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 1)
             .unwrap_err();
         let signalled = signaller.join().unwrap();
         assert!(

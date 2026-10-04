@@ -527,6 +527,26 @@ machines/m.yml: line 3: script `setup` not found; searched scripts/m, scripts (V
 machines/m.yml: work: script `snapshot`: scripts/snapshot.sh is not executable (V12)
 ",
     },
+    Case {
+        rule: "V12",
+        name: "a script with no extension named like its machine",
+        files: &[(
+            "machines/verify.yml",
+            "\
+name: verify
+description: Its script is scripts/verify, a file where a per-machine directory would be.
+initial: work
+states:
+  work:
+    invoke: verify
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+",
+        )],
+        scripts: &[],
+        expected: PASSES,
+    },
     // V13
     Case {
         rule: "V13",

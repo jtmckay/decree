@@ -16,7 +16,7 @@ use crate::machine;
 use crate::message::Message;
 
 /// Directory under `.decree/` that `decree graph` writes.
-pub const GRAPH_DIR: &str = "graph";
+const GRAPH_DIR: &str = "graph";
 
 pub fn run(project_root: &Path) -> Result<(), DecreeError> {
     for name in write(project_root)? {
@@ -67,7 +67,7 @@ pub fn stale(project_root: &Path) -> Result<Vec<String>, DecreeError> {
 }
 
 /// Every document `decree graph` writes, by filename: one per machine, then `system.md`.
-pub fn render(project_root: &Path) -> Result<BTreeMap<String, String>, DecreeError> {
+fn render(project_root: &Path) -> Result<BTreeMap<String, String>, DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
     let machines = machine::load_machines(&decree_dir)?;
     let mut documents = BTreeMap::new();

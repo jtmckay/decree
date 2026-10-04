@@ -13,18 +13,19 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::commands::check::{md_files, Project};
-use crate::commands::process::{context, run_ids, run_status};
+use crate::commands::process::context;
 use crate::cron;
 use crate::error::DecreeError;
-use crate::interpreter::{current_state, Context, RunStatus};
+use crate::events::{current_state, strings, text, Event};
+use crate::interpreter::recover::RunStatus;
+use crate::interpreter::Context;
+use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
-use crate::message::Message;
-use crate::runtime::{Running, MESSAGE_FILE};
-
-type Event = Map<String, Value>;
+use crate::message::{run_ids, Message};
+use crate::runtime::Running;
 
 /// Run `decree status`.
 pub fn run(project_root: &Path, id: Option<&str>, cron: bool) -> Result<(), DecreeError> {
@@ -53,7 +54,7 @@ fn overview(ctx: &Context, project: &Project) -> Result<(), DecreeError> {
     let mut finished: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let ids = run_ids(&ctx.runs_dir())?;
     for id in &ids {
-        let (status, events) = run_status(ctx, id)?;
+        let (status, events) = ctx.status_of(id)?;
         let state = current_state(&events).unwrap_or("-").to_string();
         let run_dir = ctx.runs_dir().join(id);
         let detail = match status {
@@ -149,7 +150,7 @@ fn wait_line(last: &Event) -> String {
     format!(
         "wait id {}, options: {}",
         field(Some(last), "wait_id"),
-        strings(last.get("options")).join(", ")
+        strings(last, "options").join(", ")
     )
 }
 
@@ -160,7 +161,7 @@ fn show_run(ctx: &Context, id: &str) -> Result<(), DecreeError> {
         eprintln!("no run {id} in {DECREE_DIR}/{RUNS_DIR}/");
         return Ok(());
     }
-    let (status, events) = run_status(ctx, id)?;
+    let (status, events) = ctx.status_of(id)?;
     println!("{} {id}", "Run".bold());
     println!("  machine: {}", field(events.first(), "machine"));
     let state = current_state(&events).unwrap_or("-");
@@ -208,7 +209,7 @@ fn event_detail(kind: &str, e: &Event) -> String {
     let ms = |key: &str| e.get(key).and_then(Value::as_u64).map(duration);
     let mut out = match kind {
         "transition" => {
-            let from = e.get("from").and_then(Value::as_str).unwrap_or("·");
+            let from = text(e, "from").unwrap_or("·");
             let mut s = format!("{from} --{}--> {} ({})", f("event"), f("to"), f("source"));
             if let Some(code) = e.get("exit_code").and_then(Value::as_i64) {
                 s.push_str(&format!(", exit {code}"));
@@ -292,10 +293,10 @@ fn event_detail(kind: &str, e: &Event) -> String {
             out.push_str(&format!(", {key}: {}", f(key)));
         }
     }
-    if let Some(failures) = e.get("exit_failures") {
+    if e.contains_key("exit_failures") {
         out.push_str(&format!(
             ", exit_failures: {}",
-            strings(Some(failures)).join(", ")
+            strings(e, "exit_failures").join(", ")
         ));
     }
     out
@@ -303,8 +304,7 @@ fn event_detail(kind: &str, e: &Event) -> String {
 
 /// `--cron`: each cron file, its schedule and machine, and when it fires next.
 fn show_cron(project_root: &Path) -> Result<(), DecreeError> {
-    let mut files = cron::scan_cron_files(project_root)?;
-    files.sort_by(|a, b| a.filename.cmp(&b.filename));
+    let files = cron::scan_cron_files(project_root)?;
     if files.is_empty() {
         println!("No cron files.");
         return Ok(());
@@ -349,18 +349,9 @@ fn duration(ms: u64) -> String {
     }
 }
 
+/// String field `key` of `e`, or empty.
 fn field<'e>(e: Option<&'e Event>, key: &str) -> &'e str {
-    e.and_then(|e| e.get(key))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-}
-
-fn strings(v: Option<&Value>) -> Vec<&str> {
-    v.and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect()
+    e.and_then(|e| text(e, key)).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -435,7 +426,7 @@ mod tests {
             state: "work".into(),
             phase: "invoke".into(),
             script: "build".into(),
-            started_at: crate::runtime::timestamp(Utc::now() - chrono::Duration::seconds(3)),
+            started_at: crate::events::timestamp(Utc::now() - chrono::Duration::seconds(3)),
             log: "0001-work-build.log".into(),
         };
         let line = running_line("r1", &r);

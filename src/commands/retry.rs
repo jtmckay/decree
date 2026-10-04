@@ -7,14 +7,15 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::commands::check::Project;
 use crate::commands::process::context;
 use crate::error::DecreeError;
-use crate::interpreter::{current_state, mirror_state, read_events, RunStatus};
+use crate::events::{current_state, first_text, is_transition, text, Event, EventLog};
+use crate::interpreter::recover::{mirror_state, RunStatus};
+use crate::layout::MESSAGE_FILE;
 use crate::message::{is_valid_id, RunLock};
-use crate::runtime::{EventLog, MESSAGE_FILE};
 
 /// Run `decree retry`.
 pub fn run(project_root: &Path, id: &str, state: Option<&str>) -> Result<(), DecreeError> {
@@ -28,15 +29,8 @@ pub fn run(project_root: &Path, id: &str, state: Option<&str>) -> Result<(), Dec
     let Some(_lock) = RunLock::acquire(&run_dir)? else {
         return Err(refuse(id, RunStatus::Active));
     };
-    let events = read_events(&run_dir)?;
-    let first = events.first();
-    let text = |key: &str| {
-        first
-            .and_then(|e| e.get(key))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-    };
-    let machine_name = text("machine");
+    let events = ctx.events(id)?;
+    let machine_name = first_text(&events, "machine").unwrap_or_default();
     let Some(machine) = project.machines.get(machine_name) else {
         return Err(DecreeError::Other(format!(
             "run {id}: machine `{machine_name}` is not loaded; it cannot be continued"
@@ -78,30 +72,30 @@ pub fn run(project_root: &Path, id: &str, state: Option<&str>) -> Result<(), Dec
         )));
     }
 
-    let mut log = EventLog::open(&run_dir, id, machine_name, text("trigger"))?;
-    let Value::Object(fields) = json!({
-        "from": from,
-        "event": "retry",
-        "to": target,
-        "source": "retry",
-        "exit_code": null,
-    }) else {
-        unreachable!("event fields are a JSON object");
-    };
-    log.append("transition", fields)?;
-    mirror_state(&run_dir.join(MESSAGE_FILE), &target)
-        .map_err(|e| DecreeError::Other(e.to_string()))?;
+    let trigger = first_text(&events, "trigger").unwrap_or_default();
+    let mut log = EventLog::open(&run_dir, id, machine_name, trigger)?;
+    log.append(
+        "transition",
+        json!({
+            "from": from,
+            "event": "retry",
+            "to": target,
+            "source": "retry",
+            "exit_code": null,
+        }),
+    )?;
+    mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
     println!("run {id} is pending in `{target}`; `decree process` continues it");
     Ok(())
 }
 
 /// The `from` of the last `transition` event that has one.
-fn last_from(events: &[serde_json::Map<String, Value>]) -> Option<String> {
+fn last_from(events: &[Event]) -> Option<String> {
     events
         .iter()
         .rev()
-        .filter(|e| e.get("type").and_then(Value::as_str) == Some("transition"))
-        .find_map(|e| e.get("from").and_then(Value::as_str))
+        .filter(|e| is_transition(e))
+        .find_map(|e| text(e, "from"))
         .map(String::from)
 }
 

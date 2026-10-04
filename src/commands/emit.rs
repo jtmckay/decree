@@ -9,11 +9,11 @@ use serde_norway::{Mapping, Value};
 
 use crate::commands::check::Project;
 use crate::error::DecreeError;
-use crate::interpreter::MAX_DEPTH;
+use crate::layout::MESSAGE_FILE;
 use crate::layout::RUNS_DIR;
 use crate::machine::{DataType, LoadedMachine};
-use crate::message::{self, Message};
-use crate::runtime::{MESSAGE_FILE, ROOT_STATE};
+use crate::message::{self, Message, MAX_DEPTH};
+use crate::runtime::ROOT_STATE;
 
 /// Run `decree emit`: check the emit against the emitting state's `emits`, `max_depth` and
 /// the target machine's `data`, then read stdin and queue the message. Prints the new id.
@@ -28,7 +28,7 @@ pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), 
     if let Some(parent) = var("DECREE_MESSAGE_ID") {
         let depth = parent_depth(&project, &parent)? + 1;
         if depth > MAX_DEPTH {
-            return Err(fail(format!(
+            return Err(DecreeError::Other(format!(
                 "depth {depth} exceeds max_depth {MAX_DEPTH}: run {parent} is at depth {}",
                 depth - 1
             )));
@@ -44,11 +44,11 @@ pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), 
     }
     if let Err(errors) = message::validate(&message, &project.machines, &project.machine_ids) {
         let errors: Vec<String> = errors.into_iter().map(|(_, e)| e).collect();
-        return Err(fail(errors.join("; ")));
+        return Err(DecreeError::Other(errors.join("; ")));
     }
 
     std::io::stdin().read_to_string(&mut message.body)?;
-    let id = message::queue(&project.decree_dir, &mut message).map_err(fail)?;
+    let id = message::queue(&project.decree_dir, &mut message)?;
     println!("{id}");
     Ok(())
 }
@@ -60,17 +60,16 @@ fn check_emits(
     state: &str,
     machine: &str,
 ) -> Result<(), DecreeError> {
-    let m = project
-        .machines
-        .get(from)
-        .ok_or_else(|| fail(format!("DECREE_MACHINE names unknown machine `{from}`")))?;
+    let m = project.machines.get(from).ok_or_else(|| {
+        DecreeError::Other(format!("DECREE_MACHINE names unknown machine `{from}`"))
+    })?;
     let node = if state == ROOT_STATE {
         Some(0)
     } else {
         m.find(state)
     };
     let node = node.map(|i| &m.nodes[i]).ok_or_else(|| {
-        fail(format!(
+        DecreeError::Other(format!(
             "DECREE_STATE names unknown state `{state}` of machine `{from}`"
         ))
     })?;
@@ -82,7 +81,7 @@ fn check_emits(
     } else {
         node.emits.join(", ")
     };
-    Err(fail(format!(
+    Err(DecreeError::Other(format!(
         "state `{state}` of machine `{from}` may not emit `{machine}`; its `emits`: {allowed}"
     )))
 }
@@ -90,7 +89,7 @@ fn check_emits(
 /// Frontmatter `depth` of run `parent` (absent means 0).
 fn parent_depth(project: &Project, parent: &str) -> Result<u32, DecreeError> {
     if !message::is_valid_id(parent) {
-        return Err(fail(format!(
+        return Err(DecreeError::Other(format!(
             "DECREE_MESSAGE_ID `{parent}` is not a run id"
         )));
     }
@@ -100,7 +99,7 @@ fn parent_depth(project: &Project, parent: &str) -> Result<u32, DecreeError> {
         .join(parent)
         .join(MESSAGE_FILE);
     let parent_message = Message::read(&path).map_err(|e| {
-        fail(format!(
+        DecreeError::Other(format!(
             "cannot read the emitting run {parent} (DECREE_MESSAGE_ID): {e}"
         ))
     })?;
@@ -110,7 +109,7 @@ fn parent_depth(project: &Project, parent: &str) -> Result<u32, DecreeError> {
             .as_u64()
             .and_then(|d| u32::try_from(d).ok())
             .ok_or_else(|| {
-                fail(format!(
+                DecreeError::Other(format!(
                     "{}: `depth` is not a non-negative integer",
                     path.display()
                 ))
@@ -122,11 +121,11 @@ fn parent_depth(project: &Project, parent: &str) -> Result<u32, DecreeError> {
 fn target<'p>(project: &'p Project, machine: &str) -> Result<&'p LoadedMachine, DecreeError> {
     project.machines.get(machine).ok_or_else(|| {
         if project.machine_ids.contains(machine) {
-            fail(format!(
+            DecreeError::Other(format!(
                 "machine `{machine}` does not load; run `decree check`"
             ))
         } else {
-            fail(format!("unknown machine `{machine}`"))
+            DecreeError::Other(format!("unknown machine `{machine}`"))
         }
     })
 }
@@ -139,7 +138,7 @@ fn parse_params(m: &LoadedMachine, params: &[String]) -> Result<Mapping, DecreeE
     for param in params {
         let (key, text) = param
             .split_once('=')
-            .ok_or_else(|| fail(format!("--param `{param}` is not `name=value`")))?;
+            .ok_or_else(|| DecreeError::Other(format!("--param `{param}` is not `name=value`")))?;
         let value = match m.data.get(key).map(|d| d.kind) {
             Some(DataType::Int) => text
                 .parse::<i64>()
@@ -152,12 +151,10 @@ fn parse_params(m: &LoadedMachine, params: &[String]) -> Result<Mapping, DecreeE
             Some(DataType::String) | None => Value::from(text),
         };
         if mapping.insert(Value::from(key), value).is_some() {
-            return Err(fail(format!("--param `{key}` is given twice")));
+            return Err(DecreeError::Other(format!(
+                "--param `{key}` is given twice"
+            )));
         }
     }
     Ok(mapping)
-}
-
-fn fail(e: impl std::fmt::Display) -> DecreeError {
-    DecreeError::Other(e.to_string())
 }

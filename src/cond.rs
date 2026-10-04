@@ -71,7 +71,7 @@ pub enum Op {
 }
 
 /// A condition's subject and, except for a bare `matches`, its test.
-pub type Shape<'a> = (Subject<'a>, Option<Test<'a>>);
+type Shape<'a> = (Subject<'a>, Option<Test<'a>>);
 
 /// What a condition tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +146,7 @@ pub enum CondError {
 }
 
 impl Op {
-    pub fn as_str(self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
             Op::Equals => "equals",
             Op::NotEquals => "not_equals",
@@ -157,8 +157,8 @@ impl Op {
         }
     }
 
-    /// Compare two numbers (`confidence` only).
-    pub fn compare(self, a: f64, b: f64) -> bool {
+    /// Compare two ints or two numbers.
+    fn compare<T: PartialOrd>(self, a: T, b: T) -> bool {
         match self {
             Op::Equals => a == b,
             Op::NotEquals => a != b,
@@ -182,7 +182,7 @@ impl fmt::Display for Op {
 }
 
 impl Value {
-    pub fn kind(&self) -> &'static str {
+    fn kind(&self) -> &'static str {
         match self {
             Value::Int(_) => "an int",
             Value::Str(_) => "a string",
@@ -244,7 +244,7 @@ impl Serialize for Operand {
 
 impl Condition {
     /// Every operator that is set, in declaration order.
-    pub fn operators(&self) -> Vec<(Op, &Operand)> {
+    fn operators(&self) -> Vec<(Op, &Operand)> {
         [
             (Op::Equals, &self.equals),
             (Op::NotEquals, &self.not_equals),
@@ -307,35 +307,28 @@ impl Condition {
     /// Evaluate against the run's facts: `data`, visit counts, decision confidences and the
     /// input text.
     pub fn eval(&self, facts: &Facts) -> Result<bool, CondError> {
-        let (subject, test) = self.shape()?;
-        let Some(test) = test else {
-            let Subject::Matches(pattern) = subject else {
-                unreachable!("shape gives every subject but a bare `matches` a test");
-            };
-            return Ok(compile(pattern)?.is_match(facts.input));
-        };
-        let left = match subject {
-            Subject::Matches(_) => unreachable!("shape gives a bare `matches` no test"),
-            Subject::Visits(state) => {
-                Value::Int(facts.visits.get(state).copied().unwrap_or(0).into())
-            }
-            Subject::Data(name) => lookup(facts.data, name)?,
-            Subject::Confidence(state) => {
-                let Test::Compare(op, operand) = test else {
-                    unreachable!("shape gives `confidence` a comparison");
-                };
+        let (op, left, operand) = match self.shape()? {
+            (Subject::Matches(pattern), _) => return Ok(compile(pattern)?.is_match(facts.input)),
+            (Subject::Confidence(state), Some(Test::Compare(op, operand))) => {
                 let left = facts.confidence.get(state).copied().unwrap_or(0.0);
                 return Ok(op.compare(left, confidence_operand(operand)?));
             }
-        };
-        let (op, operand) = match test {
-            Test::Matches(pattern) => {
-                return match left {
+            (Subject::Data(name), Some(Test::Matches(pattern))) => {
+                return match lookup(facts.data, name)? {
                     Value::Str(s) => Ok(compile(pattern)?.is_match(&s)),
                     other => Err(CondError::MatchesNotString(other.kind())),
                 };
             }
-            Test::Compare(op, operand) => (op, operand),
+            (Subject::Visits(state), Some(Test::Compare(op, operand))) => {
+                let visits = facts.visits.get(state).copied().unwrap_or(0);
+                (op, Value::Int(visits.into()), operand)
+            }
+            (Subject::Data(name), Some(Test::Compare(op, operand))) => {
+                (op, lookup(facts.data, name)?, operand)
+            }
+            // `shape` gives `visits` and `confidence` a comparison, and nothing else a
+            // missing test.
+            (subject, _) => return Err(CondError::NoOperator(subject.key())),
         };
         let right = match operand {
             Operand::Int(n) => Value::Int(*n),
@@ -368,7 +361,7 @@ pub fn confidence_operand(operand: &Operand) -> Result<f64, CondError> {
 }
 
 impl Test<'_> {
-    pub fn key(self) -> &'static str {
+    fn key(self) -> &'static str {
         match self {
             Test::Compare(op, _) => op.as_str(),
             Test::Matches(_) => "matches",
@@ -435,14 +428,7 @@ fn lookup(data: &BTreeMap<String, Value>, name: &str) -> Result<Value, CondError
 
 fn compare(left: &Value, op: Op, right: &Value) -> Result<bool, CondError> {
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(match op {
-            Op::Equals => a == b,
-            Op::NotEquals => a != b,
-            Op::LessThan => a < b,
-            Op::AtMost => a <= b,
-            Op::MoreThan => a > b,
-            Op::AtLeast => a >= b,
-        }),
+        (Value::Int(a), Value::Int(b)) => Ok(op.compare(a, b)),
         (Value::Str(_), Value::Str(_)) | (Value::Bool(_), Value::Bool(_)) => match op {
             Op::Equals => Ok(left == right),
             Op::NotEquals => Ok(left != right),
