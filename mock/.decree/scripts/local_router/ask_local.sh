@@ -18,3 +18,5 @@ echo "$scores"
 # {"invoice": 0.31, "receipt": 0.62, "other": 0.07} -> the top label and its score
 jq '{probabilities: .} + (to_entries | max_by(.value) | {event: .key, confidence: .value})' \
   <<<"$scores" > "$DECREE_REPLY"
+# a plain last line, as in router/ask_claude.sh
+jq -r '"picked \(.event)"' "$DECREE_REPLY"

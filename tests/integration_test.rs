@@ -4,6 +4,9 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
+mod common;
+use common::write_script;
+
 /// Helper: run decree in a temp directory.
 fn decree_cmd(dir: &TempDir) -> Command {
     let mut cmd = cargo_bin_cmd!("decree");
@@ -215,7 +218,6 @@ fn test_init_ai_opencode_and_copilot_write_their_routers() {
 /// Run the `ask_claude` that `decree init --ai claude` writes, with a stub `claude` on
 /// `PATH` that prints `stub_reply`: (exit code, `reply.json` if written, stderr).
 fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
-    use std::os::unix::fs::PermissionsExt;
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir)
         .args(["init", "--ai", "claude"])
@@ -226,15 +228,13 @@ fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
     fs::write(bin.join("reply.txt"), stub_reply).unwrap();
     // The stub reads the prompt from stdin, as `claude -p` does, and keeps it.
     let stub = bin.join("claude");
-    fs::write(
+    write_script(
         &stub,
-        format!(
+        &format!(
             "#!/usr/bin/env bash\n[ \"$1\" = -p ] || exit 9\ncat > {bin}/prompt.txt\ncat {bin}/reply.txt\n",
             bin = bin.display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let run = dir.path().join(".decree/runs/r1");
     fs::create_dir_all(&run).unwrap();
     let request = serde_json::json!({
@@ -299,6 +299,58 @@ fn test_ask_claude_fails_on_a_reply_that_is_not_an_option() {
         assert!(reply.is_none(), "{stub_reply}");
         assert!(stderr.contains(want), "{stderr}");
     }
+}
+
+/// The router `init` writes, run by decree, picks the option when the model replies with
+/// a bare JSON object: the script's last stdout line must not be read as its event.
+#[test]
+fn test_default_router_through_decree_takes_a_bare_json_reply() {
+    let dir = TempDir::new().unwrap();
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude"])
+        .assert()
+        .success();
+    fs::write(
+        dir.path().join(".decree/machines/pick.yml"),
+        "name: pick
+description: Pick retry or split.
+initial: triage
+states:
+  triage:
+    invoke: { choose: model, question: \"Retry or split?\" }
+    transitions:
+      retry: { target: retried, description: Implement again. }
+      split: { target: split_up, description: Split the work. }
+  retried: { final: true }
+  split_up: { final: true }
+  failed: { final: true }
+",
+    )
+    .unwrap();
+    let bin = dir.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    write_script(
+        &bin.join("claude"),
+        "#!/usr/bin/env bash\ncat > /dev/null\necho '{\"event\": \"split\", \"reason\": \"Too big.\", \"confidence\": 0.9}'\n",
+    );
+    let out = decree_cmd(&dir)
+        .args(["emit", "--machine", "pick"])
+        .write_stdin("# Task\n")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let id = String::from_utf8(out).unwrap().trim().to_string();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    decree_cmd(&dir)
+        .arg("process")
+        .env("PATH", path)
+        .assert()
+        .code(0);
+    let message =
+        fs::read_to_string(dir.path().join(".decree/runs").join(&id).join("message.md")).unwrap();
+    assert!(message.contains("state: split_up\n"), "{message}");
 }
 
 #[test]

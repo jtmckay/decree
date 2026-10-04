@@ -6,9 +6,11 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::{json, Value};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+mod common;
+use common::write_script;
 
 /// Asks a person, then ships or stops; a timeout goes to `expired`.
 const DEPLOY: &str = "\
@@ -55,9 +57,7 @@ impl Project {
         let machine = DEPLOY.replace("TIMEOUT", &timeout_s.to_string());
         fs::write(decree.join("machines/deploy.yml"), machine).unwrap();
         for (name, text) in [("ask_person", "#!/usr/bin/env bash\n"), ("ship", SHIP)] {
-            let path = decree.join("scripts").join(name);
-            fs::write(&path, text).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            write_script(&decree.join("scripts").join(name), text);
         }
         let p = Project { tmp };
         p.write(

@@ -8,9 +8,11 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+
+mod common;
+use common::write_script;
 
 const MACHINE: &str = "\
 name: hooks
@@ -68,9 +70,7 @@ impl Project {
         fs::write(decree.join("processed.md"), "").unwrap();
         fs::write(decree.join("machines/hooks.yml"), MACHINE).unwrap();
         for name in SCRIPTS {
-            let path = decree.join("scripts").join(name);
-            fs::write(&path, RECORD).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            write_script(&decree.join("scripts").join(name), RECORD);
         }
         Project { tmp }
     }
@@ -353,8 +353,7 @@ fn git_baseline_is_written_once_and_snapshot_stores_one_stash_per_visit() {
     fs::write(decree.join("machines/git_rounds.yml"), GIT_MACHINE).unwrap();
     let edit = decree.join("scripts/git_rounds/edit");
     fs::create_dir_all(edit.parent().unwrap()).unwrap();
-    fs::write(&edit, EDIT).unwrap();
-    fs::set_permissions(&edit, fs::Permissions::from_mode(0o755)).unwrap();
+    write_script(&edit, EDIT);
     fs::write(
         decree.join("inbox/rounds.md"),
         "---\nid: rounds\nmachine: git_rounds\n---\n",

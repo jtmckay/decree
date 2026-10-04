@@ -27,3 +27,4 @@ Options:
 - receipt: Proof of a payment already made.
 --- reply
 {"event": "receipt", "reason": "It is marked PAID with nothing due, but it is titled as an order, not a receipt.", "confidence": 0.55}
+picked receipt

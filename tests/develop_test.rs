@@ -9,9 +9,11 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+
+mod common;
+use common::write_script;
 
 const MESSAGE: &str =
     "# Add a greeting\n\nPrint hello.\n\n## Acceptance Criteria\n\n- It prints hello.\n";
@@ -82,9 +84,7 @@ impl Project {
     }
 
     fn stub(&self, name: &str, text: &str) {
-        let path = self.bin().join(name);
-        fs::write(&path, text).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&self.bin().join(name), text);
     }
 
     /// `PATH` with the stubs first.

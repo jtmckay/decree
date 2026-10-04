@@ -8,12 +8,14 @@ use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+mod common;
+use common::write_script;
 
 /// Fails until `ok.flag` exists in the project root.
 const FLAKY: &str = "\
@@ -100,6 +102,9 @@ states:
 const TICK_SH: &str =
     "#!/usr/bin/env bash\nfor i in 1 2 3 4 5; do echo \"tick $i\"; sleep 1; done\n";
 
+/// Ticks while `tick.flag` exists in the project root.
+const TICK_WHILE_FLAG: &str = "#!/usr/bin/env bash\nwhile [ -e \"$DECREE_PROJECT_ROOT/tick.flag\" ]; do echo tick; sleep 0.02; done\n";
+
 struct Project {
     tmp: TempDir,
 }
@@ -150,9 +155,7 @@ impl Project {
     }
 
     fn script(&self, name: &str, text: &str) {
-        let path = self.decree_dir().join("scripts").join(name);
-        fs::write(&path, text).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&self.decree_dir().join("scripts").join(name), text);
     }
 
     /// `decree emit --machine <machine>` with `body` on stdin; returns the new id.
@@ -206,7 +209,7 @@ impl Project {
                 return id;
             }
             assert!(Instant::now() < deadline, "no script started");
-            thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(5));
         }
     }
 }
@@ -234,7 +237,7 @@ fn wait_exit(child: &mut Child, timeout: Duration) -> std::process::ExitStatus {
             return status;
         }
         assert!(Instant::now() < deadline, "decree did not exit in time");
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -416,8 +419,9 @@ fn choose_person_prints_the_wait_and_a_reply_finishes_the_run() {
 fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     let p = Project::init();
     p.machine("tick", TICK);
-    p.script("ticker", TICK_SH);
+    p.script("ticker", TICK_WHILE_FLAG);
     let id = p.emit("tick", "Tick.\n");
+    fs::write(p.root().join("tick.flag"), "").unwrap();
 
     let mut decree = p.spawn(&["process"]);
     assert_eq!(p.wait_running(), id);
@@ -444,6 +448,7 @@ fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     assert_eq!(p.events(&id), events);
 
     // `decree retry` continues it, and the next `decree process` finishes it.
+    fs::remove_file(p.root().join("tick.flag")).unwrap();
     p.decree(&["retry", &id]).assert().success();
     p.decree(&["process"]).assert().success();
     assert_eq!(p.events(&id).last().unwrap()["type"], "run_finished");

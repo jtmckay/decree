@@ -7,6 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod common;
+use common::write_script;
+
 /// 0.4 words that must not appear in `examples/`, matched as whole words.
 const OLD_TERMS: &[&str] = &["routine", "routines", "outbox", "hooks", "ai_router"];
 
@@ -227,10 +230,7 @@ fn run_readme(name: &str, prepare: &str) -> tempfile::TempDir {
     let bin = dir.path().join("bin");
     fs::create_dir(&bin).unwrap();
     for (tool, body) in STUBS {
-        let path = bin.join(tool);
-        fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&bin.join(tool), &format!("#!/usr/bin/env bash\n{body}\n"));
     }
     let decree_dir = Path::new(env!("CARGO_BIN_EXE_decree")).parent().unwrap();
     let path = std::env::join_paths(

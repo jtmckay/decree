@@ -5,9 +5,11 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+
+mod common;
+use common::write_script;
 
 const MACHINE: &str = "\
 name: flow
@@ -57,9 +59,7 @@ impl Project {
         fs::write(decree.join("processed.md"), "").unwrap();
         fs::write(decree.join("machines/flow.yml"), MACHINE).unwrap();
         for (name, text) in [("work", WORK), ("commit", COMMIT)] {
-            let path = decree.join("scripts").join(name);
-            fs::write(&path, text).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            write_script(&decree.join("scripts").join(name), text);
         }
         Project { tmp }
     }

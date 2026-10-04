@@ -1731,6 +1731,7 @@ mod tests {
     use super::*;
     use crate::layout::INBOX_DIR;
     use crate::machine::{load_machine_text, CheckEnv};
+    use crate::runtime::executor_tests::install;
     use std::collections::{BTreeSet, HashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -1800,12 +1801,10 @@ mod tests {
                     .iter()
                     .find(|(s, _)| *s == script)
                     .map_or("record", |(_, f)| f);
-                // fs::copy keeps the fixture's executable bit.
-                fs::copy(
-                    fixtures.join(format!("{file}.sh")),
-                    script_dir.join(format!("{script}.sh")),
-                )
-                .unwrap();
+                install(
+                    &fixtures.join(format!("{file}.sh")),
+                    &script_dir.join(format!("{script}.sh")),
+                );
             }
             // Every fixture machine passes `decree check`.
             let ids: BTreeSet<String> = loaded.keys().cloned().collect();
@@ -2730,11 +2729,10 @@ mod tests {
     fn retried_run_whose_onentry_fails_takes_error() {
         let p = interrupted_compound();
         retry(&p, "inner");
-        fs::copy(
-            repo().join("tests/fixtures/scripts/exit_three.sh"),
-            p.root().join(".decree/scripts/inner_entry.sh"),
-        )
-        .unwrap();
+        install(
+            &repo().join("tests/fixtures/scripts/exit_three.sh"),
+            &p.root().join(".decree/scripts/inner_entry.sh"),
+        );
         let outcome = continue_run(&p.ctx(), RUN_ID).unwrap();
         assert_eq!(outcome, Outcome::Finished("failed".into()));
         assert_eq!(

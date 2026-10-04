@@ -1128,10 +1128,23 @@ mod tests {
 }
 
 #[cfg(test)]
-mod executor_tests {
+pub(crate) mod executor_tests {
     use super::*;
     use crate::machine::load_machine_text;
     use tempfile::TempDir;
+
+    /// Copy executable fixture `from` to `to` in a `cp` child process, which keeps its mode.
+    /// A test thread that wrote the copy itself would hold a write handle that a process
+    /// another thread forks at that moment inherits until it execs; running the copy then
+    /// fails with ETXTBSY ("Text file busy"), a race of multithreaded test binaries only.
+    pub(crate) fn install(from: &Path, to: &Path) {
+        let status = std::process::Command::new("cp")
+            .arg(from)
+            .arg(to)
+            .status()
+            .unwrap();
+        assert!(status.success(), "cp {} {}", from.display(), to.display());
+    }
 
     const RUN_ID: &str = "20261001T143005Z-3fa9c1";
 
@@ -1155,8 +1168,7 @@ mod executor_tests {
             let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scripts");
             for name in scripts {
                 let file = format!("{name}.sh");
-                // fs::copy keeps the fixture's executable bit.
-                fs::copy(fixtures.join(&file), dir.join(&file)).unwrap();
+                install(&fixtures.join(&file), &dir.join(&file));
             }
             project
         }

@@ -6,13 +6,15 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::{json, Value};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+mod common;
+use common::write_script;
 
 const SLOW: &str = "\
 name: slow
@@ -84,9 +86,7 @@ impl Project {
             ("work", WORK),
         ];
         for (name, text) in scripts {
-            let path = decree.join("scripts").join(name);
-            fs::write(&path, text).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            write_script(&decree.join("scripts").join(name), text);
         }
         fs::write(tmp.path().join("sleep.flag"), "").unwrap();
         Project { tmp }

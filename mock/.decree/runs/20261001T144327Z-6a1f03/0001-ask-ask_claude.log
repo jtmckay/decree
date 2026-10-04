@@ -18,6 +18,8 @@ assertion `left == right` failed
  right: 200
 
 test result: FAILED. 13 passed; 1 failed
+{"event":"fail"}
+
 
 Task message:
 # Rate-limit /api/upload
@@ -48,3 +50,4 @@ Options:
 - split: The scope is too large; emit smaller follow-up messages.
 --- reply
 {"event": "retry", "reason": "One test fails on an off-by-one in the window check; the fix is local.", "confidence": 0.86}
+picked retry

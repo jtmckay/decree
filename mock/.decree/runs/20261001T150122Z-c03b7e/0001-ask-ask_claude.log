@@ -12,6 +12,8 @@ test plans::reads_plans_toml ... FAILED
   No such file: config/plans.toml
 
 test result: FAILED. 17 passed; 1 failed
+{"event":"fail"}
+
 
 Task message:
 # Per-plan upload limits
@@ -38,3 +40,4 @@ Options:
 - split: The scope is too large; emit smaller follow-up messages.
 --- reply
 {"event": "retry", "reason": "Only one test fails, but it reads a file whose location the spec does not give.", "confidence": 0.55}
+picked retry

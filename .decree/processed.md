@@ -64,3 +64,4 @@
 64-v05-reference-docs.md
 65-v05-one-copy.md
 66-v05-test-layout.md
+67-v05-reliability-tests.md

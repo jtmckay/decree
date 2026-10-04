@@ -11,11 +11,14 @@
 | `docs_test.rs` | The docs hold together: links resolve, the machine examples are the `mock/` files. |
 | `emit_test.rs` | `decree emit`: parent, depth, trigger, `emits`, `max_depth` and `--param`. |
 | `examples_test.rs` | Every project in `examples/` checks, has no 0.4 term, and its README commands run. |
+| `failure_test.rs` | Failure scenarios not covered elsewhere: SIGTERM then `decree retry`, two `process` at once, router replies rejected or below `min_confidence`, `max_depth`, `onexit` failures and the 2 MiB log cap. |
 | `graph_test.rs` | `decree graph`: one file per machine, `system.md`, stale files, and the `mock/` graph byte for byte. |
 | `hooks_test.rs` | `onentry`/`onexit` order, attempts, and `failed`'s `onentry` (0.4.2's hooks). |
 | `integration_test.rs` | `decree init` (layout, routers, skill, permissions), `status`, color and exit codes. |
+| `interpreter_props.rs` | Property tests (proptest): generated machines and script outcomes keep the interpreter's invariants (seq, transitions, visits, mirror, hook order). |
 | `interrupt_test.rs` | Signals, crashes, the run lock and run status. |
 | `migrate_script_test.rs` | `scripts/migrate-0.4-to-0.5.sh` on the 0.4.2 project in `fixtures/legacy-0.4/`. |
+| `mock_replay_test.rs` | Each `mock/` run that is not a router's child run, replayed through the binary with stub scripts: its events, child runs, `message.md` and `request.json` equal the mock's. |
 | `mock_templates_test.rs` | Every `mock/` file that `init` also writes is byte-identical to it. |
 | `process_test.rs` | `decree process`: inbox claim and validation, and the six migration rules. |
 | `readme_test.rs` | `README.md` and `--help` describe 0.5 only; every README command runs. |
@@ -23,6 +26,8 @@
 | `validation_test.rs` | Each validation rule V1–V21 and M1–M3: a passing and a failing case per rule, as a table. |
 
 `fixtures/` holds only what is not in `mock/`: the graph `system` project, the 0.4.2 project for the migrate script, the `step_*` machines and the scripts that unit tests in `src/` run, 0.4.2's routines for `develop_test.rs` (`scripts/v0_4_2/`), and the SCXML IRP notes.
+
+A test that runs a script it wrote must write it from a child process (`sh -c 'cat > "$1"'`, or `cp`), never with `fs::write`: tests run on parallel threads, a process another thread forks inherits the test process's open write handle until it execs, and running the script meanwhile fails with ETXTBSY ("Text file busy").
 
 ## Adding a validation case
 

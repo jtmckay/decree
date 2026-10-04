@@ -4,9 +4,11 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+mod common;
+use common::write_script;
 
 /// `work` may emit `other`; `done` may emit nothing.
 const FLOW: &str = "\
@@ -54,9 +56,7 @@ impl Project {
         fs::write(decree.join("processed.md"), "").unwrap();
         fs::write(decree.join("machines/flow.yml"), FLOW).unwrap();
         fs::write(decree.join("machines/other.yml"), OTHER).unwrap();
-        let script = decree.join("scripts/work");
-        fs::write(&script, WORK).unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&decree.join("scripts/work"), WORK);
         Project { tmp }
     }
 
