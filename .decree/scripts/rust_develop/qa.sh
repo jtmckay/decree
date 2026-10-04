@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# rust_develop's qa: Claude fixes what build or test reported. Its exit
-# code is the result.
+# rust_develop's qa: Claude fixes what the gate reported. Like implement,
+# it writes STOP instead of guessing.
 set -euo pipefail
 
-# Ask Claude; the prompt is the only argument. Each call is a new session.
+# Ask Claude; the prompt is the only argument. Each call is a new session,
+# listed in the run's sessions.txt with its transcript, which Claude writes as
+# it goes and keeps even if the session dies.
 # When Claude stops at its usage limit (its output names a "usage limit" and a
 # "reset"), wait until the reset time it names, or an hour if it names none,
 # then resume the same session with the same prompt.
@@ -11,6 +13,8 @@ ai() {
   local prompt=$1 session out status
   session=$(new_session_id)
   echo "=== claude session ${session} ===" >&2
+  echo "${DECREE_STATE} ${session} ${HOME}/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')/${session}.jsonl" \
+    >> "${DECREE_RUN_DIR}/sessions.txt"
   local session_flag=(--session-id "${session}")
   while true; do
     out=$(mktemp)
@@ -66,9 +70,22 @@ wait_for_reset() {
   sleep "${wait}"
 }
 
-prompt="Read ${DECREE_MESSAGE}, build output at ${DECREE_RUN_DIR}/build.log,
-test output at ${DECREE_RUN_DIR}/test-output.log. Fix any failures. Run cargo
-build --release and cargo test again. Exit 0 only if everything passes."
+progress="${DECREE_RUN_DIR}/progress.md"
+stop="${DECREE_RUN_DIR}/STOP"
+stopped() {
+  [ -f "${stop}" ] || return 1
+  cat "${stop}" >&2
+  echo '{"event": "stop"}'
+}
+stopped && exit 0
+
+prompt="Read ${DECREE_MESSAGE}. The gate (cargo fmt --check, cargo clippy
+--all-targets -- -D warnings, cargo test) failed; its output is in
+${DECREE_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
+Fix the failures, append a line to ${progress} for each fix, and run the
+gate again. If a failure needs a decision the message does not make, write
+the question to ${stop} and stop."
 echo "=== AI prompt (QA) ==="
 echo "${prompt}"
 ai "${prompt}"
+stopped || true

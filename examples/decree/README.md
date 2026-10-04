@@ -27,8 +27,10 @@ Each spec was processed by the `rust-develop` routine of decree 0.4, which
 hands the spec to an AI, builds with `cargo build --release`, runs
 `cargo test`, and has a QA pass fix any failures — all in one automated cycle.
 In 0.5 that routine became the `rust_develop` machine that `decree init`
-writes, with one script per step (`precheck`, `implement`, `build`, `test`,
-`qa`).
+writes: `implement` works in small steps logged to `progress.md`, a `gate`
+runs `cargo fmt --check`, `cargo clippy` and `cargo test`, and `qa` runs only
+if the gate fails. An agent that finds the spec unclear writes a `STOP` file
+instead of guessing, and the run fails until someone answers it.
 
 ```bash
 decree process         # process next unprocessed spec

@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# rust_develop's implement: Claude implements the message.
+# rust_develop's implement: Claude implements the message in small steps,
+# noting each in progress.md, so a retry continues where the last attempt
+# stopped. If the message is unclear, it writes the question to STOP instead of
+# guessing; the run fails until a person answers it, deletes STOP and runs
+# `decree retry`.
 set -euo pipefail
 
-# Ask Claude; the prompt is the only argument. Each call is a new session.
+# Ask Claude; the prompt is the only argument. Each call is a new session,
+# listed in the run's sessions.txt with its transcript, which Claude writes as
+# it goes and keeps even if the session dies.
 # When Claude stops at its usage limit (its output names a "usage limit" and a
 # "reset"), wait until the reset time it names, or an hour if it names none,
 # then resume the same session with the same prompt.
@@ -10,6 +16,8 @@ ai() {
   local prompt=$1 session out status
   session=$(new_session_id)
   echo "=== claude session ${session} ===" >&2
+  echo "${DECREE_STATE} ${session} ${HOME}/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')/${session}.jsonl" \
+    >> "${DECREE_RUN_DIR}/sessions.txt"
   local session_flag=(--session-id "${session}")
   while true; do
     out=$(mktemp)
@@ -65,9 +73,25 @@ wait_for_reset() {
   sleep "${wait}"
 }
 
+progress="${DECREE_RUN_DIR}/progress.md"
+stop="${DECREE_RUN_DIR}/STOP"
+stopped() {
+  [ -f "${stop}" ] || return 1
+  cat "${stop}" >&2
+  echo '{"event": "stop"}'
+}
+stopped && exit 0
+
 prompt="You are a senior Rust engineer. Read ${DECREE_MESSAGE} and
 implement all requirements with proper error handling and tests.
-Previous attempt logs (if any) are in ${DECREE_RUN_DIR} for context."
+Work in small steps, one requirement at a time, and keep the code compiling
+between steps. After each step, append a line to ${progress}: what is done
+and what is next. If ${progress} exists, an earlier attempt was cut short:
+check the code against it and continue from there.
+If the message is ambiguous or conflicts with the code, do not guess: write
+the question to ${stop} and stop.
+Logs of earlier attempts (if any) are in ${DECREE_RUN_DIR}."
 echo "=== AI prompt (implementation) ==="
 echo "${prompt}"
 ai "${prompt}"
+stopped || true

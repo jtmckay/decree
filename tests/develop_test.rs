@@ -1,6 +1,7 @@
 //! The built-in `develop` and `rust_develop` machines `decree init` writes (docs/reference/cli.md,
-//! `decree init`): they pass `decree check`, end in the same outcome as
-//! 0.4.2's routines on the same message, and their scripts wait out Claude's usage
+//! `decree init`): they pass `decree check`, `develop` ends in the same outcome as
+//! 0.4.2's routine on the same message, `rust_develop` runs QA only when its gate
+//! fails and stops on a `STOP` file, and their scripts wait out Claude's usage
 //! limit and resume the session. `claude`, `cargo`, `date` and `sleep` are stubs on
 //! `PATH`; no test calls a model.
 
@@ -17,10 +18,15 @@ const MESSAGE: &str =
 
 /// Records its flags and the prompt's first line in `calls`. With `CLAUDE_LIMIT` set,
 /// the first call prints it and exits 1; a prompt containing `CLAUDE_FAIL_ON` exits 1.
+/// With `CLAUDE_STOP` set, it writes that to the run's `STOP` file, as an agent that
+/// cannot go on would.
 const STUB_CLAUDE: &str = r#"#!/usr/bin/env bash
 dir=$(dirname "$0")
 prompt=${!#}
 printf '%s | %s\n' "${*:1:$#-1}" "$(head -n 1 <<<"$prompt")" >> "$dir/calls"
+if [ -n "${CLAUDE_STOP:-}" ]; then
+  echo "$CLAUDE_STOP" > "$DECREE_RUN_DIR/STOP"
+fi
 if [ -n "${CLAUDE_LIMIT:-}" ] && [ ! -e "$dir/limited" ]; then
   touch "$dir/limited"
   echo "$CLAUDE_LIMIT"
@@ -33,8 +39,16 @@ fi
 echo "stub done"
 "#;
 
-/// Exits `CARGO_EXIT` (default 0).
-const STUB_CARGO: &str = "#!/usr/bin/env bash\necho \"cargo $*\"\nexit \"${CARGO_EXIT:-0}\"\n";
+/// Exits `CARGO_EXIT` (default 0). With `CARGO_FAIL_ONCE` set, only its first call
+/// fails, as if QA then fixed the code.
+const STUB_CARGO: &str = r#"#!/usr/bin/env bash
+echo "cargo $*"
+if [ -n "${CARGO_FAIL_ONCE:-}" ] && [ ! -e "$(dirname "$0")/failed" ]; then
+  touch "$(dirname "$0")/failed"
+  exit 101
+fi
+exit "${CARGO_EXIT:-0}"
+"#;
 
 /// The local time is always `STUB_NOW`.
 const STUB_DATE: &str = "#!/usr/bin/env bash\necho \"$STUB_NOW\"\n";
@@ -199,10 +213,11 @@ fn init_writes_develop_and_rust_develop_and_they_pass_check() {
 /// Environment variables for the stubs.
 type Env = &'static [(&'static str, &'static str)];
 
-/// AC: on the same message with the same stub `claude` (and `cargo`), 0.4.2's routine
-/// and the ported machine end in the same outcome.
+/// AC: on the same message with the same stub `claude`, 0.4.2's routine and the
+/// ported machine end in the same outcome. (`rust_develop` no longer ends like 0.4.2's
+/// `rust-develop`, which ignored a failed build and tests: see the tests below.)
 #[test]
-fn develop_and_rust_develop_end_like_0_4_2() {
+fn develop_ends_like_0_4_2() {
     let cases: &[(&str, &str, Env, &str)] = &[
         ("develop", "develop", &[], "done"),
         (
@@ -217,26 +232,6 @@ fn develop_and_rust_develop_end_like_0_4_2() {
             &[("CLAUDE_FAIL_ON", "Verify that")],
             "failed",
         ),
-        ("rust-develop", "rust_develop", &[], "done"),
-        // 0.4.2 ignored a failed build and test; qa sees them.
-        (
-            "rust-develop",
-            "rust_develop",
-            &[("CARGO_EXIT", "101")],
-            "done",
-        ),
-        (
-            "rust-develop",
-            "rust_develop",
-            &[("CLAUDE_FAIL_ON", "senior Rust engineer")],
-            "failed",
-        ),
-        (
-            "rust-develop",
-            "rust_develop",
-            &[("CLAUDE_FAIL_ON", "Fix any failures")],
-            "failed",
-        ),
     ];
     for (routine, machine, env, want) in cases {
         let p = Project::init();
@@ -248,46 +243,125 @@ fn develop_and_rust_develop_end_like_0_4_2() {
     }
 }
 
-/// Every state `rust_develop` passes through when the build and tests fail: the
-/// failures go to `qa`, which reads the logs `build` and `test` kept.
-#[test]
-fn rust_develop_hands_build_and_test_failures_to_qa() {
-    let p = Project::init();
-    let id = p.run("rust_develop", &[("CARGO_EXIT", "101")]);
-    assert_eq!(p.outcome(&id), "done");
-    let path: Vec<String> = p
-        .events(&id)
+/// The transitions a run took, as `from -event-> to`.
+fn path(p: &Project, id: &str) -> Vec<String> {
+    p.events(id)
         .iter()
         .filter(|e| e["type"] == "transition")
         .map(|e| format!("{} -{}-> {}", e["from"], e["event"], e["to"]).replace('"', ""))
-        .collect();
+        .collect()
+}
+
+/// A gate that passes the first time skips QA.
+#[test]
+fn rust_develop_skips_qa_when_the_gate_passes() {
+    let p = Project::init();
+    let id = p.run("rust_develop", &[]);
+    assert_eq!(p.outcome(&id), "done");
     assert_eq!(
-        path,
+        path(&p, &id),
         [
             "null -claimed-> precheck",
             "precheck -done-> implement",
-            "implement -done-> build",
-            "build -error-> test",
-            "test -error-> qa",
-            "qa -done-> done",
+            "implement -done-> gate",
+            "gate -done-> done",
         ]
     );
-    let run = p.run_dir(&id);
-    assert!(fs::read_to_string(run.join("build.log"))
-        .unwrap()
-        .contains("cargo build --release"));
-    assert!(fs::read_to_string(run.join("test-output.log"))
-        .unwrap()
-        .contains("cargo test"));
-    let qa = p.calls().pop().unwrap();
-    assert!(
-        qa.ends_with(&format!(
-            "| Read {}/message.md, build output at {}/build.log,",
-            run.display(),
-            run.display()
-        )),
-        "{qa}"
+    let gate = fs::read_to_string(p.run_dir(&id).join("gate.log")).unwrap();
+    assert_eq!(
+        gate,
+        "cargo fmt --check\ncargo clippy --all-targets -- -D warnings\ncargo test\n"
     );
+    let calls = p.calls();
+    assert_eq!(calls.len(), 1, "implement only: {calls:?}");
+    assert!(
+        calls[0].contains("| You are a senior Rust engineer. Read "),
+        "{calls:?}"
+    );
+}
+
+/// A failed gate goes to QA, which reads gate.log; the final gate decides the outcome.
+#[test]
+fn rust_develop_hands_a_failed_gate_to_qa() {
+    let qa_path = [
+        "null -claimed-> precheck",
+        "precheck -done-> implement",
+        "implement -done-> gate",
+        "gate -error-> qa",
+        "qa -done-> final_gate",
+    ];
+    for (env, last, want) in [
+        (("CARGO_FAIL_ONCE", "1"), "final_gate -done-> done", "done"),
+        (
+            ("CARGO_EXIT", "101"),
+            "final_gate -error-> failed",
+            "failed",
+        ),
+    ] {
+        let p = Project::init();
+        let id = p.run("rust_develop", &[env]);
+        assert_eq!(p.outcome(&id), want, "{env:?}");
+        let mut expected: Vec<&str> = qa_path.to_vec();
+        expected.push(last);
+        assert_eq!(path(&p, &id), expected, "{env:?}");
+        let run = p.run_dir(&id);
+        let qa = p.calls().pop().unwrap();
+        assert!(
+            qa.ends_with(&format!(
+                "| Read {}/message.md. The gate (cargo fmt --check, cargo clippy",
+                run.display()
+            )),
+            "{qa}"
+        );
+    }
+}
+
+/// An agent that writes `STOP` fails the run without retrying, and the file keeps
+/// stopping it until a person deletes it.
+#[test]
+fn rust_develop_stops_when_the_agent_writes_stop() {
+    let p = Project::init();
+    let id = p.run("rust_develop", &[("CLAUDE_STOP", "Which greeting?")]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id).last().unwrap(),
+        "implement -stop-> failed",
+        "{:?}",
+        p.events(&id)
+    );
+    assert_eq!(p.calls().len(), 1, "no retry after a stop");
+    let log = fs::read_to_string(p.run_dir(&id).join("0002-implement-implement.log")).unwrap();
+    assert!(log.contains("[stderr] Which greeting?\n"), "{log}");
+
+    // `decree retry` with STOP still there stops again, without asking the AI.
+    p.decree(&["retry", &id, "--state", "implement"])
+        .assert()
+        .success();
+    let mut cmd = p.decree(&["process"]);
+    cmd.env("PATH", p.path());
+    cmd.output().unwrap();
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(p.calls().len(), 1);
+}
+
+/// Each Claude session is listed in sessions.txt with its state and transcript path.
+#[test]
+fn claude_sessions_are_listed_in_sessions_txt() {
+    let p = Project::init();
+    let id = p.run("rust_develop", &[("CARGO_FAIL_ONCE", "1")]);
+    let sessions = fs::read_to_string(p.run_dir(&id).join("sessions.txt")).unwrap();
+    let lines: Vec<Vec<&str>> = sessions.lines().map(|l| l.split(' ').collect()).collect();
+    let states: Vec<&str> = lines.iter().map(|l| l[0]).collect();
+    assert_eq!(states, ["implement", "qa"], "{sessions}");
+    let calls = p.calls();
+    for (line, call) in lines.iter().zip(&calls) {
+        assert_eq!(line[1], session(call).1, "{sessions}");
+        assert!(
+            line[2].contains("/.claude/projects/")
+                && line[2].ends_with(&format!("/{}.jsonl", line[1])),
+            "{sessions}"
+        );
+    }
 }
 
 /// The session flags of a call line: `-p --session-id <id>` or `-p --resume <id>`.
@@ -352,10 +426,13 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
                 calls[1].split(" | ").nth(1),
                 "the same prompt again: {calls:?}"
             );
-            // The next AI step starts a session of its own.
-            let (flag, next) = session(calls.last().unwrap());
-            assert_eq!(flag, "--session-id", "{calls:?}");
-            assert_ne!(next, first);
+            // The next AI step starts a session of its own (rust_develop's gate
+            // passes, so it has no next AI step).
+            if machine == "develop" {
+                let (flag, next) = session(calls.last().unwrap());
+                assert_eq!(flag, "--session-id", "{calls:?}");
+                assert_ne!(next, first);
+            }
 
             // One implement attempt: the wait is inside the script, not a decree retry.
             let log =

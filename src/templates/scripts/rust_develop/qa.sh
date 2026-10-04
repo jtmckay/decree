@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
-# rust_develop's qa: {ai_title} fixes what build or test reported. Its exit
-# code is the result.
+# rust_develop's qa: {ai_title} fixes what the gate reported. Like implement,
+# it writes STOP instead of guessing.
 set -euo pipefail
 
 {ai_function}
 
-prompt="Read ${DECREE_MESSAGE}, build output at ${DECREE_RUN_DIR}/build.log,
-test output at ${DECREE_RUN_DIR}/test-output.log. Fix any failures. Run cargo
-build --release and cargo test again. Exit 0 only if everything passes."
+progress="${DECREE_RUN_DIR}/progress.md"
+stop="${DECREE_RUN_DIR}/STOP"
+stopped() {
+  [ -f "${stop}" ] || return 1
+  cat "${stop}" >&2
+  echo '{"event": "stop"}'
+}
+stopped && exit 0
+
+prompt="Read ${DECREE_MESSAGE}. The gate (cargo fmt --check, cargo clippy
+--all-targets -- -D warnings, cargo test) failed; its output is in
+${DECREE_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
+Fix the failures, append a line to ${progress} for each fix, and run the
+gate again. If a failure needs a decision the message does not make, write
+the question to ${stop} and stop."
 echo "=== AI prompt (QA) ==="
 echo "${prompt}"
 ai "${prompt}"
+stopped || true

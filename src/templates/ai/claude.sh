@@ -1,4 +1,6 @@
-# Ask Claude; the prompt is the only argument. Each call is a new session.
+# Ask Claude; the prompt is the only argument. Each call is a new session,
+# listed in the run's sessions.txt with its transcript, which Claude writes as
+# it goes and keeps even if the session dies.
 # When Claude stops at its usage limit (its output names a "usage limit" and a
 # "reset"), wait until the reset time it names, or an hour if it names none,
 # then resume the same session with the same prompt.
@@ -6,6 +8,8 @@ ai() {
   local prompt=$1 session out status
   session=$(new_session_id)
   echo "=== claude session ${session} ===" >&2
+  echo "${DECREE_STATE} ${session} ${HOME}/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')/${session}.jsonl" \
+    >> "${DECREE_RUN_DIR}/sessions.txt"
   local session_flag=(--session-id "${session}")
   while true; do
     out=$(mktemp)

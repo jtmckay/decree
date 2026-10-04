@@ -97,12 +97,8 @@ const DEVELOP_MACHINES: &[BuiltinMachine] = &[
                 include_str!("../templates/scripts/rust_develop/implement.sh"),
             ),
             (
-                "build",
-                include_str!("../templates/scripts/rust_develop/build.sh"),
-            ),
-            (
-                "test",
-                include_str!("../templates/scripts/rust_develop/test.sh"),
+                "gate",
+                include_str!("../templates/scripts/rust_develop/gate.sh"),
             ),
             (
                 "qa",

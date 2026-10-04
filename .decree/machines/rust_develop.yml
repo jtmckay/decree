@@ -1,27 +1,27 @@
 # Graph: ../graph/rust_develop.md
 name: rust_develop
-description: Implement a message in a Rust project with Claude, build and test it, then have Claude fix any failures.
+description: Implement a message in a Rust project with Claude in small, logged steps, run the gate (fmt, clippy, tests), and have Claude fix failures only if the gate fails.
 initial: precheck
 states:
   precheck:                        # fails fast if claude or cargo is not on PATH
     invoke: precheck
     max_attempts: 1
     transitions: { done: implement }
-  implement:                       # waits out a usage limit and resumes the session
+  implement:                       # logs each step in progress.md; writes STOP instead of guessing
     invoke: implement
     max_attempts: 3
-    transitions: { done: build }
-  build:                           # a failed build goes to qa, which fixes it
-    invoke: build
+    transitions: { done: gate, stop: failed }
+  gate:                            # cargo fmt --check, clippy -D warnings and test, kept in gate.log
+    invoke: gate
     max_attempts: 1
-    transitions: { done: test, error: test }
-  test:                            # failed tests go to qa too
-    invoke: test
-    max_attempts: 1
-    transitions: { done: qa, error: qa }
-  qa:                              # Claude reads build.log and test-output.log and fixes failures
+    transitions: { done: done, error: qa }
+  qa:                              # Claude fixes what gate.log reports
     invoke: qa
     max_attempts: 3
+    transitions: { done: final_gate, stop: failed }
+  final_gate:                      # the gate again; if it fails, so does the run
+    invoke: gate
+    max_attempts: 1
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
