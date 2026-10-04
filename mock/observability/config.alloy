@@ -42,7 +42,7 @@ loki.process "decree_script_output" {
   // runs/<run_id>/<NNNN>-<state>-<script>.log; names cannot contain "-".
   stage.regex {
     source     = "filename"
-    expression = "/runs/(?P<run_id>[^/]+)/(?P<n>\\d{4})-(?P<state>[^-]+)-(?P<script>[^/]+)\\.log$"
+    expression = "/runs/(?P<run_id>[^/]+)/(?P<n>\\d{4,})-(?P<state>[^-]+)-(?P<script>[^/]+)\\.log$"
   }
   stage.labels {
     values = { script = "" }

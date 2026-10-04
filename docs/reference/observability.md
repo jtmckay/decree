@@ -21,7 +21,7 @@ sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | s
 {job="decree", type="interrupted"} | json
 
 # model decisions below a confidence floor
-{job="decree", type="decision", kind="model"} | json | confidence < 0.6
+{job="decree", type="decision"} | json | kind="model" and confidence < 0.6
 ```
 
 The events map directly onto OpenTelemetry traces (run = trace, script and decision events = spans with start and duration), so an OTLP exporter could be added without changing the schema. decree has none.
