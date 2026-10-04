@@ -144,7 +144,7 @@ There are two retry mechanisms, and they mean different things. `max_attempts`, 
 
 | `invoke` | SCXML `type` | What runs | Events it produces |
 | --- | --- | --- | --- |
-| `script: { name: <script>, max_attempts?: <int>, timeout?: <duration> }` | `decree:script` | The script ([scripts.md](scripts.md)), up to `max_attempts` times (default 1), each stopped after `timeout` ([Durations](#durations), [Execution](scripts.md#execution)). | `done` (exit 0), `error` (non-zero), or an event the script prints. |
+| `script: { name: <script>, max_attempts?: <int>, timeout?: <duration> }` | `decree:script` | The script ([scripts.md](scripts.md)), up to `max_attempts` times (default 1), each stopped after `timeout` ([Durations](#durations), [Execution](scripts.md#execution)). | `done` (exit 0), `error` (non-zero), or the event the script names in `$DECREE_EVENT_FILE`. |
 | `check: <condition>` | `decree:check` | decree evaluates the condition. Deterministic, no AI. | `true` or `false`. |
 | `model: { question: <text>, router?: <machine>, min_confidence?: <0..1>, output?: <state> }` | `decree:model` | A router machine (default: the machine named `router`) asks a model to pick one of the state's transitions ([Model](runs.md#model)). | One of the state's events; `unsure` if its confidence is below `min_confidence`; `error` if the router fails or replies with something that is not an option. |
 | `person: { question: <text>, ask: <script>, timeout?: <duration> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions, or until `timeout` passes ([Durations](#durations), [Replies](messages.md#replies)). | One of the state's events; `error` on timeout. |
@@ -224,7 +224,7 @@ Where SCXML leaves a choice to the platform, decree's choice is in this referenc
 ## Rules
 
 - **State ids are unique across the whole machine,** as SCXML requires. A target is always a bare state id.
-- **Events.** Script events are described in [Events from an invoke](scripts.md#events-from-an-invoke). Decision events are listed in the Invoke table. `done.state.<id>` is raised by decree. Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Events a script prints and `model` or `person` options may not be `done`, `error`, `unsure`, or start with `done.` or `error.`; `true`, `false`, `yes` and `no` are ordinary event names.
+- **Events.** Script events are described in [Events from an invoke](scripts.md#events-from-an-invoke). Decision events are listed in the Invoke table. `done.state.<id>` is raised by decree. Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Events a script names and `model` or `person` options may not be `done`, `error`, `unsure`, or start with `done.` or `error.`; `true`, `false`, `yes` and `no` are ordinary event names.
 - **Selecting a transition.** For an event, check the current atomic state's `transitions`, then its parent's, up to the root, and take the first match (Event matching, above). Within one state, no transition's event may extend another's (`done` beside `done.state.work`): SCXML would pick by document order, which a YAML map does not keep (V21).
 - **Unhandled events.** If `error` matches nothing, the target is the root-level final state `failed`. Every machine must have it. (Like a Step Functions `Catch` on `States.ALL`.) Any other event that matches nothing becomes `error`.
 - **`visits.<state>`** is how many times that state has been entered in this run, derived from `events.jsonl` ([Step loop](runs.md#step-loop), Visits).
