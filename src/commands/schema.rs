@@ -1,11 +1,14 @@
 //! `decree schema`: write the JSON Schemas (draft 2020-12) of every file decree reads or
-//! writes into `.decree/schema/v1/` (docs/reference/README.md, Schemas), each through a temp
+//! writes, and of every document a command prints with `--format json` (in `cli/`), into
+//! `.decree/schema/v1/` (docs/reference/README.md, Schemas), each through a temp
 //! file and a rename, and remove anything else in `.decree/schema/`. `decree check` uses
-//! `stale` to warn when they are missing, out of date, or joined by files decree does not
+//! `stale_files` to warn when they are missing, out of date, or joined by files decree does not
 //! write. The schemas describe shape only; `decree check` stays the authority for meaning.
 
 use std::path::Path;
 
+use crate::cli::Format;
+use crate::commands::print_json;
 use crate::error::DecreeError;
 use crate::layout::DECREE_DIR;
 use crate::message::write_replace;
@@ -15,8 +18,45 @@ pub const SCHEMA_DIR: &str = "schema";
 
 /// Every schema `decree schema` writes: its path under `.decree/schema/` and its content,
 /// compiled into the binary from `src/templates/schema/`, their single source. The first
-/// path segment is the contract version (docs/reference/README.md, Versioning).
-const SCHEMAS: [(&str, &str); 5] = [
+/// path segment is the contract version (docs/reference/README.md, Versioning); `cli/` holds
+/// the documents commands print with `--format json` (docs/reference/cli.md).
+const SCHEMAS: [(&str, &str); 14] = [
+    (
+        "v1/cli/check.schema.json",
+        include_str!("../templates/schema/v1/cli/check.schema.json"),
+    ),
+    (
+        "v1/cli/emit.schema.json",
+        include_str!("../templates/schema/v1/cli/emit.schema.json"),
+    ),
+    (
+        "v1/cli/event.schema.json",
+        include_str!("../templates/schema/v1/cli/event.schema.json"),
+    ),
+    (
+        "v1/cli/graph.schema.json",
+        include_str!("../templates/schema/v1/cli/graph.schema.json"),
+    ),
+    (
+        "v1/cli/process.schema.json",
+        include_str!("../templates/schema/v1/cli/process.schema.json"),
+    ),
+    (
+        "v1/cli/prune.schema.json",
+        include_str!("../templates/schema/v1/cli/prune.schema.json"),
+    ),
+    (
+        "v1/cli/retry.schema.json",
+        include_str!("../templates/schema/v1/cli/retry.schema.json"),
+    ),
+    (
+        "v1/cli/schema.schema.json",
+        include_str!("../templates/schema/v1/cli/schema.schema.json"),
+    ),
+    (
+        "v1/cli/status.schema.json",
+        include_str!("../templates/schema/v1/cli/status.schema.json"),
+    ),
     (
         "v1/events.schema.json",
         include_str!("../templates/schema/v1/events.schema.json"),
@@ -39,11 +79,22 @@ const SCHEMAS: [(&str, &str); 5] = [
     ),
 ];
 
-pub fn run(project_root: &Path) -> Result<(), DecreeError> {
-    for name in write(project_root)? {
-        println!("{DECREE_DIR}/{SCHEMA_DIR}/{name}");
+pub fn run(project_root: &Path, format: Format) -> Result<(), DecreeError> {
+    let removed = others(&project_root.join(DECREE_DIR).join(SCHEMA_DIR))?;
+    let written = write(project_root)?;
+    let path = |name: &String| format!("{DECREE_DIR}/{SCHEMA_DIR}/{name}");
+    match format {
+        Format::Text => {
+            for name in &written {
+                println!("{}", path(name));
+            }
+            Ok(())
+        }
+        Format::Json => print_json(&serde_json::json!({
+            "written": written.iter().map(path).collect::<Vec<_>>(),
+            "removed": removed.iter().map(path).collect::<Vec<_>>(),
+        })),
     }
-    Ok(())
 }
 
 /// Write every schema into `.decree/schema/`, each through `.<name>.tmp` and a rename, and
@@ -68,22 +119,36 @@ pub fn write(project_root: &Path) -> Result<Vec<String>, DecreeError> {
 }
 
 /// How `.decree/schema/` differs from what `decree schema` would write, one line per file,
-/// each naming the file relative to `.decree/`. Empty when it is up to date.
-pub fn stale(project_root: &Path) -> Result<Vec<String>, DecreeError> {
+/// each naming the file relative to `.decree/`, as `decree check` warns. Empty when it is
+/// up to date.
+#[cfg(test)]
+fn stale(project_root: &Path) -> Result<Vec<String>, DecreeError> {
+    Ok(stale_files(project_root)?
+        .into_iter()
+        .map(|(file, message)| format!("{file}: {message}"))
+        .collect())
+}
+
+/// How `.decree/schema/` differs from what `decree schema` would write, one (file relative
+/// to `.decree/`, what is wrong) pair per file. Empty when it is up to date.
+pub fn stale_files(project_root: &Path) -> Result<Vec<(String, String)>, DecreeError> {
     let dir = project_root.join(DECREE_DIR).join(SCHEMA_DIR);
     let mut out = Vec::new();
     for (name, text) in SCHEMAS {
         match std::fs::read_to_string(dir.join(name)) {
             Ok(on_disk) if on_disk == text => {}
-            Ok(_) => out.push(format!("{SCHEMA_DIR}/{name}: out of date")),
+            Ok(_) => out.push((format!("{SCHEMA_DIR}/{name}"), "out of date".to_string())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                out.push(format!("{SCHEMA_DIR}/{name}: missing"))
+                out.push((format!("{SCHEMA_DIR}/{name}"), "missing".to_string()))
             }
             Err(e) => return Err(e.into()),
         }
     }
     for name in others(&dir)? {
-        out.push(format!("{SCHEMA_DIR}/{name}: not one decree writes"));
+        out.push((
+            format!("{SCHEMA_DIR}/{name}"),
+            "not one decree writes".to_string(),
+        ));
     }
     Ok(out)
 }

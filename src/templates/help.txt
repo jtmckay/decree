@@ -17,9 +17,12 @@ Commands:
                               router machine for AI (claude, copilot or
                               opencode). claude and copilot also get the skill
   decree check                Validate machines and pending messages
+                              (--format sarif: a SARIF 2.1.0 log for code
+                              scanning)
   decree graph                Write .decree/graph/: Mermaid diagrams in Markdown
   decree schema               Write .decree/schema/v1/: JSON Schemas for
-                              machines, messages, events and router files
+                              machines, messages, events, router files and
+                              --format json output
   decree process [--dry-run]  Deliver replies, continue pending runs, drain
                               inbox/, then run pending migrations in order
   decree daemon [--interval D]
@@ -38,6 +41,10 @@ Commands:
                               90m, 90s); --dry-run lists them
   decree help                 This help text
   decree --version            Print the version
+
+  --format json on check, status, emit, event, retry, prune, graph, schema and
+  process --dry-run prints one JSON document instead of text, described by
+  .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 
 Files (.decree/):
   machines/<name>.yml         Machines

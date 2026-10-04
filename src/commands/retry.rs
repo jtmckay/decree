@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::cli::Format;
 use crate::commands::check::Project;
+use crate::commands::print_json;
 use crate::commands::process::context;
 use crate::error::DecreeError;
 use crate::events::{current_state, first_text, is_transition, text, Event, EventLog};
@@ -18,7 +20,12 @@ use crate::layout::MESSAGE_FILE;
 use crate::message::{is_valid_id, RunLock};
 
 /// Run `decree retry`.
-pub fn run(project_root: &Path, id: &str, state: Option<&str>) -> Result<(), DecreeError> {
+pub fn run(
+    project_root: &Path,
+    id: &str,
+    state: Option<&str>,
+    format: Format,
+) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
     let run_dir = ctx.runs_dir().join(id);
@@ -85,8 +92,13 @@ pub fn run(project_root: &Path, id: &str, state: Option<&str>) -> Result<(), Dec
         }),
     )?;
     mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
-    println!("run {id} is pending in `{target}`; `decree process` continues it");
-    Ok(())
+    match format {
+        Format::Text => {
+            println!("run {id} is pending in `{target}`; `decree process` continues it");
+            Ok(())
+        }
+        Format::Json => print_json(&json!({ "id": id, "state": target })),
+    }
 }
 
 /// The `from` of the last `transition` event that has one.

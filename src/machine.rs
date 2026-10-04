@@ -454,6 +454,29 @@ pub fn load_machine_text(id: &str, text: &str) -> Result<LoadedMachine, DecreeEr
     Ok(flatten(id, machine))
 }
 
+/// Load machine `id` from `text`, as `load_machine_text`, with the error as `decree check`
+/// reports it: where it is (`line <n>` or a state path), if known, and the message.
+pub fn load_machine_located(id: &str, text: &str) -> Result<LoadedMachine, ParseError> {
+    parse_machine_located(text).map(|machine| flatten(id, machine))
+}
+
+/// A machine that does not parse: where (`line <n>` or a dotted state path), when known,
+/// and the message, which ends with `(V19)` for a key outside the SCXML subset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    pub at: Option<String>,
+    pub message: String,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.at {
+            Some(at) => write!(f, "{at}: {}", self.message),
+            None => f.write_str(&self.message),
+        }
+    }
+}
+
 /// Keys outside the SCXML subset that a state may be written with, and what to use instead
 /// (V19). SCXML elements are named as such; the rest are decree 0.5 drafts that the
 /// decision invokes replaced, and script settings that moved inside the script invoke.
@@ -527,9 +550,14 @@ const COND_ON_TRANSITION: &str =
 /// with its decree alternative, as is an old shape with the one that replaced it, and every
 /// unknown key is tagged `(V19)`.
 fn parse_machine(text: &str) -> Result<Machine, String> {
-    let at_line = |e: &serde_norway::Error, msg: String| match e.location() {
-        Some(loc) => format!("line {}: {msg}", loc.line()),
-        None => msg,
+    parse_machine_located(text).map_err(|e| e.to_string())
+}
+
+/// `parse_machine`, with the location of the error kept apart from its message.
+fn parse_machine_located(text: &str) -> Result<Machine, ParseError> {
+    let at_line = |e: &serde_norway::Error, message: String| ParseError {
+        at: e.location().map(|loc| format!("line {}", loc.line())),
+        message,
     };
     let value: serde_norway::Value = match serde_norway::from_str(text) {
         Ok(value) => value,
@@ -540,7 +568,11 @@ fn parse_machine(text: &str) -> Result<Machine, String> {
         .get("states")
         .and_then(|states| unsupported_key(states, ""))
     {
-        return Err(found);
+        let (path, message) = found;
+        return Err(ParseError {
+            at: Some(path),
+            message,
+        });
     }
     let err = match serde_norway::from_str::<Machine>(text) {
         Ok(machine) => return Ok(machine),
@@ -548,7 +580,10 @@ fn parse_machine(text: &str) -> Result<Machine, String> {
     };
     if let Some(states) = value.get("states") {
         if let Some((path, msg)) = locate_state_error(states, "") {
-            return Err(format!("{path}: {}", tag_unknown(msg)));
+            return Err(ParseError {
+                at: Some(path),
+                message: tag_unknown(msg),
+            });
         }
     }
     // Not inside a state: check the root alone, without its states, for a clean message.
@@ -575,24 +610,25 @@ fn tag_unknown(msg: String) -> String {
 }
 
 /// The first state key, transition `cond` or old invoke shape outside the SCXML subset:
-/// `<path>: <message>`.
-fn unsupported_key(states: &serde_norway::Value, prefix: &str) -> Option<String> {
+/// `(<path>, <message>)`.
+fn unsupported_key(states: &serde_norway::Value, prefix: &str) -> Option<(String, String)> {
     for (key, state) in states.as_mapping()? {
         let path = join_path(prefix, key);
         for (name, message) in UNSUPPORTED_STATE_KEYS {
             if state.get(name).is_some() {
-                return Some(format!("{path}: {message} (V19)"));
+                return Some((path, format!("{message} (V19)")));
             }
         }
         if let Some(message) = state.get("invoke").and_then(old_invoke_shape) {
-            return Some(format!("{path}: {message} (V19)"));
+            return Some((path, format!("{message} (V19)")));
         }
         let transitions = state.get("transitions").and_then(|t| t.as_mapping());
         for (event, transition) in transitions.into_iter().flatten() {
             if transition.get("cond").is_some() {
                 let event = event.as_str().unwrap_or_default();
-                return Some(format!(
-                    "{path}: transition `{event}`: {COND_ON_TRANSITION} (V19)"
+                return Some((
+                    path,
+                    format!("transition `{event}`: {COND_ON_TRANSITION} (V19)"),
                 ));
             }
         }

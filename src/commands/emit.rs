@@ -7,17 +7,23 @@ use std::path::Path;
 
 use serde_norway::{Mapping, Value};
 
+use crate::cli::Format;
 use crate::commands::check::Project;
+use crate::commands::print_json;
 use crate::error::DecreeError;
-use crate::layout::MESSAGE_FILE;
-use crate::layout::RUNS_DIR;
+use crate::layout::{DECREE_DIR, INBOX_DIR, MESSAGE_FILE, RUNS_DIR};
 use crate::machine::{DataType, LoadedMachine};
 use crate::message::{self, Message, MAX_DEPTH};
 use crate::runtime::ROOT_STATE;
 
 /// Run `decree emit`: check the emit against the emitting state's `emits`, `max_depth` and
 /// the target machine's `data`, then read stdin and queue the message. Prints the new id.
-pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), DecreeError> {
+pub fn run(
+    project_root: &Path,
+    machine: &str,
+    params: &[String],
+    format: Format,
+) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
     if let (Some(from), Some(state)) = (var("DECREE_MACHINE"), var("DECREE_STATE")) {
@@ -49,8 +55,22 @@ pub fn run(project_root: &Path, machine: &str, params: &[String]) -> Result<(), 
 
     std::io::stdin().read_to_string(&mut message.body)?;
     let id = message::queue(&project.decree_dir, &mut message)?;
-    println!("{id}");
-    Ok(())
+    print_queued(&id, format)
+}
+
+/// Print the id of a message just queued in `inbox/`: alone as text, or as
+/// `{ "id", "path" }` (`emit` and `event`).
+pub(crate) fn print_queued(id: &str, format: Format) -> Result<(), DecreeError> {
+    match format {
+        Format::Text => {
+            println!("{id}");
+            Ok(())
+        }
+        Format::Json => print_json(&serde_json::json!({
+            "id": id,
+            "path": format!("{DECREE_DIR}/{INBOX_DIR}/{id}.md"),
+        })),
+    }
 }
 
 /// `machine` must be in the `emits` of state `state` of machine `from` (docs/reference/README.md, Architecture).

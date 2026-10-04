@@ -13,9 +13,11 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
+use crate::cli::Format;
 use crate::commands::check::{md_files, Project};
+use crate::commands::print_json;
 use crate::commands::process::context;
 use crate::cron;
 use crate::error::DecreeError;
@@ -28,15 +30,21 @@ use crate::message::{run_ids, Message};
 use crate::runtime::Running;
 
 /// Run `decree status`.
-pub fn run(project_root: &Path, id: Option<&str>, cron: bool) -> Result<(), DecreeError> {
+pub fn run(
+    project_root: &Path,
+    id: Option<&str>,
+    cron: bool,
+    format: Format,
+) -> Result<(), DecreeError> {
     if cron {
         return show_cron(project_root);
     }
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
-    match id {
-        Some(id) => show_run(&ctx, id),
-        None => overview(&ctx, &project),
+    match (id, format) {
+        (Some(id), Format::Text) => show_run(&ctx, id),
+        (Some(id), Format::Json) => run_json(&ctx, id),
+        (None, format) => overview(&ctx, &project, format),
     }
 }
 
@@ -45,11 +53,61 @@ struct Row {
     id: String,
     machine: String,
     state: String,
-    detail: Option<String>,
+    detail: Option<Detail>,
+}
+
+/// What the overview says about a run beyond its id, machine and state.
+enum Detail {
+    /// An `active` run's script running now.
+    Running(Running),
+    /// A `waiting` run's last event, a `waiting` event.
+    Wait(Event),
+    Interrupted,
+}
+
+impl Row {
+    /// The detail line under the run, as text.
+    fn detail_line(&self) -> Option<String> {
+        let id = &self.id;
+        self.detail.as_ref().map(|detail| match detail {
+            Detail::Running(r) => running_line(id, r),
+            Detail::Wait(last) => wait_line(last),
+            Detail::Interrupted => format!("continue with `decree retry {id}`"),
+        })
+    }
+
+    /// The run as JSON: `id`, `machine`, `state`, and `running`, `wait_id` and `options`,
+    /// or `child`, where they apply.
+    fn json(&self) -> Value {
+        let mut out = json!({ "id": self.id, "machine": self.machine, "state": self.state });
+        match &self.detail {
+            Some(Detail::Running(r)) => {
+                out["running"] = json!({
+                    "script": r.script,
+                    "phase": r.phase,
+                    "state": r.state,
+                    "pid": r.pid,
+                    "started_at": r.started_at,
+                    "log": format!("{DECREE_DIR}/{RUNS_DIR}/{}/{}", self.id, r.log),
+                });
+            }
+            Some(Detail::Wait(last)) => {
+                let child = field(Some(last), "child");
+                if child.is_empty() {
+                    out["wait_id"] = field(Some(last), "wait_id").into();
+                    out["options"] = strings(last, "options").into();
+                } else {
+                    out["child"] = child.into();
+                }
+            }
+            Some(Detail::Interrupted) | None => {}
+        }
+        out
+    }
 }
 
 /// Counts and lists of runs by status, then of queued messages.
-fn overview(ctx: &Context, project: &Project) -> Result<(), DecreeError> {
+fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), DecreeError> {
     let mut groups: Vec<(RunStatus, Row)> = Vec::new();
     let mut finished: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let ids = run_ids(&ctx.runs_dir())?;
@@ -69,9 +127,9 @@ fn overview(ctx: &Context, project: &Project) -> Result<(), DecreeError> {
         let state = current_state(&events).unwrap_or("-").to_string();
         let run_dir = ctx.runs_dir().join(id);
         let detail = match status {
-            RunStatus::Active => Running::read(&run_dir)?.map(|r| running_line(id, &r)),
-            RunStatus::Waiting => events.last().map(wait_line),
-            RunStatus::Interrupted => Some(format!("continue with `decree retry {id}`")),
+            RunStatus::Active => Running::read(&run_dir)?.map(Detail::Running),
+            RunStatus::Waiting => events.last().cloned().map(Detail::Wait),
+            RunStatus::Interrupted => Some(Detail::Interrupted),
             RunStatus::Finished | RunStatus::Pending => None,
         };
         let row = Row {
@@ -86,18 +144,45 @@ fn overview(ctx: &Context, project: &Project) -> Result<(), DecreeError> {
         }
     }
 
-    println!("{} {}", "Runs:".bold(), ids.len());
-    for status in [
+    let inbox = md_files(&project.decree_dir.join(INBOX_DIR))?;
+    let pending = project.pending_migrations()?;
+    let unfinished = [
         RunStatus::Active,
         RunStatus::Waiting,
         RunStatus::Pending,
         RunStatus::Interrupted,
-    ] {
-        let rows: Vec<&Row> = groups
+    ];
+    let of = |status: RunStatus| -> Vec<&Row> {
+        groups
             .iter()
             .filter(|(s, _)| *s == status)
             .map(|(_, row)| row)
-            .collect();
+            .collect()
+    };
+    if format == Format::Json {
+        let mut counts = json!({ "total": ids.len() });
+        let mut runs = json!({});
+        for status in unfinished {
+            let rows = of(status);
+            counts[status.as_str()] = rows.len().into();
+            runs[status.as_str()] = rows.iter().map(|r| r.json()).collect::<Vec<_>>().into();
+        }
+        counts["finished"] = finished.values().map(Vec::len).sum::<usize>().into();
+        runs["finished"] = finished
+            .iter()
+            .map(|(state, rows)| (state.clone(), rows.iter().map(Row::json).collect()))
+            .collect::<serde_json::Map<String, Value>>()
+            .into();
+        return print_json(&json!({
+            "counts": counts,
+            "runs": runs,
+            "queued": { "inbox": inbox, "migrations": pending },
+        }));
+    }
+
+    println!("{} {}", "Runs:".bold(), ids.len());
+    for status in unfinished {
+        let rows = of(status);
         println!("  {}: {}", status.as_str(), rows.len());
         print_rows(&rows, "    ");
     }
@@ -109,12 +194,10 @@ fn overview(ctx: &Context, project: &Project) -> Result<(), DecreeError> {
     }
 
     println!("{}", "Queued:".bold());
-    let inbox = md_files(&project.decree_dir.join(INBOX_DIR))?;
     println!("  {INBOX_DIR}/: {}", inbox.len());
     for file in &inbox {
         println!("    {file}");
     }
-    let pending = project.pending_migrations()?;
     println!("  {MIGRATIONS_DIR}/: {} pending", pending.len());
     for file in &pending {
         println!("    {file}");
@@ -130,7 +213,7 @@ fn print_rows(rows: &[&Row], indent: &str) {
             row.machine,
             row.state
         );
-        if let Some(detail) = &row.detail {
+        if let Some(detail) = row.detail_line() {
             println!("{indent}  {detail}");
         }
     }
@@ -163,6 +246,24 @@ fn wait_line(last: &Event) -> String {
         field(Some(last), "wait_id"),
         strings(last, "options").join(", ")
     )
+}
+
+/// One run as JSON: its id, machine, derived status and current state, and its events as
+/// parsed objects. An unknown id is reported on stderr, as text does.
+fn run_json(ctx: &Context, id: &str) -> Result<(), DecreeError> {
+    let run_dir = ctx.runs_dir().join(id);
+    if id.is_empty() || id.contains('/') || !run_dir.is_dir() {
+        eprintln!("no run {id} in {DECREE_DIR}/{RUNS_DIR}/");
+        return Ok(());
+    }
+    let (status, events) = ctx.status_of(id)?;
+    print_json(&json!({
+        "id": id,
+        "machine": field(events.first(), "machine"),
+        "status": status.as_str(),
+        "state": current_state(&events),
+        "events": events,
+    }))
 }
 
 /// One run: frontmatter, status, and the events as a table.

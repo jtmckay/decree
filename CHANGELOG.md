@@ -15,6 +15,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 - The `tmux-services` example: services in tmux sessions, with GLiNER beside ComfyUI and Ollama sharing a GPU (migration 75). Its ComfyUI jobs run in the background, and the queue is drained only before ComfyUI's GPU memory is needed (migration 76).
 - A versioned schema for every file decree reads or writes: `events.schema.json` (one line of `events.jsonl`), `request.schema.json` and `reply.schema.json`, beside the machine and message schemas, all in `.decree/schema/v1/`. The versioning rule is in [Versioning](docs/reference/README.md#versioning). Tests validate every recorded event, request and reply, and every line the property test writes (migration 81, [D50](docs/decisions.md#d50-a-versioned-schema-for-every-file)).
 - This changelog (migration 81).
+- `--format json` on `check`, `status`, `emit`, `event`, `retry`, `prune`, `graph`, `schema` and `process --dry-run`: one JSON document on stdout, described by a new schema in `.decree/schema/v1/cli/<command>.schema.json`, with exit codes unchanged; and `decree check --format sarif`, a SARIF 2.1.0 log for GitHub code scanning, GitLab and Azure DevOps (migration 82, [D51](docs/decisions.md#d51-json-output-for-every-report-and-sarif-for-decree-check)).
 
 ### Changed
 

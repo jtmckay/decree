@@ -14,7 +14,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::cli::Format;
 use crate::commands::check::{md_files, Project};
+use crate::commands::print_json;
 use crate::error::DecreeError;
 use crate::events::{current_state, first_text, is_type, strings, text, EventLog};
 use crate::interpreter::child::continue_run;
@@ -28,10 +30,10 @@ use crate::reply::{self, Delivery};
 use crate::runtime::{self};
 
 /// Run `decree process [--dry-run]`.
-pub fn run(project_root: &Path, dry_run: bool) -> Result<(), DecreeError> {
+pub fn run(project_root: &Path, dry_run: bool, format: Format) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     if dry_run {
-        return run_dry(&project);
+        return run_dry(&project, format);
     }
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
@@ -489,37 +491,61 @@ fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
 
 /// `decree process --dry-run`: list what would run, and run nothing. Pending migrations
 /// in order with their machine, then queued inbox messages; invalid ones with their errors.
-fn run_dry(project: &Project) -> Result<(), DecreeError> {
+fn run_dry(project: &Project, format: Format) -> Result<(), DecreeError> {
     let mut problems = project.problems.clone();
+    let mut document = serde_json::Map::new();
     let lists = [
         (MIGRATIONS_DIR, project.pending_migrations()?),
         (INBOX_DIR, md_files(&project.decree_dir.join(INBOX_DIR))?),
     ];
     for (dir, files) in lists {
-        if files.is_empty() {
+        let text = format == Format::Text;
+        if text && files.is_empty() {
             println!("{dir}/: nothing queued");
             continue;
         }
-        println!("{dir}/:");
+        if text {
+            println!("{dir}/:");
+        }
+        let mut items = Vec::new();
         for file in files {
             let path = project.decree_dir.join(dir).join(&file);
             let target = Message::read(&path)
                 .map_err(|e| vec![(0, e.to_string())])
                 .and_then(|m| {
                     if m.frontmatter.contains_key("to") {
-                        return Ok(format!("reply to {}", m.text("to").unwrap_or_default()));
+                        return Ok(Target::Reply(m.text("to").unwrap_or_default().to_string()));
                     }
                     message::validate(&m, &project.machines, &project.machine_ids)
+                        .map(Target::Machine)
                 });
+            let item = match &target {
+                Ok(Target::Machine(machine)) => {
+                    serde_json::json!({ "file": file, "valid": true, "machine": machine })
+                }
+                Ok(Target::Reply(to)) => {
+                    serde_json::json!({ "file": file, "valid": true, "to": to })
+                }
+                Err(_) => serde_json::json!({ "file": file, "valid": false }),
+            };
             match target {
-                Ok(machine) => println!("  {file:<24} → {machine}"),
+                Ok(Target::Machine(machine)) if text => println!("  {file:<24} → {machine}"),
+                Ok(Target::Reply(to)) if text => println!("  {file:<24} → reply to {to}"),
+                Ok(_) => {}
                 Err(_) => {
-                    println!("  {file:<24} → invalid");
+                    if text {
+                        println!("  {file:<24} → invalid");
+                    }
                     let rule = if dir == MIGRATIONS_DIR { "M1" } else { "M2" };
                     project.check_file(dir, &file, rule, false, &mut problems)?;
                 }
             }
+            items.push(item);
         }
+        document.insert(dir.to_string(), items.into());
+    }
+    if format == Format::Json {
+        print_json(&document.into())?;
     }
     for problem in &problems {
         eprintln!("{problem}");
@@ -530,4 +556,10 @@ fn run_dry(project: &Project) -> Result<(), DecreeError> {
             "{n} error(s); nothing would run"
         ))),
     }
+}
+
+/// What a queued message would do: start a run of a machine, or reply to a waiting run.
+enum Target {
+    Machine(String),
+    Reply(String),
 }

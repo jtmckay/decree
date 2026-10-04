@@ -26,8 +26,54 @@ pub const REQUEST_SCHEMA: &str = include_str!("../../src/templates/schema/v1/req
 /// The schema of a router's `reply.json`.
 pub const REPLY_SCHEMA: &str = include_str!("../../src/templates/schema/v1/reply.schema.json");
 
-/// Every schema `decree schema` writes, by its name.
-pub const ALL: [(&str, &str); 5] = [
+/// The schema of `decree check --format json`.
+pub const CLI_CHECK_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/check.schema.json");
+
+/// The schema of `decree emit --format json`.
+pub const CLI_EMIT_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/emit.schema.json");
+
+/// The schema of `decree event --format json`.
+pub const CLI_EVENT_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/event.schema.json");
+
+/// The schema of `decree graph --format json`.
+pub const CLI_GRAPH_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/graph.schema.json");
+
+/// The schema of `decree process --format json`.
+pub const CLI_PROCESS_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/process.schema.json");
+
+/// The schema of `decree prune --format json`.
+pub const CLI_PRUNE_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/prune.schema.json");
+
+/// The schema of `decree retry --format json`.
+pub const CLI_RETRY_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/retry.schema.json");
+
+/// The schema of `decree schema --format json`.
+pub const CLI_SCHEMA_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/schema.schema.json");
+
+/// The schema of `decree status --format json`.
+pub const CLI_STATUS_SCHEMA: &str =
+    include_str!("../../src/templates/schema/v1/cli/status.schema.json");
+
+/// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
+/// `.schema.json`.
+pub const ALL: [(&str, &str); 14] = [
+    ("cli/check", CLI_CHECK_SCHEMA),
+    ("cli/emit", CLI_EMIT_SCHEMA),
+    ("cli/event", CLI_EVENT_SCHEMA),
+    ("cli/graph", CLI_GRAPH_SCHEMA),
+    ("cli/process", CLI_PROCESS_SCHEMA),
+    ("cli/prune", CLI_PRUNE_SCHEMA),
+    ("cli/retry", CLI_RETRY_SCHEMA),
+    ("cli/schema", CLI_SCHEMA_SCHEMA),
+    ("cli/status", CLI_STATUS_SCHEMA),
     ("events", EVENTS_SCHEMA),
     ("machine", MACHINE_SCHEMA),
     ("message", MESSAGE_SCHEMA),
@@ -35,10 +81,37 @@ pub const ALL: [(&str, &str); 5] = [
     ("request", REQUEST_SCHEMA),
 ];
 
-/// A draft 2020-12 validator for `schema`.
+/// A draft 2020-12 validator for `schema`. A `$ref` to another of `ALL` (as the `status`
+/// document's `events` refer to `events.schema.json`) resolves to it, offline.
 pub fn validator(schema: &str) -> Validator {
     let schema: Json = serde_json::from_str(schema).unwrap();
-    jsonschema::draft202012::new(&schema).unwrap()
+    jsonschema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .with_retriever(Bundled)
+        .build(&schema)
+        .unwrap()
+}
+
+/// Resolves the `$id` of each schema in `ALL` to its text, and nothing else: tests never
+/// fetch.
+struct Bundled;
+
+impl jsonschema::Retrieve for Bundled {
+    fn retrieve(
+        &self,
+        uri: &jsonschema::Uri<String>,
+    ) -> Result<Json, Box<dyn std::error::Error + Send + Sync>> {
+        let prefix =
+            "https://raw.githubusercontent.com/jtmckay/decree/main/src/templates/schema/v1/";
+        let name = uri
+            .as_str()
+            .strip_prefix(prefix)
+            .and_then(|path| path.strip_suffix(".schema.json"));
+        match ALL.iter().find(|(n, _)| Some(*n) == name) {
+            Some((_, text)) => Ok(serde_json::from_str(text)?),
+            None => Err(format!("not a decree schema: {}", uri.as_str()).into()),
+        }
+    }
 }
 
 pub fn machine_validator() -> Validator {

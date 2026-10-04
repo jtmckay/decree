@@ -39,18 +39,34 @@ pub enum Command {
         /// Show what would be processed without executing
         #[arg(long)]
         dry_run: bool,
+
+        /// Output format of --dry-run
+        #[arg(long, value_enum, default_value_t, requires = "dry_run")]
+        format: Format,
     },
 
     /// Validate machines and pending messages; prints one line per error
-    Check,
+    Check {
+        /// Output format: text, a JSON document, or a SARIF 2.1.0 log
+        #[arg(long, value_enum, default_value_t)]
+        format: CheckFormat,
+    },
 
     /// Write .decree/graph/: a Mermaid diagram in Markdown per machine, and system.md
     #[command(after_help = GRAPH_VIEWING)]
-    Graph,
+    Graph {
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
 
     /// Write .decree/schema/v1/: the JSON Schemas of machines, messages, events and router files
     #[command(after_help = SCHEMA_EDITORS)]
-    Schema,
+    Schema {
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
 
     /// Queue a message for a machine in inbox/; the body is read from stdin. Prints its id
     Emit {
@@ -61,6 +77,10 @@ pub enum Command {
         /// Sets the machine's data for this run (repeatable)
         #[arg(long = "param", value_name = "NAME=VALUE")]
         params: Vec<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
     },
 
     /// Reply to a run waiting in a `person` state
@@ -74,6 +94,10 @@ pub enum Command {
         /// Note, written as the reply's body
         #[arg(short = 'm', value_name = "NOTE")]
         note: Option<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
     },
 
     /// Daemon: monitor inbox + cron
@@ -91,6 +115,10 @@ pub enum Command {
         /// Cron files and when each fires next
         #[arg(long)]
         cron: bool,
+
+        /// Output format, without --cron
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
     },
 
     /// Follow the live output of a run, by default the active one, until it stops
@@ -108,6 +136,10 @@ pub enum Command {
         /// a finished run last left]
         #[arg(long = "state", value_name = "STATE")]
         state: Option<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
     },
 
     /// Delete the folders of finished runs older than an age; only this command deletes runs
@@ -120,6 +152,10 @@ pub enum Command {
         /// List the runs it would delete, and delete nothing
         #[arg(long)]
         dry_run: bool,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
     },
 
     /// Verbose help
@@ -142,6 +178,28 @@ Editors:
   Editors with the YAML language server (VS Code's YAML extension by Red Hat, and others)
   then complete keys and underline mistakes as you type. `decree check` remains the authority:
   the schema checks shape, `decree check` also checks names, targets and reachability.";
+
+/// How a command prints its report (docs/reference/cli.md, Machine-readable output).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum Format {
+    /// Lines for people
+    #[default]
+    Text,
+    /// One JSON document on stdout, described by .decree/schema/v1/cli/<command>.schema.json
+    Json,
+}
+
+/// `decree check` also prints SARIF 2.1.0, the OASIS format code scanning tools read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum CheckFormat {
+    /// Lines for people
+    #[default]
+    Text,
+    /// One JSON document on stdout, described by .decree/schema/v1/cli/check.schema.json
+    Json,
+    /// A SARIF 2.1.0 log on stdout
+    Sarif,
+}
 
 /// AI backends `init` can configure, in the order it looks for them on `PATH`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

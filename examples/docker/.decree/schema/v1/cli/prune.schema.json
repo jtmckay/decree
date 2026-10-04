@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/src/templates/schema/v1/cli/prune.schema.json",
+  "title": "decree prune --format json",
+  "description": "What `decree prune --format json` prints on stdout: the finished runs it deleted, or with --dry-run would delete, and their size. A run that could not be pruned is reported on stderr, and the exit code is then 1, after this document. Reference: docs/reference/cli.md, Machine-readable output.",
+  "type": "object",
+  "required": [
+    "runs",
+    "bytes",
+    "dry_run"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/run"
+      },
+      "description": "The runs deleted (or that would be), in id order."
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The size of their files, in bytes; text prints it in KB, MB or GB."
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "True with --dry-run: nothing was deleted."
+    }
+  },
+  "examples": [
+    {
+      "runs": [
+        {
+          "id": "D0001-0900-hello-0",
+          "machine": "hello",
+          "state": "done",
+          "finished": "2026-09-01T09:00:04.512Z"
+        }
+      ],
+      "bytes": 20480,
+      "dry_run": true
+    }
+  ],
+  "$defs": {
+    "run": {
+      "type": "object",
+      "description": "One pruned run, from its `run_finished` event.",
+      "required": [
+        "id",
+        "machine",
+        "state",
+        "finished"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The run id: the folder .decree/runs/<id>/."
+        },
+        "machine": {
+          "type": "string",
+          "description": "The run's machine."
+        },
+        "state": {
+          "type": "string",
+          "description": "The final state the run ended in."
+        },
+        "finished": {
+          "type": "string",
+          "description": "The `ts` of its `run_finished` event: RFC 3339 UTC with milliseconds."
+        }
+      }
+    }
+  }
+}

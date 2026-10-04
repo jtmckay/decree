@@ -18,7 +18,11 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use colored::Colorize;
 
+use serde_json::json;
+
+use crate::cli::Format;
 use crate::commands::check::{read_processed, Project};
+use crate::commands::print_json;
 use crate::commands::process::context;
 use crate::error::DecreeError;
 use crate::events::text;
@@ -36,7 +40,12 @@ struct Finished {
 }
 
 /// Run `decree prune`.
-pub fn run(project_root: &Path, older_than: Duration, dry_run: bool) -> Result<(), DecreeError> {
+pub fn run(
+    project_root: &Path,
+    older_than: Duration,
+    dry_run: bool,
+    format: Format,
+) -> Result<(), DecreeError> {
     // `crate::duration::parse` keeps every duration within what `TimeDelta` holds.
     let older_than = TimeDelta::from_std(older_than).unwrap_or(TimeDelta::MAX);
     let project = Project::load(project_root)?;
@@ -52,13 +61,22 @@ pub fn run(project_root: &Path, older_than: Duration, dry_run: bool) -> Result<(
     };
     let verb = if dry_run { "would prune" } else { "pruned" };
     let (mut count, mut bytes, mut errors) = (0, 0, 0);
+    let mut runs = Vec::new();
     for id in run_ids(&ctx.runs_dir())? {
         match prune(&rule, &id, dry_run) {
             Ok(Some((run, size))) => {
-                println!(
-                    "{verb} {id}  {}  {}  finished {}",
-                    run.machine, run.state, run.ts
-                );
+                match format {
+                    Format::Text => println!(
+                        "{verb} {id}  {}  {}  finished {}",
+                        run.machine, run.state, run.ts
+                    ),
+                    Format::Json => runs.push(json!({
+                        "id": id,
+                        "machine": run.machine,
+                        "state": run.state,
+                        "finished": run.ts,
+                    })),
+                }
                 count += 1;
                 bytes += size;
             }
@@ -70,10 +88,10 @@ pub fn run(project_root: &Path, older_than: Duration, dry_run: bool) -> Result<(
         }
     }
     let size = human_size(bytes);
-    if dry_run {
-        println!("would prune {count} run(s), {size}");
-    } else {
-        println!("pruned {count} run(s), {size} freed");
+    match format {
+        Format::Text if dry_run => println!("would prune {count} run(s), {size}"),
+        Format::Text => println!("pruned {count} run(s), {size} freed"),
+        Format::Json => print_json(&json!({ "runs": runs, "bytes": bytes, "dry_run": dry_run }))?,
     }
     match errors {
         0 => Ok(()),

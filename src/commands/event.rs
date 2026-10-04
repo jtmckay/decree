@@ -6,7 +6,9 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use crate::cli::Format;
 use crate::commands::check::Project;
+use crate::commands::emit::print_queued;
 use crate::commands::process::context;
 use crate::error::DecreeError;
 use crate::message::{self, Message};
@@ -19,6 +21,7 @@ pub fn run(
     target: &str,
     event: &str,
     note: Option<&str>,
+    format: Format,
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
@@ -33,6 +36,5 @@ pub fn run(
     message.set("to", target);
     message.set("event", event);
     let id = message::queue(&project.decree_dir, &mut message)?;
-    println!("{id}");
-    Ok(())
+    print_queued(&id, format)
 }

@@ -226,9 +226,9 @@ Model servers and other long-running processes are not scripts and decree does n
 | Command | What it does |
 | --- | --- |
 | `decree init [--ai AI] [--permissions]` | Create `.decree/` with machines, scripts, the `router` machine and the decree skill |
-| `decree check` | Validate machines and pending messages |
+| `decree check [--format text\|json\|sarif]` | Validate machines and pending messages; `sarif` for code scanning |
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
-| `decree schema` | Write JSON Schemas for machines, messages, events and router files to `.decree/schema/v1/` |
+| `decree schema` | Write JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
 | `decree daemon [--interval D]` | The same passes plus cron, every `D` (default `2s`) |
 | `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
@@ -240,6 +240,8 @@ Model servers and other long-running processes are not scripts and decree does n
 | `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`, `90s`); ship them to Loki first if you keep history |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree --version` | Print the version |
+
+`--format json` on `check`, `status`, `emit`, `event`, `retry`, `prune`, `graph`, `schema` and `process --dry-run` prints one JSON document, described by `.decree/schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
 decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree retry`, because a kill may be deliberate.
 

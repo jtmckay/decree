@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/src/templates/schema/v1/cli/schema.schema.json",
+  "title": "decree schema --format json",
+  "description": "What `decree schema --format json` prints on stdout: the files it wrote into .decree/schema/ and the files it removed from there. Reference: docs/reference/cli.md, Machine-readable output.",
+  "type": "object",
+  "required": [
+    "written",
+    "removed"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Paths written, relative to the project root (.decree/schema/…), in order; text prints these."
+    },
+    "removed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Paths removed from .decree/schema/ because decree no longer writes them, relative to the project root."
+    }
+  },
+  "examples": [
+    {
+      "written": [
+        ".decree/schema/v1/machine.schema.json"
+      ],
+      "removed": []
+    }
+  ]
+}

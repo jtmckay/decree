@@ -1949,3 +1949,161 @@ machines/d.yml: again: a `check` state must handle `false`, itself or through an
 "
     );
 }
+
+/// `decree check --format <format>` in a temp project holding `files`: (exit code, stdout).
+fn check_as(files: &[(&str, &str)], scripts: &[Script], format: &str) -> (i32, String) {
+    let tmp = TempDir::new().unwrap();
+    write_project(&tmp.path().join(".decree"), files, scripts);
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .args(["check", "--format", format])
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8(out.stdout).unwrap(),
+    )
+}
+
+/// A text error line in parts: (file, line, rule).
+fn text_parts(line: &str) -> (&str, Option<u64>, Option<&str>) {
+    let (file, rest) = line.split_once(": ").unwrap();
+    let number = rest
+        .strip_prefix("line ")
+        .and_then(|r| r.split_once(": "))
+        .and_then(|(n, _)| n.parse().ok());
+    let rule = line
+        .strip_suffix(')')
+        .and_then(|l| l.rsplit_once(" ("))
+        .map(|(_, rule)| rule);
+    (file, number, rule)
+}
+
+/// `decree check --format json` on every case: the document validates against
+/// `cli/check.schema.json`, lists the same errors as the text, line for line, and the exit
+/// code is the text's.
+#[test]
+fn check_json_lists_the_same_errors_as_text_for_every_case() {
+    let validator = schema::validator(schema::CLI_CHECK_SCHEMA);
+    for case in CASES {
+        let label = format!("{}: {}", case.rule, case.name);
+        let (code, stdout) = check_as(case.files, case.scripts, "json");
+        let (text_code, text) = check(case.files, case.scripts);
+        assert_eq!(code, text_code, "{label}");
+        let doc: serde_json::Value = serde_json::from_str(&stdout).expect(&label);
+        let errors = schema::errors(&validator, &doc);
+        assert!(errors.is_empty(), "{label}: {errors:?}");
+        assert_eq!(doc["valid"], case.expected == PASSES, "{label}");
+        let lines: String = doc["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                let mut line = format!("{}: ", e["file"].as_str().unwrap());
+                if let Some(n) = e["line"].as_u64() {
+                    line.push_str(&format!("line {n}: "));
+                }
+                if let Some(state) = e["state"].as_str() {
+                    line.push_str(&format!("{state}: "));
+                }
+                line.push_str(e["message"].as_str().unwrap());
+                if let Some(rule) = e["rule"].as_str() {
+                    line.push_str(&format!(" ({rule})"));
+                }
+                line + "\n"
+            })
+            .collect();
+        assert_eq!(lines, text, "{label}");
+    }
+}
+
+/// `decree check --format sarif` on every failing case: a SARIF 2.1.0 log whose driver is
+/// decree with every rule of the Validation table, and one `error` result per text error
+/// with its rule as `ruleId`, its file as `.decree/<file>` and its line as `startLine`.
+/// Warnings (here: no `.decree/graph/` or `.decree/schema/`) are results with no rule.
+#[test]
+fn check_sarif_has_every_rule_and_a_result_per_text_error() {
+    for case in CASES.iter().filter(|c| c.expected != PASSES) {
+        let label = format!("{}: {}", case.rule, case.name);
+        let (code, stdout) = check_as(case.files, case.scripts, "sarif");
+        assert_eq!(code, 1, "{label}");
+        let log: serde_json::Value = serde_json::from_str(&stdout).expect(&label);
+        assert_eq!(log["version"], "2.1.0");
+        assert_eq!(
+            log["$schema"],
+            "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
+        );
+        let runs = log["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 1);
+        let driver = &runs[0]["tool"]["driver"];
+        assert_eq!(driver["name"], "decree");
+        assert_eq!(driver["version"], env!("CARGO_PKG_VERSION"));
+        assert!(driver["informationUri"]
+            .as_str()
+            .unwrap()
+            .ends_with("docs/reference/README.md"));
+        let rules = driver["rules"].as_array().unwrap();
+        let ids: Vec<&str> = rules.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, RULES);
+        for rule in rules {
+            assert!(!rule["shortDescription"]["text"]
+                .as_str()
+                .unwrap()
+                .is_empty());
+            assert!(rule["helpUri"]
+                .as_str()
+                .unwrap()
+                .ends_with("docs/reference/machines.md#validation"));
+        }
+
+        let results = runs[0]["results"].as_array().unwrap();
+        let (errors, warnings): (Vec<_>, Vec<_>) =
+            results.iter().partition(|r| r["level"] == "error");
+        for w in &warnings {
+            assert_eq!(w["level"], "warning", "{label}");
+            assert!(w.get("ruleId").is_none(), "{label}");
+        }
+        let (_, text) = check(case.files, case.scripts);
+        assert_eq!(errors.len(), text.lines().count(), "{label}");
+        for (result, line) in errors.iter().zip(text.lines()) {
+            let (file, number, rule) = text_parts(line);
+            assert_eq!(result["ruleId"].as_str(), rule, "{label}: {line}");
+            assert!(!result["message"]["text"].as_str().unwrap().is_empty());
+            let location = &result["locations"][0]["physicalLocation"];
+            assert_eq!(
+                location["artifactLocation"]["uri"],
+                format!(".decree/{file}"),
+                "{label}: {line}"
+            );
+            assert_eq!(
+                location["region"]["startLine"].as_u64(),
+                number,
+                "{label}: {line}"
+            );
+        }
+    }
+}
+
+/// An error no rule names, a machine that is not YAML: `rule` is null in JSON, and the
+/// SARIF result has no `ruleId`.
+#[test]
+fn an_error_without_a_rule_has_a_null_rule_and_no_rule_id() {
+    let files = [("machines/m.yml", "name: m\nstates: [\n")];
+    let (code, stdout) = check_as(&files, &[], "json");
+    assert_eq!(code, 1);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let error = &doc["errors"][0];
+    assert_eq!(error["rule"], serde_json::Value::Null);
+    assert_eq!(error["file"], "machines/m.yml");
+    assert!(error["line"].is_u64(), "{error}");
+    let errors = schema::errors(&schema::validator(schema::CLI_CHECK_SCHEMA), &doc);
+    assert!(errors.is_empty(), "{errors:?}");
+
+    let (code, stdout) = check_as(&files, &[], "sarif");
+    assert_eq!(code, 1);
+    let log: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let result = &log["runs"][0]["results"][0];
+    assert_eq!(result["level"], "error");
+    assert!(result.get("ruleId").is_none(), "{result}");
+}

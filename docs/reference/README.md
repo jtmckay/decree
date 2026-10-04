@@ -114,7 +114,7 @@ The daemon poll interval is the `decree daemon --interval` flag.
 
 ## Schemas
 
-Every file decree reads or writes has a JSON Schema (draft 2020-12). `decree schema` writes them into `.decree/schema/v1/` and removes anything else in `.decree/schema/`, `decree init` writes them, and `decree check` warns when one is missing, out of date, or joined by a file decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds). Their single source is [`src/templates/schema/v1/`](../../src/templates/schema/v1/), compiled into decree; each schema's `$id` is its raw URL in the decree repository on GitHub. Every property has a description taken from this reference.
+Every file decree reads or writes, and every document a command prints with `--format json`, has a JSON Schema (draft 2020-12). `decree schema` writes them into `.decree/schema/v1/` and removes anything else in `.decree/schema/`, `decree init` writes them, and `decree check` warns when one is missing, out of date, or joined by a file decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds). Their single source is [`src/templates/schema/v1/`](../../src/templates/schema/v1/), compiled into decree; each schema's `$id` is its raw URL in the decree repository on GitHub. Every property has a description taken from this reference.
 
 | Schema | Covers | Documented in |
 | --- | --- | --- |
@@ -123,6 +123,7 @@ Every file decree reads or writes has a JSON Schema (draft 2020-12). `decree sch
 | `events.schema.json` | One line of `runs/<id>/events.jsonl`: the common fields, then one branch per `type`. | [runs.md](runs.md#eventsjsonl) |
 | `request.schema.json` | A router run's `request.json`, including `reply_schema`. | [runs.md](runs.md#model) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
+| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `retry`, `prune`, `graph`, `schema` and `process` (`--dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 
 The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
 

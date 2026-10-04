@@ -471,9 +471,13 @@ fn decree_schema_writes_every_schema_in_v1() {
             "{name}"
         );
     }
-    let names: Vec<String> = fs::read_dir(&dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+    // Every file in v1/ and v1/cli/, temp files included.
+    let names: Vec<String> = [dir.clone(), dir.join("cli")]
+        .iter()
+        .flat_map(|d| fs::read_dir(d).unwrap())
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_file())
+        .map(|p| p.display().to_string())
         .collect();
     assert_eq!(
         names.len(),

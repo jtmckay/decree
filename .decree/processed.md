@@ -79,3 +79,4 @@
 79-event-file.md
 80-one-duration-format.md
 81-schemas-for-every-file.md
+82-json-and-sarif-output.md

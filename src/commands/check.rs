@@ -9,33 +9,31 @@ use std::path::{Path, PathBuf};
 
 use serde_norway::Value;
 
-use crate::commands::{graph, schema};
+use crate::cli::CheckFormat;
+use crate::commands::{graph, print_json, schema};
 use crate::cron;
 use crate::error::DecreeError;
 use crate::layout::{self, DECREE_DIR};
 use crate::machine::validate::CheckEnv;
-use crate::machine::{self, LoadedMachine};
+use crate::machine::{self, LoadedMachine, MACHINES_DIR};
 use crate::message::{validate, Message};
 
-pub fn run(project_root: &Path) -> Result<(), DecreeError> {
+mod sarif;
+
+pub fn run(project_root: &Path, format: CheckFormat) -> Result<(), DecreeError> {
     let problems = check(project_root)?;
-    for problem in &problems {
-        println!("{problem}");
-    }
-    // A machine that fails to load cannot be drawn; its error is reported above.
-    if let Ok(stale) = graph::stale(project_root) {
-        for line in stale {
-            eprintln!(
-                "{}: {line}; run `decree graph`",
-                colored::Colorize::yellow("warning")
-            );
+    let warnings = warnings(project_root)?;
+    match format {
+        CheckFormat::Text => {
+            for problem in &problems {
+                println!("{problem}");
+            }
+            for w in &warnings {
+                eprintln!("{}: {w}", colored::Colorize::yellow("warning"));
+            }
         }
-    }
-    for line in schema::stale(project_root)? {
-        eprintln!(
-            "{}: {line}; run `decree schema`",
-            colored::Colorize::yellow("warning")
-        );
+        CheckFormat::Json => print_json(&json_document(&problems, &warnings))?,
+        CheckFormat::Sarif => print_json(&sarif::log(&problems, &warnings))?,
     }
     match problems.len() {
         0 => Ok(()),
@@ -45,9 +43,133 @@ pub fn run(project_root: &Path) -> Result<(), DecreeError> {
     }
 }
 
+/// One error `decree check` reports. As text it is one line,
+/// `<file>: <line n | state path>: <message> (<rule>)` (docs/reference/machines.md,
+/// Validation); the parts are kept apart for `--format json` and `sarif`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CheckError {
+    /// `V1`–`V21` or `M1`–`M3`; `None` for an error no rule names, such as bad YAML.
+    pub(crate) rule: Option<String>,
+    /// Path relative to `.decree/`.
+    pub(crate) file: String,
+    pub(crate) line: Option<usize>,
+    /// Dotted state path, for an error inside a state.
+    pub(crate) state: Option<String>,
+    /// What is wrong, without the rule.
+    pub(crate) message: String,
+}
+
+impl CheckError {
+    /// An error in `file` at `at` (`line <n>` or a state path), whose message may end with
+    /// its rule, `(V4)`.
+    fn new(file: String, at: Option<&str>, message: &str) -> CheckError {
+        let (message, rule) = split_rule(message);
+        let line = at
+            .and_then(|at| at.strip_prefix("line "))
+            .and_then(|n| n.parse().ok());
+        let state = at.filter(|_| line.is_none()).map(String::from);
+        CheckError {
+            rule,
+            file,
+            line,
+            state,
+            message,
+        }
+    }
+
+    fn json(&self) -> serde_json::Value {
+        let mut out = serde_json::json!({ "rule": self.rule, "file": self.file });
+        if let Some(line) = self.line {
+            out["line"] = line.into();
+        }
+        if let Some(state) = &self.state {
+            out["state"] = state.as_str().into();
+        }
+        out["message"] = self.message.as_str().into();
+        out
+    }
+}
+
+impl std::fmt::Display for CheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: ", self.file)?;
+        if let Some(line) = self.line {
+            write!(f, "line {line}: ")?;
+        }
+        if let Some(state) = &self.state {
+            write!(f, "{state}: ")?;
+        }
+        f.write_str(&self.message)?;
+        if let Some(rule) = &self.rule {
+            write!(f, " ({rule})")?;
+        }
+        Ok(())
+    }
+}
+
+/// `message` without a trailing ` (V4)` or ` (M1)`, and that rule.
+fn split_rule(message: &str) -> (String, Option<String>) {
+    let rule = message
+        .strip_suffix(')')
+        .and_then(|m| m.rsplit_once(" ("))
+        .filter(|(_, rule)| sarif::RULES.iter().any(|(id, _)| id == rule));
+    match rule {
+        Some((message, rule)) => (message.to_string(), Some(rule.to_string())),
+        None => (message.to_string(), None),
+    }
+}
+
+/// A file in `.decree/graph/` or `.decree/schema/` that differs from what `decree graph`
+/// or `decree schema` would write. `decree check` warns about it without failing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CheckWarning {
+    /// Path relative to `.decree/`.
+    pub(crate) file: String,
+    pub(crate) message: String,
+}
+
+impl std::fmt::Display for CheckWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.file, self.message)
+    }
+}
+
+/// Every warning: stale graphs, then stale schemas.
+fn warnings(project_root: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
+    let mut out = Vec::new();
+    // A machine that fails to load cannot be drawn; its error is reported as an error.
+    if let Ok(stale) = graph::stale_files(project_root) {
+        out.extend(stale.into_iter().map(|(file, message)| CheckWarning {
+            file,
+            message: format!("{message}; run `decree graph`"),
+        }));
+    }
+    out.extend(
+        schema::stale_files(project_root)?
+            .into_iter()
+            .map(|(file, message)| CheckWarning {
+                file,
+                message: format!("{message}; run `decree schema`"),
+            }),
+    );
+    Ok(out)
+}
+
+/// The `--format json` document (`.decree/schema/v1/cli/check.schema.json`).
+fn json_document(problems: &[CheckError], warnings: &[CheckWarning]) -> serde_json::Value {
+    serde_json::json!({
+        "valid": problems.is_empty(),
+        "errors": problems.iter().map(CheckError::json).collect::<Vec<_>>(),
+        "warnings": warnings
+            .iter()
+            .map(|w| serde_json::json!({ "file": w.file, "message": w.message }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// Every error `decree check` reports, in order: machines by id, then pending migrations,
 /// `inbox/` and `cron/`, each by filename.
-fn check(project_root: &Path) -> Result<Vec<String>, DecreeError> {
+fn check(project_root: &Path) -> Result<Vec<CheckError>, DecreeError> {
     let project = Project::load(project_root)?;
     let mut problems = project.problems.clone();
     let decree_dir = &project.decree_dir;
@@ -71,8 +193,8 @@ pub(crate) struct Project {
     pub(crate) machine_ids: BTreeSet<String>,
     /// The machines that loaded.
     pub(crate) machines: BTreeMap<String, LoadedMachine>,
-    /// One line per machine error, by machine id, each machine's errors in rule order.
-    pub(crate) problems: Vec<String>,
+    /// Every machine error, by machine id, each machine's errors in rule order.
+    pub(crate) problems: Vec<CheckError>,
 }
 
 impl Project {
@@ -86,14 +208,18 @@ impl Project {
         let mut problems = Vec::new();
         let mut machines = BTreeMap::new();
         let mut texts = BTreeMap::new();
+        let file = |id: &str| format!("{MACHINES_DIR}/{id}.yml");
         for (id, path) in paths {
             let text = std::fs::read_to_string(&path)?;
-            match machine::load_machine_text(&id, &text) {
+            match machine::load_machine_located(&id, &text) {
                 Ok(m) => {
                     machines.insert(id.clone(), m);
                     texts.insert(id, text);
                 }
-                Err(e) => problems.push((id, e.to_string())),
+                Err(e) => {
+                    let error = CheckError::new(file(&id), e.at.as_deref(), &e.message);
+                    problems.push((id, error));
+                }
             }
         }
         let env = CheckEnv {
@@ -105,7 +231,7 @@ impl Project {
             for p in m.validate(&texts[id], &env) {
                 problems.push((
                     id.clone(),
-                    format!("machines/{id}.yml: {}: {}", p.at, p.message),
+                    CheckError::new(file(id), Some(&p.at), &p.message),
                 ));
             }
         }
@@ -135,7 +261,7 @@ impl Project {
         name: &str,
         rule: &str,
         is_cron: bool,
-        problems: &mut Vec<String>,
+        problems: &mut Vec<CheckError>,
     ) -> Result<(), DecreeError> {
         let rel = format!("{dir}/{name}");
         let bytes = std::fs::read(self.decree_dir.join(dir).join(name))?;
@@ -143,8 +269,14 @@ impl Project {
             Ok(text) => self.check_text(&text, is_cron),
             Err(_) => vec![(1, "file is not valid UTF-8".to_string())],
         };
-        for (line, msg) in errors {
-            problems.push(format!("{rel}: line {line}: {msg} ({rule})"));
+        for (line, message) in errors {
+            problems.push(CheckError {
+                rule: Some(rule.to_string()),
+                file: rel.clone(),
+                line: Some(line),
+                state: None,
+                message,
+            });
         }
         Ok(())
     }

@@ -54,6 +54,12 @@ appear only where a machine invokes `model` or `person`.
   from a script. The emitting state must list the target in `emits:`.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and
   `decree graph` after changing a machine. Commit `.decree/graph/`.
+- **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,
+  `decree status [<id>] --format json`, and `--format json` on `emit`, `event`, `retry`,
+  `prune`, `graph`, `schema` and `process --dry-run` print one JSON document, described by
+  `.decree/schema/v1/cli/<command>.schema.json`. Exit codes are the same as in text.
+  `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
+  `message`.
 - **Scripts must be safe to re-run**: `decree retry` re-runs a step that was interrupted.
 - Do not commit `.decree/inbox/` or `.decree/runs/`.
 
@@ -61,13 +67,13 @@ appear only where a machine invokes `model` or `person`.
 
 | Command | Use |
 | --- | --- |
-| `decree check` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line. |
+| `decree check [--format json\|sarif]` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
 | `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
 | `decree schema` | Write the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/`. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
 | `decree daemon [--interval <duration>]` | The same, in a loop, with cron, every `2s` by default. |
-| `decree status [<id>] [--cron]` | Runs by status; one run's events; cron schedule. |
+| `decree status [<id>] [--cron] [--format json]` | Runs by status; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow the output of the script running now. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree retry <id> [--state <s>]` | Continue an interrupted (or finished) run. |

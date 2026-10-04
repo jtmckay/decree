@@ -14,7 +14,7 @@ pub(crate) mod reply;
 pub(crate) mod runtime;
 
 use clap::Parser;
-use cli::{Cli, Command};
+use cli::{Cli, Command, Format};
 use colored::Colorize;
 use error::{DecreeError, EXIT_SUCCESS};
 
@@ -40,26 +40,48 @@ pub fn run() -> i32 {
 fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     let root = error::require_project_root;
     // Bare `decree` runs `decree process`; every command but `init` and `help` needs a project.
-    match command.unwrap_or(Command::Process { dry_run: false }) {
+    match command.unwrap_or(Command::Process {
+        dry_run: false,
+        format: Format::Text,
+    }) {
         Command::Init { ai, permissions } => commands::init::run(ai, permissions),
         Command::Help => commands::help(),
-        Command::Process { dry_run } => commands::process::run(&root()?, dry_run),
-        Command::Check => commands::check::run(&root()?),
-        Command::Graph => commands::graph::run(&root()?),
-        Command::Schema => commands::schema::run(&root()?),
-        Command::Emit { machine, params } => commands::emit::run(&root()?, &machine, &params),
+        Command::Process { dry_run, format } => commands::process::run(&root()?, dry_run, format),
+        Command::Check { format } => commands::check::run(&root()?, format),
+        Command::Graph { format } => commands::graph::run(&root()?, format),
+        Command::Schema { format } => commands::schema::run(&root()?, format),
+        Command::Emit {
+            machine,
+            params,
+            format,
+        } => commands::emit::run(&root()?, &machine, &params, format),
         Command::Event {
             target,
             event,
             note,
-        } => commands::event::run(&root()?, &target, &event, note.as_deref()),
+            format,
+        } => commands::event::run(&root()?, &target, &event, note.as_deref(), format),
         Command::Daemon { interval } => commands::daemon::run(&root()?, interval),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
-        Command::Retry { id, state } => commands::retry::run(&root()?, &id, state.as_deref()),
+        Command::Retry { id, state, format } => {
+            commands::retry::run(&root()?, &id, state.as_deref(), format)
+        }
         Command::Prune {
             older_than,
             dry_run,
-        } => commands::prune::run(&root()?, older_than, dry_run),
-        Command::Status { id, cron } => commands::status::run(&root()?, id.as_deref(), cron),
+            format,
+        } => commands::prune::run(&root()?, older_than, dry_run, format),
+        Command::Status { id, cron, format } => {
+            if cron && format == Format::Json {
+                use clap::CommandFactory;
+                Cli::command()
+                    .error(
+                        clap::error::ErrorKind::ArgumentConflict,
+                        "--cron prints text only; --format json covers `status` and `status <id>`",
+                    )
+                    .exit();
+            }
+            commands::status::run(&root()?, id.as_deref(), cron, format)
+        }
     }
 }
