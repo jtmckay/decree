@@ -181,24 +181,24 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `condition` | object | `check` | The condition as written. |
 | `options` | list of strings | `model`, `person` | The options offered. |
 | `router` | string | `model` | The router machine used. |
-| `child_run` | string | `model` | The router's child run id. |
-| `pick` | string | `model` | The model's pick, even when the event is `unsure`. |
+| `child_run` | string | `model`, when a router run started | The router's child run id. Absent when `max_depth` stopped it from starting. |
+| `pick` | string | `model`, unless the event is `error` | The model's pick, even when the event is `unsure`. |
 | `reason` | string | `model`, if given | Reason from the reply. |
 | `confidence` | number | `model`, if reported | 0 to 1. |
 | `probabilities` | map of string to number | `model`, if reported | Per option. |
 | `router_error` | string | `model`, event `error` | Why there is no pick: the reply was rejected (and why), the router run failed, or `max_depth <n> reached`. |
-| `duration_ms` | int | `model` | Wall time of the router run. |
+| `duration_ms` | int | `model` | Wall time of the router run; `0` when none started. |
 | `reply` | string | `person` | The reply's filename under `received/`. |
 
-**`waiting`**: the run is paused in a `person` state.
+**`waiting`**: the run is paused: in a `person` state for a reply, or in a `machine` or `model` state for its child run.
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `state` | string | The `person` state. |
-| `wait_id` | string | `<run id>.w<seq>`; a reply must name it (or the run id). Absent when waiting for a child. |
-| `child` | string | The child run waited for, when waiting on a sub-machine or a router. |
-| `options` | list of strings | The options, in name order (a `person` wait). |
-| `timeout_at` | string or null | RFC 3339 deadline from the `person` invoke's `timeout`, or `null`. |
+| Field | Type | When | Meaning |
+| --- | --- | --- | --- |
+| `state` | string | Always | The waiting state. |
+| `wait_id` | string | A `person` wait | `<run id>.w<seq>`; a reply must name it (or the run id). |
+| `options` | list of strings | A `person` wait | The options, in name order. |
+| `timeout_at` | string or null | A `person` wait | RFC 3339 deadline from the `person` invoke's `timeout`, or `null` without one. |
+| `child` | string | A child wait | The child run waited for (a sub-machine or a router). |
 
 **`received`**: an external event arrived for a waiting run.
 
@@ -209,6 +209,13 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `file` | string | A reply | The reply's filename under `received/`. |
 | `child` | string | A child finished | The child run's id; `event` is its final state (`failed` as `error`). |
 | `timed_out` | bool | A timeout | Always `true` when present; `event` is `error`. |
+
+**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree retry` continues it.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `state` | string | The final state (`done`, `failed`, …). |
+| `duration_ms` | int | From the claim event to now; `0` for a message rejected at claim. |
 
 **`interrupted`**: the run stopped before a final state.
 
