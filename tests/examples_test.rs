@@ -100,7 +100,6 @@ fn every_example_passes_check_without_a_warning() {
         names,
         [
             "business-eval",
-            "docker",
             "feature",
             "route-by-complexity",
             "sort-documents",
@@ -307,8 +306,7 @@ fn readme_bash_blocks(readme: &str) -> Vec<String> {
 /// Copies `examples/<name>` into a temp directory (as `examples/<name>`, so the
 /// README's `cd` works), runs `prepare` and then every line of the README's
 /// ```bash blocks in one shell, with the stubs and this build of decree first
-/// on PATH. `docker` lines are skipped: they need Docker and the network, and
-/// the image is built from this repository's Dockerfile. `decree daemon` runs
+/// on PATH. `decree daemon` runs
 /// until the queue is empty, then gets SIGTERM. Returns the project copy.
 fn run_readme(name: &str, prepare: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -332,9 +330,6 @@ fn run_readme(name: &str, prepare: &str) -> tempfile::TempDir {
     let mut script = format!("set -euo pipefail\n{RUN_DAEMON}(cd examples/{name} && {prepare})\n");
     for block in readme_bash_blocks(&readme) {
         for line in block.lines() {
-            if line.starts_with("docker ") {
-                continue;
-            }
             if line == "decree daemon" {
                 script.push_str("run_daemon\n");
             } else {
@@ -420,13 +415,6 @@ fn business_eval_readme_commands_run() {
         })
         .count();
     assert_eq!(summaries, 4);
-}
-
-#[test]
-fn docker_readme_commands_run() {
-    let dir = run_readme("docker", "true");
-    let project = dir.path().join("examples/docker");
-    assert!(!project.join(".decree/runs").exists());
 }
 
 #[test]

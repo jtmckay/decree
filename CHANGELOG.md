@@ -30,6 +30,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Removed
 
+- The Docker image (`Dockerfile`, `.dockerignore`, its GHCR workflow) and `examples/docker/`: the image did not carry the tools machines need (it had no Rust toolchain), and projects that want decree in a container can build their own.
 - Everything 0.4: the upgrade script and its fixtures, the `config.yml` error, and the `routine:` alias for `machine:` (migration 73, [D46](docs/decisions.md#d46-no-04-compatibility-and-examples-by-topic)).
 
 ### Fixed
