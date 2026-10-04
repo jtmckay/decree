@@ -1,5 +1,5 @@
 ---
-routine: rust-develop
+machine: rust_develop
 ---
 # 68: v0.5 cleanup: review and simplify src/
 

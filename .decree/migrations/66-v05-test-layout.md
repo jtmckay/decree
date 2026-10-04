@@ -1,5 +1,5 @@
 ---
-routine: rust-develop
+machine: rust_develop
 ---
 # 66: v0.5 cleanup: tests read the mock, validation tests as a table
 

@@ -1,5 +1,5 @@
 ---
-routine: rust-develop
+machine: rust_develop
 ---
 # 67: v0.5 cleanup: reliability tests
 

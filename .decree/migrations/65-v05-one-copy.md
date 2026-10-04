@@ -1,5 +1,5 @@
 ---
-routine: rust-develop
+machine: rust_develop
 ---
 # 65: v0.5 cleanup: one copy of everything
 

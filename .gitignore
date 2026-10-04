@@ -1,4 +1,5 @@
 /target
+/decree.backup
 
 # mock/ commits its queues and runs so they can be read
 !mock/.decree/inbox/

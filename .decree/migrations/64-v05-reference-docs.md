@@ -1,5 +1,5 @@
 ---
-routine: rust-develop
+machine: rust_develop
 ---
 # 64: v0.5 cleanup: reference docs and a decision log
 
