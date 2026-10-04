@@ -7,6 +7,9 @@ Loads fastino/GLiNER2.5-Decide-1B once, then serves POST /classify on 127.0.0.1:
 
 The output is a decree reply.json as it stands, so the router script writes it unchanged.
 
+GET /health answers 200 {"ok": true}. The server only starts listening once the model is
+loaded, so any answer means ready (examples/tmux-services/ waits on it).
+
 What the pages confirm (read 2026-10-04):
 - The model card, https://huggingface.co/fastino/GLiNER2.5-Decide-1B: loading with
   AutoExtractor.from_pretrained, and classify_text(text, {task: {"labels": {label:
@@ -31,6 +34,12 @@ model = AutoExtractor.from_pretrained(MODEL)
 
 
 class Classify(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/health":
+            self.send_error(404)
+            return
+        self.reply({"ok": True})
+
     def do_POST(self):
         if self.path != "/classify":
             self.send_error(404)
@@ -41,13 +50,15 @@ class Classify(BaseHTTPRequestHandler):
             {"decision": {"labels": req["labels"]}},
             include_confidence=True,
         )["decision"]
-        body = json.dumps({"event": result["label"], "confidence": result["confidence"]})
+        self.reply({"event": result["label"], "confidence": result["confidence"]})
+
+    def reply(self, value):
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.end_headers()
-        self.wfile.write(body.encode())
+        self.wfile.write(json.dumps(value).encode())
 
 
 if __name__ == "__main__":
-    print(f"{MODEL} loaded; serving POST http://{ADDRESS[0]}:{ADDRESS[1]}/classify", flush=True)
+    print(f"{MODEL} loaded; serving POST /classify and GET /health on http://{ADDRESS[0]}:{ADDRESS[1]}", flush=True)
     HTTPServer(ADDRESS, Classify).serve_forever()

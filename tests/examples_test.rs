@@ -106,6 +106,7 @@ fn every_example_passes_check_without_a_warning() {
             "sort-documents",
             "text-to-media",
             "text-to-speech",
+            "tmux-services",
             "whisper-transcribe"
         ]
     );
@@ -510,4 +511,9 @@ fn sort_documents_readme_commands_run() {
 #[test]
 fn route_by_complexity_readme_commands_run() {
     assert_readme_reads_only("route-by-complexity");
+}
+
+#[test]
+fn tmux_services_readme_commands_run() {
+    assert_readme_reads_only("tmux-services");
 }

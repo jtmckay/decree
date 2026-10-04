@@ -153,7 +153,7 @@ fn missing_example_or_template_file_names_the_pair() {
 }
 
 /// `gliner_router` has no template: `init` does not write it. Its copies in
-/// `sort-documents` and `route-by-complexity` are byte-identical to each other.
+/// `sort-documents`, `route-by-complexity` and `tmux-services` are byte-identical.
 #[test]
 fn gliner_router_copies_are_identical() {
     let examples = repo().join("examples");
@@ -162,9 +162,11 @@ fn gliner_router_copies_are_identical() {
         "scripts/gliner_router/ask_gliner.sh",
     ] {
         let read = |name: &str| fs::read(examples.join(name).join(".decree").join(path)).unwrap();
-        assert!(
-            read("sort-documents") == read("route-by-complexity"),
-            "{path} differs between sort-documents and route-by-complexity"
-        );
+        for copy in ["route-by-complexity", "tmux-services"] {
+            assert!(
+                read("sort-documents") == read(copy),
+                "{path} differs between sort-documents and {copy}"
+            );
+        }
     }
 }

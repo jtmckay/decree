@@ -92,7 +92,7 @@ So a threshold only means something for the router it was set with. When a `mode
 
 ### Fastino GLiNER2.5-Decide, run locally
 
-[GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide-1B) is a typed router: a 1B classifier built for operational decisions, which picks one of the labels it is given and reports its score for that label. It runs on CPU (Apache-2.0). Loading it takes far longer than one decision, so a small long-running server, [`examples/route-by-complexity/gliner/decide_server.py`](../examples/route-by-complexity/gliner/decide_server.py), loads it once and answers `POST /classify` on `127.0.0.1:8090`: `{instructions, labels: {name: description}, text}` in, `{event, confidence}` out. Quick start, from `examples/route-by-complexity/` (Python 3.10 or newer):
+[GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide-1B) is a typed router: a 1B classifier built for operational decisions, which picks one of the labels it is given and reports its score for that label. It runs on CPU (Apache-2.0). Loading it takes far longer than one decision, so a small long-running server, [`examples/route-by-complexity/gliner/decide_server.py`](../examples/route-by-complexity/gliner/decide_server.py), loads it once and answers `POST /classify` on `127.0.0.1:8090`: `{instructions, labels: {name: description}, text}` in, `{event, confidence}` out. `GET /health` answers `{"ok": true}`; the server only listens once the model is loaded, so any answer means ready. Quick start, from `examples/route-by-complexity/` (Python 3.10 or newer):
 
 ```sh
 pip install 'gliner2[local]'           # or skip this and start it with: uv run --with 'gliner2[local]' python gliner/decide_server.py
@@ -100,9 +100,9 @@ python gliner/decide_server.py         # the first start downloads the model, ab
 curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does this change need?", "labels": {"small": "A typo or a config value", "large": "Design across several files"}, "text": "Fix a typo in README.md"}'
 ```
 
-To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time). The `gliner2` package's plain install is only its API client; `[local]` adds local inference ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
+To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time), or a tmux session as in [`examples/tmux-services/`](../examples/tmux-services/README.md). The `gliner2` package's plain install is only its API client; `[local]` adds local inference ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
 
-`machines/gliner_router.yml` (in [`examples/sort-documents/`](../examples/sort-documents/README.md) and [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md)):
+`machines/gliner_router.yml` (in [`examples/sort-documents/`](../examples/sort-documents/README.md), [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) and [`examples/tmux-services/`](../examples/tmux-services/README.md)):
 
 ```yaml
 name: gliner_router
