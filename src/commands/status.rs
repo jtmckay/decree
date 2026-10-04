@@ -54,6 +54,17 @@ fn overview(ctx: &Context, project: &Project) -> Result<(), DecreeError> {
     let mut finished: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let ids = run_ids(&ctx.runs_dir())?;
     for id in &ids {
+        // A finished run: its last line, `run_finished`, names its machine and final state.
+        if let Some(last) = ctx.run_finished(id)? {
+            let row = Row {
+                id: id.clone(),
+                machine: field(Some(&last), "machine").to_string(),
+                state: field(Some(&last), "state").to_string(),
+                detail: None,
+            };
+            finished.entry(row.state.clone()).or_default().push(row);
+            continue;
+        }
         let (status, events) = ctx.status_of(id)?;
         let state = current_state(&events).unwrap_or("-").to_string();
         let run_dir = ctx.runs_dir().join(id);

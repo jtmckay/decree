@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::unix::fs::FileExt;
 use std::path::Path;
 
 use chrono::{SecondsFormat, Utc};
@@ -94,15 +95,55 @@ pub fn read_events(run_dir: &Path) -> io::Result<Vec<Event>> {
     };
     text.lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| match serde_json::from_str(line) {
-            Ok(Value::Object(event)) => Ok(event),
-            Ok(_) => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "event is not a JSON object",
-            )),
-            Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
-        })
+        .map(|line| parse_event(line.as_bytes()))
         .collect()
+}
+
+/// How many bytes `last_event` reads at a time, from the end.
+const BLOCK: u64 = 4096;
+
+/// The last event in `runs/<id>/events.jsonl`, read backwards from the end of the file a
+/// block at a time until a whole line is found, so a long log costs one small read. A
+/// missing or empty file holds none.
+pub fn last_event(run_dir: &Path) -> io::Result<Option<Event>> {
+    let file = match File::open(run_dir.join(EVENTS_FILE)) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    // `tail` holds the bytes from `start` to the end of the file.
+    let mut start = file.metadata()?.len();
+    let mut tail: Vec<u8> = Vec::new();
+    loop {
+        // The last line with anything but whitespace in it, once its start is read.
+        if let Some(end) = tail.iter().rposition(|b| !b.is_ascii_whitespace()) {
+            match tail[..end].iter().rposition(|&b| b == b'\n') {
+                Some(newline) => return parse_event(&tail[newline + 1..=end]).map(Some),
+                None if start == 0 => return parse_event(&tail[..=end]).map(Some),
+                None => {}
+            }
+        } else if start == 0 {
+            return Ok(None);
+        }
+        let from = start.saturating_sub(BLOCK);
+        let mut block = vec![0; (start - from) as usize];
+        file.read_exact_at(&mut block, from)?;
+        block.extend_from_slice(&tail);
+        tail = block;
+        start = from;
+    }
+}
+
+/// One line of `events.jsonl`: a JSON object.
+fn parse_event(line: &[u8]) -> io::Result<Event> {
+    match serde_json::from_slice(line) {
+        Ok(Value::Object(event)) => Ok(event),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "event is not a JSON object",
+        )),
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+    }
 }
 
 /// String field `key` of `event`, if it is one.
@@ -188,4 +229,73 @@ pub fn claim_event(events: &[Event]) -> Option<&Event> {
 /// String field `key` of a run's first event, which names its `machine` and `trigger`.
 pub fn first_text<'e>(events: &'e [Event], key: &str) -> Option<&'e str> {
     events.first().and_then(|e| text(e, key))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// `last_event` of an `events.jsonl` holding `text`.
+    fn last_of(text: &[u8]) -> io::Result<Option<Event>> {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(EVENTS_FILE), text).unwrap();
+        last_event(dir.path())
+    }
+
+    fn seq(event: Option<Event>) -> Option<u64> {
+        event.and_then(|e| e.get("seq").and_then(Value::as_u64))
+    }
+
+    #[test]
+    fn test_last_event_of_one_line() {
+        assert_eq!(seq(last_of(b"{\"seq\":1}\n").unwrap()), Some(1));
+    }
+
+    #[test]
+    fn test_last_event_of_many_lines_across_blocks() {
+        let text: String = (1..=1000).map(|n| format!("{{\"seq\":{n}}}\n")).collect();
+        assert!(text.len() as u64 > 2 * BLOCK);
+        assert_eq!(seq(last_of(text.as_bytes()).unwrap()), Some(1000));
+    }
+
+    #[test]
+    fn test_last_event_without_a_final_newline() {
+        assert_eq!(seq(last_of(b"{\"seq\":1}\n{\"seq\":2}").unwrap()), Some(2));
+        // Blank lines and `\r\n` endings at the end are not events.
+        assert_eq!(
+            seq(last_of(b"{\"seq\":1}\r\n{\"seq\":2}\r\n\n  \n").unwrap()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_last_event_longer_than_a_block() {
+        let long = "x".repeat(3 * BLOCK as usize);
+        let text = format!("{{\"seq\":1}}\n{{\"seq\":2,\"log\":\"{long}\"}}\n");
+        let last = last_of(text.as_bytes()).unwrap().unwrap();
+        assert_eq!(last["log"], json!(long));
+        assert_eq!(seq(Some(last)), Some(2));
+        // The only line, longer than a block.
+        let only = format!("{{\"seq\":1,\"log\":\"{long}\"}}");
+        assert_eq!(seq(last_of(only.as_bytes()).unwrap()), Some(1));
+    }
+
+    #[test]
+    fn test_last_event_of_an_empty_or_missing_file() {
+        assert_eq!(last_of(b"").unwrap(), None);
+        assert_eq!(last_of(b"\n \n").unwrap(), None);
+        let dir = TempDir::new().unwrap();
+        assert_eq!(last_event(dir.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn test_last_event_reads_only_the_last_line() {
+        assert_eq!(
+            seq(last_of(b"{\"seq\":1}\nnot json\n{\"seq\":3}\n").unwrap()),
+            Some(3)
+        );
+        let err = last_of(b"{\"seq\":1}\nnot json\n").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }

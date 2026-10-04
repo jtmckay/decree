@@ -440,3 +440,74 @@ fn mirror_that_disagrees_with_the_events_is_rewritten() {
     );
     assert_eq!(p.events("run-a").last().unwrap()["cause"], "crash");
 }
+
+/// `decree <args>` in the project.
+fn decree(p: &Project, args: &[&str]) -> Command {
+    let mut cmd = cargo_bin_cmd!("decree");
+    cmd.current_dir(p.tmp.path())
+        .env("NO_COLOR", "1")
+        .args(args);
+    cmd
+}
+
+/// Run `run-a` of `slow` to `done`.
+fn finished_run(p: &Project) {
+    fs::remove_file(p.tmp.path().join("sleep.flag")).unwrap();
+    p.write("inbox/a.md", "---\nid: run-a\nmachine: slow\n---\n");
+    p.process().assert().success();
+    assert_eq!(p.events("run-a").last().unwrap()["type"], "run_finished");
+}
+
+#[test]
+fn finished_run_is_read_from_its_last_line_only() {
+    let p = Project::new();
+    finished_run(&p);
+    // A line in the middle that is not JSON: only the last line of a finished run is read.
+    let path = p.run_dir("run-a").join("events.jsonl");
+    let text = fs::read_to_string(&path).unwrap();
+    let (first, rest) = text.split_once('\n').unwrap();
+    let corrupt = format!("{first}\nnot json\n{rest}");
+    fs::write(&path, &corrupt).unwrap();
+
+    let out = decree(&p, &["status"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(stdout.contains("  finished: 1\n    done: 1\n"), "{stdout}");
+    assert!(stdout.contains("run-a  slow  `done`"), "{stdout}");
+    assert!(stdout.contains("  interrupted: 0\n"), "{stdout}");
+
+    p.process().assert().success();
+    assert_eq!(fs::read_to_string(&path).unwrap(), corrupt);
+}
+
+#[test]
+fn finished_run_retried_is_pending_and_continues() {
+    let p = Project::new();
+    finished_run(&p);
+    let before = p.order().len();
+    decree(&p, &["retry", "run-a", "--state", "work"])
+        .assert()
+        .success();
+    let events = p.events("run-a");
+    assert_eq!(events[events.len() - 2]["type"], "run_finished");
+    assert_eq!(events.last().unwrap()["source"], "retry");
+    let out = decree(&p, &["status"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(stdout.contains("  pending: 1\n"), "{stdout}");
+
+    p.process().assert().success();
+    let events = p.events("run-a");
+    assert_eq!(events.last().unwrap()["type"], "run_finished");
+    assert_eq!(last_state(&events), "done");
+    assert_eq!(
+        p.order()[before..],
+        ["root_entry", "work_entry", "work", "work_exit", "root_exit"]
+    );
+}

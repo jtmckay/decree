@@ -16,7 +16,7 @@
 | `hooks_test.rs` | `onentry`/`onexit` order, attempts, and `failed`'s `onentry` (0.4.2's hooks). |
 | `integration_test.rs` | `decree init` (layout, routers, skill, permissions), `status`, color and exit codes. |
 | `interpreter_props.rs` | Property tests (proptest): generated machines and script outcomes keep the interpreter's invariants (seq, transitions, visits, mirror, hook order). |
-| `interrupt_test.rs` | Signals, crashes, the run lock and run status. |
+| `interrupt_test.rs` | Signals, crashes, the run lock and run status, including finished runs read from their last line. |
 | `migrate_script_test.rs` | `scripts/migrate-0.4-to-0.5.sh` on the 0.4.2 project in `fixtures/legacy-0.4/`. |
 | `mock_replay_test.rs` | Each `mock/` run that is not a router's child run, replayed through the binary with stub scripts: its events, child runs, `message.md` and `request.json` equal the mock's. |
 | `mock_templates_test.rs` | Every `mock/` file that `init` also writes is byte-identical to it. |

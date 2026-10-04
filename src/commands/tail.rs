@@ -48,6 +48,9 @@ pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
 fn active_run(ctx: &Context) -> Result<Option<String>, DecreeError> {
     let mut child = None;
     for id in run_ids(&ctx.runs_dir())? {
+        if ctx.run_finished(&id)?.is_some() {
+            continue;
+        }
         let (status, events) = ctx.status_of(&id)?;
         if status != RunStatus::Active {
             continue;

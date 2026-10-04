@@ -9,8 +9,8 @@ use serde_json::json;
 
 use super::{io_err, Context, InterpreterError};
 use crate::events::{
-    current_state, first_text, is_type, read_events, text, waiting_child, Event, EventLog,
-    EVENTS_FILE,
+    current_state, first_text, is_type, last_event, read_events, text, waiting_child, Event,
+    EventLog, EVENTS_FILE,
 };
 use crate::layout::MESSAGE_FILE;
 use crate::machine::{LoadedMachine, FAILED};
@@ -33,11 +33,15 @@ pub struct Recovery {
 /// runs (a live pid in `.lock`) are left alone. Every other run's `message.md` mirror is
 /// rewritten if it disagrees with `events.jsonl` (docs/reference/messages.md, Source of truth). Runs with
 /// no events yet (never claimed past the folder), or of a machine that no longer exists,
-/// are skipped: there is no state to record or continue.
+/// are skipped: there is no state to record or continue. So are finished runs, from their
+/// last line alone.
 pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
     let runs = ctx.runs_dir();
     let mut found = Recovery::default();
     for id in run_ids(&runs).map_err(io_err(&runs))? {
+        if ctx.run_finished(&id)?.is_some() {
+            continue;
+        }
         let run_dir = runs.join(&id);
         let events = ctx.events(&id)?;
         let Some(machine) = ctx.run_machine(&events) else {
@@ -206,6 +210,15 @@ impl<'a> Context<'a> {
             None => RunStatus::Interrupted,
         };
         Ok((status, events))
+    }
+
+    /// Run `run_id`'s last event if it is `run_finished`: the run is finished, and nothing
+    /// else in its log is read (docs/reference/messages.md, Run status). Only `decree
+    /// retry` appends after it. Scans over every run check this first.
+    pub fn run_finished(&self, run_id: &str) -> Result<Option<Event>, InterpreterError> {
+        let dir = self.runs_dir().join(run_id);
+        let last = last_event(&dir).map_err(io_err(&dir.join(EVENTS_FILE)))?;
+        Ok(last.filter(|e| is_type(e, "run_finished")))
     }
 
     /// Every event of run `run_id`.

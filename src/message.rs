@@ -183,7 +183,13 @@ pub fn run_ids(runs_dir: &Path) -> io::Result<Vec<String>> {
     let mut ids: Vec<String> = match std::fs::read_dir(runs_dir) {
         Ok(entries) => entries
             .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir())
+            // The entry's type comes from the directory listing, without a `stat`; a
+            // symlink is followed, as `Path::is_dir` does.
+            .filter(|e| match e.file_type() {
+                Ok(t) if t.is_dir() => true,
+                Ok(t) if !t.is_symlink() => false,
+                _ => e.path().is_dir(),
+            })
             .filter_map(|e| e.file_name().into_string().ok())
             .collect(),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),

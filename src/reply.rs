@@ -201,7 +201,7 @@ pub fn deliver_timeouts(
     let mut timed_out = Vec::new();
     for id in run_ids(&runs_dir).map_err(io_err(&runs_dir))? {
         let run_dir = runs_dir.join(&id);
-        if !past_deadline(ctx.events(&id)?.last(), now) {
+        if ctx.run_finished(&id)?.is_some() || !past_deadline(ctx.events(&id)?.last(), now) {
             continue;
         }
         let Some(_lock) = RunLock::acquire(&run_dir).map_err(io_err(&run_dir.join(LOCK_FILE)))?

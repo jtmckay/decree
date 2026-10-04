@@ -59,11 +59,13 @@ The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). 
 
 | Status | Condition |
 | --- | --- |
-| `finished` | The last `transition` event's `to` is a final state. |
+| `finished` | The last event is `run_finished`, or the last `transition` event's `to` is a final state. |
 | `active` | The run's `.lock` holds a live pid. |
 | `waiting` | The last event is `waiting`: the run asked for a reply (`choose: person`), or is waiting for a child run. |
 | `pending` | The last event is `received`, or a `transition` with `source: "retry"`. `process` and `daemon` continue it. |
 | `interrupted` | Anything else. Includes a run whose last event is `interrupted`, and a run left mid-step by a crash. |
+
+A run that reaches a root final state appends `run_finished` last ([runs.md](runs.md#step-loop), step 8), and only `decree retry` appends after it. So a run whose last event is `run_finished` is finished, and when `process`, `daemon`, `decree status` or `decree tail` look over every run, decree reads only that last line of its `events.jsonl`: a finished run costs one small read, however long its log. `decree status <id>` and stepping a run still read the whole log.
 
 When `process` or `daemon` starts, it appends an `interrupted` event with `cause: "crash"` to every run that is interrupted but whose last event is not already `interrupted`, so the stop is visible in the log. It continues `pending` runs, in `id` order, before reading `inbox/`.
 

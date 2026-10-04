@@ -152,7 +152,9 @@ impl<'a> Pipeline<'a> {
     pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
         let mut pending = Vec::new();
         for id in message::run_ids(&self.ctx.runs_dir())? {
-            if self.ctx.status_of(&id)?.0 == RunStatus::Pending {
+            if self.ctx.run_finished(&id)?.is_none()
+                && self.ctx.status_of(&id)?.0 == RunStatus::Pending
+            {
                 pending.push(id);
             }
         }
@@ -459,6 +461,9 @@ fn blocked(file: &str, id: &str, what: &str) -> Stop {
 /// options, and a `decree event` command for each option (docs/reference/messages.md, Replies).
 fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
     for id in message::run_ids(&ctx.runs_dir())? {
+        if ctx.run_finished(&id)?.is_some() {
+            continue;
+        }
         let events = ctx.events(&id)?;
         let Some(last) = events.last().filter(|e| is_type(e, "waiting")) else {
             continue;
