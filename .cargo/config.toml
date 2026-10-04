@@ -1,0 +1,12 @@
+# decree's tests run decree. When a decree run's script runs them (rust_develop's gate),
+# they would inherit that run's variables, and the decree they start would read them:
+# `decree emit` checks `emits` against DECREE_MACHINE and DECREE_STATE, sets `parent` from
+# DECREE_MESSAGE_ID, and continues the trace in TRACEPARENT. Empty means unset to decree,
+# so forcing them empty gives every test the same environment inside a run as outside one.
+# Tests that need them set them on the command they start.
+[env]
+DECREE_MESSAGE_ID = { value = "", force = true }
+DECREE_MACHINE = { value = "", force = true }
+DECREE_STATE = { value = "", force = true }
+TRACEPARENT = { value = "", force = true }
+TRACESTATE = { value = "", force = true }

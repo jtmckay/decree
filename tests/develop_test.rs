@@ -323,12 +323,12 @@ fn claude_sessions_are_listed_in_sessions_txt() {
     }
 }
 
-/// The session flags of a call line: `-p --session-id <id>` or `-p --resume <id>`.
+/// The session flags of a call line: `-p --permission-mode auto --session-id <id>` or `... --resume <id>`.
 fn session(call: &str) -> (&str, &str) {
     let flags: Vec<&str> = call.split(" | ").next().unwrap().split(' ').collect();
-    assert_eq!(flags.len(), 3, "{call}");
-    assert_eq!(flags[0], "-p", "{call}");
-    (flags[1], flags[2])
+    assert_eq!(flags.len(), 5, "{call}");
+    assert_eq!(flags[..3], ["-p", "--permission-mode", "auto"], "{call}");
+    (flags[3], flags[4])
 }
 
 /// AC: a stub `claude` prints a usage-limit message with a reset time; the script

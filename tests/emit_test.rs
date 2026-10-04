@@ -82,11 +82,18 @@ impl Project {
         names
     }
 
-    /// `decree emit` with no `DECREE_*` variables but those given.
+    /// `decree emit` with no `DECREE_*` or trace variables but those given, so a test suite
+    /// run inside a decree run (a gate script) sees the same results.
     fn emit(&self, env: &[(&str, &str)], args: &[&str]) -> Command {
         let mut cmd = cargo_bin_cmd!("decree");
         cmd.current_dir(self.tmp.path()).env("NO_COLOR", "1");
-        for var in ["DECREE_MESSAGE_ID", "DECREE_MACHINE", "DECREE_STATE"] {
+        for var in [
+            "DECREE_MESSAGE_ID",
+            "DECREE_MACHINE",
+            "DECREE_STATE",
+            "TRACEPARENT",
+            "TRACESTATE",
+        ] {
             cmd.env_remove(var);
         }
         cmd.envs(env.iter().copied()).arg("emit").args(args);

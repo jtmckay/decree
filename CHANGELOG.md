@@ -35,6 +35,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Fixed
 
+- A script no longer inherits `DECREE_*` variables from a decree run that started its decree (a test suite run by a gate script), and the built-in machines' Claude calls pass `--permission-mode` (default `auto`, set `CLAUDE_PERMISSION_MODE` to change it) instead of inheriting your interactive default, under which `plan` mode changed nothing. Found by the first real run of 0.5.
 - `docs/reference/runs.md` documents the fields of `run_finished` again, the fields of each kind of `waiting` event, and when a `model` decision has no `child_run` or `pick` (migration 81).
 
 [0.5.0]: https://github.com/jtmckay/decree/tree/v0.5

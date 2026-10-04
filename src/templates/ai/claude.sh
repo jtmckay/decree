@@ -4,6 +4,10 @@
 # When Claude stops at its usage limit (its output names a "usage limit" and a
 # "reset"), wait until the reset time it names, or an hour if it names none,
 # then resume the same session with the same prompt.
+# CLAUDE_PERMISSION_MODE is passed to every call, so the run does not inherit your
+# interactive default (in `plan` mode Claude can only plan, and changes nothing). `auto`
+# approves what Claude's classifier judges safe; `acceptEdits` approves only file edits.
+CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-auto}"
 ai() {
   local prompt=$1 session out status
   session=$(new_session_id)
@@ -14,7 +18,7 @@ ai() {
   while true; do
     out=$(mktemp)
     # stdout to stdout and stderr to stderr, both also kept in $out
-    if { claude -p "${session_flag[@]}" "${prompt}" 2>&1 1>&3 3>&- | tee -a "${out}" >&2; } 3>&1 | tee -a "${out}"; then
+    if { claude -p --permission-mode "${CLAUDE_PERMISSION_MODE}" "${session_flag[@]}" "${prompt}" 2>&1 1>&3 3>&- | tee -a "${out}" >&2; } 3>&1 | tee -a "${out}"; then
       status=0
     else
       status=$?

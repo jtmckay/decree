@@ -416,9 +416,17 @@ impl Executor {
             .stderr(Stdio::piped())
             // An inherited `TRACESTATE` belongs to another trace.
             .env_remove(TRACESTATE_ENV)
-            .envs(self.env(run, event_path.as_deref(), &span_id))
             // Its own process group, so a stop reaches the whole tree.
             .process_group(0);
+        // A decree started inside another decree run (a test suite run by a gate script, say)
+        // must not hand the outer run's variables to its scripts: it sets every `DECREE_*`
+        // variable a script gets (docs/reference/scripts.md, Environment) itself.
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("DECREE_") {
+                cmd.env_remove(&name);
+            }
+        }
+        cmd.envs(self.env(run, event_path.as_deref(), &span_id));
         // The background group must not be stopped for touching the TTY.
         // SAFETY: signal(2) is async-signal-safe, and the closure allocates nothing.
         unsafe {

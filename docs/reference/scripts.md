@@ -33,6 +33,8 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 
 ## Environment
 
+A script inherits decree's environment, with every inherited `DECREE_*` variable and `TRACESTATE` removed, then gets the variables below. So a decree started inside another decree run (a test suite run by a gate script, say) never hands the outer run's variables to its own scripts.
+
 | Variable | Value |
 | --- | --- |
 | `DECREE_PROJECT_ROOT` | Absolute path of the directory containing `.decree/`. |
