@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# onentry: use the comfyui tmux session, or start ComfyUI's main.py in a new
-# one, and wait until it answers. It does not free the GPU: put without_ollama
-# before it.
+# onentry: use ComfyUI if it already answers, whoever runs it; otherwise use
+# the comfyui tmux session, or start ComfyUI's main.py in a new one, and wait
+# until it answers. It does not free the GPU: put without_ollama before it.
 set -euo pipefail
 COMFYUI_SESSION="${COMFYUI_SESSION:-comfyui}"
 COMFYUI_DIR="${COMFYUI_DIR:-$HOME/ComfyUI}"
@@ -13,6 +13,10 @@ COMFYUI_HEALTH="${COMFYUI_HEALTH:-http://$COMFYUI_HOST:$COMFYUI_PORT/system_stat
 COMFYUI_START_TIMEOUT_S="${COMFYUI_START_TIMEOUT_S:-180}"
 source "$(dirname "${BASH_SOURCE[0]}")/tmux_service.sh"
 
+if answers "$COMFYUI_HEALTH"; then
+  echo "comfyui already answers at $COMFYUI_HEALTH: using it, whoever runs it"
+  exit 0
+fi
 ensure_session "$COMFYUI_SESSION" "$COMFYUI_COMMAND"
 wait_until_up "$COMFYUI_HEALTH" "$COMFYUI_START_TIMEOUT_S" || {
   echo "comfyui did not start; see why with: tmux attach -t $COMFYUI_SESSION" >&2

@@ -75,3 +75,4 @@
 75-tmux-services-example.md
 76-comfyui-wait-for-empty.md
 77-use-and-without-scripts.md
+78-unload-instead-of-kill.md

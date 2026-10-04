@@ -1,9 +1,10 @@
 # yaml-language-server: $schema=../schema/machine.schema.json
 # Graph: ../graph/illustrated_post.md
-# Services in tmux sessions (README.md): use_<service> uses the service's tmux
-# session or starts it, then waits until it answers; without_<service> ends it.
-# GLiNER runs on CPU and stays up; ComfyUI and Ollama share the GPU, so a state
-# that needs one lists without_<the other> first.
+# Services in tmux sessions (README.md): use_<service> uses the service if it
+# answers, or starts it in a tmux session and waits until it answers;
+# without_<service> unloads its models through its API, and the server keeps
+# running. GLiNER runs on CPU; ComfyUI and Ollama share the GPU, so a state that
+# needs one lists without_<the other> first.
 name: illustrated_post
 description: Write a short post from the message, with a picture when the message asks for one.
 onentry: [use_gliner]              # root onentry: GLiNER is needed first, and stays up
@@ -26,12 +27,12 @@ states:
 
   render:                          # queues the FLUX2 workflow and returns; ComfyUI renders in the background
     invoke: render
-    onentry: [without_ollama, use_comfy]          # Ollama is idle (decree waits on it): end it, then ComfyUI
+    onentry: [without_ollama, use_comfy]          # Ollama is idle (decree waits on it): unload it, then ComfyUI
     transitions: { done: write }
 
   write:                           # asks Ollama for the post, writes post.md
     invoke: write
-    onentry: [without_comfy_wait, use_ollama]     # ComfyUI's queue drains and it ends, then Ollama
+    onentry: [without_comfy_wait, use_ollama]     # ComfyUI's queue drains, it unloads, then Ollama
     transitions: { done: done }
 
   done:   { final: true }

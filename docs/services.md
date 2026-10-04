@@ -15,7 +15,7 @@ The rule of thumb:
 | --- | --- |
 | The things you swap all speak HTTP and you reach them through one address | **llama-swap**: loads the server for the requested model, unloads the previous one |
 | Anything else, or you want restarts, logs and "never both at once" for any process | **systemd user units** with `Conflicts=` |
-| You want to watch and use the services live, and need no restarts or start at boot | **tmux sessions**, started and ended by the `onentry` scripts |
+| You want to watch and use the services live, and need no restarts or start at boot | **tmux sessions**, started by the `onentry` scripts, which free the GPU by unloading models through each API |
 | decree itself runs in a container without systemd | **Docker Compose** services, started and stopped by the `onentry` scripts |
 
 ## llama-swap: hot-swapping model servers
@@ -83,7 +83,12 @@ journalctl --user -u comfyui -f                         # its log, live
 
 ## tmux sessions as the supervisor
 
-If you would rather watch the services live, run each in a tmux session named after it. A `use_<service>` `onentry` script uses the session if it is running, or starts the service in a new detached one, then waits until it answers; for "never both on the GPU", a `without_<service>` script before it ends the other service's session. [`examples/tmux-services/`](../examples/tmux-services/README.md) does this for GLiNER2.5-Decide (on CPU, always up), Ollama and ComfyUI (which end each other), with one sourced helper for the three scripts. ComfyUI jobs are queued without waiting, so there are two ways to end it: `without_comfy_wait` polls `GET /queue` until nothing is running or pending, so no render is cut short, and `without_comfy_no_wait` ends it at once. Ollama is called synchronously, so `without_ollama` never needs to wait. tmux restarts nothing after a crash and starts nothing at boot, but you can `tmux attach -t comfyui` and watch or use the service as it runs.
+If you would rather watch the services live, run each in a tmux session named after it. A `use_<service>` `onentry` script uses the service if its health URL answers, whoever runs it, or starts it in a new detached session, then waits until it answers. For "never both on the GPU", a `without_<service>` script before it unloads the other service's models through its API, so the servers stay up, keeping their queues and history, and a swap costs a model load, not a server start. [`examples/tmux-services/`](../examples/tmux-services/README.md) does this for GLiNER2.5-Decide (on CPU, always up), Ollama and ComfyUI, with one sourced helper for the three `use_*` scripts:
+
+- Ollama: `GET /api/ps` lists the loaded models, `POST /api/generate {"model": <name>, "keep_alive": 0}` unloads one, and the VRAM is free once `/api/ps` lists none ([API](https://docs.ollama.com/api/ps), [FAQ](https://docs.ollama.com/faq)). decree calls Ollama synchronously, so `without_ollama` never needs to wait for work.
+- ComfyUI: `POST /free {"unload_models": true, "free_memory": true}` makes its worker unload the models and empty PyTorch's cache between jobs, and `GET /system_stats` reports what PyTorch still reserves (`torch_vram_total`). Jobs are queued without waiting, and a queued job would load its models again, so there are two ways to unload: `without_comfy_wait` polls `GET /queue` until nothing is running or pending, so no render is cut short, and `without_comfy_no_wait` drops the queue at once (`POST /queue {"clear": true}`, `POST /interrupt`). The process keeps its CUDA context, a few hundred MB.
+
+tmux restarts nothing after a crash and starts nothing at boot, but you can `tmux attach -t comfyui` and watch or use the service as it runs.
 
 ## Using a service from a machine
 

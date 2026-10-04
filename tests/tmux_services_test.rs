@@ -4,10 +4,15 @@
 //! The stub `tmux` keeps sessions as files in `stub/sessions/` and logs each call to
 //! `stub/tmux.log`. The stub `curl` answers a service's URLs while its stub session exists
 //! (unless `stub/never/<service>` exists), or always when `stub/outside/<service>` exists: a
-//! service running outside tmux. It answers ComfyUI's `/prompt`, `/queue` (one job running the
-//! first time, then empty) and `/history/<id>` (`stub/history.json` if the test wrote one,
-//! else a finished image), and Ollama's `/api/generate`. The example sits at `examples/tmux-services/` in a temp directory next
-//! to the two files it reuses by path, so its defaults resolve as in the repository.
+//! service running outside tmux. It logs each request it answers to `stub/requests.log` as
+//! `<method> /<path> <body>`. It keeps "loaded" models as files: ComfyUI's `/prompt` writes
+//! `stub/loaded/comfyui` and `/free` removes it; Ollama's plain `/api/generate` writes
+//! `stub/loaded/ollama` and one with `keep_alive: 0` removes it, unless `stub/stuck/<service>`
+//! exists. `/api/ps` and `/system_stats` report from those files. It answers ComfyUI's `GET
+//! /queue` (one job running the first time, then empty) and `/history/<id>`
+//! (`stub/history.json` if the test wrote one, else a finished image). The example sits at
+//! `examples/tmux-services/` in a temp directory next to the two files it reuses by path, so
+//! its defaults resolve as in the repository.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
@@ -28,7 +33,6 @@ echo "$cmd ${target:-$name}" >> "$STUB/tmux.log"
 case "$cmd" in
   has-session) [ -f "$STUB/sessions/$target" ] ;;
   new-session) printf '%s\n' "$command" > "$STUB/sessions/$name" ;;
-  kill-session) [ -f "$STUB/sessions/$target" ] && rm "$STUB/sessions/$target" ;;
   *) exit 1 ;;
 esac
 "#;
@@ -45,26 +49,47 @@ if [ ! -f "$STUB/outside/$service" ] && { [ ! -f "$STUB/sessions/$service" ] || 
   echo "curl: (7) Failed to connect to $url" >&2
   exit 7
 fi
-case "$url" in
-  */prompt)
+method=GET; [ -n "$data" ] && method=POST
+echo "$method /${url#http://*/} $data" >> "$STUB/requests.log"
+mkdir -p "$STUB/loaded"
+case "$method $url" in
+  "POST "*/prompt)
     cp "${data#@}" "$STUB/comfy-payload.json"
+    touch "$STUB/loaded/comfyui"
     echo '{"prompt_id": "p1", "number": 0, "node_errors": {}}' ;;
-  */queue)
+  "GET "*/queue)
     if [ -f "$STUB/queue-asked" ]; then
       echo '{"queue_running": [], "queue_pending": []}'
     else
       touch "$STUB/queue-asked"
       echo '{"queue_running": [[0, "p1", {}, {}, []]], "queue_pending": []}'
     fi ;;
+  "POST "*/free)
+    [ -f "$STUB/stuck/comfyui" ] || rm -f "$STUB/loaded/comfyui" ;;
+  *"/system_stats")
+    reserved=0; [ -f "$STUB/loaded/comfyui" ] && reserved=12884901888
+    echo "{\"devices\": [{\"name\": \"cuda:0 Stub GPU : cudaMallocAsync\", \"type\": \"cuda\", \"index\": 0, \"torch_vram_total\": $reserved}]}" ;;
   */history/p1)
     if [ -f "$STUB/history.json" ]; then
       cat "$STUB/history.json"
     else
       echo '{"p1": {"outputs": {"9": {"images": [{"filename": "decree_00001_.png", "subfolder": "", "type": "output"}]}}, "status": {"status_str": "success", "completed": true, "messages": []}}}'
     fi ;;
-  */api/generate)
-    printf '%s\n' "$data" > "$STUB/generate.json"
-    echo '{"model": "stub", "response": "A stub post.", "done": true}' ;;
+  *"/api/ps")
+    if [ -f "$STUB/loaded/ollama" ]; then
+      echo '{"models": [{"name": "gemma4:e4b", "model": "gemma4:e4b", "size_vram": 9600000000}]}'
+    else
+      echo '{"models": []}'
+    fi ;;
+  "POST "*/api/generate)
+    if jq -e '.keep_alive == 0' <<<"$data" >/dev/null; then
+      [ -f "$STUB/stuck/ollama" ] || rm -f "$STUB/loaded/ollama"
+      echo '{"model": "gemma4:e4b", "response": "", "done": true, "done_reason": "unload"}'
+    else
+      printf '%s\n' "$data" > "$STUB/generate.json"
+      touch "$STUB/loaded/ollama"
+      echo '{"model": "stub", "response": "A stub post.", "done": true}'
+    fi ;;
   *) echo '{"ok": true}' ;;
 esac
 "#;
@@ -156,7 +181,7 @@ impl Project {
         fs::write(self.stub().join("sessions").join(name), "started by hand\n").unwrap();
     }
 
-    /// A marker file `stub/<kind>/<service>` (`never` or `outside`).
+    /// A marker file `stub/<kind>/<service>` (`never`, `outside`, `loaded` or `stuck`).
     fn mark(&self, kind: &str, service: &str) {
         fs::create_dir_all(self.stub().join(kind)).unwrap();
         fs::write(self.stub().join(kind).join(service), "").unwrap();
@@ -199,12 +224,34 @@ impl Project {
             .expect("no illustrated_post run")
     }
 
-    /// The stub tmux calls that start or end a session, in order.
+    /// The stub tmux calls other than `has-session`, in order.
     fn switches(&self) -> Vec<String> {
         self.tmux_log()
             .into_iter()
             .filter(|l| !l.starts_with("has-session"))
             .collect()
+    }
+
+    /// The requests the stub curl answered, as `<method> /<path> <body>`, in order.
+    fn requests(&self) -> Vec<String> {
+        fs::read_to_string(self.stub().join("requests.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.trim_end().to_string())
+            .collect()
+    }
+
+    /// Where the first request starting with `prefix` is in `requests()`.
+    fn request_at(&self, prefix: &str) -> usize {
+        let requests = self.requests();
+        requests
+            .iter()
+            .position(|r| r.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix:?} in {requests:#?}"))
+    }
+
+    fn loaded(&self, service: &str) -> bool {
+        self.stub().join("loaded").join(service).exists()
     }
 
     fn tmux_log(&self) -> Vec<String> {
@@ -247,9 +294,11 @@ fn log(run: &Path, suffix: &str) -> String {
 }
 
 const PICTURE_POST: &str = "A post about lighthouses at dawn, with a picture of one.\n";
+const FREE: &str = r#"POST /free {"unload_models": true, "free_memory": true}"#;
+const OLLAMA_UNLOAD: &str = r#"POST /api/generate {"model":"gemma4:e4b","keep_alive":0}"#;
 
 #[test]
-fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
+fn with_picture_starts_each_service_once_and_unloads_comfyui_before_ollama() {
     if !has_jq() {
         return;
     }
@@ -264,16 +313,21 @@ fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
         ]
     );
     assert_eq!(final_state(&run), "done");
-    // No sessions at the start: ollama is absent when comfyui starts, so nothing ends.
+    // Each session started once, none killed, and all still exist.
     assert_eq!(
         p.switches(),
         [
             "new-session gliner",
             "new-session comfyui",
-            "kill-session comfyui",
             "new-session ollama"
         ]
     );
+    for session in ["gliner", "comfyui", "ollama"] {
+        assert!(
+            p.stub().join("sessions").join(session).is_file(),
+            "{session}"
+        );
+    }
     // GLiNER runs the one copy of the server, by its path next to this example.
     let gliner = fs::read_to_string(p.stub().join("sessions/gliner")).unwrap();
     assert!(
@@ -283,13 +337,21 @@ fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
                 .ends_with("/../route-by-complexity/gliner/decide_server.py"),
         "{gliner}"
     );
-    let comfyui = fs::read_to_string(p.stub().join("sessions/comfyui"));
-    assert!(comfyui.is_err(), "comfyui still running");
-    let ollama = fs::read_to_string(p.stub().join("sessions/ollama")).unwrap();
-    assert_eq!(ollama, "ollama serve\n");
+    assert_eq!(
+        fs::read_to_string(p.stub().join("sessions/ollama")).unwrap(),
+        "ollama serve\n"
+    );
+    // Ollama was not running at render, so there was nothing to unload.
+    assert!(log(&run, "-render-without_ollama.log").contains("nothing to unload"));
 
-    // The workflow carries the message as its prompt; render only queued it, and
-    // without_comfy_wait drained the queue before it ended ComfyUI.
+    // ComfyUI's model was unloaded through /free, with exactly that body, after its queue
+    // drained and before Ollama's request; Ollama's model is the one still loaded.
+    assert!(p.request_at("GET /queue") < p.request_at(FREE));
+    assert!(p.request_at(FREE) < p.request_at(r#"POST /api/generate {"#));
+    assert!(!p.loaded("comfyui"));
+    assert!(p.loaded("ollama"));
+
+    // The workflow carries the message as its prompt; render only queued it.
     let payload: Value =
         serde_json::from_str(&fs::read_to_string(p.stub().join("comfy-payload.json")).unwrap())
             .unwrap();
@@ -297,7 +359,6 @@ fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
         payload["prompt"]["6"]["inputs"]["text"],
         PICTURE_POST.trim_end()
     );
-    assert!(p.stub().join("queue-asked").is_file());
     assert_eq!(
         fs::read_to_string(run.join("comfy-prompts.txt")).unwrap(),
         "p1\n"
@@ -316,25 +377,29 @@ fn with_picture_starts_gliner_then_switches_the_gpu_from_comfyui_to_ollama() {
     );
 }
 
+/// A second picture run: Ollama still holds the model from the first.
 #[test]
-fn starting_comfyui_ends_a_running_ollama_first() {
+fn without_ollama_unloads_a_loaded_model_with_keep_alive_0_before_the_prompt() {
     if !has_jq() {
         return;
     }
     let p = Project::new(WITH_PICTURE);
     p.session("ollama");
+    p.mark("loaded", "ollama");
     let run = p.run(PICTURE_POST, &[]);
     assert_eq!(final_state(&run), "done");
-    assert_eq!(
-        p.switches(),
-        [
-            "new-session gliner",
-            "kill-session ollama",
-            "new-session comfyui",
-            "kill-session comfyui",
-            "new-session ollama"
-        ]
-    );
+    let unload = p.request_at(OLLAMA_UNLOAD);
+    // It polled /api/ps after the unload, until it listed none, all before ComfyUI's prompt.
+    let polled = p.requests()[unload..]
+        .iter()
+        .position(|r| r.starts_with("GET /api/ps"))
+        .map(|i| i + unload)
+        .expect("no /api/ps after the unload");
+    assert!(polled < p.request_at("POST /prompt"));
+    assert!(log(&run, "-render-without_ollama.log").contains("ollama has no model loaded"));
+    // Ollama's session was never ended, so use_ollama found it answering.
+    assert_eq!(p.switches(), ["new-session gliner", "new-session comfyui"]);
+    assert!(log(&run, "-write-use_ollama.log").contains("ollama already answers"));
 }
 
 #[test]
@@ -350,30 +415,37 @@ fn text_only_never_touches_comfyui() {
     );
     assert_eq!(final_state(&run), "done");
     assert_eq!(p.switches(), ["new-session gliner", "new-session ollama"]);
-    // use_ollama only asks whether a comfyui session runs, and ComfyUI's health URL.
+    // ComfyUI does not answer, so without_comfy_wait has nothing to wait for or unload.
     assert!(!p.stub().join("comfy-payload.json").exists());
+    assert!(log(&run, "-write-without_comfy_wait.log").contains("comfyui is not running"));
     assert_eq!(
         fs::read_to_string(run.join("post.md")).unwrap(),
         "A stub post.\n"
     );
 }
 
+/// GLiNER in a session started by hand, Ollama outside tmux (its own systemd service, say):
+/// both answer, so both are used as they are.
 #[test]
-fn a_running_gliner_session_is_reused() {
+fn a_service_that_already_answers_is_used_and_no_session_is_started() {
     if !has_jq() {
         return;
     }
     let p = Project::new(TEXT_ONLY);
     p.session("gliner");
+    p.mark("outside", "ollama");
     let run = p.run("A post about our new release.\n", &[]);
     assert_eq!(final_state(&run), "done");
-    assert_eq!(p.tmux_log()[0], "has-session gliner");
-    assert_eq!(p.switches(), ["new-session ollama"]);
+    assert_eq!(p.tmux_log(), Vec::<String>::new());
+    assert!(!p.stub().join("sessions/ollama").exists());
     assert_eq!(
         fs::read_to_string(p.stub().join("sessions/gliner")).unwrap(),
         "started by hand\n"
     );
-    assert!(log(&run, "-_root-use_gliner.log").contains("using the running tmux session gliner"));
+    assert!(log(&run, "-_root-use_gliner.log")
+        .contains("gliner already answers at http://127.0.0.1:8090/health"));
+    assert!(log(&run, "-write-use_ollama.log")
+        .contains("ollama already answers at http://127.0.0.1:11434/api/version"));
 }
 
 #[test]
@@ -399,31 +471,43 @@ fn a_service_that_never_answers_fails_its_onentry_and_the_run() {
     assert!(!p.stub().join("comfy-payload.json").exists());
 }
 
+/// An unload that never takes effect fails the state, naming the service and what it still
+/// holds; the next service is never started.
 #[test]
-fn a_service_still_answering_after_its_session_ended_runs_outside_tmux() {
+fn an_unload_that_never_takes_effect_fails_the_state() {
     if !has_jq() {
         return;
     }
+    // Ollama keeps its model: render fails before use_comfy.
     let p = Project::new(WITH_PICTURE);
-    p.mark("outside", "ollama");
-    let run = p.run(PICTURE_POST, &[("TMUX_END_TIMEOUT_S", "2")]);
+    p.session("ollama");
+    p.mark("loaded", "ollama");
+    p.mark("stuck", "ollama");
+    let run = p.run(PICTURE_POST, &[("OLLAMA_UNLOAD_TIMEOUT_S", "2")]);
     assert_eq!(final_state(&run), "failed");
-    // without_ollama failed, so use_comfy never ran.
+    assert_eq!(path(&run).last().unwrap(), "render error failed");
+    let text = log(&run, "-render-without_ollama.log");
+    let want = "[stderr] ollama: gemma4:e4b still loaded 2 s after keep_alive: 0";
+    assert!(text.contains(want), "{want:?} not in:\n{text}");
     assert_eq!(p.switches(), ["new-session gliner"]);
-    let log = log(&run, "-render-without_ollama.log");
-    for want in [
-        "ollama still answers at http://127.0.0.1:11434/api/version 2 s after its tmux session ended",
-        "so it is running outside tmux",
-        "sudo systemctl stop ollama",
-    ] {
-        assert!(log.contains(want), "{want:?} not in:\n{log}");
-    }
+
+    // ComfyUI keeps its model: write fails before use_ollama.
+    let p = Project::new(WITH_PICTURE);
+    p.mark("stuck", "comfyui");
+    let run = p.run(PICTURE_POST, &[("COMFY_UNLOAD_TIMEOUT_S", "2")]);
+    assert_eq!(final_state(&run), "failed");
+    assert_eq!(path(&run).last().unwrap(), "write error failed");
+    let text = log(&run, "-write-without_comfy_wait.log");
+    let want = "[stderr] comfyui: still cuda:0 Stub GPU : cudaMallocAsync: 12288 MB reserved \
+                (more than 1024 MB) 2 s after /free";
+    assert!(text.contains(want), "{want:?} not in:\n{text}");
+    assert_eq!(p.switches(), ["new-session gliner", "new-session comfyui"]);
 }
 
-/// `without_comfy_wait` fails `write`'s onentry, and leaves ComfyUI running, when this run's
+/// `without_comfy_wait` fails `write`'s onentry, before anything is unloaded, when this run's
 /// prompt failed or ComfyUI lost it.
 #[test]
-fn a_failed_or_lost_prompt_fails_without_comfy_wait_and_leaves_comfyui_running() {
+fn a_failed_or_lost_prompt_fails_without_comfy_wait_before_anything_is_unloaded() {
     if !has_jq() {
         return;
     }
@@ -446,7 +530,15 @@ fn a_failed_or_lost_prompt_fails_without_comfy_wait_and_leaves_comfyui_running()
             log(&run, "-write-without_comfy_wait.log").contains(expected),
             "{history}"
         );
-        // ComfyUI was not ended, and use_ollama never ran.
+        // Nothing was cleared, interrupted or unloaded, and use_ollama never ran.
+        let requests = p.requests();
+        assert!(
+            !requests.iter().any(|r| r.starts_with("POST /queue")
+                || r.starts_with("POST /interrupt")
+                || r.starts_with("POST /free")),
+            "{history}: {requests:#?}"
+        );
+        assert!(p.loaded("comfyui"), "{history}");
         assert_eq!(
             p.switches(),
             ["new-session gliner", "new-session comfyui"],
@@ -455,25 +547,52 @@ fn a_failed_or_lost_prompt_fails_without_comfy_wait_and_leaves_comfyui_running()
     }
 }
 
-/// `without_comfy_no_wait` ends ComfyUI at once: it never asks for the queue.
+/// `without_comfy_no_wait` clears the queue and interrupts before `/free`, never waits for the
+/// queue, and leaves the server running; with ComfyUI down it has nothing to do.
 #[test]
-fn without_comfy_no_wait_ends_comfyui_without_asking_for_the_queue() {
+fn without_comfy_no_wait_clears_and_interrupts_before_free() {
+    if !has_jq() {
+        return;
+    }
     let p = Project::new(TEXT_ONLY);
-    p.session("comfyui");
     let script = p.root().join(".decree/scripts/without_comfy_no_wait.sh");
-    let out = Command::new(&script)
-        .env(
-            "PATH",
-            format!("{}:{}", p.bin().display(), std::env::var("PATH").unwrap()),
-        )
-        .env("STUB", p.stub())
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+    let run = || {
+        let out = Command::new(&script)
+            .env(
+                "PATH",
+                format!("{}:{}", p.bin().display(), std::env::var("PATH").unwrap()),
+            )
+            .env("STUB", p.stub())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert!(run().contains("comfyui does not answer at http://127.0.0.1:8188: nothing to unload"));
+    assert!(p.requests().is_empty());
+
+    p.session("comfyui");
+    p.mark("loaded", "comfyui");
+    let stdout = run();
+    let posts: Vec<String> = p
+        .requests()
+        .into_iter()
+        .filter(|r| r.starts_with("POST "))
+        .collect();
+    assert_eq!(
+        posts,
+        [r#"POST /queue {"clear": true}"#, "POST /interrupt {}", FREE]
     );
-    assert_eq!(p.switches(), ["kill-session comfyui"]);
-    assert!(!p.stub().join("queue-asked").exists());
+    assert!(!p.requests().iter().any(|r| r.starts_with("GET /queue")));
+    assert!(!p.loaded("comfyui"));
+    assert!(p.stub().join("sessions/comfyui").is_file());
+    assert_eq!(
+        stdout.lines().last().unwrap(),
+        "comfyui has unloaded its models; its server keeps running"
+    );
+    assert_eq!(p.switches(), Vec::<String>::new());
 }

@@ -2,7 +2,7 @@
 # illustrated_post's render: queue a FLUX2 text-to-image workflow with the
 # message body as its prompt, and return at once. ComfyUI renders in the
 # background; the prompt id goes to comfy-prompts.txt in the run directory, and
-# without_comfy_wait collects the image before ComfyUI ends.
+# without_comfy_wait collects the image before ComfyUI unloads its models.
 set -euo pipefail
 COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
 # Reused by path from examples/text-to-media/; set this when the example is copied elsewhere.

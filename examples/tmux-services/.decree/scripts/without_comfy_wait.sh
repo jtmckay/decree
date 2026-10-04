@@ -3,15 +3,13 @@
 # may still be running. Wait until ComfyUI's queue is empty, nothing running
 # and nothing pending; then, while ComfyUI still holds its history, write what
 # this run's prompts (comfy-prompts.txt) made to images.txt, failing if one of
-# them failed or ComfyUI lost it; then end the comfyui tmux session, freeing
-# the GPU. On a failure ComfyUI is left running, so nothing is lost.
+# them failed or ComfyUI lost it; then run without_comfy_no_wait, which unloads
+# ComfyUI's models (the queue is empty by then, so its clear and interrupt do
+# nothing). On a failure nothing is unloaded. The server keeps running.
 set -euo pipefail
 COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
 COMFYUI_DIR="${COMFYUI_DIR:-$HOME/ComfyUI}"   # its output/ holds the images
 COMFY_DRAIN_TIMEOUT_S="${COMFY_DRAIN_TIMEOUT_S:-1800}"
-COMFYUI_SESSION="${COMFYUI_SESSION:-comfyui}"
-COMFYUI_HEALTH="${COMFYUI_HEALTH:-$COMFY_URL/system_stats}"
-source "$(dirname "${BASH_SOURCE[0]}")/tmux_service.sh"
 prompts="$DECREE_RUN_DIR/comfy-prompts.txt"
 
 # Write the images this run's prompts made to images.txt; exit 1 on a failed or lost prompt.
@@ -43,8 +41,7 @@ if ! curl -fsS --max-time 5 "$COMFY_URL/system_stats" >/dev/null 2>&1; then
     echo "comfyui is not running, so the prompts this run queued ($(paste -sd ' ' "$prompts")) are lost" >&2
     exit 1
   fi
-  echo "comfyui is not running: nothing to wait for"
-  end_session "$COMFYUI_SESSION" "$COMFYUI_HEALTH"
+  echo "comfyui is not running: nothing to wait for or unload"
   exit 0
 fi
 
@@ -65,4 +62,4 @@ if [ -s "$prompts" ]; then
   collect_images
 fi
 
-end_session "$COMFYUI_SESSION" "$COMFYUI_HEALTH"
+exec "$(dirname "${BASH_SOURCE[0]}")/without_comfy_no_wait.sh"
