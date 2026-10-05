@@ -1,4 +1,7 @@
-decree runs work through state machines. It is built from three blocks:
+decree runs durable state-machine workflows from plain files: every run is
+an append-only log that survives crashes and restarts and continues where it
+stopped. It needs no AI; when a workflow uses AI, a model or a person only
+picks among the options a state declares. It is built from three blocks:
 
   Messages  Markdown files that say what to do (the body) and which machine
             does it (`machine:` in the frontmatter). One message is one run.

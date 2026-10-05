@@ -2,7 +2,7 @@
 name = "decree"
 version = "0.5.0"
 edition = "2021"
-description = "AI orchestrator for structured, reproducible workflows"
+description = "Durable state-machine workflows from plain files, for scripts, AI agents and people"
 license = "MIT"
 repository = "https://github.com/jtmckay/decree"
 

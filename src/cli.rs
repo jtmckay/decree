@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "decree",
     version,
-    about = "AI orchestrator for structured, reproducible workflows",
+    about = "Durable state-machine workflows from plain files, for scripts, AI agents and people",
     disable_help_subcommand = true,
     disable_version_flag = true
 )]

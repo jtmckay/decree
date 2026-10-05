@@ -1,12 +1,18 @@
 # Decree
 
-Run work through state machines you can read, check and graph. decree is built from three blocks:
+**Durable state-machine workflows from plain files.**
+
+Work arrives as a message, a YAML statechart decides what happens next, and scripts do the work. Every step is written to an append-only log, so a run survives crashes, restarts and week-long waits for a reply, and continues where it stopped: durable execution in the spirit of [Temporal](https://temporal.io) or AWS Step Functions, but local, with one binary and a folder of files instead of a server and a database.
+
+decree works with no AI at all. When you do use AI, decree is the harness around it: a model, or a person, only ever picks among the options a state declares, and the state machine stays in charge of what happens next.
+
+decree is built from three blocks:
 
 - **Messages** are markdown files that say *what* to do. The body is the task; the frontmatter names the machine that does it. One message is one run.
 - **Machines** are YAML statecharts that say *in what order*: states, what each state invokes, and which event leads where. They follow [W3C SCXML](https://www.w3.org/TR/scxml/), written in YAML, and contain no code and no paths.
 - **Scripts** are executables that do *one piece of work* and report one outcome. Bash by default.
 
-A model or a person only ever picks among the transitions a machine declares, in a state that invokes `model` or `person`. Everything else is deterministic, and every step is recorded in an append-only `events.jsonl` per run.
+Decisions are states of their own, cheapest first: a deterministic `check`, then a `model` (a local classifier or an LLM), then a `person`. Everything else is deterministic, and every step is recorded in each run's `events.jsonl`.
 
 ```text
             decree emit
@@ -16,7 +22,7 @@ A model or a person only ever picks among the transitions a machine declares, in
   |      | names machine; decree mirrors state
   |      v
   |   Machine   (states, invokes, transitions)   <-- options / one event -->  model or person
-  |      | script name + DECREE_* env       ^ event: exit code or JSON line
+  |      | script name + DECREE_* env       ^ event: exit code or $DECREE_EVENT_FILE
   |      v                                  |
   +-- Scripts   (scripts/<name>, bash by default)
 ```

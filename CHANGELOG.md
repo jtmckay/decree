@@ -22,6 +22,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- decree describes itself as **durable state-machine workflows from plain files, for scripts, AI agents and people** (the crate description, `--help`, the README and the reference), in place of "AI orchestrator for structured, reproducible workflows": durability and the state machine are the core, and AI is optional.
 - **Breaking (machines):** every machine key has one shape. `invoke` is a map with one key naming its kind (`script`, `check`, `model`, `person`, `machine`), a check reads a named `output` state's output, its events are `true` and `false`, and function settings sit inside `invoke`. Old shapes fail `decree check` (V19) with a message naming the new one (migration 71, [D44](docs/decisions.md#d44-one-shape-per-machine-key)).
 - `mock/` became examples by topic: `examples/feature/`, `examples/sort-documents/` and `examples/observability/` (migration 73, [D46](docs/decisions.md#d46-no-04-compatibility-and-examples-by-topic)).
 - `tmux-services` scripts are named for what they do: `use_<service>` starts or uses a service, `without_<service>` frees the GPU of it (migration 77). They keep both servers up and free GPU memory by unloading models through the Ollama and ComfyUI APIs, instead of ending sessions (migration 78).
