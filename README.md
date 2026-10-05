@@ -29,6 +29,8 @@ cargo install decree
 
 decree runs on Linux and macOS.
 
+**Coming from 0.4?** 0.5 is a rewrite, and there is no upgrade path or upgrade tool: finish pending 0.4 work with 0.4 first. 0.5 does not read a 0.4 `.decree/`; what changed is in the [changelog's 0.5.0 entry](CHANGELOG.md#050---unreleased).
+
 ## Quick start
 
 Every command in this section runs as written, in order, in an empty directory.
@@ -286,6 +288,10 @@ Run the weekday morning task.
 ## Observability
 
 `events.jsonl` is one JSON line per event, with `machine`, `state` and `run_id` on each, so any log shipper can read it. Each run is also an OpenTelemetry trace: spans for the run, its scripts, decisions and child runs go to `traces.jsonl` as OTLP/JSON, scripts get `TRACEPARENT` so their own instrumented calls join the trace, and a message's `traceparent` continues an upstream one ([Traces](docs/reference/observability.md#traces)). [`examples/observability/`](examples/observability/README.md) ships the events to Loki with Grafana Alloy, with example queries for Grafana, and the traces to Jaeger with the OpenTelemetry Collector.
+
+## Security
+
+decree runs scripts and Claude with your permissions and no sandbox; read the [security policy](SECURITY.md) before processing messages you did not write.
 
 ## License
 

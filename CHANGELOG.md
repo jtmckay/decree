@@ -18,6 +18,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 - `--format json` on `check`, `status`, `emit`, `event`, `retry`, `prune`, `graph`, `schema` and `process --dry-run`: one JSON document on stdout, described by a new schema in `.decree/schema/v1/cli/<command>.schema.json`, with exit codes unchanged; and `decree check --format sarif`, a SARIF 2.1.0 log for GitHub code scanning, GitLab and Azure DevOps (migration 82, [D51](docs/decisions.md#d51-json-output-for-every-report-and-sarif-for-decree-check)).
 - W3C Trace Context and OpenTelemetry traces: every run has a trace id, from its message's `traceparent` frontmatter key or random, and writes each span as it ends (the run, each script, decision and wait) to `runs/<id>/traces.jsonl`, one OTLP/JSON request per line, for the OpenTelemetry Collector's `otlp_json_file` receiver. Scripts get `TRACEPARENT` and `TRACESTATE`, child runs get `traceparent` in their `message.md`, and `decree emit` carries the script's `TRACEPARENT` into the new message. `events.jsonl` (still `v: 1`): every event gains `trace_id`; `script`, `decision` and `received` events gain `span_id`, as do the claim (with `parent_span_id` when the message names a parent) and `retry` transitions. `message.schema.json` gains `traceparent` and `tracestate`. A Collector configuration is in `examples/observability/` (migration 83, [D52](docs/decisions.md#d52-traces-as-files-and-environment-variables-not-an-exporter)).
 - CI: a GitHub Actions workflow, `.github/workflows/ci.yml`, runs the gate (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`) on every push to `main` and `v0.5` and every pull request, and uploads `decree check --format sarif` for the root project and every example to GitHub code scanning (migration 84).
+- A security policy, `SECURITY.md`: supported versions, private vulnerability reporting, decree's security model as it is (scripts run with your permissions and no sandbox, a message is a prompt, the built-in machines call Claude with `--permission-mode auto`) and recommendations. The README and [Execution](docs/reference/scripts.md#execution) link it, and the README says there is no upgrade path from 0.4 (migration 86).
 
 ### Changed
 
@@ -34,6 +35,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 - The Docker image (`Dockerfile`, `.dockerignore`, its GHCR workflow) and `examples/docker/`: the image did not carry the tools machines need (it had no Rust toolchain), and projects that want decree in a container can build their own.
 - Everything 0.4: the upgrade script and its fixtures, the `config.yml` error, and the `routine:` alias for `machine:` (migration 73, [D46](docs/decisions.md#d46-no-04-compatibility-and-examples-by-topic)).
+- The statement of work at the repository root: decree 0.4's pitch, written around routines and `config.yml` (migration 86).
 
 ### Fixed
 

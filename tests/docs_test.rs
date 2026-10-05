@@ -1,7 +1,7 @@
 //! The documentation holds together: relative Markdown links resolve, the machine examples
 //! in `docs/reference/machines.md` are the files in `examples/feature/`, nothing points at the
-//! removed implementation spec, and `CHANGELOG.md` has the 0.5.0 entry and links the
-//! versioning rule. Reads this repository's files only; writes nothing.
+//! removed implementation spec, `CHANGELOG.md` has the 0.5.0 entry and links the
+//! versioning rule, and `SECURITY.md` states the permission mode the built-in machines use. Reads this repository's files only; writes nothing.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -30,12 +30,12 @@ fn files_under(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The Markdown files whose links must resolve: `README.md`, `docs/`, `examples/*/README.md`
-/// and the decree skill (`src/templates/skills/`; `.claude/skills/decree` and
+/// The Markdown files whose links must resolve: `README.md`, `SECURITY.md`, `docs/`,
+/// `examples/*/README.md` and the decree skill (`src/templates/skills/`; `.claude/skills/decree` and
 /// `.github/skills/decree` are symlinks to it).
 fn markdown_files() -> Vec<PathBuf> {
     let root = repo();
-    let mut all = vec![root.join("README.md")];
+    let mut all = vec![root.join("README.md"), root.join("SECURITY.md")];
     for entry in std::fs::read_dir(root.join("examples")).unwrap() {
         let readme = entry.unwrap().path().join("README.md");
         if readme.is_file() {
@@ -300,4 +300,73 @@ fn the_changelog_has_the_0_5_0_entry_and_links_the_versioning_rule() {
     let reference = std::fs::read_to_string(repo().join("docs/reference/README.md")).unwrap();
     assert!(anchors(&reference).contains("versioning"));
     assert!(reference.contains("(../../CHANGELOG.md)"));
+}
+
+/// The value of `KEY="${KEY:-value}"` in a shell script.
+fn shell_default(script: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=\"${{{key}:-");
+    script
+        .lines()
+        .find_map(|l| l.trim().strip_prefix(&prefix)?.strip_suffix("}\""))
+        .map(str::to_string)
+}
+
+/// `SECURITY.md` has the usual sections, and says what `src/templates/ai/claude.sh` does:
+/// Claude runs with `--permission-mode auto` unless `CLAUDE_PERMISSION_MODE` says otherwise.
+#[test]
+fn the_security_policy_matches_the_claude_script() {
+    let root = repo();
+    let policy = std::fs::read_to_string(root.join("SECURITY.md")).unwrap();
+    let headings = anchors(&policy);
+    for heading in [
+        "supported-versions",
+        "reporting-a-vulnerability",
+        "the-security-model",
+        "recommendations",
+    ] {
+        assert!(headings.contains(heading), "SECURITY.md has no {heading}");
+    }
+    assert!(policy.contains("Report a vulnerability"));
+    assert!(policy.contains("`--permission-mode auto`"));
+    assert!(policy.contains("`CLAUDE_PERMISSION_MODE`"));
+    for dir in ["inbox", "migrations", "cron"] {
+        assert!(policy.contains(&format!("`.decree/{dir}/`")), "{dir}");
+    }
+
+    let script = std::fs::read_to_string(root.join("src/templates/ai/claude.sh")).unwrap();
+    assert_eq!(
+        shell_default(&script, "CLAUDE_PERMISSION_MODE").as_deref(),
+        Some("auto"),
+        "claude.sh's default permission mode changed; update SECURITY.md"
+    );
+    assert!(script.contains("--permission-mode \"${CLAUDE_PERMISSION_MODE}\""));
+}
+
+/// The README links `SECURITY.md` and the changelog, and says there is no upgrade path
+/// from 0.4.
+#[test]
+fn the_readme_links_the_security_policy_and_the_0_4_note() {
+    let readme = std::fs::read_to_string(repo().join("README.md")).unwrap();
+    assert!(readme.contains("(SECURITY.md)"));
+    assert!(readme.contains("no upgrade path"));
+    assert!(readme.contains("(CHANGELOG.md#050---"));
+}
+
+/// The removed statement of work is gone, and nothing points at it.
+#[test]
+fn nothing_mentions_the_removed_statement_of_work() {
+    let root = repo();
+    // Migrations are immutable, so theirs stay.
+    let migrations = root.join(".decree/migrations");
+    let needle = concat!("S", "OW.md").as_bytes();
+    assert!(!root.join(concat!("S", "OW.md")).exists());
+    let hits: Vec<String> = repository_files()
+        .iter()
+        .filter(|f| !f.starts_with(&migrations))
+        .filter(|f| {
+            std::fs::read(f).is_ok_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle))
+        })
+        .map(|f| f.strip_prefix(&root).unwrap().display().to_string())
+        .collect();
+    assert!(hits.is_empty(), "files that mention it: {hits:?}");
 }
