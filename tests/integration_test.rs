@@ -467,14 +467,14 @@ fn test_status_lists_queued_messages_and_pending_migrations() {
 }
 
 #[test]
-fn test_status_unknown_id_says_so_and_exits_0() {
+fn test_status_unknown_id_says_so_and_exits_1() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
     decree_cmd(&dir)
         .args(["status", "nope"])
         .assert()
-        .success()
+        .code(1)
         .stderr(predicate::str::contains("no run nope"));
 }
 

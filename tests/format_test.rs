@@ -291,9 +291,9 @@ fn emit_event_retry_status_process_and_prune() {
     assert_eq!(doc["state"], "failed");
     let events = doc["events"].as_array().unwrap();
     assert_eq!(events.last().unwrap()["type"], "run_finished");
-    // An unknown run: reported on stderr, exit 0, as text.
+    // An unknown run: an error on stderr, exit 1, as text.
     let (code, _) = p.json(&["status", "nope"], "", schema::CLI_STATUS_SCHEMA, true);
-    assert_eq!(code, 0);
+    assert_eq!(code, 1);
 
     // event: the reply's id and path; a run that is not waiting prints nothing.
     let (code, doc) = p.json(

@@ -34,7 +34,7 @@ pub enum Command {
         permissions: bool,
     },
 
-    /// Process all migrations + drain inbox
+    /// Process everything once: replies and timeouts, pending runs, the inbox, then migrations in order
     Process {
         /// Show what would be processed without executing
         #[arg(long, conflicts_with = "retry")]
@@ -116,7 +116,7 @@ pub enum Command {
         format: Format,
     },
 
-    /// Daemon: monitor inbox + cron
+    /// Run the process loop repeatedly, plus cron, until stopped
     Daemon {
         /// Polling interval: a whole number and s, m, h or d (2s, 1m)
         #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]

@@ -268,12 +268,13 @@ fn wait_line(last: &Event) -> String {
 }
 
 /// One run as JSON: its id, machine, derived status and current state, and its events as
-/// parsed objects. An unknown id is reported on stderr, as text does.
+/// parsed objects. An unknown id is an error, as in text.
 fn run_json(ctx: &Context, id: &str) -> Result<(), DecreeError> {
     let run_dir = ctx.runs_dir().join(id);
     if id.is_empty() || id.contains('/') || !run_dir.is_dir() {
-        eprintln!("no run {id} in {DECREE_DIR}/{RUNS_DIR}/");
-        return Ok(());
+        return Err(DecreeError::Other(format!(
+            "no run {id} in {DECREE_DIR}/{RUNS_DIR}/"
+        )));
     }
     let (status, events) = ctx.status_of(id)?;
     print_json(&json!({
@@ -289,8 +290,9 @@ fn run_json(ctx: &Context, id: &str) -> Result<(), DecreeError> {
 fn show_run(ctx: &Context, project: &Project, id: &str) -> Result<(), DecreeError> {
     let run_dir = ctx.runs_dir().join(id);
     if id.is_empty() || id.contains('/') || !run_dir.is_dir() {
-        eprintln!("no run {id} in {DECREE_DIR}/{RUNS_DIR}/");
-        return Ok(());
+        return Err(DecreeError::Other(format!(
+            "no run {id} in {DECREE_DIR}/{RUNS_DIR}/"
+        )));
     }
     let (status, events) = ctx.status_of(id)?;
     println!("{} {id}", "Run".bold());
