@@ -45,22 +45,26 @@ new_session_id() {
     $((RANDOM & 0xfff)) $((RANDOM & 0x3fff | 0x8000)) "${RANDOM}" "${RANDOM}" "${RANDOM}"
 }
 
+# Claude's wording varies: "usage limit reached … reset at 10:00 PM", "You've hit
+# your session limit · resets 1:10am (America/Denver)", weekly and 5-hour limits.
 usage_limit() {
-  grep -qi 'usage limit' "$1" && grep -qi 'reset' "$1"
+  grep -qiE '(usage|session|weekly|daily|5-hour) limit|limit (reached|hit)' "$1" && grep -qi 'reset' "$1"
 }
 
 # Sleep until the time in "Limits reset at 10:00 PM" (local time, tomorrow if
 # it has passed today), or for an hour if there is no such time.
 wait_for_reset() {
   local at h m now_h now_m now_s now wait=3600
-  at=$(tr '[:upper:]' '[:lower:]' < "$1" | grep -oE 'limits? resets? +(at +)?[0-9]{1,2}:[0-9]{2} *[ap]m' \
-    | head -n 1 | grep -oE '[0-9]{1,2}:[0-9]{2} *[ap]m') || true
+  # "reset at 10:00 pm", "resets 1:10am", "resets 3am": read as local time.
+  at=$(tr '[:upper:]' '[:lower:]' < "$1" | grep -oE 'resets?( +at)? +[0-9]{1,2}(:[0-9]{2})? *[ap]m' \
+    | head -n 1 | grep -oE '[0-9]{1,2}(:[0-9]{2})? *[ap]m') || true
   IFS=: read -r now_h now_m now_s <<< "$(date +%H:%M:%S)"
   now=$((10#${now_h} * 3600 + 10#${now_m} * 60 + 10#${now_s}))
   if [ -n "${at}" ]; then
-    h=$((10#${at%%:*}))
-    m=${at#*:}
-    m=$((10#${m:0:2}))
+    h=${at%%[!0-9]*}
+    h=$((10#${h}))
+    m=0
+    case ${at} in *:*) m=${at#*:}; m=$((10#${m:0:2})) ;; esac
     if [ "${h}" -le 12 ] && [ "${m}" -le 59 ]; then
       h=$((h % 12))
       case ${at} in *pm) h=$((h + 12)) ;; esac

@@ -360,6 +360,18 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
             "22:00 (1380m 0s)",
         ),
         (
+            "You've hit your session limit · resets 1:10am (America/Denver)",
+            "00:40:00",
+            "1800",
+            "01:10 (30m 0s)",
+        ),
+        (
+            "Weekly limit reached ∙ resets 3am",
+            "02:00:00",
+            "3600",
+            "03:00 (60m 0s)",
+        ),
+        (
             "USAGE LIMIT exceeded. Will RESET tomorrow.",
             "12:00:00",
             "3600",
