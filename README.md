@@ -229,6 +229,8 @@ An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`,
 
 Model servers and other long-running processes are not scripts and decree does not manage them: an `onentry` script starts what a state needs. [docs/services.md](docs/services.md) shows systemd units, llama-swap and a tmux layout for that.
 
+An agent a script starts runs with your own configuration, because decree adds nothing between them. The built-in machines call plain `claude -p` (with `--permission-mode`, default `auto`, set by `CLAUDE_PERMISSION_MODE`), so your Claude Code settings, hooks and skills apply to every agent step. A token filter such as [rtk](https://github.com/rtk-ai/rtk), which shortens the output of the agent's own shell commands through a Claude Code hook, therefore needs no setup in decree: install its hook once and every run uses it. It does not filter files the agent reads, such as the `gate.log` that `rust_develop`'s `qa` step reads, and decree's own logs stay complete.
+
 ## Commands
 
 | Command | What it does |
