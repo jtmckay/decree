@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/src/templates/schema/v1/cli/status.schema.json",
   "title": "decree status --format json",
-  "description": "What `decree status --format json` prints on stdout. With no id: the counts by status, the runs in each group with the facts the text shows, and the queued messages. With an id: that run's derived status and its events, each a line of events.jsonl parsed. An unknown id is reported on stderr, with nothing on stdout and exit code 0, as text does. `--cron` prints text only. Reference: docs/reference/cli.md, Machine-readable output.",
+  "description": "What `decree status --format json` prints on stdout. With no id: the counts by status, the runs in each group with the facts the text shows, and the queued messages. With an id: that run's derived status and its events, each a line of events.jsonl parsed. An unknown id is an error: nothing on stdout, `error: no run <id> in .decree/runs/` on stderr, exit code 1, as text does. `--cron` prints text only. Reference: docs/reference/cli.md, Machine-readable output.",
   "oneOf": [
     {
       "$ref": "#/$defs/overview"
