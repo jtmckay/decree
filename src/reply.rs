@@ -62,6 +62,13 @@ fn find_wait(
         return Ok(Err(format!("`to` {to} names no run")));
     };
     let run_dir = runs_dir.join(run_id);
+    // The lock before the log: a delivery appends `received` before it releases the lock,
+    // so a run seen unlocked here shows any delivery that held it.
+    let alive = !locked
+        && matches!(
+            lock_state(&run_dir).map_err(io_err(&run_dir.join(LOCK_FILE)))?,
+            LockState::Live(_)
+        );
     let events = ctx.events(run_id)?;
     let machine = first_text(&events, "machine").unwrap_or_default();
     let Some(m) = ctx.machines.get(machine) else {
@@ -69,11 +76,6 @@ fn find_wait(
             "run {run_id} is not waiting: its machine `{machine}` does not load"
         )));
     };
-    let alive = !locked
-        && matches!(
-            lock_state(&run_dir).map_err(io_err(&run_dir.join(LOCK_FILE)))?,
-            LockState::Live(_)
-        );
     let status = run_status(m, &events, alive);
     if status != RunStatus::Waiting {
         return Ok(Err(format!(
@@ -111,13 +113,12 @@ fn find_wait(
     }))
 }
 
-/// The first reply in `inbox_dir`, in filename order, that answers `wait`: its `to` is the
-/// wait id or the run id. `decree event` refuses a second one, since delivering the first
-/// ends the wait (docs/reference/messages.md, Replies, step 2). Unreadable files are skipped.
-pub fn queued(inbox_dir: &Path, wait: &Wait) -> io::Result<Option<String>> {
+/// The replies queued in `inbox_dir`, in filename order, as (filename, `to`). Unreadable
+/// files are skipped.
+pub fn queued(inbox_dir: &Path) -> io::Result<Vec<(String, String)>> {
     let entries = match fs::read_dir(inbox_dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
     let mut names = Vec::new();
@@ -130,12 +131,16 @@ pub fn queued(inbox_dir: &Path, wait: &Wait) -> io::Result<Option<String>> {
         }
     }
     names.sort();
-    Ok(names.into_iter().find(|name| {
-        Message::read(&inbox_dir.join(name)).is_ok_and(|m| {
-            m.text("to")
-                .is_some_and(|to| to == wait.wait_id || to == wait.run_id)
+    Ok(names
+        .into_iter()
+        .filter_map(|name| {
+            let to = Message::read(&inbox_dir.join(&name))
+                .ok()?
+                .text("to")?
+                .to_string();
+            Some((name, to))
         })
-    }))
+        .collect())
 }
 
 /// The run `to` names, and the wait id if `to` is one. A run id that is also a valid

@@ -27,9 +27,13 @@ pub fn run(
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
+    // The inbox before the run: a reply gone from `inbox/` by now was delivered under the
+    // run's lock, so the check below sees the run `active` or no longer waiting.
+    let queued = reply::queued(&project.decree_dir.join(INBOX_DIR))?;
     let wait = reply::check(&ctx, target, event, false)?.map_err(DecreeError::Other)?;
-    let inbox = project.decree_dir.join(INBOX_DIR);
-    if let Some(file) = reply::queued(&inbox, &wait)? {
+    // Delivering the first reply ends the wait (docs/reference/messages.md, Replies, step 2).
+    let answers = |to: &String| *to == wait.wait_id || *to == wait.run_id;
+    if let Some((file, _)) = queued.iter().find(|(_, to)| answers(to)) {
         return Err(DecreeError::Other(format!(
             "wait {} already has a reply queued: {DECREE_DIR}/{INBOX_DIR}/{file}",
             wait.wait_id
