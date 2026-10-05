@@ -44,7 +44,7 @@ appear only where a machine invokes `model` or `person`.
   too. Run `decree schema` if `.decree/schema/v1/` is missing. The same folder holds the
   schemas of `events.jsonl` lines (`events.schema.json`) and of a router's `request.json` and
   `reply.json`: read them before writing a router or anything that reads a run.
-- **Machines decide, scripts work.** A script makes no routing decision beyond printing one
+- **Machines decide, scripts work.** A script makes no routing decision beyond naming one
   event; a decision is a state of its own (`check`, `model` or `person`), never logic hidden in a script.
 - **Route with a typed router.** For a `model` decision that routes work (which model, which
   path), point `router:` at a typed router (a classifier such as GLiNER2.5-Decide, or a model

@@ -17,7 +17,7 @@ runs/<id>/
 
 The source of truth: the run's state is the `to` of its last `transition` event. Every line
 carries `v`, `seq`, `ts`, `type`, `run_id`, `machine`, `trigger` and `trace_id`; `script`,
-`decision` and `received` events and the claim carry the `span_id` of their span in
+`decision` and `received` events, the claim and a `retry` carry the `span_id` of their span in
 `traces.jsonl`. Every field of every type,
 with its meaning, is in `.decree/schema/v1/events.schema.json`. Types:
 

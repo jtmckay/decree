@@ -28,6 +28,17 @@ local_model:
       router: gliner_router
       min_confidence: 0.9
       output: read_text
+  transitions:
+    invoice:
+      target: file_invoice
+      description: A bill asking for payment, with an amount due.
+    receipt:
+      target: file_receipt
+      description: Proof of a payment already made.
+    other:
+      target: file_other
+      description: Any other paperwork.
+    unsure: big_model
 ```
 
 Its scripts get two extra variables ([Environment](reference/scripts.md#environment)):

@@ -93,7 +93,7 @@ states:
 
 `approval` invokes a `person`: its `ask` script, [`ask_person.sh`](.decree/scripts/ask_person.sh), tells someone the options, and the run pauses until a reply picks one (see Asking a person, below). decree only knows the run is waiting for `approve` or `reject`. No reply in a day (`timeout: 1d`) is an `error`.
 
-[`machines/feature.yml`](.decree/machines/feature.yml) uses everything, drawn by `decree graph feature` ([`.decree/graph/feature.md`](.decree/graph/feature.md)):
+[`machines/feature.yml`](.decree/machines/feature.yml) uses everything, drawn by `decree graph` ([`.decree/graph/feature.md`](.decree/graph/feature.md)):
 
 ```mermaid
 stateDiagram-v2
@@ -147,7 +147,7 @@ stateDiagram-v2
 ```
 
 - `work` is a **compound state**: the states inside it loop until it reaches its own final state `verified`. Reaching it raises `done.state.work`, which `work` handles by going to `done`. The inner states never need to know what happens after `work`.
-- `verify` is a **script** that prints `pass` or `fail`.
+- `verify` is a **script** that names `pass` or `fail` in `$DECREE_EVENT_FILE`.
 - `rounds_left` is a **check**: `visits implement less_than data.max_rounds`. Deterministic, no AI. `true` gives the model a go; `false` goes straight to a person.
 - `triage` is a **model's choice** between `retry` and `split`. Below `min_confidence: 0.8` it produces `unsure`, which hands the decision to `review`.
 - `review` is a **person's choice**, like `deploy`'s `approval`.
@@ -278,7 +278,7 @@ If the model had failed twice, `classify` would have produced `error`, which goe
 
 ## The whole system
 
-`decree graph` with no argument ([`.decree/graph/system.md`](.decree/graph/system.md)) shows how machines connect: one box per machine, `emits` and `invokes` edges between them, and cron files as entry points. Each machine's own graph shows its states.
+`decree graph` also writes [`.decree/graph/system.md`](.decree/graph/system.md), which shows how machines connect: one box per machine, `emits` and `invokes` edges between them, and cron files as entry points. Each machine's own graph shows its states.
 
 ```mermaid
 flowchart LR
@@ -310,7 +310,7 @@ flowchart LR
 
 Mermaid and its live editor are MIT-licensed, so a team can host its own copy.
 
-State ids in the graph are the state names (`<machine>__<state>` in the system graph), and every event in `events.jsonl` carries `machine`, `state` and `run_id`. A UI built outside decree can use those to link each node to its logs in Grafana ([`observability`](../observability/README.md)).
+Node ids in the graph are the state names (the machine names in the system graph), and every event in `events.jsonl` carries `machine` and `run_id`, and an event about a state names it (`state`, or `from` and `to`). A UI built outside decree can use those to link each node to its logs in Grafana ([`observability`](../observability/README.md)).
 
 ## What every script sees
 

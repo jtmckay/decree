@@ -6,7 +6,7 @@ decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry
 
 [`config.alloy`](config.alloy) tails two kinds of file under `/srv/project/.decree/runs/`:
 
-- `*/events.jsonl`, one JSON line per event, as `job="decree"`. Every line is self-contained (`run_id`, `machine`, `trigger`, `type`, `ts`), and `script` and `router` events carry `started_at` and `duration_ms`.
+- `*/events.jsonl`, one JSON line per event, as `job="decree"`. Every line is self-contained (`run_id`, `machine`, `trigger`, `type`, `ts`), `script` events carry `started_at` and `duration_ms`, and `model` decisions the router run's `duration_ms`.
 - `*/*.log`, each script's output, as `job="decree_script"`. The filename carries its context: `runs/<run_id>/<NNNN>-<state>-<script>.log`. State and script names cannot contain `-`, so the path regex is unambiguous.
 
 Labels stay low-cardinality: `job`, `machine`, `type`, and `script` for script output. `run_id` (and `state` for script output) goes in structured metadata; a label per run makes Loki slow. Timestamps come from each event's `ts`, so late or back-filled lines land at the right time.
@@ -49,7 +49,7 @@ topk(10, max_over_time({job="decree", type="script", machine="feature"} | json |
 {job="decree_script"} | run_id="01-rate-limit-upload"
 ```
 
-`state`, `run_id` and `machine` on every event are also what a UI built outside decree needs to link each node of a [graph](../../docs/reference/graph.md) to its logs here.
+`run_id` and `machine` on every event, and the state an event names (`state`, or a transition's `from` and `to`), are also what a UI built outside decree needs to link each node of a [graph](../../docs/reference/graph.md) to its logs here.
 
 ## Traces
 

@@ -21,7 +21,7 @@ states:
         onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }
-      verify:                      # script: prints pass or fail
+      verify:                      # script: names pass or fail
         invoke: verify
         transitions: { pass: verified, fail: rounds_left }
       rounds_left:                 # deterministic check: true or false

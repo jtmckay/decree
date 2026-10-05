@@ -106,7 +106,7 @@ A project is machines, scripts and messages; there is no configuration file. Eac
 | --- | --- |
 | Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)). `decree init` writes it. |
 | Default machine | None: every message names its machine with `machine:`. `decree emit`, cron files and `decree init`'s examples always do. |
-| `max_retries` | `max_attempts` in the script invoke; default 1 (no retry), as a Step Functions task without `Retry`. |
+| Retries | `max_attempts` in the script invoke; default 1 (no retry), as a Step Functions task without `Retry`. |
 | Emit depth | A fixed limit of 10 (`max_depth`). |
 | Log size | Each script log is capped at 2 MiB (2097152 bytes). |
 | Sharing across projects | None in decree. To share machines or scripts across projects, symlink them into `machines/` and `scripts/`. |

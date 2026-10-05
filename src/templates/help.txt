@@ -72,7 +72,7 @@ Messages:
   # Add rate limiting to /api/upload
   The body is the task. decree never changes it.
 
-  decree adds `id`, `trigger` and `parent` when it claims a message, and mirrors
+  decree adds `id` and `trigger` when it claims a message, and mirrors
   the run's `state` into runs/<id>/message.md. runs/<id>/events.jsonl is the
   record. Migrations are never edited: each runs from a copy, once, in
   filename order, and a failed one blocks the ones after it.

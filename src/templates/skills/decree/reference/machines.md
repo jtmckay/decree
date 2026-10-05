@@ -49,7 +49,7 @@ name is short for `{ name: <name> }`, and `invoke: implement` is short for
 
 | `invoke` | What runs | Events |
 | --- | --- | --- |
-| `script: { name: <script>, max_attempts?: <n>, timeout?: <duration> }` | The script (see `scripts.md`), re-run in place up to `max_attempts` times (default 1), each stopped after `timeout`. | `done` (exit 0), `error` (non-zero), or the event it prints. |
+| `script: { name: <script>, max_attempts?: <n>, timeout?: <duration> }` | The script (see `scripts.md`), re-run in place up to `max_attempts` times (default 1), each stopped after `timeout`. | `done` (exit 0), `error` (non-zero), or the event it writes to `$DECREE_EVENT_FILE`. |
 | `check: <condition>` | decree evaluates the condition. No AI. | `true` or `false`. |
 | `model: { question: ..., router?: <machine>, min_confidence?: 0.8, output?: <state> }` | A router machine asks a model to pick one of the state's transitions. | An option; `unsure` below `min_confidence`; `error` if the router fails. |
 | `person: { question: ..., ask: <script>, timeout?: <duration> }` | The `ask` script tells someone; the run pauses for a reply. | An option; `error` on timeout. |
@@ -174,7 +174,7 @@ states:
         onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }
-      verify:                      # script: prints pass or fail
+      verify:                      # script: names pass or fail
         invoke: verify
         transitions: { pass: verified, fail: rounds_left }
       rounds_left:                 # deterministic check: true or false
@@ -237,9 +237,9 @@ person's time is worth it, then `person`. Each threshold is a number in the mach
 
 ## Validation
 
-`decree check` runs rules V1–V20 (names, targets, `failed` exists, reachability, every script
+`decree check` runs rules V1–V21 (names, targets, `failed` exists, reachability, every script
 name resolves, decision states cover their events, options have descriptions, `emits` and
 `router` name real machines, no invoke cycles, nothing outside the SCXML subset) and M1–M3 (every
 pending migration, inbox message and cron file parses and names a machine with valid `params`).
 Errors look like `machines/feature.yml: work.verify: <message>`. It also warns when
-`.decree/graph/` is out of date: run `decree graph`.
+`.decree/graph/` or `.decree/schema/` is out of date: run `decree graph` or `decree schema`.

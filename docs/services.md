@@ -37,13 +37,13 @@ Point a router machine at llama-swap's address. Asking for `big-llm` loads it; a
 `Conflicts=` makes two units mutually exclusive: starting one stops the other. `Restart=` brings a crashed service back, and journald keeps its logs.
 
 ```ini
-# ~/.config/systemd/user/llm.service
+# ~/.config/systemd/user/ollama.service
 [Unit]
-Description=Large model server (uses the GPU)
+Description=Ollama model server (uses the GPU)
 Conflicts=comfyui.service
 
 [Service]
-ExecStart=%h/bin/serve-llm
+ExecStart=/usr/local/bin/ollama serve
 Restart=on-failure
 ```
 
@@ -51,7 +51,7 @@ Restart=on-failure
 # ~/.config/systemd/user/comfyui.service
 [Unit]
 Description=ComfyUI (uses the GPU)
-Conflicts=llm.service
+Conflicts=ollama.service
 
 [Service]
 WorkingDirectory=%h/comfy/ComfyUI
@@ -76,9 +76,9 @@ Restart=on-failure
 Useful commands:
 
 ```bash
-systemctl --user list-units 'llm*' 'comfyui*' 'decide*'   # what is up
-systemctl --user start comfyui                          # also stops llm
-journalctl --user -u comfyui -f                         # its log, live
+systemctl --user list-units 'ollama*' 'comfyui*' 'decide*'   # what is up
+systemctl --user start comfyui                             # also stops ollama
+journalctl --user -u comfyui -f                            # its log, live
 ```
 
 ## tmux sessions as the supervisor
@@ -92,11 +92,11 @@ tmux restarts nothing after a crash and starts nothing at boot, but you can `tmu
 
 ## Using a service from a machine
 
-An `onentry` script starts what the state needs and waits until it answers:
+An `onentry` script starts what the state needs and waits until it answers. As in [`examples/tmux-services/`](../examples/tmux-services/README.md), a `use_<service>` script makes its service answer; with these units `Conflicts=` stops the other one, so no `without_<service>` script is needed to free the GPU:
 
 ```bash
 #!/usr/bin/env bash
-# scripts/use_comfyui.sh: start ComfyUI (systemd stops the LLM to free the VRAM),
+# scripts/use_comfy.sh: start ComfyUI (systemd stops Ollama to free the VRAM),
 # then wait up to 3 minutes for it to answer.
 set -euo pipefail
 systemctl --user start comfyui
@@ -110,11 +110,11 @@ exit 1
 
 ```yaml
 generate_images:
-  onentry: [use_comfyui]          # a failure here is an error, like any onentry
+  onentry: [use_comfy]            # a failure here is an error, like any onentry
   invoke: render
   transitions: { done: describe_images }
 describe_images:
-  onentry: [use_llm]              # swaps the GPU back
+  onentry: [use_ollama]           # the same with ollama: swaps the GPU back
   invoke: describe
   transitions: { done: done }
 ```
@@ -123,7 +123,7 @@ Each switch is a timed `script` event, so Grafana shows how long swaps take. dec
 
 ## Docker Compose
 
-If decree runs in a container, systemd is usually not there. Run the services as Compose services and let the `onentry` scripts stop one before starting the other (`docker compose stop llm && docker compose start comfyui`), then wait for the port as above.
+If decree runs in a container, systemd is usually not there. Run the services as Compose services and let the `onentry` scripts stop one before starting the other (`docker compose stop ollama && docker compose start comfyui`), then wait for the port as above.
 
 ## Watching it all with tmux
 
@@ -139,7 +139,7 @@ if tmux has-session -t "$session" 2>/dev/null; then
 fi
 tmux new-session -d -s "$session" -n runs 'watch -n 5 decree status'
 tmux split-window -t "$session":runs -v 'while true; do decree tail; sleep 5; done'
-tmux new-window -t "$session" -n services 'journalctl --user -f -u llm -u comfyui -u decide'
+tmux new-window -t "$session" -n services 'journalctl --user -f -u ollama -u comfyui -u decide'
 tmux new-window -t "$session" -n gpu 'nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,temperature.gpu,power.draw --format=csv --loop=5'
 exec tmux attach-session -t "$session"
 ```

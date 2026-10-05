@@ -1,6 +1,6 @@
 # Graph
 
-`decree graph` prints a Markdown document holding a Mermaid `stateDiagram-v2` diagram, generated from the same arena the interpreter runs, so the picture can never drift from the behaviour. Saved as a `.md` file it renders as it is in VS Code, GitHub, GitLab and Obsidian. decree renders no images, so it stays a small single binary. Output is byte-for-byte deterministic.
+`decree graph` writes Markdown documents holding Mermaid `stateDiagram-v2` diagrams, generated from the same arena the interpreter runs, so the picture can never drift from the behaviour. Saved as a `.md` file it renders as it is in VS Code, GitHub, GitLab and Obsidian. decree renders no images, so it stays a small single binary. Output is byte-for-byte deterministic.
 
 ## Document
 
@@ -18,7 +18,7 @@ Machine: [machines/<machine name>.yml](../machines/<machine name>.yml)
 ```
 ````
 
-and `.decree/graph/system.md`, whose heading is `# All machines`, whose line under it is `Every machine, the \`emits\` and \`invokes\` edges between them, and cron entry points.`, followed by one line per machine in name order, `- [<name>](<name>.md): <description>`, a blank line, and the `<diagram>` block. Every file ends with one newline after the closing fence. Files are deterministic, so committing them shows real changes only. The sections below define `<diagram>`.
+and `.decree/graph/system.md`, whose heading is `# All machines`, whose line under it is ``Every machine, the `emits` and `invokes` edges between them, and cron entry points.``, followed by one line per machine in name order, `- [<name>](<name>.md): <description>`, a blank line, and the `<diagram>` block. Every file ends with one newline after the closing fence. Files are deterministic, so committing them shows real changes only. The sections below define `<diagram>`.
 
 **Linking back.** YAML has no link type, so a machine links to its graph with a comment, which decree ignores: `# Graph: ../graph/<machine name>.md`, on the line after the `$schema` comment ([Schema](machines.md#schema)). `decree init` writes both into the machines it creates.
 
@@ -102,7 +102,7 @@ stateDiagram-v2
     end note
 ```
 
-## Whole system (no argument)
+## Whole system
 
 The system graph shows how machines connect, one box per machine; each machine's own graph shows its states. It is a Mermaid `flowchart LR`, not a state diagram, because machines are not states of one machine. Flowchart nodes also accept Mermaid `click` directives, which a UI built on decree can add.
 
