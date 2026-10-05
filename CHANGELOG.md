@@ -40,6 +40,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Fixed
 
+- `decree event` exits 1 when a reply to the same wait is already queued in `inbox/`, naming that file. It accepted the second reply, which then became a failed `invalid_message` run on delivery, so a caller such as an HTTP front door was told it succeeded. Found by decree-go-rest's approval endpoint.
 - The built-in machines' Claude calls recognise Claude's current limit messages ("You've hit your session limit · resets 1:10am", weekly and 5-hour limits, a reset time without minutes) and wait for the reset. They matched only "usage limit … reset at 10:00 PM", so a session limit used up every attempt in seconds and failed the run.
 - `decree status <id>` for an unknown id exits 1 with `error: no run <id> in .decree/runs/`, like `decree event`; it exited 0. The `process` and `daemon` help lines now say what they do.
 - A script no longer inherits `DECREE_*` variables from a decree run that started its decree (a test suite run by a gate script), and the built-in machines' Claude calls pass `--permission-mode` (default `auto`, set `CLAUDE_PERMISSION_MODE` to change it) instead of inheriting your interactive default, under which `plan` mode changed nothing. Found by the first real run of 0.5.

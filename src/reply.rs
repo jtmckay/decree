@@ -14,7 +14,7 @@ use crate::events::{first_text, is_type, strings, text, Event, EventLog, EVENTS_
 use crate::interpreter::recover::{run_status, RunStatus};
 use crate::interpreter::{io_err, Context, InterpreterError};
 use crate::layout::RECEIVED_DIR;
-use crate::message::{self, lock_state, run_ids, LockState, RunLock, LOCK_FILE};
+use crate::message::{self, lock_state, run_ids, LockState, Message, RunLock, LOCK_FILE};
 
 /// The wait a reply answers: a run whose status is `waiting` for a reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +108,33 @@ fn find_wait(
         trigger: first_text(&events, "trigger")
             .unwrap_or_default()
             .to_string(),
+    }))
+}
+
+/// The first reply in `inbox_dir`, in filename order, that answers `wait`: its `to` is the
+/// wait id or the run id. `decree event` refuses a second one, since delivering the first
+/// ends the wait (docs/reference/messages.md, Replies, step 2). Unreadable files are skipped.
+pub fn queued(inbox_dir: &Path, wait: &Wait) -> io::Result<Option<String>> {
+    let entries = match fs::read_dir(inbox_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let Ok(name) = entry?.file_name().into_string() else {
+            continue;
+        };
+        if name.ends_with(".md") && !name.starts_with('.') {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names.into_iter().find(|name| {
+        Message::read(&inbox_dir.join(name)).is_ok_and(|m| {
+            m.text("to")
+                .is_some_and(|to| to == wait.wait_id || to == wait.run_id)
+        })
     }))
 }
 

@@ -11,11 +11,13 @@ use crate::commands::check::Project;
 use crate::commands::emit::print_queued;
 use crate::commands::process::context;
 use crate::error::DecreeError;
+use crate::layout::{DECREE_DIR, INBOX_DIR};
 use crate::message::{self, Message};
 use crate::reply;
 
-/// Run `decree event`: check that the run is waiting and accepts `event`, so mistakes fail
-/// at once, then queue the reply with the note as its body. Prints the reply's id.
+/// Run `decree event`: check that the run is waiting, accepts `event` and has no reply
+/// queued already, so mistakes fail at once, then queue the reply with the note as its
+/// body. Prints the reply's id.
 pub fn run(
     project_root: &Path,
     target: &str,
@@ -25,7 +27,14 @@ pub fn run(
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
-    reply::check(&ctx, target, event, false)?.map_err(DecreeError::Other)?;
+    let wait = reply::check(&ctx, target, event, false)?.map_err(DecreeError::Other)?;
+    let inbox = project.decree_dir.join(INBOX_DIR);
+    if let Some(file) = reply::queued(&inbox, &wait)? {
+        return Err(DecreeError::Other(format!(
+            "wait {} already has a reply queued: {DECREE_DIR}/{INBOX_DIR}/{file}",
+            wait.wait_id
+        )));
+    }
 
     let body = match note {
         Some(note) if !note.ends_with('\n') => format!("{note}\n"),

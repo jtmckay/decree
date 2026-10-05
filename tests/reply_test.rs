@@ -414,3 +414,31 @@ fn event_with_an_unaccepted_event_or_stale_or_unknown_target_exits_1() {
     }
     assert!(p.inbox().is_empty());
 }
+
+#[test]
+fn event_while_a_reply_is_already_queued_exits_1() {
+    let p = Project::new("1h");
+    let wait_id = p.wait();
+    let out = p
+        .event(&[&wait_id, "approve"])
+        .assert()
+        .code(0)
+        .get_output()
+        .clone();
+    let first = format!("{}.md", String::from_utf8_lossy(&out.stdout).trim());
+    // By wait id or by run id: either would answer the same wait.
+    for target in [wait_id.as_str(), RUN] {
+        let out = p
+            .event(&[target, "reject"])
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        let expected = format!("wait {wait_id} already has a reply queued: .decree/inbox/{first}");
+        assert!(stderr(&out).contains(&expected), "{}", stderr(&out));
+    }
+    assert_eq!(p.inbox(), [first]);
+    p.process().assert().code(0);
+    assert_eq!(last_transition(&p.events(RUN))["to"], "done");
+    assert_eq!(p.runs(), [RUN]);
+}
