@@ -47,58 +47,50 @@ Labels are the event name plus these suffixes, in this order:
 
 Escape `<` as `#lt;` and `>` as `#gt;` in labels (Mermaid entity codes).
 
-## Example: feature
+## Example: deploy
 
-This is the `<diagram>` for the [`feature` machine](machines.md#example-feature): the fenced block in [`examples/feature/.decree/graph/feature.md`](../../examples/feature/.decree/graph/feature.md).
+This is the `<diagram>` for the [`deploy` machine](machines.md#example-asking-a-person): the fenced block in [`examples/project/.decree/graph/deploy.md`](../../examples/project/.decree/graph/deploy.md).
 
 ```mermaid
 stateDiagram-v2
-    [*] --> precheck
+    [*] --> build
+    approval --> ship: approve (person)
+    approval --> failed: error (implicit)
+    approval --> rejected: reject (person)
+    build --> approval: done
+    build --> failed: error (implicit)
+    ship --> done: done
+    ship --> failed: error (implicit)
+    done --> [*]
+    failed --> [*]
+    rejected --> [*]
+    note right of approval
+        person: ask_person
+    end note
+```
+
+## Example: a compound state
+
+This is the `<diagram>` for a machine whose root holds the `work` state of [a compound state](machines.md#fragment-a-compound-state), then `done` and `failed`. The compound state's contents come first, inside `state work { … }`; the transitions it declares, and the implicit `error` edges of its children, whose domain is the root, follow it.
+
+```mermaid
+stateDiagram-v2
+    [*] --> work
     state work {
         [*] --> implement
         implement --> verify: done
-        review --> verified: approve (person)
-        review --> implement: retry (person)
-        rounds_left --> review: false (check)
-        rounds_left --> triage: true (check)
-        triage --> implement: retry (model)
-        triage --> review: unsure (model)
-        verify --> rounds_left: fail
+        verify --> implement: fail
         verify --> verified: pass
         verified --> [*]
     }
     implement --> failed: error (implicit)
-    precheck --> work: done
-    precheck --> failed: error (implicit)
-    review --> failed: error (implicit)
-    review --> failed: reject (person)
-    spawn_followups --> done: done
-    spawn_followups --> failed: error (implicit)
-    triage --> failed: error (implicit)
-    triage --> spawn_followups: split (model)
     verify --> failed: error (implicit)
     work --> done: done.state.work
     done --> [*]
     failed --> [*]
-    note left of precheck
-        machine onentry: git_baseline
-        machine onexit: notify
-    end note
-    note right of done
-        onentry: commit
-    end note
     note right of implement
         onentry: snapshot
         onexit: collect_logs
-    end note
-    note right of review
-        person: ask_person
-    end note
-    note right of rounds_left
-        check: visits implement less_than data.max_rounds
-    end note
-    note right of triage
-        model: router, min_confidence 0.8
     end note
 ```
 
@@ -127,6 +119,6 @@ flowchart LR
 
 Mermaid and its live editor are MIT-licensed, so a team can host its own editor.
 
-**Stable ids, for tools built on top.** Node ids in the output are the state ids (single machine) or the machine names and `cron__<id>` (system graph), and `events.jsonl` carries `machine`, `state` and `run_id`. A UI outside decree can therefore link any node in a rendered graph to that state's logs (for example a Grafana Explore query on `{job="decree", machine="feature"} | json | state="verify"`). Building such a UI is outside decree; these ids and fields are the contract it relies on.
+**Stable ids, for tools built on top.** Node ids in the output are the state ids (single machine) or the machine names and `cron__<id>` (system graph), and `events.jsonl` carries `machine`, `state` and `run_id`. A UI outside decree can therefore link any node in a rendered graph to that state's logs (for example a Grafana Explore query on `{job="decree", machine="develop"} | json | state="implement"`). Building such a UI is outside decree; these ids and fields are the contract it relies on.
 
 DOT, SCXML (XML) and image output are out of scope; [the decision log](../decisions.md#d14-the-graph-is-mermaid-text-in-markdown) records why.

@@ -46,7 +46,7 @@ Its scripts get two extra variables ([Environment](reference/scripts.md#environm
 | `DECREE_REQUEST` | Absolute path of `request.json` in the router run's folder. |
 | `DECREE_REPLY` | Absolute path where the reply must be written, `reply.json` in the same folder. |
 
-**Request** (`request.json`, written by decree before the router starts):
+**Request** (`request.json`, written by decree before the router starts), here for the `triage` state of the [decisions fragment](reference/machines.md#fragment-decisions), in a machine named `feature`:
 
 ```json
 {

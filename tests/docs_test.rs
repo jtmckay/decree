@@ -1,5 +1,6 @@
 //! The documentation holds together: relative Markdown links resolve, the machine examples
-//! in `docs/reference/machines.md` are the files in `examples/feature/`, nothing points at the
+//! in `docs/reference/machines.md` are the files in `examples/project/` (but for `release`,
+//! which composes them), nothing points at the
 //! removed implementation spec, `CHANGELOG.md` has the 0.5.0 entry and links the
 //! versioning rule, and `SECURITY.md` states the permission mode the built-in machines use. Reads this repository's files only; writes nothing.
 
@@ -181,7 +182,7 @@ fn relative_markdown_links_resolve() {
 }
 
 #[test]
-fn machine_examples_are_the_feature_example_machines() {
+fn machine_examples_are_the_project_example_machines() {
     let root = repo();
     let text = std::fs::read_to_string(root.join("docs/reference/machines.md")).unwrap();
     let mut examples = Vec::new();
@@ -205,9 +206,10 @@ fn machine_examples_are_the_feature_example_machines() {
         }
     }
     let names: Vec<&str> = examples.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["hello", "deploy", "ship", "feature"]);
-    for (name, example) in &examples {
-        let file = root.join(format!("examples/feature/.decree/machines/{name}.yml"));
+    assert_eq!(names, ["hello", "develop", "deploy", "release"]);
+    // `release` is the reference's own; `docs_api_test.rs` checks it with `decree check`.
+    for (name, example) in examples.iter().filter(|(n, _)| n != "release") {
+        let file = root.join(format!("examples/project/.decree/machines/{name}.yml"));
         let machine = std::fs::read_to_string(&file).unwrap();
         assert_eq!(
             example,

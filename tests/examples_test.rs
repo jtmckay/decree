@@ -33,7 +33,7 @@ const THIS_FILE: &str = "tests/examples_test.rs";
 /// The example frozen partway through its life: it commits their queues, recorded runs
 /// and ledger so they can be read, and `replay_test.rs` replays the runs. The other examples
 /// start fresh.
-const RECORDED: &[&str] = &["feature"];
+const RECORDED: &[&str] = &["project"];
 
 fn repo() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -99,7 +99,7 @@ fn every_example_passes_check_without_a_warning() {
     assert_eq!(
         names,
         [
-            "feature",
+            "project",
             "route-by-complexity",
             "text-to-media",
             "tmux-services"
@@ -419,8 +419,8 @@ fn assert_readme_reads_only(name: &str) {
 }
 
 #[test]
-fn feature_readme_commands_run() {
-    assert_readme_reads_only("feature");
+fn project_readme_commands_run() {
+    assert_readme_reads_only("project");
 }
 
 #[test]

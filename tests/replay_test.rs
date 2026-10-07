@@ -1,6 +1,7 @@
 //! The recorded runs replayed through the binary (docs/reference/runs.md, Step loop and
-//! events.jsonl). For each run in `examples/<name>/.decree/runs/`, or in the escalation ladder
-//! `tests/fixtures/escalation/.decree/runs/`, that is not a router's child run, a temp project
+//! events.jsonl). For each run in `examples/<name>/.decree/runs/`, or in the fixtures
+//! `tests/fixtures/escalation/` and `tests/fixtures/feature/`, that is not a router's child
+//! run, a temp project
 //! gets a copy of that project's `.decree` whose every script is a
 //! stub that replays, execution by execution, the exit code and output recorded for it (a
 //! router's script also writes the recorded `reply.json`). The run's message is queued,
@@ -56,7 +57,8 @@ fn repo() -> &'static Path {
 }
 
 /// The projects with recorded runs, relative to the repository: each example that has
-/// `.decree/runs/`, and the escalation ladder fixture.
+/// `.decree/runs/`, the escalation ladder fixture, and the `feature` fixture (nesting, a
+/// check, model decisions with router child runs, `emits`).
 fn recorded_projects() -> Vec<String> {
     let mut projects: Vec<String> = fs::read_dir(repo().join("examples"))
         .unwrap()
@@ -65,6 +67,7 @@ fn recorded_projects() -> Vec<String> {
         .map(|p| format!("examples/{}", p.file_name().unwrap().to_str().unwrap()))
         .collect();
     projects.push("tests/fixtures/escalation".to_string());
+    projects.push("tests/fixtures/feature".to_string());
     projects.sort();
     projects
 }
@@ -440,8 +443,55 @@ fn normalise_span(mut line: Value, ids: &BTreeMap<String, String>) -> String {
 }
 
 #[test]
+fn project_migration_01_tries_claude_after_local_and_finishes_done_as_recorded() {
+    let r = Replay::new("examples/project", "01-rate-limit-upload");
+    let process = r.cmd(&["process"]).assert();
+    r.assert_matches_recorded();
+    process.code(0);
+    assert_eq!(
+        fs::read_to_string(r.decree().join("processed.md")).unwrap(),
+        "01-rate-limit-upload.md\n"
+    );
+}
+
+#[test]
+fn project_deploy_run_waits_for_a_person_as_recorded() {
+    let r = Replay::new("examples/project", "20261001T153012Z-7b4e2a");
+    let process = r.cmd(&["process"]).assert();
+    r.assert_matches_recorded();
+    let stdout = String::from_utf8_lossy(&process.code(0).get_output().stdout).into_owned();
+    let run = fs::read_dir(r.decree().join("runs"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .file_name();
+    let run = run.to_str().unwrap();
+    assert!(
+        stdout.contains(&format!("decree event {run}.w3 approve")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn project_cron_run_interrupted_by_sigint_as_recorded() {
+    let r = Replay::new("examples/project", "20261001T030000Z-c4e81b");
+    let mut decree = r.spawn_process();
+    let sleeping = r.tmp.path().join(".replay/sleeping");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !sleeping.exists() {
+        assert!(Instant::now() < deadline, "the script never started");
+        thread::sleep(Duration::from_millis(5));
+    }
+    // SAFETY: sends SIGINT to the decree process.
+    unsafe { libc::kill(decree.id() as i32, libc::SIGINT) };
+    assert_eq!(decree.wait().unwrap().code(), Some(130));
+    r.assert_matches_recorded();
+}
+
+#[test]
 fn feature_migration_01_finishes_done_as_recorded() {
-    let r = Replay::new("examples/feature", "01-rate-limit-upload");
+    let r = Replay::new("tests/fixtures/feature", "01-rate-limit-upload");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     process.code(0);
@@ -453,7 +503,7 @@ fn feature_migration_01_finishes_done_as_recorded() {
 
 #[test]
 fn feature_migration_02_waits_for_a_person_as_recorded() {
-    let r = Replay::new("examples/feature", "02-upload-quota-per-plan");
+    let r = Replay::new("tests/fixtures/feature", "02-upload-quota-per-plan");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     let stdout = String::from_utf8_lossy(&process.code(0).get_output().stdout).into_owned();
@@ -465,7 +515,7 @@ fn feature_migration_02_waits_for_a_person_as_recorded() {
 
 #[test]
 fn feature_triage_run_picks_small_change_as_recorded() {
-    let r = Replay::new("examples/feature", "20261001T151455Z-5d2e90");
+    let r = Replay::new("tests/fixtures/feature", "20261001T151455Z-5d2e90");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     process.code(0);
@@ -480,22 +530,6 @@ fn escalation_run_climbs_to_a_person_and_files_the_reply_as_recorded() {
     r.assert_matches_recorded();
     waiting.code(0);
     process.code(0);
-}
-
-#[test]
-fn feature_cron_run_interrupted_by_sigint_as_recorded() {
-    let r = Replay::new("examples/feature", "20261001T030000Z-c4e81b");
-    let mut decree = r.spawn_process();
-    let sleeping = r.tmp.path().join(".replay/sleeping");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !sleeping.exists() {
-        assert!(Instant::now() < deadline, "the script never started");
-        thread::sleep(Duration::from_millis(5));
-    }
-    // SAFETY: sends SIGINT to the decree process.
-    unsafe { libc::kill(decree.id() as i32, libc::SIGINT) };
-    assert_eq!(decree.wait().unwrap().code(), Some(130));
-    r.assert_matches_recorded();
 }
 
 /// Every recorded run in every recorded project that is not a router's child run has a test
@@ -517,7 +551,7 @@ fn every_recorded_run_that_is_not_a_child_run_is_replayed() {
         }
     }
     top.sort();
-    assert_eq!(top.len(), 5, "{top:?}");
+    assert_eq!(top.len(), 7, "{top:?}");
     for call in top {
         assert!(source.contains(&call), "no test calls {call}");
     }

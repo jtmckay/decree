@@ -23,10 +23,11 @@ const GIT_SCRIPTS: &[Pair] = &[
     ("scripts/snapshot.sh", "scripts/snapshot.sh"),
 ];
 
-/// Each project (relative to the repository) and the pairs it holds: the recorded example,
-/// and the escalation ladder that `replay_test.rs` replays.
+/// Each project (relative to the repository) and the pairs it holds: the `feature` fixture and
+/// the escalation ladder, whose recorded runs `replay_test.rs` replays. `examples/project` has
+/// no file `init` writes.
 const EXAMPLES: &[(&str, &[&[Pair]])] = &[
-    ("examples/feature", &[GIT_SCRIPTS, ROUTER]),
+    ("tests/fixtures/feature", &[GIT_SCRIPTS, ROUTER]),
     ("tests/fixtures/escalation", &[ROUTER]),
 ];
 
@@ -105,7 +106,11 @@ fn one_byte_change_in_an_example_file_names_the_pair() {
     for (path, _) in GIT_SCRIPTS {
         let to = example.path().join(path);
         fs::create_dir_all(to.parent().unwrap()).unwrap();
-        fs::copy(repo().join("examples/feature/.decree").join(path), &to).unwrap();
+        fs::copy(
+            repo().join("tests/fixtures/feature/.decree").join(path),
+            &to,
+        )
+        .unwrap();
     }
     let snapshot = example.path().join("scripts/snapshot.sh");
     let mut bytes = fs::read(&snapshot).unwrap();
@@ -113,7 +118,7 @@ fn one_byte_change_in_an_example_file_names_the_pair() {
     fs::write(&snapshot, bytes).unwrap();
 
     let found = mismatches(
-        "examples/feature/.decree",
+        "tests/fixtures/feature/.decree",
         example.path(),
         GIT_SCRIPTS,
         &repo().join("src/templates"),
@@ -121,7 +126,7 @@ fn one_byte_change_in_an_example_file_names_the_pair() {
     );
     assert_eq!(
         found,
-        ["examples/feature/.decree/scripts/snapshot.sh <-> src/templates/scripts/snapshot.sh: differs"]
+        ["tests/fixtures/feature/.decree/scripts/snapshot.sh <-> src/templates/scripts/snapshot.sh: differs"]
     );
 }
 
@@ -144,7 +149,7 @@ fn missing_example_or_template_file_names_the_pair() {
 
     let found = mismatches(
         "x",
-        &repo().join("examples/feature/.decree"),
+        &repo().join("tests/fixtures/feature/.decree"),
         ROUTER,
         empty.path(),
         &tmp.path().join(".decree"),

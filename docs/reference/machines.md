@@ -4,6 +4,8 @@ A machine is a YAML statechart in `.decree/machines/<name>.yml`: an SCXML docume
 
 Every state does one thing: it **invokes a function**, and the function's result is an event that picks the next state. A function is a script, one of decree's three built-in decision functions (`check`, `model`, `person`), or another machine. As far as the machine is concerned, they are all just functions.
 
+The first three examples are the machines of [`examples/project`](../../examples/project/README.md), each the simplest that does its job. The fragments after them show the building blocks a machine adds only when it needs them.
+
 ## Example: the smallest machine
 
 ```yaml
@@ -18,6 +20,26 @@ states:
     transitions: { done: done }    # exit 0 -> done; non-zero -> failed, implicitly
   done:   { final: true }
   failed: { final: true }          # every machine has one
+```
+
+## Example: an attempt list
+
+```yaml
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/develop.md
+name: develop
+description: Implement a message, then test it.
+initial: implement
+states:
+  implement:
+    invoke:                        # the local model fails often: try Claude second
+      script: { name: implement, attempts: [local, claude] }
+    transitions: { done: test }
+  test:
+    invoke: test
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }
 ```
 
 ## Example: asking a person
@@ -55,86 +77,82 @@ A state can invoke a whole machine. It runs as a child run, and the final state 
 
 ```yaml
 # yaml-language-server: $schema=../schema/v1/machine.schema.json
-# Graph: ../graph/ship.md
-name: ship
-description: Implement a feature, then deploy it.
+# Graph: ../graph/release.md
+name: release
+description: Implement a change, then deploy it.
 initial: build
 states:
   build:
-    invoke: { machine: feature }
-    transitions: { done: release }
-  release:
+    invoke: { machine: develop }
+    transitions: { done: deploy }
+  deploy:
     invoke: { machine: deploy }
     transitions: { done: done, rejected: done }
   done:   { final: true }
   failed: { final: true }
 ```
 
-## Example: feature
+## Fragment: a compound state
 
-Scripts, a deterministic check, a model's choice that hands over to a person when unsure, nesting, data and an emit.
+A state with `states` is a compound state: its children run as one unit, starting at its `initial`. When a child final state is reached, decree raises `done.state.<id>`, which the compound state handles like any event. `onentry` and `onexit` scripts run every time a state is entered or exited, and report no event; at the machine's root they run once, when the run starts and after it ends.
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
-# Graph: ../graph/feature.md
-name: feature
-description: Implement one feature spec with an AI agent, verify it, and commit.
-data:
-  max_rounds: { type: int, default: 2 }
-onentry: [git_baseline]            # root onentry: once, when the run starts
-onexit: [notify]                   # root onexit: once, after a root final state is entered
-initial: precheck
-states:
-  precheck:
-    invoke: precheck
-    transitions: { done: work }
-  work:                            # compound: the implement/verify loop as one unit
-    transitions: { done.state.work: done }   # raised when work reaches its own final state
-    initial: implement
-    states:
-      implement:
-        invoke:                    # attempts: re-run a crashing script in place
-          script: { name: implement, attempts: 2 }
-        onentry: [snapshot]
-        onexit: [collect_logs]
-        transitions: { done: verify }
-      verify:                      # script: names pass or fail
-        invoke: verify
-        transitions: { pass: verified, fail: rounds_left }
-      rounds_left:                 # deterministic check: true or false
-        invoke:
-          check: { visits: implement, less_than: { data: max_rounds } }
-        transitions: { true: triage, false: review }
-      triage:                      # a model picks one option; below the floor it is unsure
-        invoke:
-          model:
-            question: Should we implement again or split the work?
-            min_confidence: 0.8
-            output: verify
-        transitions:
-          retry:  { target: implement, description: The failures look fixable; implement again. }
-          split:  { target: spawn_followups, description: The scope is too large; emit smaller follow-up messages. }
-          unsure: review
-      review:                      # a person picks one option; the run pauses for the reply
-        invoke:
-          person:
-            question: Tests still fail. What next?
-            ask: ask_person
-            timeout: 2d
-        transitions:
-          approve: { target: verified, description: Good enough; commit it. }
-          retry:   { target: implement, description: Try again; see my note. }
-          reject:  { target: failed, description: Stop. }
-      verified: { final: true }    # raises done.state.work
-  spawn_followups:
-    invoke: spawn
-    transitions: { done: done }
-    emits: [feature]               # extension: machines its scripts may emit messages for
-  done:   { final: true, onentry: [commit] }   # migrations: processed.md is written first, so the commit includes it
-  failed: { final: true }
+work:                              # compound: the implement/verify loop as one unit
+  transitions: { done.state.work: done }   # raised when work reaches its own final state
+  initial: implement
+  states:
+    implement:
+      invoke: implement
+      onentry: [snapshot]          # every entry: a new round
+      onexit: [collect_logs]       # every exit
+      transitions: { done: verify }
+    verify:                        # script: names pass or fail
+      invoke: verify
+      transitions: { pass: verified, fail: implement }
+    verified: { final: true }      # raises done.state.work
 ```
 
-There are two retry mechanisms, and they mean different things. `attempts`, inside the script invoke, re-runs a crashing script in place: same state, no `onexit` or `onentry`. A transition back to an earlier state (`retry` above) is a new round chosen by the machine, bounded here by the `rounds_left` check.
+## Fragment: decisions
+
+A `check` is deterministic; a `model` picks one of the state's transitions through a router machine, and is `unsure` below `min_confidence`; a `person` picks one while the run waits. Here the `rounds_left` check reads `data`, a typed value a message's `params` can set (`data: { max_rounds: { type: int, default: 2 } }` at the machine's root).
+
+```yaml
+rounds_left:                       # deterministic check: true or false
+  invoke:
+    check: { visits: implement, less_than: { data: max_rounds } }
+  transitions: { true: triage, false: review }
+triage:                            # a model picks one option; below the floor it is unsure
+  invoke:
+    model:
+      question: Should we implement again or split the work?
+      min_confidence: 0.8
+      output: verify
+  transitions:
+    retry:  { target: implement, description: The failures look fixable; implement again. }
+    split:  { target: spawn_followups, description: The scope is too large; emit smaller follow-up messages. }
+    unsure: review
+review:                            # a person picks one option; the run pauses for the reply
+  invoke:
+    person:
+      question: Tests still fail. What next?
+      ask: ask_person
+      timeout: 2d
+  transitions:
+    approve: { target: verified, description: Good enough; commit it. }
+    retry:   { target: implement, description: Try again; see my note. }
+    reject:  { target: failed, description: Stop. }
+```
+
+## Fragment: emits
+
+```yaml
+spawn_followups:
+  invoke: spawn
+  transitions: { done: done }
+  emits: [develop]                 # extension: machines its scripts may emit messages for
+```
+
+There are two retry mechanisms, and they mean different things. `attempts`, inside the script invoke, re-runs a crashing script in place: same state, no `onexit` or `onentry`. A transition back to an earlier state (`retry` in the decisions fragment) is a new round chosen by the machine, bounded there by the `rounds_left` check.
 
 `attempts` is a number or a list. `attempts: 2` runs the script up to twice with `$DECREE_ATTEMPT_VALUE` unset. A list gives each attempt a value, in order, and its length is the limit, as a model gateway's fallback list (LiteLLM `fallbacks`, OpenRouter `models`):
 

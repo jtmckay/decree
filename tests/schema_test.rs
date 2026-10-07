@@ -1,6 +1,6 @@
 //! The JSON Schemas (docs/reference/README.md, Schemas): each is a valid draft 2020-12
 //! schema with a description on every property; every machine in `examples/`,
-//! `tests/fixtures/escalation/`, `src/templates/`, this repository and a fresh `decree init`
+//! `tests/fixtures/escalation/`, `tests/fixtures/feature/`, `src/templates/`, this repository and a fresh `decree init`
 //! for each `--ai` validates against `machine.schema.json`; every message in those projects
 //! against `message.schema.json`; every `events.jsonl` line, `request.json` and `reply.json`
 //! in their recorded runs and in a run made here against `events.schema.json`, `request.schema.json`
@@ -42,14 +42,16 @@ fn files_in(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     out
 }
 
-/// The example projects: each of `examples/`, and the escalation ladder in
-/// `tests/fixtures/escalation/`, whose recorded run `replay_test.rs` replays.
+/// The example projects: each of `examples/`, and the fixtures whose recorded runs
+/// `replay_test.rs` replays: the escalation ladder in `tests/fixtures/escalation/` and the
+/// `feature` project in `tests/fixtures/feature/`.
 fn example_projects() -> Vec<PathBuf> {
     let mut projects: Vec<PathBuf> = fs::read_dir(repo().join("examples"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .collect();
     projects.push(repo().join("tests/fixtures/escalation"));
+    projects.push(repo().join("tests/fixtures/feature"));
     projects.sort();
     projects
 }
@@ -471,7 +473,7 @@ fn project() -> TempDir {
     fs::create_dir_all(decree.join("machines")).unwrap();
     fs::write(
         decree.join("machines/hello.yml"),
-        fs::read_to_string(repo().join("examples/feature/.decree/machines/hello.yml")).unwrap(),
+        fs::read_to_string(repo().join("examples/project/.decree/machines/hello.yml")).unwrap(),
     )
     .unwrap();
     common_script(&decree.join("scripts/greet"));

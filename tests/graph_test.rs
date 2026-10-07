@@ -1,6 +1,6 @@
 //! `decree graph` (docs/reference/graph.md) against the `system` fixture in `tests/fixtures/graph/`
-//! and the machines and documents of every project in `examples/` and of the escalation ladder in
-//! `tests/fixtures/escalation/`. Each test copies its `.decree/` into a temp directory.
+//! and the machines and documents of every project in `examples/`, of the escalation ladder in
+//! `tests/fixtures/escalation/` and of the `feature` fixture in `tests/fixtures/feature/`. Each test copies its `.decree/` into a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -36,17 +36,14 @@ fn project(tree: &Path) -> TempDir {
     tmp
 }
 
-/// A temp project holding only the given machine files.
+/// A temp project holding only the given machine files, relative to the repository.
 fn machines_project(files: &[&str]) -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path().join(".decree/machines");
     fs::create_dir_all(&dir).unwrap();
     for file in files {
-        fs::copy(
-            repo().join("examples/feature/.decree/machines").join(file),
-            dir.join(file),
-        )
-        .unwrap();
+        let from = repo().join(file);
+        fs::copy(&from, dir.join(from.file_name().unwrap())).unwrap();
     }
     tmp
 }
@@ -84,7 +81,12 @@ fn md_names(dir: &Path) -> Vec<String> {
 
 #[test]
 fn graph_writes_one_file_per_machine_and_system_md() {
-    let tmp = machines_project(&["feature.yml", "hello.yml", "router.yml"]);
+    // `feature` has a compound state, a check, a model and a person.
+    let tmp = machines_project(&[
+        "tests/fixtures/feature/.decree/machines/feature.yml",
+        "examples/project/.decree/machines/hello.yml",
+        "tests/fixtures/feature/.decree/machines/router.yml",
+    ]);
     let (code, stdout, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
@@ -93,7 +95,7 @@ fn graph_writes_one_file_per_machine_and_system_md() {
     );
     assert_eq!(
         written(&tmp, "feature.md"),
-        read("examples/feature/.decree/graph/feature.md")
+        read("tests/fixtures/feature/.decree/graph/feature.md")
     );
     assert!(written(&tmp, "hello.md")
         .contains("Machine: [machines/hello.yml](../machines/hello.yml)\n"));
@@ -110,8 +112,8 @@ fn graph_system_matches_fixture() {
     );
 }
 
-/// The example projects: each directory of `examples/` with a `.decree/`, and the escalation
-/// ladder in `tests/fixtures/escalation/`, in name order.
+/// The example projects: each directory of `examples/` with a `.decree/`, the escalation
+/// ladder in `tests/fixtures/escalation/` and the `feature` fixture, in name order.
 fn example_projects() -> Vec<PathBuf> {
     let mut projects: Vec<PathBuf> = fs::read_dir(repo().join("examples"))
         .unwrap()
@@ -119,6 +121,7 @@ fn example_projects() -> Vec<PathBuf> {
         .filter(|p| p.join(".decree").is_dir())
         .collect();
     projects.push(repo().join("tests/fixtures/escalation"));
+    projects.push(repo().join("tests/fixtures/feature"));
     projects.sort();
     projects
 }
@@ -148,7 +151,7 @@ fn graph_rewrites_every_example_graph_unchanged() {
 
 #[test]
 fn graph_removes_stale_md_files_only() {
-    let tmp = machines_project(&["hello.yml"]);
+    let tmp = machines_project(&["examples/project/.decree/machines/hello.yml"]);
     let dir = tmp.path().join(".decree/graph");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("gone.md"), "# gone\n").unwrap();
@@ -161,7 +164,7 @@ fn graph_removes_stale_md_files_only() {
 
 #[test]
 fn graph_cron_without_machine_is_an_error() {
-    let tmp = machines_project(&["hello.yml"]);
+    let tmp = machines_project(&["examples/project/.decree/machines/hello.yml"]);
     let decree = tmp.path().join(".decree");
     fs::create_dir_all(decree.join("cron")).unwrap();
     fs::write(
@@ -179,7 +182,7 @@ fn graph_cron_without_machine_is_an_error() {
 
 #[test]
 fn graph_takes_no_machine_argument() {
-    let tmp = machines_project(&["hello.yml"]);
+    let tmp = machines_project(&["examples/project/.decree/machines/hello.yml"]);
     let out = cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
         .args(["graph", "hello"])

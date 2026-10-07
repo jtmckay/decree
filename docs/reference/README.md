@@ -1,6 +1,6 @@
 # decree 0.5 reference
 
-decree runs durable state-machine workflows from plain files: every run is an append-only log that survives crashes and restarts and continues where it stopped. It needs no AI; when a workflow uses AI, models and people only pick among the options a state declares. decree is built from three building blocks: **messages** (markdown), **machines** (YAML statecharts) and **scripts** (executables, bash by default). This reference describes how each behaves. A worked example with real files, frozen partway through its runs, lives in [`examples/feature/`](../../examples/feature/README.md) (every building block). Why decree works this way is in [the decision log](../decisions.md).
+decree runs durable state-machine workflows from plain files: every run is an append-only log that survives crashes and restarts and continues where it stopped. It needs no AI; when a workflow uses AI, models and people only pick among the options a state declares. decree is built from three building blocks: **messages** (markdown), **machines** (YAML statecharts) and **scripts** (executables, bash by default). This reference describes how each behaves. A small project with real files, frozen partway through its runs, lives in [`examples/project/`](../../examples/project/README.md) (three simple machines, a finished run, a waiting run and an interrupted run). Why decree works this way is in [the decision log](../decisions.md).
 
 | File | Subject |
 | --- | --- |

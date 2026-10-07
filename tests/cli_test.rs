@@ -254,7 +254,7 @@ fn init_emit_process_status_shows_the_run_done() {
     let p = Project::init();
     p.machine(
         "hello",
-        &fs::read_to_string("examples/feature/.decree/machines/hello.yml").unwrap(),
+        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let id = p.emit("hello", "Say hello.\n");
@@ -706,7 +706,7 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     p.script("work", FLAKY_WORK);
     p.machine(
         "hello",
-        &fs::read_to_string("examples/feature/.decree/machines/hello.yml").unwrap(),
+        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let failing = p.emit("flaky", "Fails.\n");

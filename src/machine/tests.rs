@@ -4,12 +4,20 @@ use crate::cond::Operand;
 use std::fs;
 use tempfile::TempDir;
 
-/// The docs/reference/machines.md examples, plus the router `feature` and `triage` name by default.
-const EXAMPLES: [&str; 5] = ["hello", "deploy", "ship", "feature", "router"];
+/// `examples/project`'s `hello`, `develop` and `deploy`, and from `tests/fixtures/feature/`: `ship`, which
+/// invokes `feature` and `deploy`, `feature` (nesting, a check, a model, a person, `data`,
+/// `emits`, `onentry` and `onexit`) and the router `feature` names by default.
+const EXAMPLES: [&str; 6] = ["hello", "develop", "deploy", "ship", "feature", "router"];
 
 fn fixture(name: &str) -> String {
+    let project = if ["hello", "develop", "deploy"].contains(&name) {
+        "examples/project"
+    } else {
+        "tests/fixtures/feature"
+    };
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/feature/.decree/machines")
+        .join(project)
+        .join(".decree/machines")
         .join(format!("{name}.yml"));
     fs::read_to_string(path).unwrap()
 }
@@ -48,15 +56,27 @@ fn reference_examples_load() {
     let machines = load_machines(&tmp.path().join(".decree")).unwrap();
     assert_eq!(
         machines.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["deploy", "feature", "hello", "router", "ship"]
+        ["deploy", "develop", "feature", "hello", "router", "ship"]
     );
     for (id, m) in &machines {
         assert_eq!(&m.root().id, id);
         assert!(!m.description().is_empty());
     }
     assert_eq!(machines["hello"].nodes.len(), 1 + 3);
+    assert_eq!(machines["develop"].nodes.len(), 1 + 4);
     assert_eq!(machines["deploy"].nodes.len(), 1 + 6);
     assert_eq!(machines["ship"].nodes.len(), 1 + 4);
+
+    let develop = &machines["develop"];
+    let implement = &develop.nodes[develop.find("implement").unwrap()];
+    assert_eq!(
+        implement.invoke,
+        Some(Invoke::Script(ScriptInvoke {
+            name: "implement".into(),
+            attempts: Some(Attempts::Values(vec!["local".into(), "claude".into()])),
+            timeout: None,
+        }))
+    );
 
     let deploy = &machines["deploy"];
     let approval = &deploy.nodes[deploy.find("approval").unwrap()];

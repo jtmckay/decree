@@ -1,0 +1,2 @@
+I'll add a sliding-window limiter keyed by API key.
+Created src/limits.rs, wired it into src/routes/upload.rs, added tests/upload_limit.rs.

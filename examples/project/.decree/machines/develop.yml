@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/develop.md
+name: develop
+description: Implement a message, then test it.
+initial: implement
+states:
+  implement:
+    invoke:                        # the local model fails often: try Claude second
+      script: { name: implement, attempts: [local, claude] }
+    transitions: { done: test }
+  test:
+    invoke: test
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

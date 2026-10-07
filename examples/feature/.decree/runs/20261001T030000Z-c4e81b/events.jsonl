@@ -1,2 +1,0 @@
-{"v":1,"seq":1,"ts":"2026-10-01T03:00:01.000Z","type":"transition","run_id":"20261001T030000Z-c4e81b","machine":"develop","trigger":"cron","trace_id":"89341310c6f1c2b9fe608ef2c5c2950f","from":null,"event":"claimed","to":"implement","source":"claim","exit_code":null,"file":"20261001T030000Z-c4e81b.md","span_id":"001866f4259f6b6d"}
-{"v":1,"seq":2,"ts":"2026-10-01T03:12:40.500Z","type":"interrupted","run_id":"20261001T030000Z-c4e81b","machine":"develop","trigger":"cron","trace_id":"89341310c6f1c2b9fe608ef2c5c2950f","state":"implement","cause":"signal","script":"implement"}

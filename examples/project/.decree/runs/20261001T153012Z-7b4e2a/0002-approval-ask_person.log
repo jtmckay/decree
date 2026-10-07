@@ -1,0 +1,10 @@
+Waiting for a person: deploy/approval - Release 1.4.0
+Question: Ship this build?
+Options (event: description):
+{
+  "approve": "Ship this build.",
+  "reject": "Do not ship."
+}
+
+  decree event 20261001T153012Z-7b4e2a.w3 approve -m "<note>"
+  decree event 20261001T153012Z-7b4e2a.w3 reject -m "<note>"

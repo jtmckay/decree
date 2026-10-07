@@ -27,7 +27,7 @@ The run's current state is always an atomic state, `S`.
 
 A `model` invoke asks a **router**: an ordinary machine that answers the question. decree builds the question, runs the router as a child run, and validates the answer; everything about prompts, models, retries and budgets lives in the router, so it can be read, changed and replaced like any machine.
 
-1. **Request.** decree writes `request.json` in the child run's folder:
+1. **Request.** decree writes `request.json` in the child run's folder; here for the `triage` state of the [decisions fragment](machines.md#fragment-decisions), in a machine named `feature`:
 
    ```json
    {
@@ -128,13 +128,13 @@ See [Replies](messages.md#replies). The options and their descriptions are writt
 
 One JSON object per line (JSON Lines), appended with a single `write` call on a file opened with `O_APPEND`. This file is both the run's record ([Lifecycle](messages.md#lifecycle), Source of truth) and its telemetry: it is designed to be shipped to Loki as it is ([observability.md](observability.md)). `.decree/schema/v1/events.schema.json` states every type below as a JSON Schema for one line ([Schemas](README.md#schemas)).
 
-Four lines of the recorded `feature` migration in [`examples/feature/`](../../examples/feature/.decree/runs/01-rate-limit-upload/events.jsonl): the claim, the `verify` script, the transition its event caused, and `run_finished`:
+Four lines of the recorded `develop` migration in [`examples/project/`](../../examples/project/.decree/runs/01-rate-limit-upload/events.jsonl): the claim, the `implement` script's `local` attempt, which failed, the transition that started the `claude` attempt in place, and `run_finished`:
 
 ```json
-{"v":1,"seq":1,"ts":"2026-10-01T14:30:05.000Z","type":"transition","run_id":"01-rate-limit-upload","machine":"feature","trigger":"migration","trace_id":"94b30376f6a9be8a642b186df56c40ec","from":null,"event":"claimed","to":"precheck","source":"claim","exit_code":null,"file":"01-rate-limit-upload.md","span_id":"bbd03ab4bd8e2e6c"}
-{"v":1,"seq":9,"ts":"2026-10-01T14:43:27.850Z","type":"script","run_id":"01-rate-limit-upload","machine":"feature","trigger":"migration","trace_id":"94b30376f6a9be8a642b186df56c40ec","state":"verify","phase":"invoke","script":"verify","path":".decree/scripts/feature/verify.sh","attempt":1,"started_at":"2026-10-01T14:41:51.650Z","duration_ms":96200,"exit_code":0,"log":"0006-verify-verify.log","span_id":"dd285b657d448ef9"}
-{"v":1,"seq":10,"ts":"2026-10-01T14:43:27.855Z","type":"transition","run_id":"01-rate-limit-upload","machine":"feature","trigger":"migration","trace_id":"94b30376f6a9be8a642b186df56c40ec","from":"verify","event":"fail","to":"rounds_left","source":"script","exit_code":0}
-{"v":1,"seq":27,"ts":"2026-10-01T14:51:12.340Z","type":"run_finished","run_id":"01-rate-limit-upload","machine":"feature","trigger":"migration","trace_id":"94b30376f6a9be8a642b186df56c40ec","state":"done","duration_ms":1267340}
+{"v":1,"seq":1,"ts":"2026-10-01T14:30:05.000Z","type":"transition","run_id":"01-rate-limit-upload","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","from":null,"event":"claimed","to":"implement","source":"claim","exit_code":null,"file":"01-rate-limit-upload.md","span_id":"189ed21326b51409"}
+{"v":1,"seq":2,"ts":"2026-10-01T14:38:22.400Z","type":"script","run_id":"01-rate-limit-upload","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"implement","phase":"invoke","script":"implement","path":".decree/scripts/develop/implement.sh","attempt":1,"attempt_value":"local","started_at":"2026-10-01T14:30:05.010Z","duration_ms":497390,"exit_code":1,"log":"0001-implement-implement.log","span_id":"0b43a796c9019427"}
+{"v":1,"seq":3,"ts":"2026-10-01T14:38:22.405Z","type":"transition","run_id":"01-rate-limit-upload","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","attempt_value":"claude","from":"implement","event":"error","to":"implement","source":"attempt","exit_code":1}
+{"v":1,"seq":8,"ts":"2026-10-01T14:51:11.910Z","type":"run_finished","run_id":"01-rate-limit-upload","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"done","duration_ms":1266910}
 ```
 
 Every event carries these fields, so each line stands alone in a log pipeline:

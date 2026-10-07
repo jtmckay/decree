@@ -1,6 +1,6 @@
 # Observability: decree runs in Loki, Grafana and Jaeger
 
-decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record, and `traces.jsonl` holds the same run as OpenTelemetry spans ([Observability](../../docs/reference/observability.md)). This example ships the events, and optionally each script's output, to Loki with Grafana Alloy, and lists LogQL queries to explore them in Grafana; and it ships the traces to Jaeger with the OpenTelemetry Collector ([Traces](#traces)). It has no `.decree/` of its own: point it at the recorded runs in [`feature`](../feature/README.md), or at your own project.
+decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record, and `traces.jsonl` holds the same run as OpenTelemetry spans ([Observability](../../docs/reference/observability.md)). This example ships the events, and optionally each script's output, to Loki with Grafana Alloy, and lists LogQL queries to explore them in Grafana; and it ships the traces to Jaeger with the OpenTelemetry Collector ([Traces](#traces)). It has no `.decree/` of its own: point it at the recorded runs in [`project`](../project/README.md), or at your own project.
 
 ## What gets shipped
 
@@ -20,11 +20,11 @@ cd examples/observability
 docker network create decree-observability
 docker run -d --name loki --network decree-observability -p 3100:3100 grafana/loki -config.file=/etc/loki/local-config.yaml -validation.reject-old-samples=false
 docker run -d --name grafana --network decree-observability -p 3000:3000 -e GF_AUTH_ANONYMOUS_ENABLED=true -e GF_AUTH_ANONYMOUS_ORG_ROLE=Admin grafana/grafana
-docker run -d --name alloy --network decree-observability -v "$PWD/config.alloy:/etc/alloy/config.alloy:ro" -v "$PWD/../feature:/srv/project:ro" grafana/alloy run /etc/alloy/config.alloy
+docker run -d --name alloy --network decree-observability -v "$PWD/config.alloy:/etc/alloy/config.alloy:ro" -v "$PWD/../project:/srv/project:ro" grafana/alloy run /etc/alloy/config.alloy
 ```
 
 - `-validation.reject-old-samples=false` lets Loki take the recorded runs, whose `ts` are older than Loki's default limit of a week. A live project does not need it.
-- Mount your own project's root instead of `../feature` to ship its runs. On a host without Docker, run `alloy run config.alloy` with `/srv/project` replaced by the directory that contains `.decree/`.
+- Mount your own project's root instead of `../project` to ship its runs. On a host without Docker, run `alloy run config.alloy` with `/srv/project` replaced by the directory that contains `.decree/`.
 - Open Grafana at http://localhost:3000, add a Loki data source with the URL `http://loki:3100`, and run the queries below in Explore. The recorded runs are from 2026-10-01, so set the time range to include that day.
 
 ## Queries
@@ -43,7 +43,7 @@ sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | s
 {job="decree", type="decision"} | json | kind="model" and confidence < 0.6
 
 # the slowest agent rounds this week
-topk(10, max_over_time({job="decree", type="script", machine="feature"} | json | script="implement" | unwrap duration_ms [7d]) by (run_id))
+topk(10, max_over_time({job="decree", type="script", machine="develop"} | json | script="implement" | unwrap duration_ms [7d]) by (run_id))
 
 # one run's script output, in order
 {job="decree_script"} | run_id="01-rate-limit-upload"
@@ -57,7 +57,7 @@ topk(10, max_over_time({job="decree", type="script", machine="feature"} | json |
 
 ```bash
 docker run -d --name jaeger --network decree-observability -p 16686:16686 jaegertracing/jaeger
-docker run -d --name otelcol --network decree-observability -v "$PWD/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" -v "$PWD/../feature:/srv/project:ro" otel/opentelemetry-collector-contrib
+docker run -d --name otelcol --network decree-observability -v "$PWD/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" -v "$PWD/../project:/srv/project:ro" otel/opentelemetry-collector-contrib
 ```
 
-Open Jaeger at http://localhost:16686, pick the service `decree`, and set the time range to include 2026-10-01. Each recorded run is one trace: `run feature` holds its scripts and decisions, and the router run sits under the `decision model triage` span that started it. A script that calls an instrumented service or model with the `TRACEPARENT` decree gives it adds its own spans under its `script` span.
+Open Jaeger at http://localhost:16686, pick the service `decree`, and set the time range to include 2026-10-01. Each run is one trace, whose spans are written as they end: `run develop` holds the migration's scripts, its failed `local` attempt marked as an error, and the waiting `deploy` run shows its scripts so far. In a machine with a `model` decision, the router run sits under the `decision model <state>` span that started it. A script that calls an instrumented service or model with the `TRACEPARENT` decree gives it adds its own spans under its `script` span.

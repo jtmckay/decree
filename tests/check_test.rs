@@ -1,6 +1,7 @@
-//! `decree check` on `examples/feature/` and the `tests/fixtures/escalation/` ladder
-//! (docs/reference/machines.md, Validation): it passes without a warning, warns when `graph/` is out of date, and names the
-//! rule when an example machine is broken. The rule-by-rule cases are in `validation_test.rs`.
+//! `decree check` on `examples/project/`, the `tests/fixtures/feature/` project and the
+//! `tests/fixtures/escalation/` ladder (docs/reference/machines.md, Validation): it passes
+//! without a warning, warns when `graph/` is out of date, and names the rule when a machine
+//! is broken. The rule-by-rule cases are in `validation_test.rs`.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -15,10 +16,12 @@ fn decree_dir(project: &str) -> PathBuf {
         .join(".decree")
 }
 
-/// `examples/<name>/.decree`.
-fn example(name: &str) -> PathBuf {
-    decree_dir(&format!("examples/{name}"))
-}
+/// The small example project: `hello`, `develop` and `deploy`.
+const PROJECT: &str = "examples/project";
+
+/// The `feature` fixture: nesting, a check, a model's choice, a person, `data`, `emits`,
+/// `onentry` and `onexit`, and `ship`, which invokes two machines.
+const FEATURE: &str = "tests/fixtures/feature";
 
 /// The escalation ladder (`file_document`): two checks, two models and a person, with its
 /// recorded run.
@@ -59,7 +62,7 @@ fn check_project(project: &str, edit: impl FnOnce(&Path)) -> (i32, String, Strin
 
 #[test]
 fn check_passes_on_the_recorded_projects_without_a_warning() {
-    for project in ["examples/feature", ESCALATION] {
+    for project in [PROJECT, FEATURE, ESCALATION] {
         assert_eq!(
             check_project(project, |_| {}),
             (0, String::new(), String::new()),
@@ -68,34 +71,30 @@ fn check_passes_on_the_recorded_projects_without_a_warning() {
     }
 }
 
-/// The docs/reference/machines.md examples, alone, with a stub `scripts/<name>` for each script.
+/// The docs/reference/machines.md examples: `examples/project`'s three machines, alone, and
+/// `release`, which composes two of them, with a stub `scripts/<name>` for each script.
 #[test]
 fn check_passes_on_the_reference_examples() {
     let tmp = TempDir::new().unwrap();
     let decree = tmp.path().join(".decree");
     fs::create_dir_all(decree.join("machines")).unwrap();
-    for name in ["hello", "deploy", "ship", "feature", "router"] {
+    for name in ["hello", "develop", "deploy"] {
         let file = format!("machines/{name}.yml");
-        fs::copy(example("feature").join(&file), decree.join(&file)).unwrap();
+        fs::copy(decree_dir(PROJECT).join(&file), decree.join(&file)).unwrap();
     }
+    let reference = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/machines.md"),
+    )
+    .unwrap();
+    let release = reference
+        .split("```yaml\n")
+        .filter_map(|block| block.split_once("```").map(|(yaml, _)| yaml))
+        .find(|yaml| yaml.contains("\nname: release\n"))
+        .unwrap();
+    fs::write(decree.join("machines/release.yml"), release).unwrap();
     let scripts = decree.join("scripts");
     fs::create_dir_all(&scripts).unwrap();
-    for name in [
-        "greet",
-        "build",
-        "ask_person",
-        "ship",
-        "git_baseline",
-        "notify",
-        "precheck",
-        "implement",
-        "snapshot",
-        "collect_logs",
-        "verify",
-        "spawn",
-        "commit",
-        "ask_claude",
-    ] {
+    for name in ["greet", "implement", "test", "build", "ask_person", "ship"] {
         let path = scripts.join(name);
         fs::write(&path, "#!/usr/bin/env bash\nexit 0\n").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -114,7 +113,7 @@ fn check_passes_on_the_reference_examples() {
 
 #[test]
 fn check_warns_when_the_graph_files_are_out_of_date() {
-    let (code, stdout, stderr) = check_project("examples/feature", |decree| {
+    let (code, stdout, stderr) = check_project(PROJECT, |decree| {
         let graph = decree.join("graph");
         fs::remove_file(graph.join("hello.md")).unwrap();
         fs::write(graph.join("deploy.md"), "# deploy\n").unwrap();
@@ -133,7 +132,7 @@ fn check_warns_when_the_graph_files_are_out_of_date() {
 #[test]
 fn check_warns_until_the_graph_is_rewritten() {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&example("feature"), &tmp.path().join(".decree"));
+    copy_dir(&decree_dir(PROJECT), &tmp.path().join(".decree"));
     fs::write(
         tmp.path().join(".decree/machines/greet.yml"),
         "name: greet\ndescription: Run hello.\ninitial: work\nstates:\n  \
@@ -165,11 +164,11 @@ fn check_warns_until_the_graph_is_rewritten() {
 
 #[test]
 fn check_warns_when_the_graph_directory_is_missing() {
-    let (code, _, stderr) = check_project("examples/feature", |decree| {
+    let (code, _, stderr) = check_project(PROJECT, |decree| {
         fs::remove_dir_all(decree.join("graph")).unwrap()
     });
     assert_eq!(code, 0);
-    assert_eq!(stderr.lines().count(), 8, "{stderr}");
+    assert_eq!(stderr.lines().count(), 4, "{stderr}");
     assert!(
         stderr.contains("warning: graph/system.md: missing"),
         "{stderr}"
@@ -181,32 +180,36 @@ fn check_warns_when_the_graph_directory_is_missing() {
 fn check_rejects_the_old_shapes_with_the_reference_messages() {
     let cases = [
         (
+            FEATURE,
             "feature.yml",
             "        transitions: { done: verify }\n",
             "        transitions: { done: { target: verify, cond: \"visits.implement < 2\" } }\n",
             "machines/feature.yml: work.implement: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)",
         ),
         (
+            PROJECT,
             "deploy.yml",
             "        question: Ship this build?\n",
             "",
             "machines/deploy.yml: approval: a `person` state needs a `question`: what is being decided (V8)",
         ),
         (
+            PROJECT,
             "deploy.yml",
             "reject:  { target: rejected, description: Do not ship. }",
             "reject:  rejected",
             "machines/deploy.yml: approval: option `reject` needs a `description`: write it as `reject: { target: rejected, description: ... }` (V8)",
         ),
         (
+            FEATURE,
             "ship.yml",
             "invoke: { machine: deploy }",
             "invoke: { machine: ship }",
             "machines/ship.yml: release: machine `ship` invokes itself: ship -> ship; a machine never invokes itself, directly or through others (V20)",
         ),
     ];
-    for (file, from, to, expected) in cases {
-        let (code, stdout, _) = check_project("examples/feature", |decree| {
+    for (project, file, from, to, expected) in cases {
+        let (code, stdout, _) = check_project(project, |decree| {
             let path = decree.join("machines").join(file);
             let text = fs::read_to_string(&path).unwrap();
             assert!(text.contains(from), "{file}: {from}");
@@ -216,7 +219,7 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
         assert_eq!(stdout, format!("{expected}\n"));
     }
     // A router state inside a compound state, as in the V19 case of `validation_test.rs`.
-    let (code, stdout, _) = check_project("examples/feature", |decree| {
+    let (code, stdout, _) = check_project(PROJECT, |decree| {
         fs::write(
             decree.join("machines/b.yml"),
             "name: b\ndescription: A router state inside a compound state.\ninitial: work\n\

@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/src/templates/schema/v1/cli/status.schema.json",
+  "title": "decree status --format json",
+  "description": "What `decree status --format json` prints on stdout. With no id: the counts by status, the runs in each group with the facts the text shows, and the queued messages. With an id: that run's derived status and its events, each a line of events.jsonl parsed. An unknown id is an error: nothing on stdout, `error: no run <id> in .decree/runs/` on stderr, exit code 1, as text does. `--cron` prints text only. Reference: docs/reference/cli.md, Machine-readable output.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/overview"
+    },
+    {
+      "$ref": "#/$defs/run"
+    }
+  ],
+  "examples": [
+    {
+      "counts": {
+        "total": 2,
+        "active": 0,
+        "waiting": 1,
+        "pending": 0,
+        "interrupted": 0,
+        "finished": 1
+      },
+      "runs": {
+        "active": [],
+        "waiting": [
+          {
+            "id": "D0006-1100-review-0",
+            "machine": "review",
+            "state": "approval",
+            "wait_id": "D0006-1100-review-0.w3",
+            "options": [
+              "approve",
+              "reject"
+            ]
+          }
+        ],
+        "pending": [],
+        "interrupted": [],
+        "finished": {
+          "done": [
+            {
+              "id": "D0001-0900-hello-0",
+              "machine": "hello",
+              "state": "done"
+            }
+          ]
+        }
+      },
+      "queued": {
+        "inbox": [],
+        "migrations": [
+          "01-add-login.md"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "overview": {
+      "type": "object",
+      "description": "`decree status`: every run by status, then the queued messages.",
+      "required": [
+        "counts",
+        "runs",
+        "queued"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "counts": {
+          "type": "object",
+          "description": "How many runs there are, in all and per status.",
+          "required": [
+            "total",
+            "active",
+            "waiting",
+            "pending",
+            "interrupted",
+            "finished"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Every run in .decree/runs/."
+            },
+            "active": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Runs that are `active`."
+            },
+            "waiting": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Runs that are `waiting`."
+            },
+            "pending": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Runs that are `pending`."
+            },
+            "interrupted": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Runs that are `interrupted`."
+            },
+            "finished": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Runs that are finished, in any final state."
+            }
+          }
+        },
+        "runs": {
+          "type": "object",
+          "description": "The runs of each status (docs/reference/messages.md, Run status), each list in id order.",
+          "required": [
+            "active",
+            "waiting",
+            "pending",
+            "interrupted",
+            "finished"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/row"
+              },
+              "description": "Runs that are `active`."
+            },
+            "waiting": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/row"
+              },
+              "description": "Runs that are `waiting`."
+            },
+            "pending": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/row"
+              },
+              "description": "Runs that are `pending`."
+            },
+            "interrupted": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/row"
+              },
+              "description": "Runs that are `interrupted`."
+            },
+            "finished": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/row"
+                }
+              },
+              "description": "Finished runs by the final state they ended in, such as `done` and `failed`."
+            }
+          }
+        },
+        "queued": {
+          "type": "object",
+          "description": "Messages waiting to run.",
+          "required": [
+            "inbox",
+            "migrations"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "inbox": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filenames in inbox/, in filename order."
+            },
+            "migrations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Migrations not in processed.md, in filename order."
+            }
+          }
+        }
+      }
+    },
+    "row": {
+      "type": "object",
+      "description": "One run in the overview.",
+      "required": [
+        "id",
+        "machine",
+        "state"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The run id."
+        },
+        "machine": {
+          "type": "string",
+          "description": "The run's machine."
+        },
+        "state": {
+          "type": "string",
+          "description": "The state the run is in, or ended in; `-` before its first transition."
+        },
+        "running": {
+          "$ref": "#/$defs/running",
+          "description": "For an `active` run, the script running now."
+        },
+        "wait_id": {
+          "type": "string",
+          "description": "For a run waiting in a `person` state, the wait id a reply names."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "For a run waiting in a `person` state, the events it accepts."
+        },
+        "child": {
+          "type": "string",
+          "description": "For a run waiting for a child run (a `machine` invoke or a router), the child's run id."
+        }
+      }
+    },
+    "running": {
+      "type": "object",
+      "description": "The script an active run is running now, from .running (docs/reference/scripts.md, Execution).",
+      "required": [
+        "script",
+        "phase",
+        "state",
+        "pid",
+        "started_at",
+        "log"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "script": {
+          "type": "string",
+          "description": "The script's name."
+        },
+        "phase": {
+          "type": "string",
+          "description": "Where it runs: `invoke`, `onentry` or `onexit`."
+        },
+        "state": {
+          "type": "string",
+          "description": "The state it runs for."
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The script's process id."
+        },
+        "started_at": {
+          "type": "string",
+          "description": "When it started: RFC 3339 UTC with milliseconds."
+        },
+        "log": {
+          "type": "string",
+          "description": "Its log file, relative to the project root."
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "`decree status <id>`: one run.",
+      "required": [
+        "id",
+        "machine",
+        "status",
+        "state",
+        "events"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The run id."
+        },
+        "machine": {
+          "type": "string",
+          "description": "The run's machine."
+        },
+        "status": {
+          "enum": [
+            "active",
+            "waiting",
+            "pending",
+            "interrupted",
+            "finished"
+          ],
+          "description": "The run's status, derived from its events (docs/reference/messages.md, Run status)."
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The state the run is in, or ended in; null before its first transition."
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "../events.schema.json"
+          },
+          "description": "Every line of the run's events.jsonl, parsed, in order."
+        }
+      }
+    }
+  }
+}

@@ -425,10 +425,17 @@ mod tests {
         assert!(!command_exists("definitely_not_a_real_command_xyz"));
     }
 
-    /// A file under `examples/feature/.decree/`.
+    /// A file under `examples/project/.decree/`.
     fn example(path: &str) -> String {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        std::fs::read_to_string(root.join("examples/feature/.decree").join(path)).unwrap()
+        std::fs::read_to_string(root.join("examples/project/.decree").join(path)).unwrap()
+    }
+
+    /// A file under `tests/fixtures/feature/.decree/`: the files of the `feature` machine
+    /// and the git scripts, which `examples/project` does not have.
+    fn feature_fixture(path: &str) -> String {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(root.join("tests/fixtures/feature/.decree").join(path)).unwrap()
     }
 
     /// The copilot and opencode routers are claude's with their own script and CLI call.
@@ -499,7 +506,7 @@ mod tests {
         }
     }
 
-    /// `git_baseline` and `snapshot` are `examples/feature`'s, byte for byte, and executable.
+    /// `git_baseline` and `snapshot` are the `feature` fixture's, byte for byte, and executable.
     #[test]
     fn test_write_shared_scripts_writes_the_examples_git_scripts() {
         use std::os::unix::fs::PermissionsExt;
@@ -514,7 +521,7 @@ mod tests {
         for name in names {
             let path = dir.path().join(SCRIPTS_DIR).join(&name);
             let text = std::fs::read_to_string(&path).unwrap();
-            assert_eq!(text, example(&format!("scripts/{name}")), "{name}");
+            assert_eq!(text, feature_fixture(&format!("scripts/{name}")), "{name}");
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o755, "{name}");
         }
@@ -588,14 +595,14 @@ mod tests {
         }
     }
 
-    /// The skill's examples are `examples/feature`'s: `hello` in SKILL.md, `feature`'s
-    /// verify script, and the cron file.
+    /// The skill's examples are real files: `examples/project`'s `hello` and cron file, and the
+    /// `feature` fixture's verify script.
     #[test]
-    fn test_decree_skill_examples_are_the_feature_examples() {
+    fn test_decree_skill_examples_are_the_example_files() {
         let text: String = DECREE_SKILL.iter().map(|(_, c)| *c).collect();
         let hello = example("machines/hello.yml");
         assert!(text.contains(&hello), "hello.yml");
-        let verify = example("scripts/feature/verify.sh");
+        let verify = feature_fixture("scripts/feature/verify.sh");
         let body = verify
             .lines()
             .filter(|l| !l.starts_with('#'))
