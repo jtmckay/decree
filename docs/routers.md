@@ -20,25 +20,23 @@ Running a model server is outside decree: these routers only talk to one (see [`
 A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, which `decree init` writes (`decree check` fails V16 if a `model` names no router and there is no `machines/router.yml`):
 
 ```yaml
-# machines/sort_document.yml
-local_model:
+# machines/develop_by_size.yml, in examples/route-by-complexity/
+size_up:
   invoke:
     model:
-      question: Which kind of document is this?
+      question: How much reasoning does this change need?
       router: gliner_router
-      min_confidence: 0.9
-      output: read_text
+      min_confidence: 0.7
+      output: describe
   transitions:
-    invoice:
-      target: file_invoice
-      description: A bill asking for payment, with an amount due.
-    receipt:
-      target: file_receipt
-      description: Proof of a payment already made.
-    other:
-      target: file_other
-      description: Any other paperwork.
-    unsure: big_model
+    small:
+      target: local_first
+      description: "A local, mechanical change: a typo, a rename, a config value, one small function with a clear spec."
+    large:
+      target: claude_only
+      description: Design, several files, unclear requirements, concurrency or security.
+    unsure: claude_only
+    error: claude_only
 ```
 
 Its scripts get two extra variables ([Environment](reference/scripts.md#environment)):
@@ -113,7 +111,7 @@ curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does th
 
 To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time), or a tmux session as in [`examples/tmux-services/`](../examples/tmux-services/README.md). The `gliner2` package's plain install is only its API client; `[local]` adds local inference ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
 
-`machines/gliner_router.yml` (in [`examples/sort-documents/`](../examples/sort-documents/README.md), [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) and [`examples/tmux-services/`](../examples/tmux-services/README.md)):
+`machines/gliner_router.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) and [`examples/tmux-services/`](../examples/tmux-services/README.md)):
 
 ```yaml
 name: gliner_router
@@ -285,4 +283,25 @@ jq -e '(.confidence // 0) >= 0.85' "$DECREE_REPLY" > /dev/null && echo sure > "$
 exit 0
 ```
 
-The `0.85` belongs to the cheap model, and the `min_confidence` on the deciding state then applies to whichever model answered last; calibrate both. The same ladder can also be built in the deciding machine instead, with two `model` states and an `unsure` transition between them, as `sort_document` in [`examples/sort-documents/`](../examples/sort-documents/README.md) does; that puts the escalation in the main machine's graph rather than inside the router.
+The `0.85` belongs to the cheap model, and the `min_confidence` on the deciding state then applies to whichever model answered last; calibrate both. The same ladder can also be built in the deciding machine instead, with two `model` states and an `unsure` transition between them; that puts the escalation in the main machine's graph rather than inside the router. Each state's `min_confidence` is calibrated for its own router, and a `confidence` check after the second `unsure` decides whether the rest is worth a person's time:
+
+```yaml
+small_model:                       # a typed classifier: trusted at 0.9 or more
+  invoke:
+    model: { question: Which kind of document is this?, router: gliner_router, min_confidence: 0.9, output: read_text }
+  transitions:
+    invoice: { target: file_invoice, description: A bill asking for payment. }
+    receipt: { target: file_receipt, description: Proof of a payment already made. }
+    unsure: large_model
+large_model:                       # the default router: trusted at 0.7 or more
+  invoke:
+    model: { question: Which kind of document is this?, min_confidence: 0.7, output: read_text }
+  transitions:
+    invoice: { target: file_invoice, description: A bill asking for payment. }
+    receipt: { target: file_receipt, description: Proof of a payment already made. }
+    unsure: worth_asking
+worth_asking:                      # at least 0.4: ask a person; lower: set aside
+  invoke:
+    check: { confidence: large_model, at_least: 0.4 }
+  transitions: { true: ask_person, false: set_aside }
+```

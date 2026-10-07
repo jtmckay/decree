@@ -6,6 +6,8 @@ Work arrives as a message, a YAML statechart decides what happens next, and scri
 
 decree works with no AI at all. When you do use AI, decree is the harness around it: a model, or a person, only ever picks among the options a state declares, and the state machine stays in charge of what happens next.
 
+decree is developed with itself: every change to this repository is a migration in [`.decree/migrations/`](.decree/migrations/), run by `decree process`.
+
 decree is built from three blocks:
 
 - **Messages** are markdown files that say *what* to do. The body is the task; the frontmatter names the machine that does it. One message is one run.
@@ -198,7 +200,7 @@ Every state does one thing: it invokes a function, and the function's result is 
 
 Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, or the whole run at the root), `data` (typed values set from a message's `params`), `emits` (machines a state's scripts may `decree emit` to), compound states (`initial` plus `states`, with transitions that bubble up) and `final`.
 
-[The reference](docs/reference/README.md) is the full contract, [the decision log](docs/decisions.md) says why, and [`examples/`](examples/) holds worked projects with real files: start at [`examples/feature/`](examples/feature/README.md) for every building block, and [`examples/sort-documents/`](examples/sort-documents/README.md) for an escalation ladder of models.
+[The reference](docs/reference/README.md) is the full contract, [the decision log](docs/decisions.md) says why, and [`examples/`](examples/) holds worked projects with real files: start at [`examples/feature/`](examples/feature/README.md) for every building block.
 
 ### Graphs
 

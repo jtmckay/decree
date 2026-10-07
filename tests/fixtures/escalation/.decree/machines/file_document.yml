@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/file_document.md
+# An escalation ladder: the cheapest way to decide goes first, and each step
+# passes on only what it cannot decide. A `check` says `false`; a model below its
+# min_confidence says `unsure`. Free and certain, free and likely, a small
+# local model, a large model, then a person.
+name: file_document
+description: File one scanned document as an invoice, a receipt or other paperwork.
+data:
+  file: { type: string, default: "" }   # the scan's path, from the message's params
+initial: by_name
+states:
+  # 1. Free and certain: the accounting system names its invoices.
+  by_name:
+    invoke:
+      check: { data: file, matches: '^scans/invoice-[0-9]+\.pdf$' }
+    transitions: { true: file_invoice, false: read_text }
+
+  read_text:                       # prints the scan's text; what every later step reads
+    invoke: extract_text
+    transitions: { done: by_text }
+
+  # 2. Free and likely: wording only invoices have.
+  by_text:
+    invoke:
+      check: { output: read_text, matches: '(?i)invoice (no|number)[.:]' }
+    transitions: { true: file_invoice, false: local_model }
+
+  # 3. Cheap: a small classifier on this machine. Sure enough (0.9 or more) -> act.
+  local_model:
+    invoke:
+      model:
+        question: Which kind of document is this?
+        router: gliner_router
+        min_confidence: 0.9
+        output: read_text
+    transitions:
+      invoice:
+        target: file_invoice
+        description: A bill asking for payment, with an amount due.
+      receipt:
+        target: file_receipt
+        description: Proof of a payment already made.
+      other:
+        target: file_other
+        description: Any other paperwork.
+      unsure: big_model
+
+  # 4. Costly: the default router's large model. Sure enough (0.7 or more) -> act.
+  big_model:
+    invoke:
+      model:
+        question: Which kind of document is this?
+        min_confidence: 0.7
+        output: read_text
+    transitions:
+      invoice:
+        target: file_invoice
+        description: A bill asking for payment, with an amount due.
+      receipt:
+        target: file_receipt
+        description: Proof of a payment already made.
+      other:
+        target: file_other
+        description: Any other paperwork.
+      unsure: worth_asking
+
+  # 5. Bands: below 0.7 but at least 0.4 is worth a person's time; lower is set aside.
+  worth_asking:
+    invoke:
+      check: { confidence: big_model, at_least: 0.4 }
+    transitions: { true: ask_person, false: set_aside }
+
+  # 6. A person decides; the run waits for their reply.
+  ask_person:
+    invoke:
+      person:
+        question: Which kind of document is this?
+        ask: ask_person
+        timeout: 7d
+    transitions:
+      invoice:
+        target: file_invoice
+        description: A bill asking for payment, with an amount due.
+      receipt:
+        target: file_receipt
+        description: Proof of a payment already made.
+      other:
+        target: file_other
+        description: Any other paperwork.
+      error: set_aside             # no reply within a week
+
+  file_invoice: { invoke: file_away, transitions: { done: done } }   # file_away moves the scan
+  file_receipt: { invoke: file_away, transitions: { done: done } }   # to the folder its state
+  file_other:   { invoke: file_away, transitions: { done: done } }   # names ($DECREE_STATE)
+  done:      { final: true }
+  set_aside: { final: true }       # left in scans/; the decisions are in events.jsonl
+  failed:    { final: true }

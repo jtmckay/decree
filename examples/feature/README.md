@@ -2,7 +2,7 @@
 
 This example is a decree project frozen partway through its life. Its centre is the `feature` machine, which implements a spec with an AI agent and uses everything a machine can do: nesting, a `check`, a model's choice, escalation to a person, `data`, `emits`, and `onentry` and `onexit` scripts. Around it are six smaller machines, their scripts, two finished runs (with their router child runs), one run waiting for a person, one interrupted run, and three queued messages (one of them the person's reply).
 
-Nothing here runs on its own: it is a snapshot that shows exactly what the files of a decree project look like, and the [reference](../../docs/reference/README.md) quotes it. Tests hold it to the reference: `decree check` passes here, `decree graph` reproduces `.decree/graph/*.md` byte for byte, and each recorded run replays through decree to the same events. [`sort-documents`](../sort-documents/README.md) shows an escalation ladder of models, and [`observability`](../observability/README.md) ships these runs to Grafana.
+Nothing here runs on its own: it is a snapshot that shows exactly what the files of a decree project look like, and the [reference](../../docs/reference/README.md) quotes it. Tests hold it to the reference: `decree check` passes here, `decree graph` reproduces `.decree/graph/*.md` byte for byte, and each recorded run replays through decree to the same events. [`observability`](../observability/README.md) ships these runs to Grafana.
 
 ## Running it
 
@@ -367,7 +367,7 @@ states:
 
 Its script, [`ask_claude.sh`](.decree/scripts/router/ask_claude.sh), renders the prompt, asks `claude -p`, and writes `reply.json` (`event`, `reason`, `confidence`). decree then checks that the event is one of the options and applies `min_confidence`.
 
-Because a router is just a machine, replacing it is ordinary work: edit or replace `machines/router.yml` (the router every `model` without `router:` uses), or point a state's `router:` at another machine, for example one that asks a decision model (TypeSafe's Jev, Fastino's GLiNER2.5-Decide locally, OpenAI's Decisions API), a self-hosted LLM, or a cheap model first and a stronger one only when the first is unsure, as [`sort-documents`](../sort-documents/README.md) does. Each router run is its own child run, so its logs and timing show up separately in `decree status` and Grafana.
+Because a router is just a machine, replacing it is ordinary work: edit or replace `machines/router.yml` (the router every `model` without `router:` uses), or point a state's `router:` at another machine, for example one that asks a decision model (TypeSafe's Jev, Fastino's GLiNER2.5-Decide locally, OpenAI's Decisions API), a self-hosted LLM, or a cheap model first and a stronger one only when the first is unsure ([Router machines](../../docs/routers.md#cheap-model-first-stronger-model-when-unsure)). Each router run is its own child run, so its logs and timing show up separately in `decree status` and Grafana.
 
 ## Standards this draws from
 

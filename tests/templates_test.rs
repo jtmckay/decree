@@ -23,10 +23,11 @@ const GIT_SCRIPTS: &[Pair] = &[
     ("scripts/snapshot.sh", "scripts/snapshot.sh"),
 ];
 
-/// Each example and the pairs it holds.
+/// Each project (relative to the repository) and the pairs it holds: the recorded example,
+/// and the escalation ladder that `replay_test.rs` replays.
 const EXAMPLES: &[(&str, &[&[Pair]])] = &[
-    ("feature", &[GIT_SCRIPTS, ROUTER]),
-    ("sort-documents", &[ROUTER]),
+    ("examples/feature", &[GIT_SCRIPTS, ROUTER]),
+    ("tests/fixtures/escalation", &[ROUTER]),
 ];
 
 fn repo() -> PathBuf {
@@ -85,8 +86,8 @@ fn example_files_match_the_templates_init_writes() {
     for (name, groups) in EXAMPLES {
         for pairs in *groups {
             found.extend(mismatches(
-                &format!("examples/{name}/.decree"),
-                &repo().join("examples").join(name).join(".decree"),
+                &format!("{name}/.decree"),
+                &repo().join(name).join(".decree"),
                 pairs,
                 &repo().join("src/templates"),
                 &tmp.path().join(".decree"),
@@ -143,7 +144,7 @@ fn missing_example_or_template_file_names_the_pair() {
 
     let found = mismatches(
         "x",
-        &repo().join("examples/sort-documents/.decree"),
+        &repo().join("examples/feature/.decree"),
         ROUTER,
         empty.path(),
         &tmp.path().join(".decree"),
@@ -153,19 +154,20 @@ fn missing_example_or_template_file_names_the_pair() {
 }
 
 /// `gliner_router` has no template: `init` does not write it. Its copies in
-/// `sort-documents`, `route-by-complexity` and `tmux-services` are byte-identical.
+/// `route-by-complexity`, `tmux-services` and `tests/fixtures/escalation` are byte-identical.
 #[test]
 fn gliner_router_copies_are_identical() {
-    let examples = repo().join("examples");
+    let original = "examples/route-by-complexity";
     for path in [
         "machines/gliner_router.yml",
         "scripts/gliner_router/ask_gliner.sh",
     ] {
-        let read = |name: &str| fs::read(examples.join(name).join(".decree").join(path)).unwrap();
-        for copy in ["route-by-complexity", "tmux-services"] {
+        let read =
+            |project: &str| fs::read(repo().join(project).join(".decree").join(path)).unwrap();
+        for copy in ["examples/tmux-services", "tests/fixtures/escalation"] {
             assert!(
-                read("sort-documents") == read(copy),
-                "{path} differs between sort-documents and {copy}"
+                read(original) == read(copy),
+                "{path} differs between {original} and {copy}"
             );
         }
     }

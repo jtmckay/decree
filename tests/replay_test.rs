@@ -1,6 +1,7 @@
-//! The examples' recorded runs replayed through the binary (docs/reference/runs.md, Step loop
-//! and events.jsonl). For each run in `examples/<name>/.decree/runs/` that is not a router's
-//! child run, a temp project gets a copy of that example's `.decree` whose every script is a
+//! The recorded runs replayed through the binary (docs/reference/runs.md, Step loop and
+//! events.jsonl). For each run in `examples/<name>/.decree/runs/`, or in the escalation ladder
+//! `tests/fixtures/escalation/.decree/runs/`, that is not a router's child run, a temp project
+//! gets a copy of that project's `.decree` whose every script is a
 //! stub that replays, execution by execution, the exit code and output recorded for it (a
 //! router's script also writes the recorded `reply.json`). The run's message is queued,
 //! `decree process` runs, and the events it writes must equal the recorded ones once
@@ -34,7 +35,7 @@ dir="$DECREE_PROJECT_ROOT/.replay/${name%%.*}"
 n=$(( $(cat "$dir/count" 2>/dev/null || echo 0) + 1 ))
 mkdir -p "$dir" && echo "$n" > "$dir/count"
 step="$dir/$n"
-[ -d "$step" ] || { echo "the example records no execution $n of $name" >&2; exit 99; }
+[ -d "$step" ] || { echo "the project records no execution $n of $name" >&2; exit 99; }
 if [ -e "$step/sleep" ]; then
   touch "$DECREE_PROJECT_ROOT/.replay/sleeping"
   exec sleep 100
@@ -50,8 +51,22 @@ done < "$step/log"
 exit "$(cat "$step/exit")"
 "#;
 
-fn examples() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples")
+fn repo() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The projects with recorded runs, relative to the repository: each example that has
+/// `.decree/runs/`, and the escalation ladder fixture.
+fn recorded_projects() -> Vec<String> {
+    let mut projects: Vec<String> = fs::read_dir(repo().join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.join(".decree/runs").is_dir())
+        .map(|p| format!("examples/{}", p.file_name().unwrap().to_str().unwrap()))
+        .collect();
+    projects.push("tests/fixtures/escalation".to_string());
+    projects.sort();
+    projects
 }
 
 fn read_events(run_dir: &Path) -> Vec<Value> {
@@ -112,19 +127,19 @@ fn files(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// A temp project replaying run `run` of `examples/<example>/`.
+/// A temp project replaying run `run` of `project` (relative to the repository).
 struct Replay {
     tmp: TempDir,
-    /// The example's `.decree/`.
+    /// The project's `.decree/`.
     recorded: PathBuf,
     run: String,
 }
 
 impl Replay {
-    fn new(example: &str, run: &str) -> Replay {
+    fn new(project: &str, run: &str) -> Replay {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        let recorded = examples().join(example).join(".decree");
+        let recorded = repo().join(project).join(".decree");
         // The machines, scripts, graphs and cron files; no runs, queue or migrations.
         copy_dir(&recorded, &decree, &|p| {
             p.parent() == Some(recorded.as_path())
@@ -199,7 +214,7 @@ impl Replay {
         }
     }
 
-    /// Queue the run's message as the example received it: a migration from `migrations/`,
+    /// Queue the run's message as the project received it: a migration from `migrations/`,
     /// anything else in `inbox/` under the claim event's `file`, without the `state` mirror.
     fn queue(&self) {
         let claim = &read_events(&self.recorded_run(&self.run))[0];
@@ -426,7 +441,7 @@ fn normalise_span(mut line: Value, ids: &BTreeMap<String, String>) -> String {
 
 #[test]
 fn feature_migration_01_finishes_done_as_recorded() {
-    let r = Replay::new("feature", "01-rate-limit-upload");
+    let r = Replay::new("examples/feature", "01-rate-limit-upload");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     process.code(0);
@@ -438,7 +453,7 @@ fn feature_migration_01_finishes_done_as_recorded() {
 
 #[test]
 fn feature_migration_02_waits_for_a_person_as_recorded() {
-    let r = Replay::new("feature", "02-upload-quota-per-plan");
+    let r = Replay::new("examples/feature", "02-upload-quota-per-plan");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     let stdout = String::from_utf8_lossy(&process.code(0).get_output().stdout).into_owned();
@@ -450,15 +465,15 @@ fn feature_migration_02_waits_for_a_person_as_recorded() {
 
 #[test]
 fn feature_triage_run_picks_small_change_as_recorded() {
-    let r = Replay::new("feature", "20261001T151455Z-5d2e90");
+    let r = Replay::new("examples/feature", "20261001T151455Z-5d2e90");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     process.code(0);
 }
 
 #[test]
-fn sort_documents_run_climbs_to_a_person_and_files_the_reply_as_recorded() {
-    let r = Replay::new("sort-documents", "20261001T170412Z-3f9a51");
+fn escalation_run_climbs_to_a_person_and_files_the_reply_as_recorded() {
+    let r = Replay::new("tests/fixtures/escalation", "20261001T170412Z-3f9a51");
     let waiting = r.cmd(&["process"]).assert();
     r.deliver_reply();
     let process = r.cmd(&["process"]).assert();
@@ -469,7 +484,7 @@ fn sort_documents_run_climbs_to_a_person_and_files_the_reply_as_recorded() {
 
 #[test]
 fn feature_cron_run_interrupted_by_sigint_as_recorded() {
-    let r = Replay::new("feature", "20261001T030000Z-c4e81b");
+    let r = Replay::new("examples/feature", "20261001T030000Z-c4e81b");
     let mut decree = r.spawn_process();
     let sleeping = r.tmp.path().join(".replay/sleeping");
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -483,20 +498,16 @@ fn feature_cron_run_interrupted_by_sigint_as_recorded() {
     r.assert_matches_recorded();
 }
 
-/// Every recorded run in every example that is not a router's child run has a test above.
+/// Every recorded run in every recorded project that is not a router's child run has a test
+/// above.
 #[test]
 fn every_recorded_run_that_is_not_a_child_run_is_replayed() {
     let source = fs::read_to_string(file!()).unwrap_or_else(|_| {
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(file!())).unwrap()
     });
     let mut top: Vec<String> = Vec::new();
-    for example in fs::read_dir(examples()).unwrap() {
-        let example = example.unwrap().path();
-        let Ok(runs) = fs::read_dir(example.join(".decree/runs")) else {
-            continue;
-        };
-        let name = example.file_name().unwrap().to_str().unwrap().to_string();
-        for entry in runs {
+    for name in recorded_projects() {
+        for entry in fs::read_dir(repo().join(&name).join(".decree/runs")).unwrap() {
             let path = entry.unwrap().path();
             let message = fs::read_to_string(path.join("message.md")).unwrap();
             if !message.contains("\ntrigger: invoke\n") {
@@ -517,11 +528,8 @@ fn every_recorded_run_that_is_not_a_child_run_is_replayed() {
 #[test]
 fn every_recorded_reply_validates_against_its_request_reply_schema() {
     let mut checked = 0;
-    for example in fs::read_dir(examples()).unwrap() {
-        let runs = example.unwrap().path().join(".decree/runs");
-        if !runs.is_dir() {
-            continue;
-        }
+    for project in recorded_projects() {
+        let runs = repo().join(project).join(".decree/runs");
         for request in files(&runs)
             .into_iter()
             .filter(|p| p.ends_with("request.json"))

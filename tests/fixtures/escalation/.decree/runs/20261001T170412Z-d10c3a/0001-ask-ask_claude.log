@@ -1,0 +1,30 @@
+You choose the next step of a workflow. Reply with only a JSON object:
+{"event": "<one option name>", "reason": "<one sentence>", "confidence": <0 to 1>}
+
+Workflow: file_document: File one scanned document as an invoice, a receipt or other paperwork.
+Current step: big_model: 
+Question: Which kind of document is this?
+
+Output this decision reads (empty if none):
+ACME OFFICE SUPPLY                     Order 88213
+1 x Toner cartridge, black            $64.00
+Subtotal $64.00   Tax $5.28   Total $69.28
+Card ending 4417   Status: PAID   Balance due: $0.00
+Questions about this order? billing@acme.example
+
+Task message:
+Scanned on the office scanner, tray 2.
+
+Run so far:
+- by_name: false
+- read_text: done
+- by_text: false
+- local_model: unsure
+
+Options:
+- invoice: A bill asking for payment, with an amount due.
+- other: Any other paperwork.
+- receipt: Proof of a payment already made.
+--- reply
+{"event": "receipt", "reason": "It is marked PAID with nothing due, but it is titled as an order, not a receipt.", "confidence": 0.55}
+picked receipt

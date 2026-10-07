@@ -1,6 +1,6 @@
 # Observability: decree runs in Loki, Grafana and Jaeger
 
-decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record, and `traces.jsonl` holds the same run as OpenTelemetry spans ([Observability](../../docs/reference/observability.md)). This example ships the events, and optionally each script's output, to Loki with Grafana Alloy, and lists LogQL queries to explore them in Grafana; and it ships the traces to Jaeger with the OpenTelemetry Collector ([Traces](#traces)). It has no `.decree/` of its own: point it at the recorded runs in [`feature`](../feature/README.md) or [`sort-documents`](../sort-documents/README.md), or at your own project.
+decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record, and `traces.jsonl` holds the same run as OpenTelemetry spans ([Observability](../../docs/reference/observability.md)). This example ships the events, and optionally each script's output, to Loki with Grafana Alloy, and lists LogQL queries to explore them in Grafana; and it ships the traces to Jaeger with the OpenTelemetry Collector ([Traces](#traces)). It has no `.decree/` of its own: point it at the recorded runs in [`feature`](../feature/README.md), or at your own project.
 
 ## What gets shipped
 
@@ -24,7 +24,7 @@ docker run -d --name alloy --network decree-observability -v "$PWD/config.alloy:
 ```
 
 - `-validation.reject-old-samples=false` lets Loki take the recorded runs, whose `ts` are older than Loki's default limit of a week. A live project does not need it.
-- Mount `../sort-documents` instead of `../feature` to ship that example's run, or your own project's root to ship yours. On a host without Docker, run `alloy run config.alloy` with `/srv/project` replaced by the directory that contains `.decree/`.
+- Mount your own project's root instead of `../feature` to ship its runs. On a host without Docker, run `alloy run config.alloy` with `/srv/project` replaced by the directory that contains `.decree/`.
 - Open Grafana at http://localhost:3000, add a Loki data source with the URL `http://loki:3100`, and run the queries below in Explore. The recorded runs are from 2026-10-01, so set the time range to include that day.
 
 ## Queries

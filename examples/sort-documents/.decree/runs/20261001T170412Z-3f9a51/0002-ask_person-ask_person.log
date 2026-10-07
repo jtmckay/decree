@@ -1,8 +1,0 @@
-Waiting for a person: sort_document/ask_person
-Question: Which kind of document is this?
-Options (event: description):
-{"invoice": "A bill asking for payment, with an amount due.", "other": "Any other paperwork.", "receipt": "Proof of a payment already made."}
-
-  decree event 20261001T170412Z-3f9a51.w15 invoice -m "<note>"
-  decree event 20261001T170412Z-3f9a51.w15 other -m "<note>"
-  decree event 20261001T170412Z-3f9a51.w15 receipt -m "<note>"

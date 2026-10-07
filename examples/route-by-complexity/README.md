@@ -116,7 +116,7 @@ examples/route-by-complexity/
   .decree/
     machines/
       develop_by_size.yml              size up, then implement and test: locally first, or with Claude only
-      gliner_router.yml                a typed router: asks the classifier server (the same file as in sort-documents)
+      gliner_router.yml                a typed router: asks the classifier server (the same file as in tmux-services)
     scripts/
       develop_by_size/describe.sh      prints the title, acceptance criteria and named files with line counts
       develop_by_size/implement.sh     one attempt: opencode with an Ollama model (local) or claude -p (claude), then $TEST_CMD

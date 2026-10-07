@@ -1,5 +1,5 @@
-//! `decree check` on `examples/feature/` and `examples/sort-documents/` (docs/reference/machines.md,
-//! Validation): it passes without a warning, warns when `graph/` is out of date, and names the
+//! `decree check` on `examples/feature/` and the `tests/fixtures/escalation/` ladder
+//! (docs/reference/machines.md, Validation): it passes without a warning, warns when `graph/` is out of date, and names the
 //! rule when an example machine is broken. The rule-by-rule cases are in `validation_test.rs`.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -8,13 +8,21 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
-/// `examples/<name>/.decree`.
-fn example(name: &str) -> PathBuf {
+/// `<project>/.decree`, `project` relative to the repository.
+fn decree_dir(project: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join(name)
+        .join(project)
         .join(".decree")
 }
+
+/// `examples/<name>/.decree`.
+fn example(name: &str) -> PathBuf {
+    decree_dir(&format!("examples/{name}"))
+}
+
+/// The escalation ladder (`file_document`): two checks, two models and a person, with its
+/// recorded run.
+const ESCALATION: &str = "tests/fixtures/escalation";
 
 /// Copy `src` to `dst` recursively; `fs::copy` keeps the execute bits.
 fn copy_dir(src: &Path, dst: &Path) {
@@ -30,10 +38,11 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
-/// Run `decree check` in a copy of `examples/<name>/`: (exit code, stdout, stderr).
-fn check_example(name: &str, edit: impl FnOnce(&Path)) -> (i32, String, String) {
+/// Run `decree check` in a copy of `project` (relative to the repository): (exit code,
+/// stdout, stderr).
+fn check_project(project: &str, edit: impl FnOnce(&Path)) -> (i32, String, String) {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&example(name), &tmp.path().join(".decree"));
+    copy_dir(&decree_dir(project), &tmp.path().join(".decree"));
     edit(&tmp.path().join(".decree"));
     let out = cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
@@ -49,12 +58,12 @@ fn check_example(name: &str, edit: impl FnOnce(&Path)) -> (i32, String, String) 
 }
 
 #[test]
-fn check_passes_on_the_recorded_examples_without_a_warning() {
-    for name in ["feature", "sort-documents"] {
+fn check_passes_on_the_recorded_projects_without_a_warning() {
+    for project in ["examples/feature", ESCALATION] {
         assert_eq!(
-            check_example(name, |_| {}),
+            check_project(project, |_| {}),
             (0, String::new(), String::new()),
-            "{name}"
+            "{project}"
         );
     }
 }
@@ -105,7 +114,7 @@ fn check_passes_on_the_reference_examples() {
 
 #[test]
 fn check_warns_when_the_graph_files_are_out_of_date() {
-    let (code, stdout, stderr) = check_example("feature", |decree| {
+    let (code, stdout, stderr) = check_project("examples/feature", |decree| {
         let graph = decree.join("graph");
         fs::remove_file(graph.join("hello.md")).unwrap();
         fs::write(graph.join("deploy.md"), "# deploy\n").unwrap();
@@ -156,7 +165,7 @@ fn check_warns_until_the_graph_is_rewritten() {
 
 #[test]
 fn check_warns_when_the_graph_directory_is_missing() {
-    let (code, _, stderr) = check_example("feature", |decree| {
+    let (code, _, stderr) = check_project("examples/feature", |decree| {
         fs::remove_dir_all(decree.join("graph")).unwrap()
     });
     assert_eq!(code, 0);
@@ -197,7 +206,7 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
         ),
     ];
     for (file, from, to, expected) in cases {
-        let (code, stdout, _) = check_example("feature", |decree| {
+        let (code, stdout, _) = check_project("examples/feature", |decree| {
             let path = decree.join("machines").join(file);
             let text = fs::read_to_string(&path).unwrap();
             assert!(text.contains(from), "{file}: {from}");
@@ -207,7 +216,7 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
         assert_eq!(stdout, format!("{expected}\n"));
     }
     // A router state inside a compound state, as in the V19 case of `validation_test.rs`.
-    let (code, stdout, _) = check_example("feature", |decree| {
+    let (code, stdout, _) = check_project("examples/feature", |decree| {
         fs::write(
             decree.join("machines/b.yml"),
             "name: b\ndescription: A router state inside a compound state.\ninitial: work\n\
@@ -226,29 +235,29 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
     );
 }
 
-/// The escalation conditions in `sort_document` broken one at a time (V10).
+/// The escalation conditions in `file_document` broken one at a time (V10).
 #[test]
 fn check_rejects_bad_escalation_conditions_with_v10() {
     let cases = [
         (
             "file: { type: string, default: \"\" }",
             "file: { type: int, default: 0 }",
-            "machines/sort_document.yml: by_name: check: `matches` needs string data, but `file` is int (V10)",
+            "machines/file_document.yml: by_name: check: `matches` needs string data, but `file` is int (V10)",
         ),
         (
             "confidence: big_model",
             "confidence: read_text",
-            "machines/sort_document.yml: worth_asking: check: `confidence` names `read_text`, which is not a `model` state (V10)",
+            "machines/file_document.yml: worth_asking: check: `confidence` names `read_text`, which is not a `model` state (V10)",
         ),
         (
             "at_least: 0.4",
             "at_least: 1.5",
-            "machines/sort_document.yml: worth_asking: check: `confidence` compares to a number from 0 to 1, not 1.5 (V10)",
+            "machines/file_document.yml: worth_asking: check: `confidence` compares to a number from 0 to 1, not 1.5 (V10)",
         ),
     ];
     for (from, to, expected) in cases {
-        let (code, stdout, _) = check_example("sort-documents", |decree| {
-            let path = decree.join("machines/sort_document.yml");
+        let (code, stdout, _) = check_project(ESCALATION, |decree| {
+            let path = decree.join("machines/file_document.yml");
             let text = fs::read_to_string(&path).unwrap();
             assert!(text.contains(from), "{from}");
             fs::write(&path, text.replacen(from, to, 1)).unwrap();

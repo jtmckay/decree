@@ -1,9 +1,9 @@
 //! The JSON Schemas (docs/reference/README.md, Schemas): each is a valid draft 2020-12
 //! schema with a description on every property; every machine in `examples/`,
-//! `src/templates/`, this repository and a fresh `decree init` for each `--ai` validates
-//! against `machine.schema.json`; every message in `examples/` against
-//! `message.schema.json`; every `events.jsonl` line, `request.json` and `reply.json` in
-//! `examples/` and in a run made here against `events.schema.json`, `request.schema.json`
+//! `tests/fixtures/escalation/`, `src/templates/`, this repository and a fresh `decree init`
+//! for each `--ai` validates against `machine.schema.json`; every message in those projects
+//! against `message.schema.json`; every `events.jsonl` line, `request.json` and `reply.json`
+//! in their recorded runs and in a run made here against `events.schema.json`, `request.schema.json`
 //! and `reply.schema.json`; `decree schema` writes them all to `.decree/schema/v1/` and
 //! removes anything else, and `decree check` warns until it has. Whether the schemas reject
 //! what `decree check` rejects is tested case by case in `validation_test.rs`; every line
@@ -42,18 +42,28 @@ fn files_in(dir: &Path, suffix: &str) -> Vec<PathBuf> {
     out
 }
 
-/// The machine files of every project in this repository: each of `examples/`, and the
+/// The example projects: each of `examples/`, and the escalation ladder in
+/// `tests/fixtures/escalation/`, whose recorded run `replay_test.rs` replays.
+fn example_projects() -> Vec<PathBuf> {
+    let mut projects: Vec<PathBuf> = fs::read_dir(repo().join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    projects.push(repo().join("tests/fixtures/escalation"));
+    projects.sort();
+    projects
+}
+
+/// The machine files of every project in this repository: the example projects, and the
 /// repository's own `.decree/`.
 fn project_machines() -> Vec<PathBuf> {
     let mut projects = vec![repo()];
-    for entry in fs::read_dir(repo().join("examples")).unwrap() {
-        projects.push(entry.unwrap().path());
-    }
+    projects.extend(example_projects());
     let machines: Vec<PathBuf> = projects
         .iter()
         .flat_map(|p| files_in(&p.join(".decree/machines"), ".yml"))
         .collect();
-    assert!(machines.len() > 20, "found only {machines:?}");
+    assert!(machines.len() > 15, "found only {machines:?}");
     machines
 }
 
@@ -231,12 +241,12 @@ fn every_machine_of_a_fresh_init_validates_for_each_ai() {
 }
 
 /// Migrations, inbox messages, cron files, and the messages and replies in the recorded runs
-/// of every project in `examples/`.
+/// of every example project.
 #[test]
 fn every_message_in_examples_validates() {
     let mut paths = Vec::new();
-    for project in fs::read_dir(repo().join("examples")).unwrap() {
-        let decree = project.unwrap().path().join(".decree");
+    for project in example_projects() {
+        let decree = project.join(".decree");
         for dir in ["migrations", "inbox", "cron"] {
             paths.extend(files_in(&decree.join(dir), ".md"));
         }
@@ -584,11 +594,11 @@ fn unversioned_schemas_are_reported_then_removed() {
     );
 }
 
-/// Every file named `name` in the recorded runs of every project in `examples/`.
+/// Every file named `name` in the recorded runs of every example project.
 fn recorded(name: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    for project in fs::read_dir(repo().join("examples")).unwrap() {
-        let Ok(runs) = fs::read_dir(project.unwrap().path().join(".decree/runs")) else {
+    for project in example_projects() {
+        let Ok(runs) = fs::read_dir(project.join(".decree/runs")) else {
             continue;
         };
         for run in runs {

@@ -180,7 +180,7 @@ A state with no `invoke` and a `done` transition passes straight through (SCXML'
 
 For example `{ output: read_text, matches: '(?i)invoice' }`, `{ data: file, matches: '\.pdf$' }`, `{ visits: implement, less_than: { data: max_rounds } }` or `{ confidence: big_model, at_least: 0.4 }`. The comparison operators are `equals`, `not_equals`, `less_than`, `at_most`, `more_than` and `at_least`; `matches` is only an operator. `<value>` is a literal or `{ data: <name> }`. Regular expressions use the `regex` crate's syntax and match anywhere unless anchored. There is no `and`/`or`: to test two things, use two `check` states in a row.
 
-**Escalation** is a chain of states, cheapest first, each passing what it cannot decide to the next: `false` from a `check`, `unsure` from a `model` below its `min_confidence`. A `confidence` check after `unsure` splits the rest into bands (worth asking a person, or not). The `sort_document` machine in [`examples/sort-documents/`](../../examples/sort-documents/README.md) goes the whole way: file name, document text, a local classifier, a large model, a person.
+**Escalation** is a chain of states, cheapest first, each passing what it cannot decide to the next: `false` from a `check`, `unsure` from a `model` below its `min_confidence`. A `confidence` check after `unsure` splits the rest into bands (worth asking a person, or not). [Router machines](../routers.md#cheap-model-first-stronger-model-when-unsure) shows a ladder that goes from a small model to a large one, then to a person.
 
 ## Durations
 

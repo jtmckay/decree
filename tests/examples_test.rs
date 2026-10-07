@@ -1,7 +1,7 @@
 //! Every project in `examples/` is a 0.5 project.
 //! `decree check` passes in each without a warning, no 0.4 word remains in the
 //! examples, `src/`, `docs/reference/`, `README.md` or `tests/`, and each README's
-//! commands run as written, with stubs on `PATH` for the AI tools and services.
+//! commands run as written, with a stub on `PATH` for the services they call.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,10 +30,10 @@ const OLD_TERMS: &[&str] = &["routines", "outbox", "hooks", "ai_router"];
 /// This file, which holds the word lists.
 const THIS_FILE: &str = "tests/examples_test.rs";
 
-/// The examples frozen partway through their life: they commit their queues, recorded runs
+/// The example frozen partway through its life: it commits their queues, recorded runs
 /// and ledger so they can be read, and `replay_test.rs` replays the runs. The other examples
 /// start fresh.
-const RECORDED: &[&str] = &["feature", "sort-documents"];
+const RECORDED: &[&str] = &["feature"];
 
 fn repo() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -99,14 +99,10 @@ fn every_example_passes_check_without_a_warning() {
     assert_eq!(
         names,
         [
-            "business-eval",
             "feature",
             "route-by-complexity",
-            "sort-documents",
             "text-to-media",
-            "text-to-speech",
-            "tmux-services",
-            "whisper-transcribe"
+            "tmux-services"
         ]
     );
     for name in names {
@@ -237,16 +233,6 @@ fn every_example_ships_its_graph_and_schema_and_starts_fresh_unless_recorded() {
 /// Stand-ins for the tools the examples call. Each does just enough for the
 /// next script to find what it expects.
 const STUBS: &[(&str, &str)] = &[
-    // Writes the file the prompt asks for ("... markdown to <path>").
-    (
-        "claude",
-        r#"prompt=""
-while [ $# -gt 0 ]; do case "$1" in -p) prompt=$2; shift 2 ;; *) shift ;; esac; done
-out=$(printf '%s\n' "$prompt" | grep -o 'markdown to [^ ]*' | tail -n 1 | cut -d' ' -f3-)
-[ -z "$out" ] || printf '# stub report\n' > "$out"
-echo "stub claude""#,
-    ),
-    ("opencode", r#"echo "stub opencode $1""#),
     // `-o <file>` gets a body; ComfyUI's /upload/image and /history/<id> get a reply that
     // names one saved image; anything else gets a ComfyUI prompt id.
     (
@@ -257,20 +243,6 @@ if [ -n "$out" ]; then echo stub > "$out"
 elif [[ "$url" == */upload/image ]]; then printf '{"name":"stub.png","subfolder":"","type":"input"}'
 elif [[ "$url" == */history/* ]]; then printf '{"stub":{"status":{"status_str":"success"},"outputs":{"9":{"images":[{"filename":"stub.png","subfolder":"","type":"output"}]}}}}'
 else printf '{"prompt_id":"stub"}'; fi"#,
-    ),
-    // Copies the `-i` input to the last argument.
-    (
-        "ffmpeg",
-        r#"for a in "$@"; do last=$a; done
-while [ $# -gt 0 ]; do case "$1" in -i) in=$2; shift 2 ;; *) shift ;; esac; done
-cp "$in" "$last""#,
-    ),
-    // Writes <output_dir>/<input basename>.txt.
-    (
-        "whisper",
-        r#"input=$1; dir=.
-while [ $# -gt 0 ]; do case "$1" in --output_dir) dir=$2; shift 2 ;; *) shift ;; esac; done
-base=$(basename "$input"); echo "stub transcript" > "$dir/${base%.*}.txt""#,
     ),
 ];
 
@@ -385,40 +357,13 @@ fn processed(project: &Path) -> Vec<String> {
         .collect()
 }
 
-/// jq is a real dependency of the media examples' scripts, not a stand-in.
+/// jq is a real dependency of `text-to-media`'s scripts, not a stand-in.
 fn has_jq() -> bool {
     let found = Command::new("jq").arg("--version").output().is_ok();
     if !found {
         eprintln!("jq is not installed: skipping this example's README commands");
     }
     found
-}
-
-#[test]
-fn business_eval_readme_commands_run() {
-    let dir = run_readme("business-eval", "true");
-    let project = dir.path().join("examples/business-eval");
-    assert_eq!(
-        processed(&project),
-        [
-            "01-petpulse.spec.md",
-            "02-greenroute.spec.md",
-            "03-studystream.spec.md"
-        ]
-    );
-    // Three specs plus the extra idea, each a chain of four runs.
-    assert_eq!(all_runs_done(&project), 16);
-    let summaries = fs::read_dir(project.join(".decree/runs"))
-        .unwrap()
-        .filter(|e| {
-            e.as_ref()
-                .unwrap()
-                .path()
-                .join("04-executive-summary.md")
-                .is_file()
-        })
-        .count();
-    assert_eq!(summaries, 4);
 }
 
 #[test]
@@ -452,36 +397,6 @@ fn text_to_media_readme_commands_run() {
     assert!(payload.contains("The character gently waves"), "{payload}");
 }
 
-#[test]
-fn text_to_speech_readme_commands_run() {
-    if !has_jq() {
-        return;
-    }
-    let dir = run_readme("text-to-speech", "true");
-    let project = dir.path().join("examples/text-to-speech");
-    assert_eq!(processed(&project), ["01-greeting.md", "02-narration.md"]);
-    assert_eq!(all_runs_done(&project), 3);
-    for file in ["greeting", "narration", "sentence"] {
-        assert!(
-            project.join(format!("output/{file}.mp3")).is_file(),
-            "{file}"
-        );
-    }
-}
-
-#[test]
-fn whisper_transcribe_readme_commands_run() {
-    // The README's prerequisite: a recording at the path the migration names.
-    let dir = run_readme(
-        "whisper-transcribe",
-        "mkdir -p audio && echo recording > audio/meeting-notes.mp3",
-    );
-    let project = dir.path().join("examples/whisper-transcribe");
-    assert_eq!(processed(&project), ["01-transcribe-sample.md"]);
-    assert_eq!(all_runs_done(&project), 2);
-    assert!(project.join("audio/meeting-notes.txt").is_file());
-}
-
 /// The recorded examples' commands only read the project: nothing runs, and `decree graph`
 /// changes nothing.
 fn assert_readme_reads_only(name: &str) {
@@ -506,11 +421,6 @@ fn assert_readme_reads_only(name: &str) {
 #[test]
 fn feature_readme_commands_run() {
     assert_readme_reads_only("feature");
-}
-
-#[test]
-fn sort_documents_readme_commands_run() {
-    assert_readme_reads_only("sort-documents");
 }
 
 #[test]

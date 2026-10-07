@@ -1,6 +1,6 @@
 //! `decree graph` (docs/reference/graph.md) against the `system` fixture in `tests/fixtures/graph/`
-//! and the machines and documents of every project in `examples/`. Each test copies its `.decree/`
-//! into a temp directory.
+//! and the machines and documents of every project in `examples/` and of the escalation ladder in
+//! `tests/fixtures/escalation/`. Each test copies its `.decree/` into a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -110,13 +110,15 @@ fn graph_system_matches_fixture() {
     );
 }
 
-/// The example projects: each directory of `examples/` with a `.decree/`, in name order.
+/// The example projects: each directory of `examples/` with a `.decree/`, and the escalation
+/// ladder in `tests/fixtures/escalation/`, in name order.
 fn example_projects() -> Vec<PathBuf> {
     let mut projects: Vec<PathBuf> = fs::read_dir(repo().join("examples"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.join(".decree").is_dir())
         .collect();
+    projects.push(repo().join("tests/fixtures/escalation"));
     projects.sort();
     projects
 }
