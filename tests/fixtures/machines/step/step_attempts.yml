@@ -4,7 +4,7 @@ initial: work
 states:
   work:
     invoke:
-      script: { name: fail_until_final, max_attempts: 3 }
+      script: { name: fail_until_final, attempts: 3 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

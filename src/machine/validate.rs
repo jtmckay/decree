@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::{
-    event_matches, is_event_name, is_ident, is_reserved_event, DataType, Edge, Invoke,
-    LoadedMachine, MachineInvoke, FAILED, ROUTER_MACHINE,
+    event_matches, is_attempt_value, is_event_name, is_ident, is_reserved_event, Attempts,
+    DataType, Edge, Invoke, LoadedMachine, MachineInvoke, FAILED, ROUTER_MACHINE,
 };
 use crate::cond::{Condition, Operand, Subject, Test};
 use crate::runtime::resolve::resolve_script;
@@ -724,6 +724,13 @@ impl Validator<'_> {
         for i in self.states() {
             let at = self.m.state_path(i);
             match &self.m.nodes[i].invoke {
+                Some(Invoke::Script(script)) => {
+                    if let Some(attempts) = &script.attempts {
+                        for message in attempts_problems(attempts) {
+                            self.push(at.clone(), message);
+                        }
+                    }
+                }
                 Some(Invoke::Machine(mi)) => self.child_machine(&at, mi),
                 Some(Invoke::Model(c)) => {
                     match c.router.as_deref() {
@@ -906,4 +913,25 @@ impl Validator<'_> {
         }
         None
     }
+}
+
+/// V16 for a script invoke's `attempts`: a positive integer, or a non-empty list of valid values.
+fn attempts_problems(attempts: &Attempts) -> Vec<String> {
+    if attempts.is_empty() {
+        return vec![match attempts {
+            Attempts::Count(_) => "attempts: 0 is not a positive integer (V16)".to_string(),
+            Attempts::Values(_) => "attempts: [] lists no attempts (V16)".to_string(),
+        }];
+    }
+    attempts
+        .values()
+        .unwrap_or_default()
+        .iter()
+        .filter(|value| !is_attempt_value(value))
+        .map(|value| {
+            format!(
+                "attempts entry `{value}` is not a valid value: it starts with a letter or digit, then up to 127 of letters, digits and `._:/@-` (V16)"
+            )
+        })
+        .collect()
 }

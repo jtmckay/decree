@@ -4,7 +4,7 @@ initial: implement
 states:
   implement:
     invoke:
-      script: { name: fail_until_final, max_attempts: 2 }
+      script: { name: fail_until_final, attempts: 2 }
     transitions: { done: verify }
   verify:
     invoke: verify

@@ -23,11 +23,11 @@ states:
     transitions: { done: synthesize }
   synthesize:                      # body -> Chatterbox -> WAV in the run folder
     invoke:
-      script: { name: synthesize, max_attempts: 3 }
+      script: { name: synthesize, attempts: 3 }
     transitions: { done: convert }
   convert:                         # WAV -> output/<filename>.mp3
     invoke:
-      script: { name: convert, max_attempts: 3 }
+      script: { name: convert, attempts: 3 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

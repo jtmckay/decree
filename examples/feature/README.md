@@ -42,7 +42,7 @@ examples/feature/.decree/
 - A **machine** says *in what order*: states, what each state invokes, and which event leads to which state. It names functions but never contains code or paths.
 - A **script** does one piece of work and reports one outcome: exit 0 (`done`), non-zero (`error`), or a richer event it names in a file (`echo pass > "$DECREE_EVENT_FILE"`). Generic scripts (`commit`, `notify`, `snapshot`, `test`) live once in `scripts/` and serve every machine; `scripts/feature/implement.sh` and `scripts/develop/implement.sh` are each machine's own `implement`, found first because `scripts/<machine>/` is checked before `scripts/`.
 
-There is no configuration file. A `model` with no `router:` uses the machine named `router`, every message names its machine, and retries are set per script with `max_attempts` inside its invoke.
+There is no configuration file. A `model` with no `router:` uses the machine named `router`, every message names its machine, and retries are set per script with `attempts` inside its invoke.
 
 Every state **invokes one function**, and the function's result is an event. The function is a script, or one of decree's three built-in decisions: `check` (a deterministic condition), `model` (a model picks an option) or `person` (a person picks an option). AI and people appear only where a machine invokes `model` or `person`.
 
@@ -171,7 +171,7 @@ A machine is an SCXML statechart written in YAML. The keys are SCXML's names; if
 | `type: internal` (not used here) | `type="internal"` | A compound state's transition to its own child without leaving the compound. |
 | `data` (in the machine), `params` (in a message) | `<datamodel><data>`, `<invoke><param>` | Typed, read-only values; a message's `params` set them for its run. Scripts see `DECREE_DATA_MAX_ROUNDS`. |
 | `emits: [feature]` | extension | Which machines this state's scripts may queue messages for, via `decree emit`. |
-| `invoke: { script: { name: implement, max_attempts: 2 } }`, `timeout` | extension (as AWS Step Functions `Retry`, `TimeoutSeconds`) | Mechanical retry and time limit for a script (inside its invoke), or for a reply (inside `person`). |
+| `invoke: { script: { name: implement, attempts: 2 } }`, `timeout` | extension (as AWS Step Functions `Retry`, `TimeoutSeconds`) | Mechanical retry and time limit for a script (inside its invoke), or for a reply (inside `person`). |
 
 ## Composing machines
 
@@ -217,7 +217,7 @@ Each `invoke: { machine: … }` starts a **child run** in its own folder under `
 | 15 `transition` `triage → implement` (`retry`, `source: model`) | | | |
 | 16 `script` snapshot, onentry | `0007` | Round 2 (`DECREE_VISITS=2`). | |
 | 17 `script` implement, invoke, attempt 1 | `0008` | The agent's API call failed: exit 1. | |
-| 18 `transition` `implement → implement` (`error`, `source: attempt`) | | `max_attempts: 2` in `implement`'s invoke, so decree re-ran it in place: no `onexit` or `onentry`. | Attempts are mechanical retries; they are not visits. |
+| 18 `transition` `implement → implement` (`error`, `source: attempt`) | | `attempts: 2` in `implement`'s invoke, so decree re-ran it in place: no `onexit` or `onentry`. | Attempts are mechanical retries; they are not visits. |
 | 19 `script` implement, invoke, attempt 2 | `0009` | `DECREE_FINAL_ATTEMPT=true`. Succeeded. | |
 | 20 `script` collect_logs, onexit | `0010` | | |
 | 21 `transition` `implement → verify` (`done`) | | | |
@@ -257,12 +257,12 @@ A reply to a stale wait id, or with an event that is not an option, is not appli
 
 ## Two kinds of retry
 
-| | `max_attempts` | A transition back (`retry`) |
+| | `attempts` | A transition back (`retry`) |
 | --- | --- | --- |
 | Means | "That crashed; run it again." | "That worked but the result is wrong; do another round." |
 | Decided by | Exit code | The machine: a script's result, a `check`, a model or a person |
 | Leaves the state? | No: no `onexit` or `onentry`, no new visit | Yes: `onexit`, `onentry`, `visits` + 1 |
-| Bounded by | `max_attempts` in the script invoke (default 1) | A `check` on `visits` |
+| Bounded by | `attempts` in the script invoke (default 1; a list gives each attempt a value) | A `check` on `visits` |
 | In `events.jsonl` | `transition` with `source: attempt`, `from == to` | An ordinary `transition` |
 
 ## Routing a free-form request
@@ -359,7 +359,7 @@ initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
     invoke:                        # a reply that is not one of the options fails the script; it runs once more
-      script: { name: ask_claude, max_attempts: 2 }
+      script: { name: ask_claude, attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

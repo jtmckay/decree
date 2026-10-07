@@ -12,14 +12,14 @@ states:
     transitions: { done: analyze }
   analyze:
     invoke:
-      script: { name: analyze, max_attempts: 3 }
+      script: { name: analyze, attempts: 3 }
     transitions: { done: check_report }
   check_report:
     invoke: check_report
     transitions: { done: hand_off }
   hand_off:
     invoke:
-      script: { name: hand_off, max_attempts: 3 }
+      script: { name: hand_off, attempts: 3 }
     transitions: { done: done }
     emits: [financial_model]
   done:   { final: true }

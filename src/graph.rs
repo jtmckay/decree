@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::machine::{Invoke, LoadedMachine, FAILED, MACHINES_DIR, ROUTER_MACHINE};
+use crate::machine::{Attempts, Invoke, LoadedMachine, FAILED, MACHINES_DIR, ROUTER_MACHINE};
 
 /// The file `decree graph` writes for the whole system, beside one per machine.
 pub const SYSTEM_FILE: &str = "system.md";
@@ -145,7 +145,12 @@ fn notes(m: &LoadedMachine, out: &mut String) {
             Some(Invoke::Person(c)) => {
                 lines.push(format!("person: {}", c.ask.as_deref().unwrap_or_default()))
             }
-            Some(Invoke::Script(_)) | None => {}
+            Some(Invoke::Script(script)) => {
+                if let Some(values) = script.attempts.as_ref().and_then(Attempts::values) {
+                    lines.push(format!("attempts: {}", values.join(" → ")));
+                }
+            }
+            None => {}
         }
         if !node.onentry.is_empty() {
             lines.push(format!("onentry: {}", node.onentry.join(", ")));
@@ -358,6 +363,20 @@ mod tests {
             state_diagram(&m).unwrap(),
             "stateDiagram-v2\n    [*] --> s\n    s --> done: done\n    s --> failed: error\n    done --> [*]\n    failed --> [*]\n    note left of s\n        machine onentry: a, b\n    end note\n    note right of s\n        onexit: x, y\n    end note\n"
         );
+    }
+
+    #[test]
+    fn attempt_list_is_a_note_and_a_count_is_not() {
+        let m = load(
+            "m",
+            "name: m\ndescription: d\ninitial: a\nstates:\n  a:\n    invoke:\n      script: { name: a, attempts: [local, local, claude, local] }\n    transitions: { done: b }\n  b:\n    invoke:\n      script: { name: b, attempts: 3 }\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
+        );
+        let diagram = state_diagram(&m).unwrap();
+        assert!(
+            diagram.contains("    note right of a\n        attempts: local → local → claude → local\n    end note\n"),
+            "{diagram}"
+        );
+        assert!(!diagram.contains("note right of b"), "{diagram}");
     }
 
     #[test]

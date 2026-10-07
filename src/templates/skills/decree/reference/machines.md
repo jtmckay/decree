@@ -27,7 +27,7 @@ every state is reachable. `decree schema` rewrites `.decree/schema/` if it is mi
 | Root | `data` | `name: { type: string\|int\|bool, default: ... }`. Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
 | Root | `onentry`, `onexit` | Scripts run once when the run starts, and once after a root final state is entered. |
 | Root | `initial`, `states` | Required. `initial` is a direct child. |
-| State | `invoke` | The state's function (below). `max_attempts` and `timeout` go inside it. |
+| State | `invoke` | The state's function (below). `attempts` and `timeout` go inside it. |
 | State | `transitions` | `event: target`, or `event: { target, description, type: internal }`. |
 | State | `onentry`, `onexit` | Scripts run every time the state is entered or exited. They produce no event. |
 | State | `initial`, `states` | Make the state compound (no `invoke`). |
@@ -37,7 +37,7 @@ every state is reachable. `decree schema` rewrites `.decree/schema/` if it is mi
 
 Inside a state, write keys in this order: `description`, `invoke`, `onentry`, `onexit`,
 `transitions`, `emits`, then `initial` and `states` for a compound state. Don't write defaults
-(no `max_attempts: 1`).
+(no `attempts: 1`).
 
 Every machine has a root-level final state named `failed`.
 
@@ -49,7 +49,7 @@ name is short for `{ name: <name> }`, and `invoke: implement` is short for
 
 | `invoke` | What runs | Events |
 | --- | --- | --- |
-| `script: { name: <script>, max_attempts?: <n>, timeout?: <duration> }` | The script (see `scripts.md`), re-run in place up to `max_attempts` times (default 1), each stopped after `timeout`. | `done` (exit 0), `error` (non-zero), or the event it writes to `$DECREE_EVENT_FILE`. |
+| `script: { name: <script>, attempts?: <n> \| [<value>, …], timeout?: <duration> }` | The script (see `scripts.md`), re-run in place while it fails, once per attempt (default 1), each stopped after `timeout`. A list gives each attempt its value in `$DECREE_ATTEMPT_VALUE`. | `done` (exit 0), `error` (non-zero), or the event it writes to `$DECREE_EVENT_FILE`. |
 | `check: <condition>` | decree evaluates the condition. No AI. | `true` or `false`. |
 | `model: { question: ..., router?: <machine>, min_confidence?: 0.8, output?: <state> }` | A router machine asks a model to pick one of the state's transitions. | An option; `unsure` below `min_confidence`; `error` if the router fails. |
 | `person: { question: ..., ask: <script>, timeout?: <duration> }` | The `ask` script tells someone; the run pauses for a reply. | An option; `error` on timeout. |
@@ -134,19 +134,33 @@ literal or `{ data: <name> }`. For example `{ output: read_text, matches: '(?i)i
 
 ## Two kinds of retry
 
-| | `max_attempts` | A transition back (`retry`) |
+| | `attempts` | A transition back (`retry`) |
 | --- | --- | --- |
 | Means | "That crashed; run it again." | "That worked but the result is wrong; do another round." |
 | Leaves the state? | No: no `onexit`/`onentry`, no new visit | Yes: `visits` + 1 |
-| Bounded by | `max_attempts` in the script invoke | A `check` on `visits` |
+| Bounded by | `attempts` in the script invoke | A `check` on `visits` |
+
+`attempts` is a number, or a list whose entries run in order, each as `$DECREE_ATTEMPT_VALUE`,
+until one attempt does not end in `error`:
+
+```yaml
+implement:
+  invoke:
+    script: { name: implement, attempts: [local, local, claude, local], timeout: 3h }
+  transitions: { done: verify, error: ask_person }   # all four failed: a person
+```
+
+Entries match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$` (`claude-opus-5-5`, `qwen3:8b`). Use a list
+when the same step is only done by something else (a stronger model); use a transition to another
+state when what happens next differs. Each new visit starts again at attempt 1.
 
 ## Not supported (and the alternative)
 
 `cond` on transitions (make the decision a `check` state), `<parallel>`, `<history>`, `<send>`
 (use `decree emit`), `<raise>` (a script names its event), `<assign>` (`data` is read-only),
 targetless transitions, XML. `decree check` names the alternative when it rejects one, and names
-the new shape for an old one (`choose`, `input`, a bare `matches`, `max_attempts` or `timeout_s` on
-a state, `timeout_s` in an invoke, `{ machine: x, params: ... }`).
+the new shape for an old one (`choose`, `input`, a bare `matches`, the old retry key (now `attempts`),
+`timeout_s` on a state, `timeout_s` in an invoke, `{ machine: x, params: ... }`).
 
 ## Example: everything at once
 
@@ -169,8 +183,8 @@ states:
     initial: implement
     states:
       implement:
-        invoke:                    # max_attempts: re-run a crashing script in place
-          script: { name: implement, max_attempts: 2 }
+        invoke:                    # attempts: re-run a crashing script in place
+          script: { name: implement, attempts: 2 }
         onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }

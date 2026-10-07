@@ -395,7 +395,7 @@ impl Spec {
                     s.push_str(&format!("{indent}  invoke: work\n"));
                 }
                 Invoke::Script { attempts, .. } => s.push_str(&format!(
-                    "{indent}  invoke:\n{indent}    script: {{ name: work, max_attempts: {attempts} }}\n"
+                    "{indent}  invoke:\n{indent}    script: {{ name: work, attempts: {attempts} }}\n"
                 )),
                 Invoke::Check { of, op, n, .. } => s.push_str(&format!(
                     "{indent}  invoke:\n{indent}    check: {{ visits: s{of}, {op}: {n} }}\n"

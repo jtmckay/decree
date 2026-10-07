@@ -13,7 +13,7 @@ states:
     transitions: { done: transcribe }
   transcribe:
     invoke:
-      script: { name: transcribe, max_attempts: 3 }
+      script: { name: transcribe, attempts: 3 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

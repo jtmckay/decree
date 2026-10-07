@@ -398,9 +398,17 @@ fn normalise(mut event: Value, ids: &BTreeMap<String, String>) -> String {
     line
 }
 
-/// One `traces.jsonl` line as JSON, with each span's start and end times replaced by their
-/// key, and generated ids replaced by the recorded ones.
+/// One `traces.jsonl` line as JSON, with decree's version replaced by `<version>`, each span's
+/// start and end times by their key, and generated ids by the recorded ones.
 fn normalise_span(mut line: Value, ids: &BTreeMap<String, String>) -> String {
+    // The recording was made by another decree version.
+    let resource = &mut line["resourceSpans"][0];
+    for attribute in resource["resource"]["attributes"].as_array_mut().unwrap() {
+        if attribute["key"] == "service.version" {
+            attribute["value"]["stringValue"] = Value::String("<version>".into());
+        }
+    }
+    resource["scopeSpans"][0]["scope"]["version"] = Value::String("<version>".into());
     for span in line["resourceSpans"][0]["scopeSpans"][0]["spans"]
         .as_array_mut()
         .unwrap()

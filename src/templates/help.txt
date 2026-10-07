@@ -97,7 +97,7 @@ Machines:
         reject:  { target: rejected, description: Do not ship. }
     ship:
       invoke:
-        script: { name: ship, max_attempts: 2 }   # re-run on a non-zero exit
+        script: { name: ship, attempts: 2 }   # re-run on a non-zero exit
       transitions: { done: done }
     done:     { final: true }
     rejected: { final: true }
@@ -105,7 +105,7 @@ Machines:
 
   A machine is an SCXML statechart written in YAML. `invoke` has one key,
   which names the kind:
-    <script>, or script: { name: <script>, max_attempts: 2, timeout: 10m }
+    <script>, or script: { name: <script>, attempts: 2, timeout: 10m }
                                               a script
     check: { visits: S, less_than: 3 }        a condition: true or false
     model: { question: ..., output: <state> } a router machine asks a model
@@ -126,14 +126,16 @@ Scripts:
   DECREE_MACHINE, DECREE_STATE, DECREE_PHASE, DECREE_VISITS, DECREE_RUN_DIR,
   DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS, DECREE_FINAL_ATTEMPT, DECREE_TRIGGER,
   DECREE_EVENTS, DECREE_EVENT_FILE, DECREE_PARENT, DECREE_RECEIVED,
-  DECREE_DATA_<NAME>; in a router run DECREE_REQUEST and DECREE_REPLY; for an
+  DECREE_DATA_<NAME>; with an attempts list DECREE_ATTEMPT_VALUE and
+  DECREE_ATTEMPT_VALUES; in a router run DECREE_REQUEST and DECREE_REPLY; for an
   ask script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES; and TRACEPARENT
   (W3C Trace Context: the run's trace and the script's span), with TRACESTATE
   when the message carried one.
 
 No configuration file; conventions and fixed limits instead:
   machines/router.yml             # answers every model invoke that names no router:
-  max_attempts: 3                 # inside a script invoke; default 1 (no retry)
+  attempts: 3, or [local, claude] # inside a script invoke; default 1
+                                  # (no retry); a list sets DECREE_ATTEMPT_VALUE
   max_depth                       # 10: deepest chain of emits and child runs
   script logs                     # each capped at 2 MiB
   Share machines or scripts across projects by symlinking them into machines/

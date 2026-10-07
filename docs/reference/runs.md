@@ -77,7 +77,7 @@ initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
     invoke:                        # a reply that is not one of the options fails the script; it runs once more
-      script: { name: ask_claude, max_attempts: 2 }
+      script: { name: ask_claude, attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
@@ -159,6 +159,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `to` | string | Always | Atomic state entered (`T`). |
 | `source` | string | Always | `claim`, `exit_code`, `script`, `attempt`, `check`, `model`, `person`, `machine`, `timeout`, `internal`, `invalid_message` or `retry`. |
 | `exit_code` | int or null | Always | The invoke's exit code. `null` if there was no invoke. |
+| `attempt_value` | string | `source: "attempt"`, when the state's `attempts` is a list | The value of the attempt about to run: its `DECREE_ATTEMPT_VALUE`. |
 | `invalid_event` | string | [Events from an invoke](scripts.md#events-from-an-invoke), step 4 | The undeclared event the invoke named. |
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
 | `file` | string | A claim from the inbox or migrations | Original inbox or migration filename. Absent for a child run, which has none. |
@@ -177,6 +178,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `script` | string | Always | Script name. |
 | `path` | string | Always | File that ran, relative to the project root. |
 | `attempt` | int | Always | `DECREE_ATTEMPT`. |
+| `attempt_value` | string | An invoke whose `attempts` is a list | `DECREE_ATTEMPT_VALUE`: the entry this attempt ran with. |
 | `started_at` | string | Always | RFC 3339 UTC with milliseconds. |
 | `duration_ms` | int | Always | Wall time. |
 | `exit_code` | int or null | Always | `null` if killed by a signal. |

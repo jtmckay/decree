@@ -124,7 +124,7 @@ fn feature_arena_has_eleven_states_plus_root() {
         m.nodes[verify].invoke,
         Some(Invoke::Script(ScriptInvoke {
             name: "verify".into(),
-            max_attempts: None,
+            attempts: None,
             timeout: None,
         }))
     );
@@ -161,7 +161,7 @@ fn feature_arena_has_eleven_states_plus_root() {
     assert!(!retry.internal);
 
     let implement = &m.nodes[m.find("implement").unwrap()];
-    assert_eq!(m.max_attempts(m.find("implement").unwrap()), 2);
+    assert_eq!(m.attempt_count(m.find("implement").unwrap()), 2);
     assert_eq!(implement.onentry, ["snapshot"]);
     assert_eq!(implement.onexit, ["collect_logs"]);
 
@@ -194,10 +194,10 @@ fn accepted_events_skip_reserved_names_and_include_ancestors() {
 
 #[test]
 fn misspelled_script_setting_names_file_and_state_path() {
-    let text = fixture("feature").replace("max_attempts: 2", "max_attempt: 2");
+    let text = fixture("feature").replace("attempts: 2", "attempt: 2");
     let err = load_err("feature", &text);
     assert!(
-        err.starts_with("machines/feature.yml: work.implement: unknown field `max_attempt`"),
+        err.starts_with("machines/feature.yml: work.implement: unknown field `attempt`"),
         "{err}"
     );
     assert!(err.ends_with("(V19)"), "{err}");
@@ -822,12 +822,64 @@ fn bare_matches_names_output() {
 fn state_level_script_settings_name_the_script_invoke() {
     assert_eq!(
         old_shape("    invoke: s\n    max_attempts: 2\n    transitions: { done: done }\n"),
-        "a: max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } } (V19)"
+        "a: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` inside the script invoke, invoke: { script: { name: <script>, attempts: … } } (V19)"
     );
     assert_eq!(
         old_shape("    invoke: s\n    timeout_s: 60\n    transitions: { done: done }\n"),
         "a: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d }) (V19)"
     );
+}
+
+#[test]
+fn old_retry_key_in_an_invoke_names_attempts_with_its_count() {
+    assert_eq!(
+        old_shape("    invoke: { script: { name: s, max_attempts: 2 } }\n    transitions: { done: done }\n"),
+        "a: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` (V19)"
+    );
+    assert_eq!(
+        old_shape("    invoke: { model: { question: Q, max_attempts: x } }\n    transitions: { done: done }\n"),
+        "a: max_attempts is not supported: write `attempts: <n>` or `attempts: [<value>, …]` (V19)"
+    );
+}
+
+#[test]
+fn attempts_is_a_count_or_a_list_of_values() {
+    let text = format!(
+        "{HEAD}  a:\n    invoke:\n      script: {{ name: s, attempts: [local, qwen3:8b, claude-opus-5-5, local] }}\n    \
+         transitions: {{ done: done }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
+    );
+    let m = load("m", &text);
+    let a = m.find("a").unwrap();
+    assert_eq!(m.attempt_count(a), 4);
+    let values: Vec<_> = (1..=5).map(|k| m.attempt_value(a, k)).collect();
+    assert_eq!(
+        values,
+        [
+            Some("local"),
+            Some("qwen3:8b"),
+            Some("claude-opus-5-5"),
+            Some("local"),
+            None
+        ]
+    );
+    assert_eq!(m.attempt_value(a, 0), None);
+}
+
+#[test]
+fn attempt_values_follow_the_pattern() {
+    for ok in [
+        "local",
+        "claude-opus-5-5",
+        "qwen3:8b",
+        "a/b@c.d_e",
+        "0",
+        &"x".repeat(128),
+    ] {
+        assert!(is_attempt_value(ok), "{ok}");
+    }
+    for bad in ["", "-x", ".x", "a b", "é", &"x".repeat(129)] {
+        assert!(!is_attempt_value(bad), "{bad}");
+    }
 }
 
 #[test]
@@ -841,7 +893,7 @@ fn machine_with_params_beside_it_names_the_long_form() {
 #[test]
 fn script_and_machine_take_a_bare_name_or_the_long_form() {
     let text = format!(
-        "{HEAD}  a:\n    invoke:\n      script: {{ name: s, max_attempts: 3, timeout: 9s }}\n    \
+        "{HEAD}  a:\n    invoke:\n      script: {{ name: s, attempts: 3, timeout: 9s }}\n    \
          transitions: {{ done: b }}\n  \
          b: {{ invoke: {{ script: s }}, transitions: {{ done: c }} }}\n  \
          c: {{ invoke: {{ machine: {{ name: child, params: {{ n: 1 }} }} }}, transitions: {{ done: done }} }}\n  \
@@ -853,20 +905,21 @@ fn script_and_machine_take_a_bare_name_or_the_long_form() {
         panic!("{:?}", m.nodes[a].invoke);
     };
     assert_eq!(
-        (script.name.as_str(), script.max_attempts, script.timeout),
-        ("s", Some(3), Some(Duration::from_secs(9)))
+        (script.name.as_str(), &script.attempts, script.timeout),
+        ("s", &Some(Attempts::Count(3)), Some(Duration::from_secs(9)))
     );
-    assert_eq!(m.max_attempts(a), 3);
+    assert_eq!(m.attempt_count(a), 3);
+    assert_eq!(m.attempt_value(a, 1), None);
     let b = m.find("b").unwrap();
     assert_eq!(
         m.nodes[b].invoke,
         Some(Invoke::Script(ScriptInvoke {
             name: "s".into(),
-            max_attempts: None,
+            attempts: None,
             timeout: None,
         }))
     );
-    assert_eq!(m.max_attempts(b), 1);
+    assert_eq!(m.attempt_count(b), 1);
     let Some(Invoke::Machine(child)) = &m.nodes[m.find("c").unwrap()].invoke else {
         panic!();
     };
@@ -964,4 +1017,21 @@ fn script_problems_name_the_state_and_relative_path() {
             },
         ]
     );
+}
+
+#[test]
+fn attempts_of_another_shape_name_both_forms() {
+    for (attempts, expected) in [
+        ("-1", "`attempts` is a positive integer or a list of values, `attempts: [<value>, …]`, not -1"),
+        ("local", "`attempts` is a positive integer or a list of values, `attempts: [<value>, …]`"),
+        ("[local, 3]", "`attempts` is a positive integer or a list of values, `attempts: [<value>, …]`: each value is a string, not 3"),
+    ] {
+        let text = format!(
+            "{HEAD}  a:\n    invoke: {{ script: {{ name: s, attempts: {attempts} }} }}\n    \
+             transitions: {{ done: done }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        );
+        let err = load_err("m", &text);
+        assert!(err.contains(expected), "{attempts}: {err}");
+        assert!(err.contains(": a: "), "{attempts}: {err}");
+    }
 }

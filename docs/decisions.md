@@ -175,7 +175,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 
 **Context.** 0.4.2 had five hooks (`beforeAll`, `afterAll`, `beforeEach`, `afterEach`, `onDeadLetter`), and its git-stash hooks restored a baseline before the final retry. SCXML runs entry and exit content on each entry and exit of a state, not per retry.
 
-**Decision.** `beforeAll` is root `onentry`, `afterAll` root `onexit`, `beforeEach` and `afterEach` a state's `onentry` and `onexit`, and `onDeadLetter` the `onentry` of `failed`. They run once per visit; `max_attempts` re-runs only the invoke. The git-stash hooks became `git_baseline` (root `onentry`, records `HEAD` once) and `snapshot` (a working state's `onentry`, a checkpoint each visit). Restoring the baseline before the final attempt is dropped: a machine that wants a clean retry loops back through a state.
+**Decision.** `beforeAll` is root `onentry`, `afterAll` root `onexit`, `beforeEach` and `afterEach` a state's `onentry` and `onexit`, and `onDeadLetter` the `onentry` of `failed`. They run once per visit; `attempts` re-runs only the invoke. The git-stash hooks became `git_baseline` (root `onentry`, records `HEAD` once) and `snapshot` (a working state's `onentry`, a checkpoint each visit). Restoring the baseline before the final attempt is dropped: a machine that wants a clean retry loops back through a state.
 
 **Consequences.** Hooks are visible in the machine and its graph. A run that ends `failed`, including after a failing `onentry`, runs `failed`'s `onentry` exactly once; 0.4.2 skipped `onDeadLetter` after a `beforeEach` failure, and 0.5 reverses that on purpose. Evidence: `b1d5613`, `446dce7`.
 
@@ -191,7 +191,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 
 **Context.** 0.4's `config.yml` held the router command, the default routine, `max_retries`, the emit depth, the log size and shared routines. After [D4](#d4-a-router-is-a-machine) and [D5](#d5-each-choose-model-names-its-router-or-uses-the-machine-named-router), what was left were defaults that hid behaviour outside the machines, and a strict-keys version still had to be kept in step with the migration script.
 
-**Decision.** There is no configuration file ([No configuration file](reference/README.md#no-configuration-file)). The router is the machine named `router`; every message names its machine; `max_attempts` defaults to 1 per state; the emit depth limit (10) and the log cap (2 MiB) are fixed; shared machines and scripts are symlinks. The daemon interval is a flag. A leftover `.decree/config.yml` is an error naming `scripts/migrate-0.4-to-0.5.sh`.
+**Decision.** There is no configuration file ([No configuration file](reference/README.md#no-configuration-file)). The router is the machine named `router`; every message names its machine; `attempts` defaults to 1 per script invoke; the emit depth limit (10) and the log cap (2 MiB) are fixed; shared machines and scripts are symlinks. The daemon interval is a flag. A leftover `.decree/config.yml` is an error naming `scripts/migrate-0.4-to-0.5.sh`.
 
 **Consequences.** A project is machines, scripts and messages, and everything that affects a run is in them. Evidence: `dc2184a` (strict `config.yml`, superseded), `235d7e5` and `0652778` (removed).
 
@@ -253,9 +253,9 @@ What decree does is in the [reference](reference/README.md). The construction pl
 
 ## D25: C8: no `max_retries` alias
 
-**Context.** 0.4.2's routine configuration accepted `max_retries` as an alias of `max_attempts`, which no design document mentioned.
+**Context.** 0.4.2's routine configuration accepted `max_retries` as an alias of the state's attempt count (now `attempts`), which no design document mentioned.
 
-**Decision.** No alias: it went with the routine configuration. Retries are the state's `max_attempts`.
+**Decision.** No alias: it went with the routine configuration. Retries are the script invoke's `attempts`.
 
 **Consequences.** One name. A 0.4 `config.yml` is not read at all ([D17](#d17-no-configuration-file)). Evidence: `8ab1a72`.
 
@@ -405,17 +405,17 @@ What decree does is in the [reference](reference/README.md). The construction pl
 
 ## D44: One shape per machine key
 
-**Context.** The machine format had places where one idea took several shapes. `invoke` named its kind three ways: a bare string was a script, `check:` and `machine:` were keys, and `choose: model` and `choose: person` were values, each with its own sibling fields. Where a check's text came from was implicit: `{ matches: re }` read the `input:` state named beside `check:`, or, without one, whichever script ran last, and `matches` was both a subject and an operator. A check produced `yes` or `no` where a reader expects true and false. `max_attempts` and a script's `timeout_s` sat on the state while a person's `timeout_s` sat inside `invoke`. And the examples wrote prose inside flow maps, where an unquoted `?` or `, ` breaks YAML. People and models had to guess which shape a key took. Prior art for naming a kind by its key: serde's externally tagged enums (`{ variant: value }`, a map with one key), and GitHub Actions steps, which are a `uses:` step or a `run:` step by the key that is present.
+**Context.** The machine format had places where one idea took several shapes. `invoke` named its kind three ways: a bare string was a script, `check:` and `machine:` were keys, and `choose: model` and `choose: person` were values, each with its own sibling fields. Where a check's text came from was implicit: `{ matches: re }` read the `input:` state named beside `check:`, or, without one, whichever script ran last, and `matches` was both a subject and an operator. A check produced `yes` or `no` where a reader expects true and false. The attempt count (now `attempts`) and a script's `timeout_s` sat on the state while a person's `timeout_s` sat inside `invoke`. And the examples wrote prose inside flow maps, where an unquoted `?` or `, ` breaks YAML. People and models had to guess which shape a key took. Prior art for naming a kind by its key: serde's externally tagged enums (`{ variant: value }`, a map with one key), and GitHub Actions steps, which are a `uses:` step or a `run:` step by the key that is present.
 
 **Decision.** One shape per key, explicit over implicit ([Invoke](reference/machines.md#invoke-the-states-function)):
 
 - `invoke` is a map with exactly one key, which names the kind: `script`, `check`, `model`, `person` or `machine`. `invoke: <name>` is short for `invoke: { script: <name> }`, and a bare name under `script` or `machine` is short for `{ name: <name> }`.
 - A check's events are `true` and `false`. YAML 1.2 reads `true:` and `false:` as booleans; decree reads a boolean key in `transitions` as that event name, so no quotes are needed.
 - A condition has exactly one subject and one operator. `output: <state>` is the subject that reads a state's script output, and `matches` is only an operator. A `model` reads the state named by its `output`, or nothing: there is no fallback to the most recent script.
-- Script settings (`max_attempts`, `timeout_s`) sit inside the script invoke, as a person's `timeout_s` sits inside `person`.
+- Script settings (the attempt count, now `attempts`, and `timeout_s`) sit inside the script invoke, as a person's `timeout_s` sits inside `person`.
 - Machines write decision invokes and prose in block style.
 
-No old shape is accepted: `choose`, `input`, a bare `matches`, a state-level `max_attempts` or `timeout_s`, and `{ machine: x, params }` each fail V19 with a message that names the new shape. Nothing old is read or translated. This supersedes the syntax in [D5](#d5-each-choose-model-names-its-router-or-uses-the-machine-named-router), [D8](#d8-asking-a-person-is-choose-person-plus-a-reply-message) and [D12](#d12-ai-and-people-decide-only-where-a-machine-says-choose) (the decisions stand; `choose: model` is now `model:` and `choose: person` is now `person:`), and the input fallback in [D9](#d9-what-the-router-request-holds).
+No old shape is accepted: `choose`, `input`, a bare `matches`, a state-level attempt count or `timeout_s`, and `{ machine: x, params }` each fail V19 with a message that names the new shape. Nothing old is read or translated. This supersedes the syntax in [D5](#d5-each-choose-model-names-its-router-or-uses-the-machine-named-router), [D8](#d8-asking-a-person-is-choose-person-plus-a-reply-message) and [D12](#d12-ai-and-people-decide-only-where-a-machine-says-choose) (the decisions stand; `choose: model` is now `model:` and `choose: person` is now `person:`), and the input fallback in [D9](#d9-what-the-router-request-holds).
 
 **Consequences.** A reader knows an invoke's kind from its one key and a condition's text from its named `output`, so a machine reads the same to a person and a model, and a JSON Schema can describe each kind on its own (migration 72). Every machine, recorded check event and doc example changed once, before 0.5 is released. A model state that names no `output` gets an empty `input`, so its prompt holds only what the machine names. Evidence: migration 71.
 

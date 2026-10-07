@@ -89,6 +89,7 @@ EOF
 | `DECREE_VISITS` | Times this state has been entered, including now. |
 | `DECREE_RUN_DIR` | `runs/<id>/`. |
 | `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS`, `DECREE_FINAL_ATTEMPT` | Attempt number, the limit, and `true` on the last one. |
+| `DECREE_ATTEMPT_VALUE`, `DECREE_ATTEMPT_VALUES` | With an `attempts` list: this attempt's entry, and the whole list, space-separated. Unset with `attempts: <n>`; no value for `onentry`/`onexit`. |
 | `DECREE_TRIGGER` | `migration`, `cron`, `emit`, `inbox` or `invoke`. |
 | `DECREE_EVENTS` | Events the current state accepts, space-separated. |
 | `DECREE_EVENT_FILE` | For an invoke: the file to write its event to. Empty for other scripts. |

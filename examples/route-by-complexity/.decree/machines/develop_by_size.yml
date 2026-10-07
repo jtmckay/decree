@@ -35,7 +35,7 @@ states:
 
   implement_claude:                # claude -p; logs each step in progress.md; writes STOP instead of guessing
     invoke:
-      script: { name: implement_claude, max_attempts: 2 }
+      script: { name: implement_claude, attempts: 2 }
     transitions: { done: verify, stop: failed }
 
   verify:                          # $TEST_CMD, cargo test by default

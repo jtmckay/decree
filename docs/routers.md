@@ -192,7 +192,7 @@ initial: ask
 states:
   ask:
     invoke:                        # network errors: try once more
-      script: { name: ask_jev, max_attempts: 2 }
+      script: { name: ask_jev, attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
@@ -243,7 +243,7 @@ initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
     invoke:                        # a reply that is not one of the options fails the script; it runs once more
-      script: { name: ask_claude, max_attempts: 2 }
+      script: { name: ask_claude, attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

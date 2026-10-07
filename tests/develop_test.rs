@@ -447,7 +447,7 @@ fn other_failures_do_not_wait() {
     assert_eq!(p.outcome(&id), "failed");
     assert!(!p.bin().join("slept").exists());
     let calls = p.calls();
-    assert_eq!(calls.len(), 3, "max_attempts 3: {calls:?}");
+    assert_eq!(calls.len(), 3, "attempts: 3: {calls:?}");
     let sessions: Vec<&str> = calls.iter().map(|c| session(c).1).collect();
     assert!(calls.iter().all(|c| session(c).0 == "--session-id"));
     assert!(sessions[0] != sessions[1] && sessions[1] != sessions[2]);

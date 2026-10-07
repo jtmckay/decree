@@ -452,7 +452,7 @@ mod tests {
             );
             assert!(b.router_yml().contains("name: router\n"));
             assert!(b.router_yml().contains(&format!(
-                "script: {{ name: ask_{}, max_attempts: 2 }}\n",
+                "script: {{ name: ask_{}, attempts: 2 }}\n",
                 b.name
             )));
             assert!(b.router_ask_sh().contains(&format!("reply=$({})\n", b.ask)));

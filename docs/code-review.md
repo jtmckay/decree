@@ -61,7 +61,7 @@ Non-test lines (`#[cfg(test)]` items and `tests.rs` files excluded), before and 
 | # | Where | Finding | Status |
 | --- | --- | --- | --- |
 | 19 | `src/machine.rs:379`, `:386`, `:406` | `machine_paths` wrapped `machine_files`; `load_machine_file` had one caller. | Fixed: one `machine_paths`, loading inlined. |
-| 20 | `src/runtime.rs:530` | `Executor::max_attempts` did not use the executor. | Fixed: `LoadedMachine::max_attempts`. |
+| 20 | `src/runtime.rs:530` | `Executor`'s attempt limit did not use the executor. | Fixed: moved to `LoadedMachine` (now `LoadedMachine::attempt_count`). |
 | 21 | `src/commands/process.rs:269` | `Pipeline::print_waiting` only called `print_waiting`. | Fixed: removed. |
 | 22 | `src/commands/status.rs:307` | `--cron` sorted files `scan_cron_files` had already sorted. | Fixed: removed. |
 | 23 | `src/machine.rs:312`, `:445` | `flatten` and `parse_machine` were `pub` for one graph unit test. | Fixed: private; the test loads through `load_machine_text`. |

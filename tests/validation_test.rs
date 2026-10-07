@@ -812,6 +812,81 @@ states:
     },
     Case {
         rule: "V16",
+        name: "attempts as a count and as a list of model ids",
+        files: &[
+            ("machines/a.yml", "\
+name: a
+description: Retries.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, attempts: 3 } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/b.yml", "\
+name: b
+description: A local model twice, then a hosted one.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, attempts: [qwen3:8b, qwen3:8b, claude-opus-5-5, local] } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+        ],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "V16",
+        name: "attempts empty, zero, or with an entry that has a space",
+        files: &[
+            ("machines/a.yml", "\
+name: a
+description: No attempts.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, attempts: [] } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/b.yml", "\
+name: b
+description: Zero attempts.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, attempts: 0 } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/c.yml", "\
+name: c
+description: A value with a space.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, attempts: [local, \"claude opus\"] } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+        ],
+        scripts: &[],
+        expected: "\
+machines/a.yml: work: attempts: [] lists no attempts (V16)
+machines/b.yml: work: attempts: 0 is not a positive integer (V16)
+machines/c.yml: work: attempts entry `claude opus` is not a valid value: it starts with a letter or digit, then up to 127 of letters, digits and `._:/@-` (V16)
+",
+    },
+    Case {
+        rule: "V16",
         name: "a timeout that is not a duration",
         files: &[
             ("machines/a.yml", "\
@@ -1045,8 +1120,44 @@ machines/b.yml: work.step: router on a state is not supported: make the decision
         ],
         scripts: &[],
         expected: "\
-machines/a.yml: work: max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } } (V19)
+machines/a.yml: work: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` inside the script invoke, invoke: { script: { name: <script>, attempts: … } } (V19)
 machines/b.yml: work: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d }) (V19)
+",
+    },
+    Case {
+        rule: "V19",
+        name: "max_attempts in a script invoke, attempts in a model invoke",
+        files: &[
+            ("machines/a.yml", "\
+name: a
+description: Retries written the old way.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, max_attempts: 2 } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+"),
+            ("machines/b.yml", "\
+name: b
+description: Attempts on a model.
+initial: pick
+states:
+  pick:
+    invoke:
+      model: { question: Which?, attempts: 2 }
+    transitions:
+      a: { target: done, description: A. }
+      b: { target: done, description: B. }
+  done: { final: true }
+  failed: { final: true }
+"),
+        ],
+        scripts: &[],
+        expected: "\
+machines/a.yml: work: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` (V19)
+machines/b.yml: pick: unknown field `attempts`, expected one of `question`, `router`, `min_confidence`, `output` (V19)
 ",
     },
     Case {

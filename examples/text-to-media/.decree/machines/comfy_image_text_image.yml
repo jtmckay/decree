@@ -18,7 +18,7 @@ states:
     transitions: { done: queue_prompt }
   queue_prompt:                    # posts the payload to ComfyUI
     invoke:
-      script: { name: queue_prompt, max_attempts: 3 }
+      script: { name: queue_prompt, attempts: 3 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

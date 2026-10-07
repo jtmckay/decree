@@ -6,7 +6,7 @@ initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs {ai_cli}, writes $DECREE_REPLY
     invoke:                        # a reply that is not one of the options fails the script; it runs once more
-      script: { name: ask_{ai}, max_attempts: 2 }
+      script: { name: ask_{ai}, attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }

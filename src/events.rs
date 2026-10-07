@@ -239,6 +239,9 @@ impl RunTrace {
                 span.name = format!("script {}/{}", field("state"), field("script"));
                 let attempt = event.get("attempt").and_then(Value::as_i64).unwrap_or(1);
                 attributes.push(("decree.attempt", Attr::Int(attempt)));
+                if let Some(value) = text(event, "attempt_value") {
+                    attributes.push(("decree.attempt_value", Attr::Str(value.to_string())));
+                }
                 let exit_code = event.get("exit_code").and_then(Value::as_i64);
                 if let Some(code) = exit_code {
                     attributes.push(("process.exit.code", Attr::Int(code)));

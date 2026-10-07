@@ -94,15 +94,97 @@ pub enum Invoke {
     Machine(MachineInvoke),
 }
 
-/// `{ script: { name, max_attempts?, timeout? } }`, or `{ script: <name> }`.
+/// `{ script: { name, attempts?, timeout? } }`, or `{ script: <name> }`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScriptInvoke {
     pub name: String,
-    pub max_attempts: Option<u32>,
+    pub attempts: Option<Attempts>,
     /// A duration (`crate::duration`).
     #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
     pub timeout: Option<Duration>,
+}
+
+/// A script invoke's `attempts` (docs/reference/machines.md, Two kinds of retry): how many
+/// times the script may run in one visit, and what each attempt's `DECREE_ATTEMPT_VALUE` is.
+/// V16 checks that the count is positive, the list non-empty and each value valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Attempts {
+    /// `attempts: <n>`: n attempts with no value.
+    Count(u32),
+    /// `attempts: [<value>, …]`: one attempt per entry, in order.
+    Values(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for Attempts {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        const SHAPE: &str =
+            "`attempts` is a positive integer or a list of values, `attempts: [<value>, …]`";
+        match serde_norway::Value::deserialize(deserializer)? {
+            serde_norway::Value::Number(n) => n
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .map(Attempts::Count)
+                .ok_or_else(|| D::Error::custom(format!("{SHAPE}, not {n}"))),
+            serde_norway::Value::Sequence(items) => items
+                .into_iter()
+                .map(|item| match item {
+                    serde_norway::Value::String(value) => Ok(value),
+                    other => Err(D::Error::custom(format!(
+                        "{SHAPE}: each value is a string, not {}",
+                        serde_norway::to_string(&other)
+                            .unwrap_or_default()
+                            .trim_end()
+                    ))),
+                })
+                .collect::<Result<_, _>>()
+                .map(Attempts::Values),
+            _ => Err(D::Error::custom(SHAPE)),
+        }
+    }
+}
+
+impl Attempts {
+    /// The number of attempts.
+    pub fn len(&self) -> u32 {
+        match self {
+            Attempts::Count(n) => *n,
+            Attempts::Values(values) => u32::try_from(values.len()).unwrap_or(u32::MAX),
+        }
+    }
+
+    /// Whether there are no attempts (`attempts: 0` or `attempts: []`), which V16 rejects.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The value of attempt `attempt`, from 1, if the list form gives it one.
+    pub fn value(&self, attempt: u32) -> Option<&str> {
+        match self {
+            Attempts::Count(_) => None,
+            Attempts::Values(values) => attempt
+                .checked_sub(1)
+                .and_then(|k| values.get(k as usize))
+                .map(String::as_str),
+        }
+    }
+
+    /// The whole list, if this is the list form.
+    pub fn values(&self) -> Option<&[String]> {
+        match self {
+            Attempts::Count(_) => None,
+            Attempts::Values(values) => Some(values),
+        }
+    }
+}
+
+/// Whether `value` is a valid `attempts` entry: `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`, so
+/// model ids such as `claude-opus-5-5` or `qwen3:8b` fit.
+pub fn is_attempt_value(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && value.len() <= 128
+        && chars.all(|c| c.is_ascii_alphanumeric() || "._:/@-".contains(c))
 }
 
 /// `{ model: { question, router?, min_confidence?, output? } }`. `question` is optional
@@ -160,7 +242,7 @@ impl<'de> Deserialize<'de> for Invoke {
             serde_norway::Value::String(name) => {
                 return Ok(Invoke::Script(ScriptInvoke {
                     name,
-                    max_attempts: None,
+                    attempts: None,
                     timeout: None,
                 }))
             }
@@ -480,10 +562,9 @@ impl std::fmt::Display for ParseError {
 /// Keys outside the SCXML subset that a state may be written with, and what to use instead
 /// (V19). SCXML elements are named as such; the rest are decree 0.5 drafts that the
 /// decision invokes replaced, and script settings that moved inside the script invoke.
-const UNSUPPORTED_STATE_KEYS: [(&str, &str); 15] = [
+const UNSUPPORTED_STATE_KEYS: [(&str, &str); 14] = [
     ("router", "router on a state is not supported: make the decision a state with invoke: { model: { question: ... } }"),
     ("default", "default on a state is not supported: a model state takes unsure, or error, instead"),
-    ("max_attempts", "max_attempts on a state is not supported: write it inside the script invoke, invoke: { script: { name: <script>, max_attempts: <n> } }"),
     ("timeout_s", "timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d })"),
     ("cond", "cond is not supported: make the decision a state with invoke: { check: ... }"),
     ("parallel", "SCXML <parallel> is not supported: a run is always in exactly one atomic state"),
@@ -506,6 +587,30 @@ const MACHINE_PARAMS: &str = "{ machine: <name>, params: ... } is not supported:
 const BARE_MATCHES: &str =
     "a bare matches is not supported: name the state it reads, { output: <state>, matches: ... }";
 const TIMEOUT_S: &str = "timeout_s is not supported: write timeout: <n>s|m|h|d";
+
+/// What to write instead of the old retry key, whose value is `value` (V19): `attempts` with the
+/// same number, or a list.
+fn old_retry_message(value: &serde_norway::Value) -> String {
+    let count = value
+        .as_u64()
+        .map_or_else(|| "<n>".to_string(), |n| n.to_string());
+    format!("max_attempts is not supported: write `attempts: {count}` or `attempts: [<value>, …]`")
+}
+
+/// The old retry key written on a state, or inside its invoke of any kind (V19).
+fn old_retry_key(state: &serde_norway::Value) -> Option<String> {
+    if let Some(value) = state.get("max_attempts") {
+        return Some(format!(
+            "{} inside the script invoke, invoke: {{ script: {{ name: <script>, attempts: … }} }}",
+            old_retry_message(value)
+        ));
+    }
+    let invoke = state.get("invoke")?.as_mapping()?;
+    invoke
+        .values()
+        .find_map(|kind| kind.get("max_attempts"))
+        .map(old_retry_message)
+}
 
 /// The first old shape in a state's `invoke`, if any (V19).
 fn old_invoke_shape(invoke: &serde_norway::Value) -> Option<&'static str> {
@@ -614,6 +719,9 @@ fn tag_unknown(msg: String) -> String {
 fn unsupported_key(states: &serde_norway::Value, prefix: &str) -> Option<(String, String)> {
     for (key, state) in states.as_mapping()? {
         let path = join_path(prefix, key);
+        if let Some(message) = old_retry_key(state) {
+            return Some((path, format!("{message} (V19)")));
+        }
         for (name, message) in UNSUPPORTED_STATE_KEYS {
             if state.get(name).is_some() {
                 return Some((path, format!("{message} (V19)")));
@@ -754,16 +862,24 @@ impl LoadedMachine {
         })
     }
 
-    /// Attempts allowed for state `i`: its script invoke's `max_attempts`, default 1
-    /// (docs/reference/scripts.md, Execution, Attempts).
-    pub fn max_attempts(&self, i: usize) -> u32 {
+    /// State `i`'s script invoke's `attempts`, if it writes one.
+    pub fn attempts(&self, i: usize) -> Option<&Attempts> {
         self.nodes[i]
             .invoke
             .as_ref()
             .and_then(Invoke::script)
-            .and_then(|s| s.max_attempts)
-            .unwrap_or(1)
-            .max(1)
+            .and_then(|s| s.attempts.as_ref())
+    }
+
+    /// Attempts allowed for state `i`: the length of its script invoke's `attempts`, default 1
+    /// (docs/reference/scripts.md, Execution, Attempts).
+    pub fn attempt_count(&self, i: usize) -> u32 {
+        self.attempts(i).map_or(1, Attempts::len).max(1)
+    }
+
+    /// The value of attempt `attempt` (from 1) of state `i`, from its `attempts` list.
+    pub fn attempt_value(&self, i: usize, attempt: u32) -> Option<&str> {
+        self.attempts(i).and_then(|a| a.value(attempt))
     }
 
     /// A final state whose parent is the root: entering it ends the run.

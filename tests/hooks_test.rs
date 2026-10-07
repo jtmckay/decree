@@ -1,6 +1,6 @@
 //! `onentry` and `onexit` (docs/reference/machines.md): the root's, the atomic state's, and
 //! `failed`'s `onentry`, which runs once when a run fails. They run once per
-//! visit to a state; `max_attempts` re-runs only the invoke. Each test builds its own
+//! visit to a state; `attempts` re-runs only the invoke. Each test builds its own
 //! `.decree/` in a temp directory.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -25,7 +25,7 @@ initial: work
 states:
   work:
     invoke:
-      script: { name: work, max_attempts: 2 }
+      script: { name: work, attempts: 2 }
     onentry: [before_each]
     onexit: [after_each]
     transitions: { done: done }

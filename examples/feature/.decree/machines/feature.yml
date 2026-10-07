@@ -16,8 +16,8 @@ states:
     initial: implement
     states:
       implement:
-        invoke:                    # max_attempts: re-run a crashing script in place
-          script: { name: implement, max_attempts: 2 }
+        invoke:                    # attempts: re-run a crashing script in place
+          script: { name: implement, attempts: 2 }
         onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }

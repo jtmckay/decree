@@ -201,7 +201,7 @@ fn test_init_ai_opencode_and_copilot_write_their_routers() {
         let machine = fs::read_to_string(decree.join("machines/router.yml")).unwrap();
         assert!(machine.contains("name: router\n"), "{machine}");
         assert!(
-            machine.contains(&format!("script: {{ name: ask_{ai}, max_attempts: 2 }}\n")),
+            machine.contains(&format!("script: {{ name: ask_{ai}, attempts: 2 }}\n")),
             "{machine}"
         );
         let scripts: Vec<String> = fs::read_dir(decree.join("scripts/router"))

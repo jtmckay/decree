@@ -93,8 +93,8 @@ states:
     initial: implement
     states:
       implement:
-        invoke:                    # max_attempts: re-run a crashing script in place
-          script: { name: implement, max_attempts: 2 }
+        invoke:                    # attempts: re-run a crashing script in place
+          script: { name: implement, attempts: 2 }
         onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }
@@ -134,7 +134,20 @@ states:
   failed: { final: true }
 ```
 
-There are two retry mechanisms, and they mean different things. `max_attempts`, inside the script invoke, re-runs a crashing script in place: same state, no `onexit` or `onentry`. A transition back to an earlier state (`retry` above) is a new round chosen by the machine, bounded here by the `rounds_left` check.
+There are two retry mechanisms, and they mean different things. `attempts`, inside the script invoke, re-runs a crashing script in place: same state, no `onexit` or `onentry`. A transition back to an earlier state (`retry` above) is a new round chosen by the machine, bounded here by the `rounds_left` check.
+
+`attempts` is a number or a list. `attempts: 2` runs the script up to twice with `$DECREE_ATTEMPT_VALUE` unset. A list gives each attempt a value, in order, and its length is the limit, as a model gateway's fallback list (LiteLLM `fallbacks`, OpenRouter `models`):
+
+```yaml
+implement:
+  invoke:
+    script: { name: implement, attempts: [local, local, claude, local], timeout: 3h }
+  transitions: { done: verify, error: ask_person }   # all four failed: a person
+```
+
+`implement` runs with `DECREE_ATTEMPT_VALUE=local`; if it exits non-zero or times out, it runs again with `local`, then `claude`, then `local`. The first attempt that ends in anything but `error` (`done`, or an event the script names) is the state's event; if all four fail, the event is `error`. Each entry matches `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`, so model ids such as `claude-opus-5-5` or `qwen3:8b` fit, and repeats are allowed. A new visit starts again at attempt 1; a script that should start higher on a later round reads `$DECREE_VISITS`.
+
+Use a list when the same step, with the same inputs and the same next state, is only done by something else: a stronger model, another host. Use a transition to a different state when what happens next differs: another script, a person, a step whose output the machine branches on.
 
 ## Invoke: the state's function
 
@@ -144,7 +157,7 @@ There are two retry mechanisms, and they mean different things. `max_attempts`, 
 
 | `invoke` | SCXML `type` | What runs | Events it produces |
 | --- | --- | --- | --- |
-| `script: { name: <script>, max_attempts?: <int>, timeout?: <duration> }` | `decree:script` | The script ([scripts.md](scripts.md)), up to `max_attempts` times (default 1), each stopped after `timeout` ([Durations](#durations), [Execution](scripts.md#execution)). | `done` (exit 0), `error` (non-zero), or the event the script names in `$DECREE_EVENT_FILE`. |
+| `script: { name: <script>, attempts?: <int> \| [<value>, …], timeout?: <duration> }` | `decree:script` | The script ([scripts.md](scripts.md)), once per attempt until one does not end in `error` (default 1 attempt; a list gives each its `$DECREE_ATTEMPT_VALUE`), each stopped after `timeout` ([Durations](#durations), [Execution](scripts.md#execution)). | `done` (exit 0), `error` (non-zero), or the event the script names in `$DECREE_EVENT_FILE`. |
 | `check: <condition>` | `decree:check` | decree evaluates the condition. Deterministic, no AI. | `true` or `false`. |
 | `model: { question: <text>, router?: <machine>, min_confidence?: <0..1>, output?: <state> }` | `decree:model` | A router machine (default: the machine named `router`) asks a model to pick one of the state's transitions ([Model](runs.md#model)). | One of the state's events; `unsure` if its confidence is below `min_confidence`; `error` if the router fails or replies with something that is not an option. |
 | `person: { question: <text>, ask: <script>, timeout?: <duration> }` | `decree:person` | The `ask` script tells someone; the run pauses until a reply picks one of the state's transitions, or until `timeout` passes ([Durations](#durations), [Replies](messages.md#replies)). | One of the state's events; `error` on timeout. |
@@ -187,7 +200,7 @@ A duration is a whole number of at most 9 digits followed by one unit: `s` (seco
 | Root | `states` | map of id to state | child `<state>` and `<final>` | Required. The map key is the state's `id`. |
 | State | `final` | `true` | `<final>` | Marks a final state. Final states may only have `description`, `onentry` and `emits`. |
 | State | `description` | string | extension | Optional. |
-| State | `invoke` | script name, or a map with one key: `script`, `check`, `model`, `person` or `machine` | `<invoke type>` | Optional on atomic states (above). `max_attempts` and `timeout` go inside it. |
+| State | `invoke` | script name, or a map with one key: `script`, `check`, `model`, `person` or `machine` | `<invoke type>` | Optional on atomic states (above). `attempts` and `timeout` go inside it. |
 | State | `onentry`, `onexit` | list of script names | `<onentry>`, `<onexit>` | Optional. Run every time this state is entered or exited. |
 | State | `initial`, `states` | as root | `<state initial>`, child states | Present together on compound states, absent on all others. |
 | State | `transitions` | map of event to target | `<transition event target type>` | Short form `event: target`, or long form `{target, description, type}`. Not allowed on final states. |
@@ -237,7 +250,7 @@ Machines are YAML 1.2. In YAML 1.2, `true:` and `false:` as map keys are boolean
 
 Unknown keys fail validation everywhere: at the root, in a state, a `data` entry, a long-form transition, every `invoke` object and every condition, so a misspelled key never falls back to another meaning (V19). A condition's `<value>` is a literal (int, float, string, bool) or `{ data: <name> }`; floats appear only in `confidence` conditions.
 
-**Style.** Decision invokes, and anything holding prose (`question`, `description`), use block style. Short structural maps (`transitions: { done: verify }`, `{ final: true }`) may stay inline. Inside a state, keys go in this order: `description`, `invoke`, `onentry`, `onexit`, `transitions`, `emits`, then `initial` and `states` for a compound state. Defaults are not written out (no `max_attempts: 1`).
+**Style.** Decision invokes, and anything holding prose (`question`, `description`), use block style. Short structural maps (`transitions: { done: verify }`, `{ final: true }`) may stay inline. Inside a state, keys go in this order: `description`, `invoke`, `onentry`, `onexit`, `transitions`, `emits`, then `initial` and `states` for a compound state. Defaults are not written out (no `attempts: 1`).
 
 ## Schema
 
@@ -280,10 +293,10 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 | V13 | Every `emits` entry is an existing machine name. |
 | V14 | Every `data` default matches its `type`. |
 | V15 | Every compound state with a final child handles `done.state.<id>`, itself or through an ancestor, so the run cannot stall. |
-| V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `max_attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19. |
+| V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19. |
 | V17 | `type: internal` appears only on a compound state's transition whose target is one of its descendants. |
 | V18 | Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-named event or a `model` or `person` option. |
-| V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `person:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` or `timeout_s` on a state (inside `invoke: { script: … }`), `timeout_s` in an invoke (`timeout: <n>s\|m\|h\|d`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`). |
+| V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `person:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` anywhere (`attempts: <n>` or `attempts: [<value>, …]`, inside `invoke: { script: … }`), `timeout_s` on a state (inside `invoke: { script: … }`), `timeout_s` in an invoke (`timeout: <n>s\|m\|h\|d`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`). |
 | V20 | No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others. |
 | V21 | Within one state, no transition's event equals another's followed by `.` and more (`done` and `done.state.work`), so at most one of a state's transitions matches any event. |
 | M1 | Every pending migration (not in `processed.md`) parses, names a known machine in `machine:`, and has valid `params` for that machine's `data`. |

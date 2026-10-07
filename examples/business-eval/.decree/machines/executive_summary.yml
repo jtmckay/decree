@@ -14,7 +14,7 @@ states:
     transitions: { done: analyze }
   analyze:
     invoke:
-      script: { name: analyze, max_attempts: 3 }
+      script: { name: analyze, attempts: 3 }
     transitions: { done: check_report }
   check_report:
     invoke: check_report

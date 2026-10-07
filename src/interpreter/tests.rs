@@ -590,6 +590,121 @@ fn invoke_failing_twice_then_succeeding_takes_done_after_two_attempts() {
     assert_eq!(visits(&p.events())["work"], 1);
 }
 
+/// `implement` tries a local model, then Claude; `fail_unless_claude` only succeeds with
+/// `claude`. `verify` and `rounds_left` send the run round twice.
+const ATTEMPT_LIST_LOOP: &str = "\
+name: attempt_list_loop
+description: A list of attempts, in a loop of two rounds.
+initial: implement
+states:
+  implement:
+    invoke:
+      script: { name: fail_unless_claude, attempts: [local, claude] }
+    transitions: { done: verify }
+  verify:
+    invoke: verify
+    transitions: { done: rounds_left }
+  rounds_left:
+    invoke:
+      check: { visits: implement, less_than: 2 }
+    transitions: { true: implement, false: done }
+  done:   { final: true }
+  failed: { final: true }
+";
+
+#[test]
+fn attempt_list_runs_each_value_in_place_and_each_visit_starts_again() {
+    let p = Project::from_text(
+        "attempt_list_loop",
+        ATTEMPT_LIST_LOOP,
+        &[
+            ("fail_unless_claude", "fail_unless_claude"),
+            ("verify", "exit_zero"),
+        ],
+    );
+    assert_eq!(p.run(), Outcome::Finished("done".into()));
+    let runs: Vec<_> = p
+        .events_of("script")
+        .iter()
+        .filter(|e| e["state"] == "implement")
+        .map(|e| {
+            (
+                e["attempt"].as_u64().unwrap(),
+                e["attempt_value"].as_str().unwrap().to_string(),
+                e["exit_code"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    // Each visit starts again at attempt 1, with `local`.
+    assert_eq!(
+        runs,
+        [
+            (1, "local".to_string(), 1),
+            (2, "claude".to_string(), 0),
+            (1, "local".to_string(), 1),
+            (2, "claude".to_string(), 0),
+        ]
+    );
+    assert_eq!(
+        p.transitions(),
+        [
+            "- claimed implement claim",
+            "implement error implement attempt",
+            "implement done verify exit_code",
+            "verify done rounds_left exit_code",
+            "rounds_left true implement check",
+            "implement error implement attempt",
+            "implement done verify exit_code",
+            "verify done rounds_left exit_code",
+            "rounds_left false done check"
+        ]
+    );
+    let next: Vec<_> = p
+        .events_of("transition")
+        .iter()
+        .filter(|e| e["source"] == "attempt")
+        .map(|e| e["attempt_value"].clone())
+        .collect();
+    assert_eq!(next, [json!("claude"), json!("claude")]);
+    // Attempts are not visits: two rounds, two visits.
+    assert_eq!(visits(&p.events())["implement"], 2);
+}
+
+#[test]
+fn attempt_list_that_succeeds_on_claude_is_one_visit() {
+    let text = "\
+name: attempt_list
+description: A local model, then Claude.
+initial: implement
+states:
+  implement:
+    invoke:
+      script: { name: fail_unless_claude, attempts: [local, claude] }
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }
+";
+    let p = Project::from_text(
+        "attempt_list",
+        text,
+        &[("fail_unless_claude", "fail_unless_claude")],
+    );
+    assert_eq!(p.run(), Outcome::Finished("done".into()));
+    let logs: Vec<_> = p
+        .events_of("script")
+        .iter()
+        .map(|e| fs::read_to_string(p.run_dir().join(e["log"].as_str().unwrap())).unwrap())
+        .collect();
+    assert_eq!(
+        logs,
+        [
+            "attempt 1 of 2: local in local claude\n",
+            "attempt 2 of 2: claude in local claude\n"
+        ]
+    );
+    assert_eq!(visits(&p.events())["implement"], 1);
+}
+
 #[test]
 fn visits_check_ends_a_retry_loop_after_two_visits() {
     let p = Project::new(

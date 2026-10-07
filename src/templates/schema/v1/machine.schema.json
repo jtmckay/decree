@@ -263,7 +263,7 @@
       ],
       "examples": [
         "verify",
-        { "script": { "name": "implement", "max_attempts": 2 } },
+        { "script": { "name": "implement", "attempts": 2 } },
         { "check": { "visits": "implement", "less_than": { "data": "max_rounds" } } },
         { "model": { "question": "Should we implement again or split the work?", "min_confidence": 0.8, "output": "verify" } },
         { "person": { "question": "Ship this build?", "ask": "ask_person", "timeout": "1d" } },
@@ -280,11 +280,23 @@
           "additionalProperties": false,
           "properties": {
             "name": { "$ref": "#/$defs/scriptName" },
-            "max_attempts": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 4294967295,
-              "description": "How many times to run a script that fails, in place: same state, no onexit or onentry between attempts. Default 1 (no retry). A transition back to an earlier state is a different thing: a new round the machine chooses."
+            "attempts": {
+              "description": "The attempts in one visit: decree runs the script once per attempt, in order, in place (same state, no onexit or onentry between attempts), and stops at the first that does not end in `error`. A number n is n attempts with no value; a list is one attempt per entry, each run with its entry in `$DECREE_ATTEMPT_VALUE` (`[local, local, claude]`: a local model twice, then a hosted one). Default 1 (no retry). A transition back to an earlier state is a different thing: a new round the machine chooses.",
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4294967295,
+                  "description": "n attempts, with `$DECREE_ATTEMPT_VALUE` unset."
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$" },
+                  "description": "One attempt per entry, in order; repeats are allowed. Each entry is `$DECREE_ATTEMPT_VALUE` for its attempt, a model id such as `claude-opus-5-5` or `qwen3:8b` say."
+                }
+              ],
+              "examples": [3, ["local", "local", "claude", "local"]]
             },
             "timeout": {
               "$ref": "#/$defs/duration",
@@ -293,7 +305,11 @@
           }
         }
       ],
-      "examples": ["implement", { "name": "implement", "max_attempts": 2, "timeout": "1h" }]
+      "examples": [
+        "implement",
+        { "name": "implement", "attempts": 2, "timeout": "1h" },
+        { "name": "implement", "attempts": ["local", "local", "claude", "local"], "timeout": "3h" }
+      ]
     },
     "modelInvoke": {
       "type": "object",

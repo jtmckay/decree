@@ -27,7 +27,7 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 - While a script runs, `runs/<id>/.running` holds one JSON object: `{"pid": 4242, "state": "implement", "phase": "invoke", "script": "implement", "started_at": "<RFC 3339 UTC, ms>", "log": "0004-implement-implement.log"}`. decree writes it (temp file plus rename) right after spawning and deletes it after writing the `script` event. `decree status` and `decree tail` read it; it is not part of the record. A `.running` left behind by a crash names the `script` of the `interrupted` event.
 - The log of a state's latest script run is that state's output: what a `{ output: <state>, matches: … }` check tests and what a `model` with `output: <state>` reads ([Invoke](machines.md#invoke-the-states-function), Output).
 - **Timeout.** If the script invoke sets `timeout` ([Durations](machines.md#durations)) and the invoke runs longer, decree stops it and treats it as a non-zero exit. Its `script` event records `"timed_out": true`.
-- **Attempts.** If the invoke exits non-zero (or times out) and the state has attempts left, decree runs it again without leaving the state: no `onexit` or `onentry`, one `transition` event with `event: "error"`, `from` and `to` equal, and `source: "attempt"`. Attempts = the script invoke's `max_attempts`, default 1. Only when attempts run out does `error` take its transition. `onentry` failures are not retried.
+- **Attempts.** If the invoke exits non-zero (or times out) and the state has attempts left, decree runs it again without leaving the state: no `onexit` or `onentry`, one `transition` event with `event: "error"`, `from` and `to` equal, `source: "attempt"`, and the next attempt's `attempt_value` when it has one. The attempts are the script invoke's `attempts` ([Invoke](machines.md#invoke-the-states-function)): a number, or a list whose entries run in order, each as `DECREE_ATTEMPT_VALUE`; default 1. The first attempt that does not end in `error` decides the event; only when attempts run out does `error` take its transition. Each visit starts again at attempt 1. `onentry` failures are not retried.
 - **Signals.** If decree receives SIGINT or SIGTERM while a script runs, it stops the script, writes no `script` event for it, and interrupts the run ([Replies](messages.md#replies), Stopping). `decree process --retry` re-runs the step, so scripts must be safe to re-run.
 - **Logs** are capped at 2 MiB (2097152 bytes). After the script exits, a larger log keeps only its last 2 MiB, behind the line `[log truncated — showing last 2MB of output]`.
 
@@ -46,7 +46,9 @@ A script inherits decree's environment, with every inherited `DECREE_*` variable
 | `DECREE_VISITS` | `visits.<state>` for this state, including the current visit. `0` for `_root`. |
 | `DECREE_RUN_DIR` | Absolute path of `runs/<id>/`. |
 | `DECREE_ATTEMPT` | Attempt number of the invoke in this visit, from 1. `1` for `onentry` and `onexit` scripts. |
-| `DECREE_MAX_ATTEMPTS` | Attempts allowed for this state. |
+| `DECREE_ATTEMPT_VALUE` | This attempt's entry in the invoke's `attempts` list, e.g. `claude`. Unset with the integer form, and for `onentry` and `onexit` scripts. |
+| `DECREE_ATTEMPT_VALUES` | The whole `attempts` list, space-separated. Unset with the integer form. |
+| `DECREE_MAX_ATTEMPTS` | Attempts allowed for this state: the `attempts` list's length, or the integer. |
 | `DECREE_FINAL_ATTEMPT` | `true` if `DECREE_ATTEMPT` equals `DECREE_MAX_ATTEMPTS`, else `false`. |
 | `DECREE_TRIGGER` | The message's `trigger`. |
 | `DECREE_EVENTS` | The events the current state accepts, space-separated, in name order. Lets a script check what it may name. |

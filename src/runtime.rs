@@ -21,7 +21,7 @@ use serde_json::{json, Map, Value};
 
 use crate::events::{timestamp, EventLog, EVENTS_FILE};
 use crate::layout::MESSAGE_FILE;
-use crate::machine::{is_reserved_event, DataSpec, LoadedMachine, ScriptInvoke};
+use crate::machine::{is_reserved_event, Attempts, DataSpec, LoadedMachine, ScriptInvoke};
 use crate::trace::{self, TraceParent, TRACEPARENT_ENV, TRACESTATE_ENV};
 use resolve::{resolve_script, ScriptError};
 
@@ -36,6 +36,12 @@ const POLL: Duration = Duration::from_millis(10);
 
 /// Prefix of stderr lines in a script log, with one trailing space.
 const STDERR_PREFIX: &[u8] = b"[stderr] ";
+
+/// This attempt's `attempts` entry, set only when the invoke lists its attempts.
+const ATTEMPT_VALUE_ENV: &str = "DECREE_ATTEMPT_VALUE";
+
+/// The whole `attempts` list, space-separated, set only when the invoke lists its attempts.
+const ATTEMPT_VALUES_ENV: &str = "DECREE_ATTEMPT_VALUES";
 
 /// When a script runs: SCXML `<onentry>`, `<invoke>` or `<onexit>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +160,13 @@ pub struct ScriptRun<'a> {
     pub phase: Phase,
     pub visits: u32,
     pub attempt: u32,
-    pub max_attempts: u32,
+    /// `DECREE_MAX_ATTEMPTS`: the number of attempts in a visit.
+    pub attempt_count: u32,
+    /// `DECREE_ATTEMPT_VALUE`: this attempt's `attempts` entry. Unset with the integer form,
+    /// and for `onentry` and `onexit` scripts.
+    pub attempt_value: Option<&'a str>,
+    /// `DECREE_ATTEMPT_VALUES`: the whole `attempts` list. Unset with the integer form.
+    pub attempt_values: Option<&'a [String]>,
     /// `DECREE_EVENTS`: what the state accepts, from `LoadedMachine::accepted_events`.
     pub events: &'a [String],
     /// `DECREE_WAIT_ID`, `DECREE_QUESTION` and `DECREE_CHOICES`: set for the `ask` script of
@@ -177,7 +189,9 @@ impl<'a> ScriptRun<'a> {
             phase,
             visits: 0,
             attempt: 1,
-            max_attempts: 1,
+            attempt_count: 1,
+            attempt_value: None,
+            attempt_values: None,
             events: &[],
             wait_id: "",
             question: "",
@@ -314,8 +328,8 @@ impl Executor {
     }
 
     /// Run `script`, the invoke of `state`, re-running it in place while it fails and
-    /// attempts remain, and pick its event. Each failed attempt but the last appends a
-    /// `transition` event with `source: "attempt"`.
+    /// attempts remain, each with its `attempts` entry, and pick its event. Each failed
+    /// attempt but the last appends a `transition` event with `source: "attempt"`.
     pub fn run_invoke(
         &mut self,
         machine: &LoadedMachine,
@@ -324,24 +338,28 @@ impl Executor {
         visits: u32,
     ) -> Result<InvokeOutcome, RuntimeError> {
         let node = &machine.nodes[state];
-        let max_attempts = machine.max_attempts(state);
+        let attempt_count = machine.attempt_count(state);
+        let attempt_values = machine.attempts(state).and_then(Attempts::values);
         let events = machine.accepted_events(state);
         let mut attempt = 1;
         let execution = loop {
             let execution = self.run_script(&ScriptRun {
                 visits,
                 attempt,
-                max_attempts,
+                attempt_count,
+                attempt_value: machine.attempt_value(state, attempt),
+                attempt_values,
                 events: &events,
                 timeout: script.timeout,
                 names_event: true,
                 ..ScriptRun::new(&script.name, &node.id, Phase::Invoke)
             })?;
-            if execution.succeeded() || attempt >= max_attempts {
+            if execution.succeeded() || attempt >= attempt_count {
                 break execution;
             }
-            self.append_attempt(&node.id, execution.exit_code)?;
             attempt += 1;
+            let next_value = machine.attempt_value(state, attempt);
+            self.append_attempt(&node.id, execution.exit_code, next_value)?;
         };
         let event = if !execution.succeeded() {
             InvokeEvent::ExitCode("error")
@@ -357,15 +375,24 @@ impl Executor {
         Ok(InvokeOutcome { event, execution })
     }
 
-    /// A failed attempt that will be re-run: `error`, with `from` and `to` equal.
-    fn append_attempt(&mut self, state: &str, exit_code: Option<i32>) -> Result<(), RuntimeError> {
-        let fields = json!({
+    /// A failed attempt that will be re-run: `error`, with `from` and `to` equal, and the
+    /// `attempt_value` of the attempt about to run, if it has one.
+    fn append_attempt(
+        &mut self,
+        state: &str,
+        exit_code: Option<i32>,
+        attempt_value: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        let mut fields = json!({
             "from": state,
             "event": "error",
             "to": state,
             "source": "attempt",
             "exit_code": exit_code,
         });
+        if let Some(value) = attempt_value {
+            fields["attempt_value"] = json!(value);
+        }
         self.append("transition", fields)
     }
 
@@ -509,6 +536,9 @@ impl Executor {
         fields.insert("script".into(), json!(run.script));
         fields.insert("path".into(), json!(self.display_path(&execution.path)));
         fields.insert("attempt".into(), json!(run.attempt));
+        if let Some(value) = run.attempt_value {
+            fields.insert("attempt_value".into(), json!(value));
+        }
         fields.insert("started_at".into(), json!(timestamp(started_at)));
         fields.insert("duration_ms".into(), json!(duration.as_millis() as u64));
         fields.insert("exit_code".into(), json!(execution.exit_code));
@@ -550,10 +580,10 @@ impl Executor {
             ("VISITS", run.visits.to_string().into()),
             ("RUN_DIR", info.run_dir.as_os_str().into()),
             ("ATTEMPT", run.attempt.to_string().into()),
-            ("MAX_ATTEMPTS", run.max_attempts.to_string().into()),
+            ("MAX_ATTEMPTS", run.attempt_count.to_string().into()),
             (
                 "FINAL_ATTEMPT",
-                (run.attempt == run.max_attempts).to_string().into(),
+                (run.attempt == run.attempt_count).to_string().into(),
             ),
             ("TRIGGER", info.trigger.clone().into()),
             ("EVENTS", events.join(" ").into()),
@@ -572,6 +602,12 @@ impl Executor {
         .into_iter()
         .map(|(name, value)| (format!("DECREE_{name}"), value))
         .collect();
+        if let Some(value) = run.attempt_value {
+            vars.push((ATTEMPT_VALUE_ENV.to_string(), value.into()));
+        }
+        if let Some(values) = run.attempt_values {
+            vars.push((ATTEMPT_VALUES_ENV.to_string(), values.join(" ").into()));
+        }
         vars.extend(
             info.data
                 .iter()
@@ -930,7 +966,7 @@ pub(crate) mod executor_tests {
         let p = Project::new(&["exit_three"]);
         let out = invoke(
             &p,
-            "{ invoke: { script: { name: exit_three, max_attempts: 2 } }, transitions: { done: done } }",
+            "{ invoke: { script: { name: exit_three, attempts: 2 } }, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("error"));
         assert_eq!(out.execution.exit_code, Some(3));
@@ -1004,7 +1040,7 @@ pub(crate) mod executor_tests {
         let p = Project::new(&["name_pass_until_final"]);
         let out = invoke(
             &p,
-            "{ invoke: { script: { name: name_pass_until_final, max_attempts: 3 } }, \
+            "{ invoke: { script: { name: name_pass_until_final, attempts: 3 } }, \
              transitions: { done: done, pass: done } }",
         );
         assert_eq!(out.event, InvokeEvent::Script("pass".to_string()));
@@ -1084,7 +1120,7 @@ pub(crate) mod executor_tests {
         let p = Project::new(&["fail_until_final"]);
         let out = invoke(
             &p,
-            "{ invoke: { script: { name: fail_until_final, max_attempts: 3 } }, transitions: { done: done } }",
+            "{ invoke: { script: { name: fail_until_final, attempts: 3 } }, transitions: { done: done } }",
         );
         assert_eq!(out.event, InvokeEvent::ExitCode("done"));
         let scripts = p.events_of("script");
@@ -1104,7 +1140,134 @@ pub(crate) mod executor_tests {
     }
 
     #[test]
-    fn max_attempts_defaults_to_one() {
+    fn attempt_list_runs_each_value_in_order_until_one_succeeds() {
+        let p = Project::new(&["fail_unless_claude"]);
+        let out = invoke(
+            &p,
+            "{ invoke: { script: { name: fail_unless_claude, attempts: [local, local, claude, local] } }, \
+             transitions: { done: done } }",
+        );
+        assert_eq!(out.event, InvokeEvent::ExitCode("done"));
+        let scripts = p.events_of("script");
+        let values: Vec<_> = scripts
+            .iter()
+            .map(|e| (e["attempt"].clone(), e["attempt_value"].clone()))
+            .collect();
+        assert_eq!(
+            values,
+            [
+                (json!(1), json!("local")),
+                (json!(2), json!("local")),
+                (json!(3), json!("claude")),
+            ]
+        );
+        // Each `source: "attempt"` transition names the value of the attempt it starts.
+        let next: Vec<_> = p
+            .events_of("transition")
+            .iter()
+            .map(|e| (e["source"].clone(), e["attempt_value"].clone()))
+            .collect();
+        assert_eq!(
+            next,
+            [
+                (json!("attempt"), json!("local")),
+                (json!("attempt"), json!("claude")),
+            ]
+        );
+        assert_eq!(
+            p.log("0001-s-fail_unless_claude.log"),
+            "attempt 1 of 4: local in local local claude local\n"
+        );
+        assert_eq!(
+            p.log("0003-s-fail_unless_claude.log"),
+            "attempt 3 of 4: claude in local local claude local\n"
+        );
+    }
+
+    #[test]
+    fn attempt_list_that_always_fails_gives_error_after_every_value() {
+        let p = Project::new(&["exit_three"]);
+        let out = invoke(
+            &p,
+            "{ invoke: { script: { name: exit_three, attempts: [local, local, claude, local] } }, \
+             transitions: { done: done } }",
+        );
+        assert_eq!(out.event, InvokeEvent::ExitCode("error"));
+        let values: Vec<_> = p
+            .events_of("script")
+            .iter()
+            .map(|e| e["attempt_value"].clone())
+            .collect();
+        assert_eq!(
+            values,
+            [
+                json!("local"),
+                json!("local"),
+                json!("claude"),
+                json!("local")
+            ]
+        );
+        assert_eq!(p.events_of("transition").len(), 3);
+    }
+
+    #[test]
+    fn named_event_on_the_first_attempt_ends_the_list() {
+        let p = Project::new(&["name_pass"]);
+        let out = invoke(
+            &p,
+            "{ invoke: { script: { name: name_pass, attempts: [local, claude] } }, \
+             transitions: { done: done, pass: done } }",
+        );
+        assert_eq!(out.event, InvokeEvent::Script("pass".to_string()));
+        let scripts = p.events_of("script");
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0]["attempt_value"], json!("local"));
+        assert!(p.events_of("transition").is_empty());
+    }
+
+    #[test]
+    fn attempt_count_leaves_the_values_unset() {
+        let p = Project::new(&["fail_unless_claude"]);
+        let out = invoke(
+            &p,
+            "{ invoke: { script: { name: fail_unless_claude, attempts: 3 } }, transitions: { done: done } }",
+        );
+        assert_eq!(out.event, InvokeEvent::ExitCode("error"));
+        for n in 1..=3 {
+            assert_eq!(
+                p.log(&format!("{n:04}-s-fail_unless_claude.log")),
+                format!("attempt {n} of 3: unset in unset\n")
+            );
+        }
+        let scripts = p.events_of("script");
+        assert!(scripts.iter().all(|e| !e.contains_key("attempt_value")));
+        let transitions = p.events_of("transition");
+        assert!(transitions.iter().all(|e| !e.contains_key("attempt_value")));
+    }
+
+    #[test]
+    fn hook_scripts_get_the_values_but_no_value_of_their_own() {
+        let p = Project::new(&["print_env"]);
+        let out = p
+            .executor()
+            .run_script(&ScriptRun {
+                attempt_count: 2,
+                attempt_values: Some(&["local".to_string(), "claude".to_string()]),
+                ..ScriptRun::new("print_env", "s", Phase::OnEntry)
+            })
+            .unwrap();
+        let log = p.log(&out.log);
+        assert!(
+            log.lines()
+                .any(|l| l == "DECREE_ATTEMPT_VALUES=local claude"),
+            "{log}"
+        );
+        assert!(!log.contains("DECREE_ATTEMPT_VALUE="), "{log}");
+        assert!(!p.events_of("script")[0].contains_key("attempt_value"));
+    }
+
+    #[test]
+    fn attempts_default_to_one() {
         let p = Project::new(&["exit_three"]);
         invoke(&p, "{ invoke: exit_three, transitions: { done: done } }");
         assert_eq!(p.events_of("script").len(), 1);
@@ -1155,7 +1318,7 @@ pub(crate) mod executor_tests {
             .run_script(&ScriptRun {
                 visits: 2,
                 attempt: 1,
-                max_attempts: 1,
+                attempt_count: 1,
                 events: &events,
                 wait_id: "w-id",
                 question: "Tests still fail. What next?",
@@ -1222,7 +1385,9 @@ pub(crate) mod executor_tests {
     #[test]
     fn root_and_invoke_variables_have_their_defaults() {
         let p = Project::new(&["print_env"]);
-        let m = machine("{ invoke: { script: { name: print_env, max_attempts: 2 } }, transitions: { done: done } }");
+        let m = machine(
+            "{ invoke: { script: { name: print_env, attempts: 2 } }, transitions: { done: done } }",
+        );
         let mut exec = p.executor();
         let out = exec
             .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 4)

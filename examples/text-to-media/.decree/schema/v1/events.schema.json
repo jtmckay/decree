@@ -100,6 +100,10 @@
           "type": ["integer", "null"],
           "description": "The invoke's exit code. `null` if there was no invoke."
         },
+        "attempt_value": {
+          "type": "string",
+          "description": "On a `source: \"attempt\"` transition whose state's `attempts` is a list: the value of the attempt about to run, its `DECREE_ATTEMPT_VALUE`."
+        },
         "invalid_event": {
           "type": "string",
           "description": "The undeclared event the invoke named (docs/reference/scripts.md, Events from an invoke, step 4); the event is then `error`."
@@ -194,6 +198,10 @@
           "type": "integer",
           "minimum": 1,
           "description": "DECREE_ATTEMPT: 1 for the first attempt."
+        },
+        "attempt_value": {
+          "type": "string",
+          "description": "DECREE_ATTEMPT_VALUE: this attempt's entry in the state's `attempts` list. Absent with the integer form, and for `onentry` and `onexit` scripts."
         },
         "started_at": {
           "$ref": "#/$defs/timestamp",

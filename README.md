@@ -179,7 +179,7 @@ states:
       reject:  { target: rejected, description: Do not ship. }
   ship:
     invoke:
-      script: { name: ship, max_attempts: 2 }   # re-run on a non-zero exit
+      script: { name: ship, attempts: 2 }   # re-run on a non-zero exit
     transitions: { done: done }
   done:     { final: true }
   rejected: { final: true }
@@ -190,7 +190,7 @@ Every state does one thing: it invokes a function, and the function's result is 
 
 | `invoke:` | What happens | Events |
 | --- | --- | --- |
-| `<script>`, or `script: { name: <script>, max_attempts: 2, timeout: 10m }` | Runs the script, re-running it up to `max_attempts` times and stopping it after `timeout` (a [duration](docs/reference/machines.md#durations): `90s`, `10m`, `12h`, `7d`). | `done`, `error`, or the event it writes to `$DECREE_EVENT_FILE` |
+| `<script>`, or `script: { name: <script>, attempts: 2, timeout: 10m }` | Runs the script, re-running it up to `attempts` times and stopping it after `timeout` (a [duration](docs/reference/machines.md#durations): `90s`, `10m`, `12h`, `7d`). | `done`, `error`, or the event it writes to `$DECREE_EVENT_FILE` |
 | `check: <condition>` | A deterministic condition over a state's output, `data`, `visits` or a model's confidence, such as `check: { visits: fix, less_than: 3 }`. | `true`, `false` |
 | `model: { question: ..., output: <state> }` | A router machine asks a model to pick one of the state's transitions, with a confidence, given the `output` state's output and the message body. Below `min_confidence` the event is `unsure`. | the transition names, `unsure` |
 | `person: { question: ..., ask: <script> }` | The `ask` script tells someone; the run pauses until a reply arrives. | the transition names, `error` on `timeout` |
@@ -229,7 +229,7 @@ An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`,
 
 Model servers and other long-running processes are not scripts and decree does not manage them: an `onentry` script starts what a state needs. [docs/services.md](docs/services.md) shows systemd units, llama-swap and a tmux layout for that.
 
-An agent a script starts runs with your own configuration, because decree adds nothing between them. The built-in machines call plain `claude -p` (with `--permission-mode`, default `auto`, set by `CLAUDE_PERMISSION_MODE`), so your Claude Code settings, hooks and skills apply to every agent step. A token filter such as [rtk](https://github.com/rtk-ai/rtk), which shortens the output of the agent's own shell commands through a Claude Code hook, therefore needs no setup in decree: install its hook once and every run uses it. It does not filter files the agent reads, such as the `gate.log` that `rust_develop`'s `qa` step reads, and decree's own logs stay complete.
+An agent a script starts runs with your own configuration, because decree adds nothing between them. The built-in machines call plain `claude -p` (with `--permission-mode`, default `auto`, set by `CLAUDE_PERMISSION_MODE`), so your Claude Code settings, hook scripts and skills apply to every agent step. A token filter such as [rtk](https://github.com/rtk-ai/rtk), which shortens the output of the agent's own shell commands through a Claude Code hook, therefore needs no setup in decree: install its hook once and every run uses it. It does not filter files the agent reads, such as the `gate.log` that `rust_develop`'s `qa` step reads, and decree's own logs stay complete.
 
 ## Commands
 
@@ -278,7 +278,7 @@ There is no configuration file. Each setting is a convention or a fixed limit:
 | --- | --- |
 | Router for a `model` invoke | The machine named `router`, unless the invoke sets `router:` |
 | Default machine | None: every message names its `machine:` |
-| Retries | `max_attempts` in the script invoke; default 1 (no retry) |
+| Retries | `attempts` in the script invoke, a number or a list of values (`[local, claude]`); default 1 (no retry) |
 | Emit depth | A fixed limit of 10 |
 | Log size | Each script log is capped at 2 MiB |
 | Sharing across projects | Symlink shared machines and scripts into `machines/` and `scripts/` |

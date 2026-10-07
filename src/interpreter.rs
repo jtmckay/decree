@@ -35,7 +35,7 @@ use crate::events::{
 };
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
-use crate::machine::{event_matches, Invoke, LoadedMachine, FAILED};
+use crate::machine::{event_matches, Attempts, Invoke, LoadedMachine, FAILED};
 use crate::message::{Message, MessageError, RunLock, LOCK_FILE};
 use crate::runtime::{
     data_env, Executor, InvokeEvent, Phase, RouterFiles, RunInfo, RuntimeError, ScriptRun,
@@ -566,12 +566,14 @@ impl<'a> Interpreter<'a> {
         let mut failed = false;
         for &n in states {
             let (name, visits) = self.script_state(n)?;
-            let max_attempts = m.max_attempts(n);
+            let attempt_count = m.attempt_count(n);
+            let attempt_values = m.attempts(n).and_then(Attempts::values);
             let events = m.accepted_events(n);
             for script in &m.nodes[n].onentry {
                 let execution = self.executor.run_script(&ScriptRun {
                     visits,
-                    max_attempts,
+                    attempt_count,
+                    attempt_values,
                     events: &events,
                     ..ScriptRun::new(script, name, Phase::OnEntry)
                 })?;
@@ -600,13 +602,15 @@ impl<'a> Interpreter<'a> {
     fn run_exit_scripts(&mut self, n: usize) -> Result<Vec<String>, InterpreterError> {
         let m = self.machine;
         let (name, visits) = self.script_state(n)?;
-        let max_attempts = m.max_attempts(n);
+        let attempt_count = m.attempt_count(n);
+        let attempt_values = m.attempts(n).and_then(Attempts::values);
         let events = m.accepted_events(n);
         let mut failures = Vec::new();
         for script in &m.nodes[n].onexit {
             let execution = self.executor.run_script(&ScriptRun {
                 visits,
-                max_attempts,
+                attempt_count,
+                attempt_values,
                 events: &events,
                 ..ScriptRun::new(script, name, Phase::OnExit)
             })?;

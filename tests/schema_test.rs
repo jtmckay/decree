@@ -281,7 +281,7 @@ states:
     transitions: { done: long }
   long:
     invoke:
-      script: { name: work, max_attempts: 2, timeout: 60s }
+      script: { name: work, attempts: 2, timeout: 60s }
     transitions: { done: named }
   named:
     invoke:
@@ -354,6 +354,20 @@ fn boolean_transition_keys_are_the_events_true_and_false() {
     assert!(found.is_empty(), "{found}");
 }
 
+/// `attempts` as a list of values, model ids among them, is accepted as the count is.
+#[test]
+fn attempts_list_is_accepted() {
+    let validator = schema::machine_validator();
+    let text = EVERY_INVOKE.replacen(
+        "attempts: 2,",
+        "attempts: [local, qwen3:8b, claude-opus-5-5, local],",
+        1,
+    );
+    assert!(text != EVERY_INVOKE);
+    let errors = schema::machine_errors(&validator, &text).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
 /// Mistakes an editor underlines: each is rejected at the key or value that is wrong.
 #[test]
 fn mistakes_are_rejected_where_they_are() {
@@ -361,8 +375,28 @@ fn mistakes_are_rejected_where_they_are() {
     for (from, to, at) in [
         ("    invoke: work\n", "    invok: work\n", "/states/short"),
         (
-            "{ name: work, max_attempts: 2,",
+            "{ name: work, attempts: 2,",
             "{ name: work, max_atempts: 2,",
+            "/states/long/invoke",
+        ),
+        (
+            "{ name: work, attempts: 2,",
+            "{ name: work, max_attempts: 2,",
+            "/states/long/invoke",
+        ),
+        (
+            "{ name: work, attempts: 2,",
+            "{ name: work, attempts: 0,",
+            "/states/long/invoke",
+        ),
+        (
+            "{ name: work, attempts: 2,",
+            "{ name: work, attempts: [],",
+            "/states/long/invoke",
+        ),
+        (
+            "{ name: work, attempts: 2,",
+            "{ name: work, attempts: [local, \"claude opus\"],",
             "/states/long/invoke",
         ),
         (
