@@ -252,6 +252,8 @@ Unknown keys fail validation everywhere: at the root, in a state, a `data` entry
 
 **Style.** Decision invokes, and anything holding prose (`question`, `description`), use block style. Short structural maps (`transitions: { done: verify }`, `{ final: true }`) may stay inline. Inside a state, keys go in this order: `description`, `invoke`, `onentry`, `onexit`, `transitions`, `emits`, then `initial` and `states` for a compound state. Defaults are not written out (no `attempts: 1`).
 
+**Start simple.** Write the most naive machine that does the job: one state per script, in a straight line, ending in `done`. Add decisions, loops, `data`, `attempts`, `timeout`, child machines or `emits` only when someone asks for them or a run has shown they are needed, and say why in the state's comment. The cheapest fix comes first: change the script, then `attempts`, then a transition on an event the script names, then a `check`, a `model` or `person` decision, and last a child machine.
+
 ## Schema
 
 `decree schema` writes a JSON Schema (draft 2020-12) for every file decree reads or writes into `.decree/schema/v1/` ([Schemas](README.md#schemas)): among them `machine.schema.json` for machine files and `message.schema.json` for message frontmatter ([messages.md](messages.md)). Their single source is compiled into decree, `decree init` writes them, and `decree check` warns when they are missing or differ from what `decree schema` would write. Every property has a description taken from this reference, and the schemas carry examples, so they are one precise contract for people, editors and models alike.

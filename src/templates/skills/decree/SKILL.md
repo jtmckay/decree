@@ -3,7 +3,8 @@ name: decree
 description: >
   Work in a decree project: messages (migrations, inbox, cron), machines (YAML statecharts in
   .decree/machines/) and scripts (.decree/scripts/), checked with `decree check`, drawn with
-  `decree graph`, and queued with `decree emit`.
+  `decree graph`, and queued with `decree emit`. Prefers the simplest machine: states are added
+  only when the user asks or a run shows the need.
   INVOKE when: the user mentions decree or .decree/; writes or edits a migration, inbox message,
   cron file, machine or script; asks how to automate, schedule or chain work, ask a model or a
   person to decide a step, or why a run failed, is waiting or was interrupted.
@@ -31,6 +32,18 @@ appear only where a machine invokes `model` or `person`.
 
 ## Rules
 
+- **Start with the simplest machine.** Write the most naive machine that does the job: the
+  scripts it needs, one state each, in a straight line (`done` → the next state), ending in
+  `done`. `error` already goes to `failed` implicitly; don't write it.
+  - Add nothing else until the user asks for it or a run has shown it is needed: no `check`,
+    `model` or `person` decisions, loops or round counters, `data` params, `attempts`,
+    `timeout`, child machines, `emits`, compound states or one state per case.
+  - When an addition is warranted, add the smallest one that solves the problem, and say why
+    in the state's comment (`# the local model fails often: try Claude second`).
+  - The cheapest fixes come first, in this order: change the script; `attempts`; a transition
+    on an event the script names; a `check`; a `model` or `person` decision; a child machine.
+  - Asked to design a machine, show the simple version, and list possible additions in prose
+    as options, not in the YAML.
 - **Never edit a migration.** Files in `.decree/migrations/` are immutable; the ones listed in
   `.decree/processed.md` have run. To change something, write a new migration with the next
   number.
@@ -44,8 +57,12 @@ appear only where a machine invokes `model` or `person`.
   too. Run `decree schema` if `.decree/schema/v1/` is missing. The same folder holds the
   schemas of `events.jsonl` lines (`events.schema.json`) and of a router's `request.json` and
   `reply.json`: read them before writing a router or anything that reads a run.
-- **Machines decide, scripts work.** A script makes no routing decision beyond naming one
-  event; a decision is a state of its own (`check`, `model` or `person`), never logic hidden in a script.
+- **Scripts choose how, machines choose what runs next.** A script may decide *how* to do its
+  one job from its params and environment: which workflow file, which model for this attempt,
+  which flags. A choice of *which step runs next* is a transition, on `done` or an event the
+  script names. Make it a decision state (`check`, `model`, `person`) only when the step after
+  it differs, and the choice is worth seeing in the graph, testing with `decree check`, or
+  giving to a model or a person.
 - **Route with a typed router.** For a `model` decision that routes work (which model, which
   path), point `router:` at a typed router (a classifier such as GLiNER2.5-Decide, or a model
   constrained by `reply_schema`): it cannot answer outside the options and costs little. Keep
@@ -114,6 +131,76 @@ states:
     transitions: { done: done }    # exit 0 -> done; non-zero -> failed, implicitly
   done:   { final: true }
   failed: { final: true }          # every machine has one
+```
+
+A machine grows one reason at a time. First, the straight line that does the job:
+
+```yaml
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/develop.md
+name: develop
+description: Implement a message, then test it.
+initial: implement
+states:
+  implement:                       # the job needs two scripts: one state each, in a line
+    invoke: implement
+    transitions: { done: test }
+  test:
+    invoke: test
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }
+```
+
+Real runs then fail at random in `implement`, and a re-run passes. The cheapest fix is
+`attempts`:
+
+```yaml
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/develop.md
+name: develop
+description: Implement a message, then test it.
+initial: implement
+states:
+  implement:
+    invoke:                        # runs fail at random and a re-run passes: try 3 times
+      script: { name: implement, attempts: 3 }
+    transitions: { done: test }
+  test:
+    invoke: test
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }
+```
+
+Later the local model often fails where Claude would not. Give each attempt a value instead
+of adding a state:
+
+```yaml
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/develop.md
+name: develop
+description: Implement a message, then test it.
+initial: implement
+states:
+  implement:
+    invoke:                        # the local model fails often: try Claude third
+      script: { name: implement, attempts: [local, local, claude] }
+    transitions: { done: test }
+  test:
+    invoke: test
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }
+```
+
+The script picks the model from the attempt: a choice of *how*, not of what runs next.
+
+```sh
+case "$DECREE_ATTEMPT_VALUE" in
+  claude) claude -p "$(cat "$DECREE_MESSAGE")" ;;
+  *)      ollama run qwen3:8b "$(cat "$DECREE_MESSAGE")" ;;
+esac
 ```
 
 ## Reference files

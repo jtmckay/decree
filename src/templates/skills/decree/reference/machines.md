@@ -39,6 +39,11 @@ Inside a state, write keys in this order: `description`, `invoke`, `onentry`, `o
 `transitions`, `emits`, then `initial` and `states` for a compound state. Don't write defaults
 (no `attempts: 1`).
 
+**Start simple.** Write the most naive machine that does the job: one state per script, in a
+straight line, ending in `done`. Add decisions, loops, `data`, `attempts`, `timeout`, child
+machines or `emits` only when someone asks for them or a run has shown they are needed, and
+say why in the state's comment.
+
 Every machine has a root-level final state named `failed`.
 
 ## Invoke: the state's function

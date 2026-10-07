@@ -87,3 +87,4 @@
 87-docs-match-the-api.md
 88-attempts.md
 89-examples-from-real-machines.md
+90-skill-simplest-machine.md

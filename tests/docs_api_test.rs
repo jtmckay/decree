@@ -1221,3 +1221,48 @@ fn the_environment_table_matches_what_decree_sets() {
         unknown.join("\n")
     );
 }
+
+/// The skill starts with the simplest machine: it is the first rule, the old rule that put
+/// every decision in a state is gone, and the worked example's first `develop` machine is
+/// script states in a straight line, ending in `done`.
+#[test]
+fn the_skill_writes_the_simplest_machine_first() {
+    let skill = read("src/templates/skills/decree/SKILL.md");
+    let first_rule = skill
+        .lines()
+        .skip_while(|l| *l != "## Rules")
+        .find(|l| l.starts_with("- "))
+        .unwrap();
+    assert!(
+        first_rule.starts_with("- **Start with the simplest machine.**"),
+        "{first_rule}"
+    );
+    assert!(!skill.contains("Machines decide, scripts work"));
+
+    let develops: Vec<serde_norway::Value> = machine_blocks(&skill)
+        .into_iter()
+        .filter_map(|(_, b)| match b {
+            MachineBlock::Whole(yaml) => serde_norway::from_str(&yaml).ok(),
+            MachineBlock::Fragment(_) => None,
+        })
+        .filter(|m: &serde_norway::Value| m["name"].as_str() == Some("develop"))
+        .collect();
+    assert_eq!(develops.len(), 3, "the worked example grows in three steps");
+    let first = &develops[0];
+    let states = first["states"].as_mapping().unwrap();
+    let mut at = first["initial"].as_str().unwrap().to_string();
+    let mut seen = 0;
+    while at != "done" {
+        let state = &states[at.as_str()];
+        assert!(state["invoke"].is_string(), "`{at}` invokes one script");
+        let transitions = state["transitions"].as_mapping().unwrap();
+        assert_eq!(transitions.len(), 1, "`{at}` has only `done`");
+        at = transitions["done"].as_str().unwrap().to_string();
+        seen += 1;
+    }
+    assert_eq!(
+        seen + 2,
+        states.len(),
+        "only script states, `done` and `failed`"
+    );
+}
