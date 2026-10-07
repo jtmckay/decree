@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/comfy.md
+# Text to media on ComfyUI. Its API is fire and forget, so a render is four
+# steps: build the workflow, submit it, await the render, fetch the files. The
+# message names the method, a workflow in workflows/ by file stem, and its body
+# is the prompt.
+name: comfy
+description: Render the message body on ComfyUI with the workflow `method` names, wait for the render, and save it to the repo path in `output`.
+data:
+  method: { type: string, default: "" }        # a workflow in workflows/, by file stem; required
+  output: { type: string, default: "" }        # repo path without extension; required
+  input_image: { type: string, default: "" }   # repo path, uploaded to ComfyUI; for image-to-* methods
+  width:  { type: int, default: 0 }            # 0 keeps the workflow's own value
+  height: { type: int, default: 0 }
+  seed:   { type: int, default: -1 }           # -1 keeps the workflow's own value
+onentry: [precheck]                # fails fast if curl or jq is missing
+initial: build
+states:
+  build:                           # patches workflows/<method>.json with the params; fails on an unknown method or a missing required param
+    invoke: build
+    transitions: { done: submit }
+  submit:                          # uploads input_image, POST /prompt, keeps the prompt id
+    invoke:
+      script: { name: submit, attempts: 3, timeout: 2m }
+    transitions: { done: await }
+  await:                           # polls /history/<prompt id> until the prompt finishes
+    invoke:
+      script: { name: await, timeout: 3h }
+    transitions: { done: fetch }
+  fetch:                           # downloads each output to `output` (+ its extension)
+    invoke:
+      script: { name: fetch, attempts: 3, timeout: 10m }
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

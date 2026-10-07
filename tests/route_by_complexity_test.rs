@@ -1,5 +1,5 @@
 //! `examples/route-by-complexity/`: `develop_by_size` run through the binary down each of
-//! its five paths. The example's `.decree/` is copied to a temp project whose
+//! its paths, including the attempt lists of `local_first` and `claude_only`. The example's `.decree/` is copied to a temp project whose
 //! `gliner_router/ask_gliner.sh` is a stub that writes a chosen reply, with stub `opencode`,
 //! `claude` and test commands first on `PATH`. No model, no network. Also: the request decree
 //! writes carries a `reply_schema` over the options, the GLiNER quick starts are at most five
@@ -24,12 +24,15 @@ cp "$DECREE_PROJECT_ROOT/stub/reply.json" "$DECREE_REPLY"
 echo "picked (stub)"
 "#;
 
-/// Records the call in `calls`, and exits `$<TOOL>_EXIT` (default 0).
+/// Records the call in `calls`. The `claude` stub also writes `STOP` in the run directory
+/// when `stub/stop` exists, as Claude does when the message is unclear.
 fn stub_tool(tool: &str) -> String {
-    let var = format!("{}_EXIT", tool.to_uppercase());
-    format!(
-        "#!/usr/bin/env bash\necho {tool} >> \"$(dirname \"$0\")/calls\"\nexit \"${{{var}:-0}}\"\n"
-    )
+    let stop = if tool == "claude" {
+        "[ ! -f \"$DECREE_PROJECT_ROOT/stub/stop\" ] || echo 'Which limit?' > \"$DECREE_RUN_DIR/STOP\"\n"
+    } else {
+        ""
+    };
+    format!("#!/usr/bin/env bash\necho {tool} >> \"$(dirname \"$0\")/calls\"\n{stop}")
 }
 
 /// The test command (`TEST_CMD`): its n-th call exits with the n-th line of
@@ -101,6 +104,11 @@ impl Project {
     /// `decree process` with the stubs first on `PATH` and `TEST_CMD` the stub test command;
     /// it exits 0, or 1 when the migration ends in `failed`.
     fn process(&self, code: i32) {
+        self.process_with_tests(&self.bin().join("stub-tests").to_string_lossy(), code);
+    }
+
+    /// `decree process` with the stubs first on `PATH` and `test_cmd` as `TEST_CMD`.
+    fn process_with_tests(&self, test_cmd: &str, code: i32) {
         let path = std::env::join_paths(
             std::iter::once(self.bin())
                 .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
@@ -109,7 +117,7 @@ impl Project {
         cargo_bin_cmd!("decree")
             .current_dir(self.root())
             .env("PATH", path)
-            .env("TEST_CMD", self.bin().join("stub-tests"))
+            .env("TEST_CMD", test_cmd)
             .env("NO_COLOR", "1")
             .arg("process")
             .assert()
@@ -155,6 +163,24 @@ impl Project {
             .collect()
     }
 
+    /// The `attempt_value` of each `implement` script event, in order.
+    fn script_values(&self) -> Vec<String> {
+        self.events(RUN)
+            .iter()
+            .filter(|e| e["type"] == "script" && e["script"] == "implement")
+            .map(|e| e["attempt_value"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// The `attempt_value` of each `source: "attempt"` transition: the attempt it starts.
+    fn attempt_transitions(&self) -> Vec<String> {
+        self.events(RUN)
+            .iter()
+            .filter(|e| e["type"] == "transition" && e["source"] == "attempt")
+            .map(|e| e["attempt_value"].as_str().unwrap().to_string())
+            .collect()
+    }
+
     /// The `request.json` of the router run `size_up` waited for.
     fn request(&self) -> Value {
         let child = self
@@ -184,13 +210,13 @@ fn small_is_implemented_locally_and_done() {
         p.path(),
         [
             "describe done size_up",
-            "size_up small implement_local",
-            "implement_local done verify",
-            "verify done done",
+            "size_up small local_first",
+            "local_first done done",
         ]
     );
     assert_eq!(p.final_state(), "done");
     assert_eq!(p.calls(), ["opencode", "tests"]);
+    assert_eq!(p.script_values(), ["local"]);
 }
 
 #[test]
@@ -201,13 +227,13 @@ fn large_is_implemented_by_claude_and_done() {
         p.path(),
         [
             "describe done size_up",
-            "size_up large implement_claude",
-            "implement_claude done verify",
-            "verify done done",
+            "size_up large claude_only",
+            "claude_only done done",
         ]
     );
     assert_eq!(p.final_state(), "done");
     assert_eq!(p.calls(), ["claude", "tests"]);
+    assert_eq!(p.script_values(), ["claude"]);
 }
 
 #[test]
@@ -215,56 +241,130 @@ fn unsure_goes_to_claude() {
     let p = Project::new(SMALL_BUT_UNSURE, &[0]);
     p.process(0);
     assert_eq!(
-        p.path()[..3],
+        p.path(),
         [
             "describe done size_up",
-            "size_up unsure implement_claude",
-            "implement_claude done verify",
+            "size_up unsure claude_only",
+            "claude_only done done",
         ]
     );
     assert_eq!(p.final_state(), "done");
     assert_eq!(p.calls(), ["claude", "tests"]);
 }
 
+/// A local attempt that fails the tests moves to the next attempt, in the same state.
 #[test]
-fn small_that_fails_verify_escalates_to_claude_once_and_is_done() {
+fn small_that_fails_the_tests_once_is_done_on_the_second_local_attempt() {
     let p = Project::new(SMALL, &[1, 0]);
     p.process(0);
     assert_eq!(
         p.path(),
         [
             "describe done size_up",
-            "size_up small implement_local",
-            "implement_local done verify",
-            "verify error tried_claude",
-            "tried_claude true implement_claude",
-            "implement_claude done verify",
-            "verify done done",
+            "size_up small local_first",
+            "local_first error local_first",
+            "local_first done done",
         ]
     );
     assert_eq!(p.final_state(), "done");
-    assert_eq!(p.calls(), ["opencode", "tests", "claude", "tests"]);
+    assert_eq!(p.calls(), ["opencode", "tests", "opencode", "tests"]);
+    assert_eq!(p.script_values(), ["local", "local"]);
+    assert_eq!(p.attempt_transitions(), ["local"]);
 }
 
 #[test]
-fn small_that_fails_locally_and_with_claude_is_failed() {
-    let p = Project::new(SMALL, &[1, 1]);
-    p.process(1);
+fn small_that_fails_locally_twice_is_done_by_claude() {
+    let p = Project::new(SMALL, &[1, 1, 0]);
+    p.process(0);
+    assert_eq!(p.final_state(), "done");
+    assert_eq!(
+        p.calls(),
+        ["opencode", "tests", "opencode", "tests", "claude", "tests"]
+    );
+    assert_eq!(p.script_values(), ["local", "local", "claude"]);
+    assert_eq!(p.attempt_transitions(), ["local", "claude"]);
+}
+
+/// With `TEST_CMD=false`, `local_first` runs `implement` three times, with `local`, `local`
+/// and `claude`, and the run ends in `failed`.
+#[test]
+fn local_first_whose_tests_always_fail_tries_local_local_claude_and_is_failed() {
+    let p = Project::new(SMALL, &[]);
+    p.process_with_tests("false", 1);
     assert_eq!(
         p.path(),
         [
             "describe done size_up",
-            "size_up small implement_local",
-            "implement_local done verify",
-            "verify error tried_claude",
-            "tried_claude true implement_claude",
-            "implement_claude done verify",
-            "verify error tried_claude",
-            "tried_claude false failed",
+            "size_up small local_first",
+            "local_first error local_first",
+            "local_first error local_first",
+            "local_first error failed",
         ]
     );
     assert_eq!(p.final_state(), "failed");
-    assert_eq!(p.calls(), ["opencode", "tests", "claude", "tests"]);
+    assert_eq!(p.calls(), ["opencode", "opencode", "claude"]);
+    assert_eq!(p.script_values(), ["local", "local", "claude"]);
+    assert_eq!(p.attempt_transitions(), ["local", "claude"]);
+}
+
+#[test]
+fn claude_only_whose_tests_always_fail_tries_claude_twice_and_is_failed() {
+    let p = Project::new(LARGE, &[1, 1]);
+    p.process(1);
+    assert_eq!(p.final_state(), "failed");
+    assert_eq!(p.calls(), ["claude", "tests", "claude", "tests"]);
+    assert_eq!(p.script_values(), ["claude", "claude"]);
+}
+
+/// Claude writes `STOP` instead of guessing: the event is `stop`, no more attempts run, the
+/// tests do not run, and the run ends in `failed` with the question in the log.
+#[test]
+fn a_stop_from_an_attempt_ends_the_run_in_failed() {
+    let p = Project::new(SMALL, &[1, 1]);
+    fs::write(p.root().join("stub/stop"), "").unwrap();
+    p.process(1);
+    assert_eq!(
+        p.path()[2..],
+        [
+            "local_first error local_first",
+            "local_first error local_first",
+            "local_first stop failed",
+        ]
+    );
+    assert_eq!(p.final_state(), "failed");
+    assert_eq!(
+        p.calls(),
+        ["opencode", "tests", "opencode", "tests", "claude"]
+    );
+    let logs: String = fs::read_dir(p.run_dir(RUN))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|path| path.to_string_lossy().ends_with("-implement.log"))
+        .map(|path| fs::read_to_string(path).unwrap())
+        .collect();
+    assert!(logs.contains("Which limit?"), "{logs}");
+}
+
+/// An attempt value other than `local` or `claude` is an error naming it, and runs nothing.
+#[test]
+fn an_unknown_attempt_value_is_an_error_naming_it() {
+    let p = Project::new(SMALL, &[0]);
+    let run = p.root().join("run");
+    fs::create_dir(&run).unwrap();
+    let out = Command::new(
+        p.root()
+            .join(".decree/scripts/develop_by_size/implement.sh"),
+    )
+    .env("DECREE_ATTEMPT_VALUE", "gpt")
+    .env("DECREE_RUN_DIR", &run)
+    .env("DECREE_MESSAGE", p.root().join("message.md"))
+    .env("DECREE_EVENT_FILE", run.join(".event"))
+    .output()
+    .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unknown attempt value 'gpt'"), "{stderr}");
+    assert!(p.calls().is_empty());
 }
 
 /// The classifier reads the title, the acceptance criteria and the size of the files the

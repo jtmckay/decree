@@ -1,85 +1,91 @@
-# ComfyUI Media — Image & Video Generation Pipeline
+# Text to media on ComfyUI: build, submit, await, fetch
 
-Generate images and videos via [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
-REST API using decree migrations.
+Generate images and videos with [ComfyUI](https://github.com/comfyanonymous/ComfyUI)'s API, one message per render. The message names the workflow, its body is the prompt, and the render is saved in the repository at the path the message gives.
 
-## What This Demonstrates
+ComfyUI's API is fire and forget: `POST /prompt` queues a workflow and answers with a prompt id at once, before anything renders. So one render is four steps: build the workflow, submit it, await the render, and fetch the files. A machine that stops after submitting never knows whether the render worked, and never gets the file.
 
-- **Multiple machines** — three machines for different generation modes
-  (text-only, text+image, image-to-video)
-- **Shared and per-machine scripts** — `precheck` and `queue_prompt` live once
-  in `.decree/scripts/` and serve all three machines; each machine's own
-  `build_payload` lives in `.decree/scripts/<machine>/`, which decree checks
-  first
-- **Workflow templates** — ComfyUI JSON workflows in `workflows/` are
-  patched with jq at runtime using the message's `params`
-- **Machines without AI agents** — no AI assistant involved; the scripts call
-  the ComfyUI API directly
+No model is involved: the scripts call ComfyUI directly, with `curl` and `jq`.
 
-## Machines
+## The machine
 
-| Machine | Workflow | Description |
-|---------|----------|-------------|
-| `comfy_image_text` | FLUX2 text-to-image | Generate images from text prompts |
-| `comfy_image_text_image` | FLUX2 text+image | Generate images guided by text and a reference image |
-| `comfy_video_i2v` | WAN2.2 image-to-video | Animate a still image into video with text guidance |
+[`machines/comfy.yml`](.decree/machines/comfy.yml) ([graph](.decree/graph/comfy.md)):
 
-Each runs `precheck` (curl and jq are installed), `build_payload` (patch the
-workflow into `runs/<id>/comfy-payload.json`) and `queue_prompt` (post it,
-save the reply as `runs/<id>/comfy-response.json`). The graphs are in
-[`.decree/graph/`](.decree/graph/system.md).
+```mermaid
+stateDiagram-v2
+    [*] --> build
+    await --> fetch: done
+    await --> failed: error (implicit)
+    build --> submit: done
+    build --> failed: error (implicit)
+    fetch --> done: done
+    fetch --> failed: error (implicit)
+    submit --> await: done
+    submit --> failed: error (implicit)
+    done --> [*]
+    failed --> [*]
+    note left of build
+        machine onentry: precheck
+    end note
+```
 
-## Message Format
+1. The root `onentry`, [`precheck`](.decree/scripts/precheck.sh), fails fast if `curl` or `jq` is missing.
+2. [`build`](.decree/scripts/comfy/build.sh) patches `workflows/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type (the positive `CLIPTextEncode`, every node with a `width`, `height`, `seed` or `noise_seed`, every `filename_prefix`), so a new method is a new workflow file. It fails, before anything is sent, on an unknown method, listing the methods, or on a missing `method`, `output` or prompt, or a missing `input_image` when the workflow loads an image.
+3. [`submit`](.decree/scripts/comfy/submit.sh) uploads `input_image`, if any (`POST /upload/image`), queues the workflow (`POST /prompt`) and keeps the prompt id. It is safe to repeat, so it has `attempts: 3`.
+4. [`await`](.decree/scripts/comfy/await.sh) polls `GET /history/<prompt id>` every `COMFY_POLL_S` seconds (5) until the prompt is there, which it is once it finishes, and fails if it did not succeed. It has no attempts: a render that never finishes, within its 3 h timeout, is something to look at, not to retry.
+5. [`fetch`](.decree/scripts/comfy/fetch.sh) downloads each file the prompt saved (`GET /view`) to `output` plus the file's extension, or `output-<n>` plus it when there are several. It is safe to repeat, so it has `attempts: 3`.
 
-### Text-to-Image
+The scripts find ComfyUI at `COMFY_URL`, `http://127.0.0.1:8188` by default, as in [`tmux-services`](../tmux-services/README.md).
+
+## Methods and messages
+
+A method is a workflow in [`workflows/`](workflows/), by file stem. One message per method:
+
+### `image_flux2_text_landscape`: an image from text (FLUX2)
 
 ```yaml
 ---
-machine: comfy_image_text
+machine: comfy
 params:
-  width: 800              # optional, default: 400
-  height: 400             # optional, default: 400
-  output_prefix: my_image # required — ComfyUI output filename prefix
+  method: image_flux2_text_landscape
+  output: output/unicorn_landscape   # required: repo path without extension
+  width: 800                         # optional: 0 keeps the workflow's own value
+  height: 400
+  seed: 42                           # optional: -1 keeps the workflow's own value
 ---
-Your image generation prompt goes here.
+A unicorn running along a rainbow into a pink sunset, fantasy art.
 ```
 
-### Text + Reference Image
+### `image_flux2_text_image`: an image from text and a reference image (FLUX2)
 
 ```yaml
 ---
-machine: comfy_image_text_image
+machine: comfy
 params:
-  input_image: reference.png  # required — filename in ComfyUI's input dir
-  output_prefix: my_output    # required
+  method: image_flux2_text_image
+  output: output/style_transfer_demo
+  input_image: images/reference.png  # required: repo path, uploaded to ComfyUI
 ---
-Describe the desired output, referencing the input image.
+Same character and pose as the reference image, reimagined in anime style.
 ```
 
-### Image-to-Video
+### `video_i2v_wan2.2_14B_long`: a video from a still image (WAN2.2 14B)
 
 ```yaml
 ---
-machine: comfy_video_i2v
+machine: comfy
 params:
-  input_image: frame.png      # required — first frame image
-  output_prefix: my_video     # required
-  width: 640                  # optional, default: 640
-  height: 640                 # optional, default: 640
+  method: video_i2v_wan2.2_14B_long
+  output: output/lily_waving
+  input_image: output/character_lily_fullbody.png   # required: the first frame
+  width: 640
+  height: 640
 ---
-Describe the motion and scene for the video.
+The character gently waves her hand and smiles.
 ```
 
-Every machine also takes `api_url` (default: `http://127.0.0.1:8288/api/prompt`).
+## Running it
 
-## Prerequisites
-
-- A running [ComfyUI](https://github.com/comfyanonymous/ComfyUI) instance
-  (default: `http://127.0.0.1:8288`)
-- FLUX2 and/or WAN2.2 models loaded in ComfyUI
-- `curl` and `jq` installed
-
-## Usage
+You need a running ComfyUI with the FLUX2 and WAN2.2 models the workflows load, and `curl` and `jq`. [`migrations/`](.decree/migrations/) holds four renders; the third restyles a picture of yours, which it expects at `images/reference.png`, and the fourth animates the second's image.
 
 ```bash
 cd examples/text-to-media
@@ -88,14 +94,82 @@ decree process
 decree status
 ```
 
-## Daemon Mode
-
-Queue messages in `.decree/inbox/` for continuous generation:
+The renders are in `output/`. To render from other tools (a game engine, a web app), queue messages and keep a daemon running:
 
 ```bash
-echo "A lighthouse at dawn, oil painting" | decree emit --machine comfy_image_text --param output_prefix=lighthouse
+echo "A lighthouse at dawn, oil painting" | decree emit --machine comfy --param method=image_flux2_text_landscape --param output=output/lighthouse
 decree daemon
 ```
 
-This is particularly useful when integrating with external tools (game
-engines, web apps) that produce generation requests programmatically.
+## Commissioning from another machine
+
+A machine that needs art commissions it with `emits`: a state lists `comfy` in `emits`, and its script runs `decree emit` once per piece. This is how a `develop` machine can end, once a change is verified:
+
+```yaml
+  commission:                      # one comfy message per piece of art the change needs
+    invoke: commission
+    transitions: { done: done }
+    emits: [comfy]
+```
+
+```sh
+# commission.sh: art.tsv lists the pieces, one per line: method, output, prompt
+while IFS=$'\t' read -r method output prompt; do
+  printf '%s\n' "$prompt" | decree emit --machine comfy --param method="$method" --param output="$output"
+done < "$DECREE_RUN_DIR/art.tsv"
+```
+
+Each piece becomes its own `comfy` run, with its own log and retries, so one failed render does not fail the change: the change is done, and the failed render is one run to look at and retry.
+
+## When messages stop naming a method
+
+Every message here names its method, and while senders can, that is all it takes. Once they cannot, for instance when a model writes the commissions in prose, the next step is to let the params narrow the choice, and a typed classifier pick among only the methods that fit:
+
+```yaml
+initial: has_method
+states:
+  has_method:
+    invoke:
+      check: { data: method, matches: '\S' }
+    transitions: { true: build, false: has_input_image }
+  has_input_image:                 # with no image, only one method fits
+    invoke:
+      check: { data: input_image, matches: '\S' }
+    transitions: { true: pick_from_image, false: build_text }
+  pick_from_image:                 # typed: the classifier can only pick a method that takes an image
+    invoke:
+      model:
+        question: Which ComfyUI workflow fits this commission?
+        router: gliner_router
+        min_confidence: 0.5
+    transitions:
+      restyle:
+        target: build_restyle
+        description: A still image that edits, restyles or reworks the reference image according to the text.
+      animate:
+        target: build_animate
+        description: A video that animates the reference image, used as its first frame.
+      unsure: failed
+  build_text:    { invoke: build, transitions: { done: submit } }
+  build_restyle: { invoke: build, transitions: { done: submit } }
+  build_animate: { invoke: build, transitions: { done: submit } }
+```
+
+`gliner_router` is the typed router from [`route-by-complexity`](../route-by-complexity/README.md). A pick reaches `build` only through the state it leads to, so `build` would read the method from `$DECREE_STATE` when `method` is empty (`build_animate` is `video_i2v_wan2.2_14B_long`). `unsure` fails rather than guessing, since a wrong render costs GPU time and still needs a person. This example leaves all of this out on purpose: it is not needed until senders cannot name the method.
+
+## The files
+
+```text
+examples/text-to-media/
+  workflows/                         the methods: ComfyUI workflows in API format, by file stem
+  .decree/
+    machines/comfy.yml               build, submit, await, fetch
+    scripts/
+      precheck.sh                    root onentry: curl and jq are installed
+      comfy/build.sh                 patches workflows/<method>.json into runs/<id>/comfy-payload.json
+      comfy/submit.sh                uploads input_image, POST /prompt, keeps the prompt id
+      comfy/await.sh                 polls /history/<prompt id> until the prompt finishes
+      comfy/fetch.sh                 downloads each output to `output` plus its extension
+    migrations/                      four renders to try it with
+    graph/  schema/                  written by `decree graph` and `decree schema`
+```

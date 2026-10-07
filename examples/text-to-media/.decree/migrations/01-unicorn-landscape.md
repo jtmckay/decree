@@ -1,9 +1,10 @@
 ---
-machine: comfy_image_text
+machine: comfy
 params:
+  method: image_flux2_text_landscape
+  output: output/unicorn_landscape
   width: 800
   height: 400
-  output_prefix: unicorn_landscape
 ---
 
 A unicorn running along a rainbow into a pink sunset, fantasy art,

@@ -14,35 +14,37 @@ This example sends each change to the cheapest model that can do it. A local cla
 ```mermaid
 stateDiagram-v2
     [*] --> describe
+    claude_only --> done: done
+    claude_only --> failed: error (implicit)
+    claude_only --> failed: stop
     describe --> size_up: done
     describe --> failed: error (implicit)
-    implement_claude --> verify: done
-    implement_claude --> failed: error (implicit)
-    implement_claude --> failed: stop
-    implement_local --> verify: done
-    implement_local --> implement_claude: error
-    size_up --> implement_claude: error
-    size_up --> implement_claude: large (model: gliner_router)
-    size_up --> implement_local: small (model: gliner_router)
-    size_up --> implement_claude: unsure (model: gliner_router)
-    tried_claude --> failed: false (check)
-    tried_claude --> implement_claude: true (check)
-    verify --> done: done
-    verify --> tried_claude: error
+    local_first --> done: done
+    local_first --> failed: error (implicit)
+    local_first --> failed: stop
+    size_up --> claude_only: error
+    size_up --> claude_only: large (model: gliner_router)
+    size_up --> local_first: small (model: gliner_router)
+    size_up --> claude_only: unsure (model: gliner_router)
     done --> [*]
     failed --> [*]
+    note right of claude_only
+        attempts: claude → claude
+    end note
+    note right of local_first
+        attempts: local → local → claude
+    end note
     note right of size_up
         model: gliner_router, min_confidence 0.7
-    end note
-    note right of tried_claude
-        check: visits implement_claude less_than 1
     end note
 ```
 
 1. `describe` prints what the classifier reads: the message's title, its acceptance criteria, and the files it names that exist, with their line counts, so the classifier sees a size and not only prose.
 2. `size_up` asks [`gliner_router`](.decree/machines/gliner_router.yml) "How much reasoning does this change need?", with two options: `small` ("A local, mechanical change: a typo, a rename, a config value, one small function with a clear spec.") and `large` ("Design, several files, unclear requirements, concurrency or security."). Below `min_confidence: 0.7` the event is `unsure`, and `unsure` goes to Claude: when in doubt, use the stronger model. So does `error`, when the classifier is not running.
-3. `implement_local` runs `opencode run --model ollama/<model>`; `implement_claude` runs `claude -p`, logging each step in the run's `progress.md` and writing `STOP` instead of guessing, as `rust_develop` does.
-4. `verify` runs `$TEST_CMD` (`cargo test` by default). If it fails after the local model, `tried_claude` sends the change to Claude once; if it fails after Claude, the run ends in `failed`.
+3. `local_first` and `claude_only` run one script, [`implement`](.decree/scripts/develop_by_size/implement.sh), once per entry of their attempt list until an attempt succeeds. The entry, in `$DECREE_ATTEMPT_VALUE`, names the tool: `local` runs `opencode run --model ollama/<model>`, and `claude` runs `claude -p`, logging each step in the run's `progress.md` and writing `STOP` instead of guessing, as `rust_develop` does. A `STOP` from any attempt is the `stop` event, which ends the run in `failed` until a person answers it.
+4. Each attempt then runs `$TEST_CMD` (`cargo test` by default), and fails if the tests fail. `local_first` tries `local`, `local`, then `claude`; `claude_only` tries `claude` twice. If every attempt fails, the event is `error`, and the run ends in `failed`.
+
+The tests run inside the attempt because an attempt succeeds when the change passes the tests, not when the model stops talking. So a local model's change that fails them moves to the next attempt, in the same state, with no state to count the tries.
 
 ## Running it
 
@@ -70,7 +72,7 @@ The `curl` prints the reply as `gliner_router` writes it, `{"event": "small", "c
 
 ### The local model, through OpenCode
 
-`implement_local` names the model in one variable at its top, `OLLAMA_MODEL`, which defaults to `qwen3-coder:30b` (19 GB). Pull it, and tell OpenCode about Ollama in the project's `opencode.json` ([OpenCode's Ollama provider](https://opencode.ai/docs/providers/)):
+`implement` names the local model in one variable at its top, `OLLAMA_MODEL`, which defaults to `qwen3-coder:30b` (19 GB). Pull it, and tell OpenCode about Ollama in the project's `opencode.json` ([OpenCode's Ollama provider](https://opencode.ai/docs/providers/)):
 
 ```sh
 ollama pull qwen3-coder:30b
@@ -94,14 +96,14 @@ OpenCode's docs suggest raising Ollama's `num_ctx` (16k to 32k) if tool calls do
 
 ## Tuning `min_confidence`
 
-0.7 is a starting point, and it belongs to this classifier ([Confidence is calibrated per router](../../docs/routers.md#confidence-is-calibrated-per-router)). Every `size_up` records a `decision` event with the pick, the confidence and the event that followed, and every `verify` failure is a `transition` event. Ship them to Loki as in [`observability`](../observability/README.md), and compare in Grafana:
+0.7 is a starting point, and it belongs to this classifier ([Confidence is calibrated per router](../../docs/routers.md#confidence-is-calibrated-per-router)). Every `size_up` records a `decision` event with the pick, the confidence and the event that followed, and every failed attempt is a `transition` event with `source: "attempt"` and the `attempt_value` of the attempt it starts. Ship them to Loki as in [`observability`](../observability/README.md), and compare in Grafana:
 
 ```logql
 # what the classifier picked, and how sure it was
 {job="decree", type="decision", machine="develop_by_size"} | json | state="size_up" | line_format "{{.run_id}} {{.pick}} {{.confidence}} {{.event}}"
 
-# local attempts that failed the tests and went to Claude
-{job="decree", type="transition", machine="develop_by_size"} | json | from="tried_claude" and event="true"
+# local attempts that failed the tests: each starts the next attempt, and "claude" means both failed
+{job="decree", type="transition", machine="develop_by_size"} | json | source="attempt" and from="local_first" | line_format "{{.run_id}} next: {{.attempt_value}}"
 ```
 
 If `small` picks above the threshold often fail the tests, raise it; if `unsure` changes that Claude then did were mostly small, lower it.
@@ -113,13 +115,11 @@ examples/route-by-complexity/
   gliner/decide_server.py              the classifier server (the one copy of it in the repository)
   .decree/
     machines/
-      develop_by_size.yml              size up, implement locally or with Claude, verify
+      develop_by_size.yml              size up, then implement and test: locally first, or with Claude only
       gliner_router.yml                a typed router: asks the classifier server (the same file as in sort-documents)
     scripts/
       develop_by_size/describe.sh      prints the title, acceptance criteria and named files with line counts
-      develop_by_size/implement_local.sh   opencode run with an Ollama model
-      develop_by_size/implement_claude.sh  claude -p, with progress.md and STOP
-      develop_by_size/verify.sh        $TEST_CMD, cargo test by default
+      develop_by_size/implement.sh     one attempt: opencode with an Ollama model (local) or claude -p (claude), then $TEST_CMD
       gliner_router/ask_gliner.sh      posts the request to the classifier server, writes the reply
     migrations/01-raise-upload-limit.md   a small change to try it with
     graph/  schema/                    written by `decree graph` and `decree schema`

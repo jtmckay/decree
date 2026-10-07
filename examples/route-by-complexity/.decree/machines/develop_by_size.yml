@@ -1,18 +1,19 @@
 # yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop_by_size.md
 # Route by complexity: a typed classifier (GLiNER2.5-Decide, on CPU, in
-# milliseconds) decides whether a change is small enough for a local model
-# served by Ollama, or needs Claude. When in doubt, and when local work fails
-# verification, Claude does it.
+# milliseconds) decides whether a change is small enough to try first with a
+# local model served by Ollama, or needs Claude. Each attempt implements the
+# change and runs the tests; a failed attempt moves to the next value, so local
+# work that fails the tests goes to Claude in the same state.
 name: develop_by_size
-description: Size up a change with a local classifier, implement it with a local model or with Claude, and verify it.
+description: Size up a change with a local classifier, then implement and test it, locally first or with Claude only, moving to Claude when local attempts fail the tests.
 initial: describe
 states:
   describe:                        # prints the title, acceptance criteria and named files with line counts
     invoke: describe
     transitions: { done: size_up }
 
-  size_up:                         # typed: the classifier can only pick small or large
+  size_up:                         # typed: the classifier picks where to start; unsure or down goes to Claude
     invoke:
       model:
         question: How much reasoning does this change need?
@@ -21,31 +22,23 @@ states:
         output: describe
     transitions:
       small:
-        target: implement_local
+        target: local_first
         description: "A local, mechanical change: a typo, a rename, a config value, one small function with a clear spec."
       large:
-        target: implement_claude
+        target: claude_only
         description: Design, several files, unclear requirements, concurrency or security.
-      unsure: implement_claude     # when in doubt, use the stronger model
-      error: implement_claude      # no classifier: use the stronger model
+      unsure: claude_only          # when in doubt, use the stronger model
+      error: claude_only           # no classifier: use the stronger model
 
-  implement_local:                 # opencode run with a model served by Ollama
-    invoke: implement_local
-    transitions: { done: verify, error: implement_claude }
-
-  implement_claude:                # claude -p; logs each step in progress.md; writes STOP instead of guessing
+  local_first:                     # each attempt implements, then runs the tests; a failure moves to the next
     invoke:
-      script: { name: implement_claude, attempts: 2 }
-    transitions: { done: verify, stop: failed }
+      script: { name: implement, attempts: [local, local, claude] }
+    transitions: { done: done, stop: failed }
 
-  verify:                          # $TEST_CMD, cargo test by default
-    invoke: verify
-    transitions: { done: done, error: tried_claude }
-
-  tried_claude:                    # a failed local attempt escalates to Claude once
+  claude_only:                     # each attempt runs claude -p, then the tests
     invoke:
-      check: { visits: implement_claude, less_than: 1 }
-    transitions: { true: implement_claude, false: failed }
+      script: { name: implement, attempts: [claude, claude] }
+    transitions: { done: done, stop: failed }
 
   done:   { final: true }
   failed: { final: true }

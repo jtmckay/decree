@@ -1,9 +1,10 @@
 ---
-machine: comfy_image_text
+machine: comfy
 params:
+  method: image_flux2_text_landscape
+  output: output/character_lily_fullbody
   width: 400
   height: 600
-  output_prefix: character_lily_fullbody
 ---
 
 Children's storybook illustration, soft warm watercolor style, whimsical

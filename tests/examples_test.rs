@@ -247,12 +247,16 @@ out=$(printf '%s\n' "$prompt" | grep -o 'markdown to [^ ]*' | tail -n 1 | cut -d
 echo "stub claude""#,
     ),
     ("opencode", r#"echo "stub opencode $1""#),
-    // `-o <file>` gets a body; otherwise a ComfyUI reply plus the `-w` status code.
+    // `-o <file>` gets a body; ComfyUI's /upload/image and /history/<id> get a reply that
+    // names one saved image; anything else gets a ComfyUI prompt id.
     (
         "curl",
-        r#"out=""; w=""
-while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; -w) w=$2; shift 2 ;; *) shift ;; esac; done
-if [ -n "$out" ]; then echo stub > "$out"; else printf '{"prompt_id":"stub"}'; [ -z "$w" ] || printf '\n200'; fi"#,
+        r#"out=""; url=""
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; http*) url=$1; shift ;; *) shift ;; esac; done
+if [ -n "$out" ]; then echo stub > "$out"
+elif [[ "$url" == */upload/image ]]; then printf '{"name":"stub.png","subfolder":"","type":"input"}'
+elif [[ "$url" == */history/* ]]; then printf '{"stub":{"status":{"status_str":"success"},"outputs":{"9":{"images":[{"filename":"stub.png","subfolder":"","type":"output"}]}}}}'
+else printf '{"prompt_id":"stub"}'; fi"#,
     ),
     // Copies the `-i` input to the last argument.
     (
@@ -422,17 +426,30 @@ fn text_to_media_readme_commands_run() {
     if !has_jq() {
         return;
     }
-    let dir = run_readme("text-to-media", "true");
+    // The README's prerequisite: a picture of yours for the third render.
+    let dir = run_readme(
+        "text-to-media",
+        "mkdir -p images && echo picture > images/reference.png",
+    );
     let project = dir.path().join("examples/text-to-media");
     assert_eq!(processed(&project).len(), 4);
     assert_eq!(all_runs_done(&project), 5);
+    for render in [
+        "unicorn_landscape",
+        "character_lily_fullbody",
+        "style_transfer_demo",
+        "lily_waving",
+        "lighthouse",
+    ] {
+        assert!(
+            project.join(format!("output/{render}.png")).is_file(),
+            "{render}"
+        );
+    }
     let payload =
         fs::read_to_string(project.join(".decree/runs/04-animate-character/comfy-payload.json"))
             .unwrap();
-    assert!(payload.contains("\"lily_waving\""), "{payload}");
-    assert!(project
-        .join(".decree/runs/04-animate-character/comfy-response.json")
-        .is_file());
+    assert!(payload.contains("The character gently waves"), "{payload}");
 }
 
 #[test]
