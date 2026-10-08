@@ -114,7 +114,11 @@ appear only where a machine invokes `model` or `person`.
 source `lib/ai.sh` (the `ai` function for the chosen `--ai`; add another backend there) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`). The project fills in `scripts/develop/gate.sh` with its own checks; until then it
-runs nothing and says so. `verify` ends in `pass` or `fail` from the AI's `VERDICT:` line.
+runs nothing, says so and names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,
+then `final_gate`, whose `fail` ends the run); a non-zero exit means the checks could not run,
+such as a missing tool, and goes to `failed` without `fix`. `lib/ai.sh` runs the agent with
+`DECREE_EVENT_FILE=/dev/null`, so a gate the agent runs names no event for its caller. `verify`
+ends in `pass` or `fail` from the AI's `VERDICT:` line.
 Start from it before writing a new develop-style machine.
 
 ## Worked example

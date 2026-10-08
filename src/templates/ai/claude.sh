@@ -7,9 +7,12 @@
 # CLAUDE_PERMISSION_MODE is passed to every call, so the run does not inherit your
 # interactive default (in `plan` mode Claude can only plan, and changes nothing). `auto`
 # approves what Claude's classifier judges safe; `acceptEdits` approves only file edits.
+# Claude names no event (it writes STOP instead), so a script it runs, such as
+# the gate, cannot name the caller's.
 CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-auto}"
 ai() {
   local prompt=$1 session out status
+  local -x DECREE_EVENT_FILE=/dev/null
   session=$(new_session_id)
   echo "=== claude session ${session} ===" >&2
   echo "${DECREE_STATE} ${session} ${HOME}/.claude/projects/$(pwd | sed 's/[^A-Za-z0-9]/-/g')/${session}.jsonl" \

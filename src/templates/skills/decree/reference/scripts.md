@@ -91,7 +91,8 @@ reads none of them; the built-in `develop` machine's scripts follow this convent
 - `STOP`: a question instead of a guess. A script that finds it prints it and writes `stop` to
   `$DECREE_EVENT_FILE`; it keeps stopping retries until a person answers and deletes it.
 - `gate.log`: the output of the project's checks (`scripts/develop/gate.sh`), for the step that
-  fixes them.
+  fixes them. The gate names `pass` or `fail`; a non-zero exit (`error`) means the checks could
+  not run, such as a missing tool, and its message is here.
 - `plan.md`: an optional plan a step writes for later ones.
 
 ## Environment

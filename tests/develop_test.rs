@@ -1,9 +1,9 @@
 //! The built-in `develop` machine `decree init` writes (docs/reference/cli.md, `decree init`):
 //! it passes `decree check`, its scripts source `lib/ai.sh`, the default gate runs nothing
 //! and says so, `verify` names `pass` or `fail` from the AI's `VERDICT:` line, a run hands a
-//! failed gate to `fix` and stops on a `STOP` file, and Claude's usage limit is waited out
-//! and the session resumed. `claude`, `date` and `sleep` are stubs on `PATH`, and the gate
-//! is a stub script; no test calls a model.
+//! failed gate to `fix`, ends a gate that could not run in `failed`, and stops on a `STOP`
+//! file, and Claude's usage limit is waited out and the session resumed. `claude`, `date`,
+//! `sleep` and the gate's one check are stubs on `PATH`; no test calls a model.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
@@ -21,7 +21,7 @@ const MESSAGE: &str =
 /// Records its flags and the prompt's first line in `calls`. With `CLAUDE_LIMIT` set,
 /// the first call prints it and exits 1; a prompt containing `CLAUDE_FAIL_ON` exits 1.
 /// With `CLAUDE_STOP` set, it writes that to the run's `STOP` file, as an agent that
-/// cannot go on would. A prompt asking for a verdict is answered with `CLAUDE_REPLY`,
+/// cannot go on would. With `CLAUDE_RUNS_GATE` set, it runs the gate, as `fix` asks. A prompt asking for a verdict is answered with `CLAUDE_REPLY`,
 /// by default `VERDICT: pass`.
 const STUB_CLAUDE: &str = r#"#!/usr/bin/env bash
 dir=$(dirname "$0")
@@ -29,6 +29,9 @@ prompt=${!#}
 printf '%s | %s\n' "${*:1:$#-1}" "$(head -n 1 <<<"$prompt")" >> "$dir/calls"
 if [ -n "${CLAUDE_STOP:-}" ]; then
   echo "$CLAUDE_STOP" > "$DECREE_RUN_DIR/STOP"
+fi
+if [ -n "${CLAUDE_RUNS_GATE:-}" ]; then
+  .decree/scripts/develop/gate.sh
 fi
 if [ -n "${CLAUDE_LIMIT:-}" ] && [ ! -e "$dir/limited" ]; then
   touch "$dir/limited"
@@ -45,17 +48,21 @@ if [[ $prompt == *"VERDICT: pass"* ]]; then
 fi
 "#;
 
-/// The gate: prints its checks to gate.log and exits `GATE_EXIT` (default 0). With
+/// The gate's one check: prints that it ran and exits `GATE_EXIT` (default 0). With
 /// `GATE_FAIL_ONCE` set, only its first call fails, as if `fix` then fixed the code.
-const STUB_GATE: &str = r#"#!/usr/bin/env bash
-set -euo pipefail
+const STUB_CHECK: &str = r#"#!/usr/bin/env bash
 status=${GATE_EXIT:-0}
 if [ -n "${GATE_FAIL_ONCE:-}" ] && [ ! -e "$DECREE_RUN_DIR/gate.failed" ]; then
   touch "$DECREE_RUN_DIR/gate.failed"
   status=1
 fi
-{ echo "checks ran"; exit "$status"; } 2>&1 | tee "$DECREE_RUN_DIR/gate.log"
+echo "checks ran"
+exit "$status"
 "#;
+
+/// The line of the gate `init` writes that stands in for the project's checks.
+const UNCONFIGURED: &str =
+    "  echo \"gate: no checks configured; edit .decree/scripts/develop/gate.sh\"\n";
 
 /// The local time is always `STUB_NOW`.
 const STUB_DATE: &str = "#!/usr/bin/env bash\necho \"$STUB_NOW\"\n";
@@ -68,7 +75,8 @@ struct Project {
 }
 
 impl Project {
-    /// `decree init --ai claude`, plus a `bin/` holding a stub `claude`, and a stub gate.
+    /// `decree init --ai claude`, plus a `bin/` holding a stub `claude`, and the gate
+    /// `init` wrote with its checks replaced by the stub `check`.
     fn init() -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
@@ -76,8 +84,16 @@ impl Project {
         p.decree(&["init", "--ai", "claude"]).assert().success();
         fs::create_dir(p.bin()).unwrap();
         p.stub("claude", STUB_CLAUDE);
-        write_script(&p.script("gate"), STUB_GATE);
+        p.stub("check", STUB_CHECK);
+        p.edit_gate(UNCONFIGURED, "  check\n");
         p
+    }
+
+    /// Replaces `from` in the gate with `to`.
+    fn edit_gate(&self, from: &str, to: &str) {
+        let gate = fs::read_to_string(self.script("gate")).unwrap();
+        assert!(gate.contains(from), "{from}");
+        write_script(&self.script("gate"), &gate.replacen(from, to, 1));
     }
 
     /// `.decree/scripts/develop/<name>.sh`.
@@ -230,36 +246,105 @@ fn init_writes_develop_router_and_lib_ai_sh_and_they_pass_check() {
             assert!(!text.contains("ai()"), "{ai}: {script} defines ai()");
         }
         assert!(decree.join("graph/develop.md").is_file(), "{ai}");
+        let develop = fs::read_to_string(decree.join("machines/develop.yml")).unwrap();
+        for transitions in [
+            "transitions: { pass: verify, fail: fix }",
+            "transitions: { pass: verify, fail: failed }",
+        ] {
+            assert!(develop.contains(transitions), "{ai}: {transitions}");
+        }
+        let gate = fs::read_to_string(decree.join("scripts/develop/gate.sh")).unwrap();
+        for event in ["echo pass > ", "echo fail > "] {
+            assert!(gate.contains(event), "{ai}: {event}");
+        }
         p.decree(&["check"]).assert().code(0);
     }
 }
 
-/// The gate `init` writes runs no checks, says so in its output and in gate.log, and exits 0.
+/// `gate.sh` run on its own: its exit code, stdout, stderr, gate.log and the event it wrote.
+fn gate_alone(p: &Project) -> (Option<i32>, String, String, String, String) {
+    let run_dir = p.root().join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let event_file = run_dir.join("event");
+    fs::write(&event_file, "").unwrap();
+    let out = std::process::Command::new(p.script("gate"))
+        .current_dir(p.root())
+        .env("PATH", p.path())
+        .env("DECREE_RUN_DIR", &run_dir)
+        .env("DECREE_EVENT_FILE", &event_file)
+        .output()
+        .unwrap();
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        fs::read_to_string(run_dir.join("gate.log")).unwrap(),
+        fs::read_to_string(&event_file).unwrap(),
+    )
+}
+
+/// The gate `init` writes runs no checks, says so in its output and in gate.log, and
+/// names `pass`. Its commented checks each have a `command -v` line.
 #[test]
-fn the_default_gate_exits_0_and_says_it_is_unconfigured() {
+fn the_default_gate_says_it_is_unconfigured_and_names_pass() {
     let p = Project {
         tmp: TempDir::new().unwrap(),
     };
     p.decree(&["init", "--ai", "claude"]).assert().success();
-    let run_dir = p.root().join("run");
-    fs::create_dir(&run_dir).unwrap();
-    let out = std::process::Command::new(p.script("gate"))
-        .current_dir(p.root())
-        .env("DECREE_RUN_DIR", &run_dir)
-        .output()
-        .unwrap();
     let said = "gate: no checks configured; edit .decree/scripts/develop/gate.sh\n";
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(String::from_utf8_lossy(&out.stdout), said);
-    assert_eq!(fs::read_to_string(run_dir.join("gate.log")).unwrap(), said);
+    assert_eq!(
+        gate_alone(&p),
+        (
+            Some(0),
+            said.to_string(),
+            String::new(),
+            said.to_string(),
+            "pass\n".to_string()
+        )
+    );
     let text = fs::read_to_string(p.script("gate")).unwrap();
     for check in [
+        "# command -v cargo >/dev/null || missing cargo\n",
         "# cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test\n",
+        "# command -v npm >/dev/null || missing npm\n",
         "# npm ci && npm run lint && npm test\n",
+        "# command -v go >/dev/null || missing go\n",
         "# gofmt -l . | (! grep .) && go vet ./... && go test ./...\n",
     ] {
         assert!(text.contains(check), "{check}");
     }
+}
+
+/// The gate names `pass` or `fail` from its checks and exits 0; a missing tool is a
+/// non-zero exit, before any check runs, that says which tool.
+#[test]
+fn the_gate_names_pass_or_fail_and_exits_1_when_a_tool_is_missing() {
+    let p = Project::init();
+    let ran = "checks ran\n".to_string();
+    assert_eq!(
+        gate_alone(&p),
+        (
+            Some(0),
+            ran.clone(),
+            String::new(),
+            ran.clone(),
+            "pass\n".into()
+        )
+    );
+    p.edit_gate("  check\n", "  check && false\n");
+    assert_eq!(
+        gate_alone(&p),
+        (Some(0), ran.clone(), String::new(), ran, "fail\n".into())
+    );
+    p.edit_gate(
+        "# command -v cargo >/dev/null || missing cargo\n",
+        "command -v no-such-tool >/dev/null || missing no-such-tool\n",
+    );
+    let said = "gate: no-such-tool not found on PATH; the checks cannot run\n".to_string();
+    assert_eq!(
+        gate_alone(&p),
+        (Some(1), String::new(), said.clone(), said, String::new())
+    );
 }
 
 /// `verify.sh` run on its own, with the stub `claude` replying `reply`: its exit code and
@@ -331,7 +416,7 @@ fn develop_skips_fix_when_the_gate_passes() {
             "null -claimed-> precheck",
             "precheck -done-> implement",
             "implement -done-> gate",
-            "gate -done-> verify",
+            "gate -pass-> verify",
             "verify -pass-> done",
         ]
     );
@@ -356,18 +441,24 @@ fn develop_hands_a_failed_gate_to_fix() {
         "null -claimed-> precheck",
         "precheck -done-> implement",
         "implement -done-> gate",
-        "gate -error-> fix",
+        "gate -fail-> fix",
         "fix -done-> final_gate",
     ];
     let cases: &[(Env, &[&str], &str)] = &[
         (
             &[("GATE_FAIL_ONCE", "1")],
-            &["final_gate -done-> verify", "verify -pass-> done"],
+            &["final_gate -pass-> verify", "verify -pass-> done"],
             "done",
         ),
         (
             &[("GATE_EXIT", "1")],
-            &["final_gate -error-> failed"],
+            &["final_gate -fail-> failed"],
+            "failed",
+        ),
+        // The agent runs the gate, as `fix` asks; its event is not implement's or fix's.
+        (
+            &[("GATE_EXIT", "1"), ("CLAUDE_RUNS_GATE", "1")],
+            &["final_gate -fail-> failed"],
             "failed",
         ),
     ];
@@ -388,6 +479,33 @@ fn develop_hands_a_failed_gate_to_fix() {
             "{fix}"
         );
     }
+}
+
+/// AC: a gate whose check needs a tool not on `PATH` names `error`, and the run ends in
+/// `failed` without `fix`.
+#[test]
+fn develop_ends_failed_when_the_gate_cannot_run() {
+    let p = Project::init();
+    p.edit_gate(
+        "# command -v cargo >/dev/null || missing cargo\n",
+        "command -v no-such-tool >/dev/null || missing no-such-tool\n",
+    );
+    let id = p.run(&[]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id),
+        [
+            "null -claimed-> precheck",
+            "precheck -done-> implement",
+            "implement -done-> gate",
+            "gate -error-> failed",
+        ]
+    );
+    assert_eq!(p.calls().len(), 1, "implement only: {:?}", p.calls());
+    assert_eq!(
+        fs::read_to_string(p.run_dir(&id).join("gate.log")).unwrap(),
+        "gate: no-such-tool not found on PATH; the checks cannot run\n"
+    );
 }
 
 /// AC: an AI whose reply ends `VERDICT: fail` makes verify's event `fail`, and the run

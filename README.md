@@ -49,7 +49,7 @@ Every command in this section runs as written, in order, in an empty directory.
 decree init
 ```
 
-This writes `.decree/` with the `develop` machine and its scripts, the `router` machine for your AI tool (`--ai claude|copilot|opencode`; by default the first one found on `PATH`), `lib/ai.sh` (the `ai` function the scripts source), and the decree skill for Claude Code or Copilot. `develop` implements a message with your AI in logged steps, runs your project's checks, has the AI fix them only if they fail, then has it check the acceptance criteria and name `pass` or `fail`. Fill in its gate, `.decree/scripts/develop/gate.sh` (commented lines show cargo, npm and Go); until you do, it runs nothing and says so.
+This writes `.decree/` with the `develop` machine and its scripts, the `router` machine for your AI tool (`--ai claude|copilot|opencode`; by default the first one found on `PATH`), `lib/ai.sh` (the `ai` function the scripts source), and the decree skill for Claude Code or Copilot. `develop` implements a message with your AI in logged steps, runs your project's checks, has the AI fix them only if they fail, then has it check the acceptance criteria and name `pass` or `fail`. Fill in its gate, `.decree/scripts/develop/gate.sh` (commented lines show cargo, npm and Go, each with the `command -v` line that checks its tool); until you do, it runs nothing, says so and names `pass`. The gate names `pass` or `fail` from your checks; when they cannot run at all (a tool missing from `PATH`, say) it exits non-zero, and the run ends in `failed` without asking the AI to fix code that may be fine.
 
 **2. Write a script.** A script does one thing. Exit 0 is the event `done`, anything else is `error`.
 
