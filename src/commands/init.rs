@@ -1,4 +1,5 @@
 use crate::cli::AiBackend;
+use crate::commands::skill::DECREE_SKILL;
 use crate::commands::{graph, schema};
 use crate::error::DecreeError;
 use crate::layout;
@@ -118,30 +119,6 @@ const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
 const LIB_README: &str = "Code that scripts source (`. \"$DECREE_LIB/<file>\"`), config and data. \
                           decree never runs anything in it.\n";
 
-/// The decree skill `init` writes: path under the skill directory, and content.
-const DECREE_SKILL: &[(&str, &str)] = &[
-    (
-        "SKILL.md",
-        include_str!("../templates/skills/decree/SKILL.md"),
-    ),
-    (
-        "reference/machines.md",
-        include_str!("../templates/skills/decree/reference/machines.md"),
-    ),
-    (
-        "reference/messages.md",
-        include_str!("../templates/skills/decree/reference/messages.md"),
-    ),
-    (
-        "reference/runs.md",
-        include_str!("../templates/skills/decree/reference/runs.md"),
-    ),
-    (
-        "reference/scripts.md",
-        include_str!("../templates/skills/decree/reference/scripts.md"),
-    ),
-];
-
 /// Check if a command exists on PATH.
 fn command_exists(name: &str) -> bool {
     Command::new("which")
@@ -173,6 +150,18 @@ fn select_backend(ai: Option<AiBackend>, found: impl Fn(&str) -> bool) -> Backen
         .copied()
         .find(|b| found(b.name))
         .unwrap_or(OPENCODE)
+}
+
+/// Where decree writes the skill for `ai`, or, without it, for the backend `init` would
+/// pick; `None` if that backend reads no skills. Also the backend's name, for messages.
+pub(crate) fn skill_dir(ai: Option<AiBackend>) -> (&'static str, Option<&'static str>) {
+    let backend = select_backend(ai, command_exists);
+    (backend.name, backend.skill_dir)
+}
+
+/// Every directory decree writes the skill into, in detection order.
+pub(crate) fn skill_dirs() -> impl Iterator<Item = &'static str> {
+    AI_BACKENDS.iter().filter_map(|b| b.skill_dir)
 }
 
 impl Backend {

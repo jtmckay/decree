@@ -26,6 +26,9 @@ Commands:
   decree schema               Write .decree/schema/v1/: JSON Schemas for
                               machines, messages, events, router files and
                               --format json output
+  decree skill [--ai AI]      Refresh the decree skill (.claude/skills/decree/
+                              or .github/skills/decree/) after an upgrade;
+                              your own files there are kept
   decree process [--dry-run]  Deliver replies, continue pending runs, drain
                               inbox/, then run pending migrations in order.
                               A failed inbox run is reported and the rest
@@ -50,8 +53,8 @@ Commands:
   decree help                 This help text
   decree --version            Print the version
 
-  --format json on check, status, emit, event, prune, graph, schema and
-  process --dry-run prints one JSON document instead of text, described by
+  --format json on check, status, emit, event, prune, graph, schema, skill
+  and process --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 
 Files (.decree/):

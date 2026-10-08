@@ -58,6 +58,7 @@ What decree does is in the [reference](reference/README.md). The construction pl
 | [D50](#d50-a-versioned-schema-for-every-file) | A versioned schema for every file | Migration 81 |
 | [D51](#d51-json-output-for-every-report-and-sarif-for-decree-check) | JSON output for every report, and SARIF for `decree check` | Migration 82 |
 | [D53](#d53-decree-process---retry-continues-a-run) | `decree process --retry` continues a run | Migration 85 |
+| [D54](#d54-decree-skill-refreshes-the-skill) | `decree skill` refreshes the skill | Migration 104 |
 
 ## D1: Machines follow SCXML
 
@@ -491,3 +492,11 @@ No old shape is accepted: `choose`, `input`, a bare `matches`, a state-level att
 **Decision.** `decree retry` is removed; continuing a run is a flag on the command a person was going to run anyway: `decree process --retry [<id>] [--state <s>]` ([Retry](reference/cli.md#retry)). Without an id it continues the migration that blocks the queue, the earliest pending migration whose run is `failed` or `interrupted`; with an id, any run. It writes the same `transition` with `source: "retry"`, with the same default state and `--state` rules, and the same `process` then continues the run and everything queued after it. Every message that suggests continuing a run prints the exact command: ``Fix the cause, then run `decree process --retry`.`` for a blocked migration, `decree process --retry <id>` for a failed inbox run, and the same in `decree status`. `--retry` takes no `--dry-run` or `--format`, since `process` produces a stream; `retry --format json` and its schema went with the command.
 
 **Consequences.** One command to remember, and the message that reports a failure is the command that continues it, copied as printed. The behaviour is unchanged: decree still never retries on its own, a retry keeps the run's folder and history, and `events.jsonl` still records `source: "retry"`, meaning a person continued the run. A script can no longer make a run `pending` without also processing the queue; nothing used that. Evidence: migration 85.
+
+## D54: `decree skill` refreshes the skill
+
+**Context.** [D30](#d30-q4-init-writes-the-decree-skill) removed 0.4's `skill` command when `init` began writing the skill. But `init` refuses an existing `.decree/` and never overwrites a file, so after upgrading decree nothing refreshed `.claude/skills/decree/`: a user copied the skill from decree's source tree by hand. `decree graph` and `decree schema` already rewrite the files decree owns.
+
+**Decision.** `decree skill [--ai <claude|copilot|opencode>]` writes the skill the way `decree schema` writes the schemas: decree's own files (`SKILL.md`, `reference/*.md`) are overwritten through a temp file and a rename, a file in `reference/` that decree no longer ships is removed, and any other file in the folder is left alone. Without `--ai` it refreshes every skill folder that exists, else the one of the backend `init` would pick. `opencode` reads no skills, so for it the command writes nothing and exits 1. It prints each file, `unchanged` when already identical, and takes `--format json` ([D51](#d51-json-output-for-every-report-and-sarif-for-decree-check)). This supersedes the part of D30 that removed the `skill` command; `init` still writes the skill once and never overwrites it.
+
+**Consequences.** Upgrading is: install the new version, then `decree skill` and `decree schema` ([Upgrading decree](reference/cli.md#upgrading-decree)). A user's notes beside the skill survive; an edit to `SKILL.md` itself does not, as it is decree's file. Evidence: migration 104.

@@ -84,6 +84,17 @@ pub enum Command {
         format: Format,
     },
 
+    /// Write the decree skill (.claude/skills/decree/ or .github/skills/decree/), overwriting decree's own files
+    Skill {
+        /// AI backend whose skill folder to write [default: every skill folder that exists, else the backend init would pick]
+        #[arg(long, value_enum)]
+        ai: Option<AiBackend>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
     /// Queue a message for a machine in inbox/; the body is read from stdin. Prints its id
     Emit {
         /// Machine the message names
@@ -202,7 +213,7 @@ pub enum CheckFormat {
     Sarif,
 }
 
-/// AI backends `init` can configure, in the order it looks for them on `PATH`.
+/// AI backends `init` can configure (and `skill` write for), in the order it looks for them on `PATH`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AiBackend {
     Opencode,

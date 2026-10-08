@@ -101,3 +101,4 @@
 101-attempts-and-named-events.md
 102-gate-pass-fail.md
 103-env-interpolation.md
+104-decree-skill.md

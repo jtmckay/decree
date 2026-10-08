@@ -241,6 +241,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree check [--format text\|json\|sarif]` | Validate machines and pending messages; `sarif` for code scanning |
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
 | `decree schema` | Write JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
+| `decree skill [--ai AI]` | Refresh the decree skill in `.claude/skills/decree/` or `.github/skills/decree/` after an upgrade |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
 | `decree process --retry [ID] [--state S]` | First continue a failed or interrupted run: `ID`, or the migration blocking the queue |
 | `decree daemon [--interval D]` | The same passes plus cron, every `D` (default `2s`) |

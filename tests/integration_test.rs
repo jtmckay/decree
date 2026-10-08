@@ -705,14 +705,16 @@ fn test_init_keeps_existing_skill_files() {
     );
 }
 
-/// The `skill` command is gone (docs/reference/cli.md).
+/// 0.4's `skill` flags are gone: `decree skill` refreshes the skill and takes only `--ai`
+/// and `--format` (docs/reference/cli.md; docs/decisions.md, D54).
 #[test]
-fn test_skill_command_is_removed() {
+fn test_skill_04_flags_are_usage_errors() {
     let dir = TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join(".decree")).unwrap();
     decree_cmd(&dir)
         .args(["skill", "--scope", "project", "--target", "claude"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("unrecognized subcommand 'skill'"));
+        .stderr(predicate::str::contains("unexpected argument '--scope'"));
     assert!(!dir.path().join(".claude").exists());
 }

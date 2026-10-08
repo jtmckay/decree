@@ -66,6 +66,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         Command::Check { format } => commands::check::run(&root()?, format),
         Command::Graph { format } => commands::graph::run(&root()?, format),
         Command::Schema { format } => commands::schema::run(&root()?, format),
+        Command::Skill { ai, format } => commands::skill::run(&root()?, ai, format),
         Command::Emit {
             machine,
             params,

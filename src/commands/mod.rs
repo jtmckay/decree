@@ -7,6 +7,7 @@ pub mod init;
 pub mod process;
 pub mod prune;
 pub mod schema;
+pub mod skill;
 pub mod status;
 pub mod tail;
 
