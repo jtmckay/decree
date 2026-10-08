@@ -27,7 +27,10 @@ Commands:
                               machines, messages, events, router files and
                               --format json output
   decree process [--dry-run]  Deliver replies, continue pending runs, drain
-                              inbox/, then run pending migrations in order
+                              inbox/, then run pending migrations in order.
+                              A failed inbox run is reported and the rest
+                              run; a failed migration stops it. Exits 1 if
+                              any run failed
   decree process --retry [ID] [--state S]
                               First continue a failed or interrupted run: ID,
                               or the migration blocking the queue

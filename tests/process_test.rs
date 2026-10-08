@@ -234,35 +234,64 @@ fn inbox_runs_in_filename_order() {
 }
 
 #[test]
-fn a_failed_inbox_run_stops_process() {
+fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
     let p = Project::new();
+    p.write("inbox/a.md", "---\nid: run-a\nmachine: flow\n---\n");
     p.write(
-        "inbox/a.md",
-        "---\nid: run-a\nmachine: flow\nparams: { fail: true }\n---\n",
+        "inbox/b.md",
+        "---\nid: run-b\nmachine: flow\nparams: { fail: true }\n---\n",
     );
-    p.write("inbox/b.md", "---\nid: run-b\nmachine: flow\n---\n");
+    p.write("inbox/c.md", "---\nid: run-c\nmachine: flow\n---\n");
     let out = p.process().assert().code(1).get_output().clone();
     let err = stderr(&out);
-    assert!(err.contains("run run-a (a.md) ended in `failed`"), "{err}");
-    assert!(err.contains("`decree process --retry run-a`"), "{err}");
-    assert_eq!(p.order(), ["start run-a"]);
-    assert!(p.decree().join("inbox/b.md").exists());
+    assert!(err.contains("run run-b (b.md) ended in `failed`"), "{err}");
+    assert!(err.contains("`decree process --retry run-b`"), "{err}");
+    // After the queue is empty: every run that failed in the pass, with its retry command.
+    let summary = err
+        .split_once("1 run(s) ended in `failed` in this pass:")
+        .unwrap_or_else(|| panic!("{err}"))
+        .1;
+    assert!(
+        summary.contains("run run-b: decree process --retry run-b"),
+        "{err}"
+    );
+    assert!(
+        !summary.contains("run-a") && !summary.contains("run-c"),
+        "{err}"
+    );
 
-    // `--retry <id>` continues the failed inbox run in its folder, then drains the inbox.
-    p.fix();
-    p.process().args(["--retry", "run-a"]).assert().success();
+    assert_eq!(p.runs(), ["run-a", "run-b", "run-c"]);
+    assert_eq!(last_state(&p.events("run-a")), "done");
+    assert_eq!(last_state(&p.events("run-b")), "failed");
+    assert_eq!(last_state(&p.events("run-c")), "done");
     assert_eq!(
         p.order(),
         [
             "start run-a",
-            "start run-a",
             "end run-a",
             "start run-b",
-            "end run-b"
+            "start run-c",
+            "end run-c"
         ]
     );
+    assert!(p
+        .decree()
+        .join("inbox")
+        .read_dir()
+        .unwrap()
+        .next()
+        .is_none());
+
+    // `--retry <id>` continues the failed inbox run in its folder, then the pass goes on.
+    p.fix();
+    p.write("inbox/d.md", "---\nid: run-d\nmachine: flow\n---\n");
+    p.process().args(["--retry", "run-b"]).assert().success();
     assert_eq!(
-        transitions(&p.events("run-a")),
+        p.order()[5..],
+        ["start run-b", "end run-b", "start run-d", "end run-d"]
+    );
+    assert_eq!(
+        transitions(&p.events("run-b")),
         [
             t("-", "work", "claim"),
             t("work", "failed", "exit_code"),
@@ -270,7 +299,25 @@ fn a_failed_inbox_run_stops_process() {
             t("work", "done", "exit_code"),
         ]
     );
-    assert!(!p.decree().join("inbox/b.md").exists());
+}
+
+#[test]
+fn a_failed_inbox_run_does_not_block_migrations() {
+    let p = Project::new();
+    p.write(
+        "inbox/a.md",
+        "---\nid: run-a\nmachine: flow\nparams: { fail: true }\n---\n",
+    );
+    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
+    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
+    let out = p.process().assert().code(1).get_output().clone();
+    let err = stderr(&out);
+    assert!(
+        err.contains("run run-a: decree process --retry run-a"),
+        "{err}"
+    );
+    assert_eq!(p.runs(), ["01-a", "02-b", "run-a"]);
+    assert_eq!(p.read("processed.md"), "01-a.md\n02-b.md\n");
 }
 
 // ---------------------------------------------------------------

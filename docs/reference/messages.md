@@ -57,6 +57,8 @@ The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). 
 5. **Finish.** The run ends when it enters a root-level final state. The run folder is kept until `decree prune` removes it ([cli.md](cli.md)); nothing removes it automatically.
 6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only a person continues an interrupted run, with `decree process --retry` ([Retry](cli.md#retry)).
 
+**A failed inbox run does not stop `process`.** Inbox messages are independent, so when a run claimed from `inbox/` ends in `failed` (a reply's rejection run, or a run continued after a reply, included), `decree process` reports it with `decree process --retry <id>` and goes on with the next inbox file. Once the queue is empty it lists every run that failed in the pass and exits 1. A failed migration does stop it ([Migrations](#migrations-ordered-run-once-stop-on-error), rule 4).
+
 **Source of truth.** The run's state is the `to` of the last `transition` event in `events.jsonl`. `message.md`'s `state` is a mirror for humans and tools; whenever decree touches a run and the two disagree (a crash between the two writes), it rewrites the mirror. This is event sourcing: the log is the record, everything else is derived.
 
 **Run status** is derived from the last event, in this order:
@@ -97,8 +99,8 @@ Before stepping a run, decree creates `runs/<id>/.lock` exclusively (`O_EXCL`) a
 
 1. **Run from a copy.** A migration's `id` is its file stem. To start one, decree creates `runs/<id>/` (already-exists means the migration has a run already: see rule 4) and copies the file to `runs/<id>/message.md`, adding `id` and `trigger: migration`. The run then works like any other.
 2. **Run once.** A migration whose filename is in `processed.md` is skipped. `processed.md` is read as a set; duplicate lines are harmless.
-3. **Strict order.** Migrations run in byte-order of filename. Migration N+1 starts only when N is in `processed.md` and `inbox/` is empty, so follow-ups that N emits run before N+1 starts.
-4. **Stop on error.** A migration whose run is `failed` or `interrupted` blocks every later migration until `decree process --retry` continues it and it finishes; `process` stops and exits 1, naming the migration and ending ``Fix the cause, then run `decree process --retry`.`` A `waiting` migration also blocks later migrations until its reply arrives.
+3. **Strict order.** Migrations run in byte-order of filename. Migration N+1 starts only when N is in `processed.md` and `inbox/` is empty, so follow-ups that N emits run before N+1 starts. A follow-up that ends in `failed` has left `inbox/`, so it does not hold back N+1.
+4. **Stop on error.** A migration whose run is `failed` or `interrupted` blocks every later migration until `decree process --retry` continues it and it finishes; `process` stops at once and exits 1, unlike for a failed inbox run ([Lifecycle](#lifecycle)), naming the migration and ending ``Fix the cause, then run `decree process --retry`.`` A `waiting` migration also blocks later migrations until its reply arrives.
 5. **Ledger write.** When a migration's run enters a final state other than `failed`, decree appends the filename to `processed.md` (temp file plus rename) before that state's `onentry` scripts run. If one of them fails ([runs.md](runs.md#step-loop)), decree removes the line again.
 6. **Validate first.** Before starting the first pending migration, `process` and `daemon` parse every pending migration (frontmatter, machine, `params` against the machine's `data`). If any are invalid, they print every error and run nothing: `N migration(s) are invalid; nothing was processed.`, exit 1.
 

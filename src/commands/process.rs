@@ -2,8 +2,10 @@
 //! mark runs a crash left behind `interrupted` and continue `pending` runs, then repeat
 //! until nothing is left: claim the next `inbox/` message and run it through its machine,
 //! or start the next migration once the inbox is empty. Never continues an `interrupted`
-//! run. Stops at the first run that ends in `failed`, and before a `failed`, `interrupted`
-//! or `waiting` migration. Ends by printing every waiting run.
+//! run. A run that is not a migration and ends in `failed` is reported and the pass goes on;
+//! a migration that ends in `failed` stops it, as does a `failed`, `interrupted` or `waiting`
+//! migration before it starts. Ends by printing every waiting run, then every run that failed
+//! in the pass, and exits 1 if there was one.
 //!
 //! `--retry [<id>] [--state <s>]` first makes one `interrupted` or finished run `pending`
 //! again: run `<id>`, or the migration that blocks the queue. It appends a `transition`
@@ -59,20 +61,26 @@ pub fn run(
     }
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
-    let mut pipeline = Pipeline::new(project_root, &project, shutdown)?;
+    let mut pipeline = Pipeline::new(project_root, &project, shutdown, "")?;
     if let Some(Retry { id, state }) = retry {
         retry_run(&pipeline.ctx, &project, id.as_deref(), state.as_deref())?;
     }
     let result = pipeline.recover().and_then(|()| pipeline.drain());
     print_waiting(&pipeline.ctx)?;
-    result.map_err(Stop::into_error)
+    let failed = pipeline.take_failed();
+    print_failed(&failed);
+    result.map_err(Stop::into_error)?;
+    match failed.len() {
+        0 => Ok(()),
+        n => Err(DecreeError::Other(format!(
+            "{n} run(s) ended in `{FAILED}`"
+        ))),
+    }
 }
 
 /// Why a pass of the pipeline stopped short.
 #[derive(Debug)]
 pub(crate) enum Stop {
-    /// A run ended in `failed`. `process` stops; `daemon` reports it and goes on.
-    Failed(String),
     /// A migration is `failed` or `interrupted`: later migrations wait for `decree process --retry`.
     Blocked(String),
     /// SIGINT or SIGTERM: the current run is `interrupted`.
@@ -84,7 +92,7 @@ pub(crate) enum Stop {
 impl Stop {
     pub(crate) fn into_error(self) -> DecreeError {
         match self {
-            Stop::Failed(message) | Stop::Blocked(message) => DecreeError::Other(message),
+            Stop::Blocked(message) => DecreeError::Other(message),
             Stop::Interrupted => DecreeError::Interrupted,
             Stop::Error(e) => e,
         }
@@ -104,6 +112,10 @@ pub(crate) struct Pipeline<'a> {
     project: &'a Project,
     /// Inbox files another process claimed first, or is claiming now.
     lost: HashSet<String>,
+    /// Put before each failed run's report: `process` prints none, `daemon` its name.
+    prefix: &'static str,
+    /// Runs that are not migrations and ended in `failed` since the last `take_failed`.
+    failed: Vec<String>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -113,6 +125,7 @@ impl<'a> Pipeline<'a> {
         project_root: &Path,
         project: &'a Project,
         shutdown: Arc<AtomicBool>,
+        prefix: &'static str,
     ) -> Result<Self, DecreeError> {
         if !project.problems.is_empty() {
             for problem in &project.problems {
@@ -129,11 +142,30 @@ impl<'a> Pipeline<'a> {
             ctx,
             project,
             lost: HashSet::new(),
+            prefix,
+            failed: Vec::new(),
         })
     }
 
     fn shutdown(&self) -> bool {
         self.ctx.shutdown.load(Ordering::Relaxed)
+    }
+
+    /// Report run `id`, not a migration, that ended in `failed`, with its `--retry` command.
+    /// Inbox messages are independent, so the pass goes on (docs/reference/messages.md, Lifecycle).
+    fn fail(&mut self, id: &str, file: Option<&str>) {
+        let file = file.map(|f| format!(" ({f})")).unwrap_or_default();
+        eprintln!(
+            "{}run {id}{file} ended in `{FAILED}`; see .decree/runs/{id}/, \
+             then continue it with `decree process --retry {id}`",
+            self.prefix
+        );
+        self.failed.push(id.to_string());
+    }
+
+    /// The runs that ended in `failed` since the last call, in the order they failed.
+    pub(crate) fn take_failed(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.failed)
     }
 
     /// At start: mark runs a crash left behind `interrupted` (never continued), then
@@ -151,7 +183,8 @@ impl<'a> Pipeline<'a> {
 
     /// `process`: repeat until nothing is left: deliver timeouts, continue `pending` runs
     /// (`decree process --retry` may have made more), claim the next inbox message, and start the
-    /// next migration once the inbox is empty. Stops at the first run that ends in `failed`.
+    /// next migration once the inbox is empty. A failed inbox run is reported and the loop goes
+    /// on; a failed migration stops it.
     pub(crate) fn drain(&mut self) -> Result<(), Stop> {
         loop {
             self.deliver_timeouts()?;
@@ -166,8 +199,8 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    /// Continue `ids` in order; stops at the first that ends in `failed`.
-    fn continue_runs(&self, ids: &[String]) -> Result<(), Stop> {
+    /// Continue `ids` in order; stops at the first migration that ends in `failed`.
+    fn continue_runs(&mut self, ids: &[String]) -> Result<(), Stop> {
         for id in ids {
             self.continue_one(id)?;
         }
@@ -188,8 +221,9 @@ impl<'a> Pipeline<'a> {
         Ok(pending)
     }
 
-    /// Continue `pending` run `id`. A run another process holds now is skipped.
-    pub(crate) fn continue_one(&self, id: &str) -> Result<(), Stop> {
+    /// Continue `pending` run `id`. A run another process holds now is skipped. A migration
+    /// that ends in `failed` blocks the queue; any other run is reported and the pass goes on.
+    pub(crate) fn continue_one(&mut self, id: &str) -> Result<(), Stop> {
         if self.shutdown() {
             return Err(Stop::Interrupted);
         }
@@ -201,15 +235,14 @@ impl<'a> Pipeline<'a> {
         match outcome {
             Outcome::Finished(state) if state == FAILED => {
                 let events = self.ctx.events(id)?;
-                let migration = first_text(&events, "trigger") == Some("migration");
-                Err(if migration {
-                    blocked(&format!("{id}.md"), &format!("ended in `{FAILED}`"))
-                } else {
-                    Stop::Failed(format!(
-                        "run {id} ended in `{FAILED}`; see .decree/runs/{id}/, \
-                         then continue it with `decree process --retry {id}`"
-                    ))
-                })
+                if first_text(&events, "trigger") == Some("migration") {
+                    return Err(blocked(
+                        &format!("{id}.md"),
+                        &format!("ended in `{FAILED}`"),
+                    ));
+                }
+                self.fail(id, None);
+                Ok(())
             }
             Outcome::Interrupted(_) => Err(Stop::Interrupted),
             _ => Ok(()),
@@ -217,7 +250,7 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Deliver every `timeout` deadline that has passed, and continue those runs.
-    pub(crate) fn deliver_timeouts(&self) -> Result<(), Stop> {
+    pub(crate) fn deliver_timeouts(&mut self) -> Result<(), Stop> {
         let timed_out = reply::deliver_timeouts(&self.ctx, chrono::Utc::now())?;
         self.continue_runs(&timed_out)
     }
@@ -260,10 +293,10 @@ impl<'a> Pipeline<'a> {
         };
         let id = claim.id.clone();
         match run_claim(&self.ctx, self.project, claim, problem)? {
-            Outcome::Finished(state) if state == FAILED => Err(Stop::Failed(format!(
-                "run {id} ({file}) ended in `{FAILED}`; see .decree/runs/{id}/, \
-                 then continue it with `decree process --retry {id}`"
-            ))),
+            Outcome::Finished(state) if state == FAILED => {
+                self.fail(&id, Some(&file));
+                Ok(true)
+            }
             Outcome::Interrupted(_) => Err(Stop::Interrupted),
             _ => Ok(true),
         }
@@ -293,6 +326,17 @@ pub(crate) fn context<'a>(
         project_root: project_root.to_path_buf(),
         machines: &project.machines,
         shutdown,
+    }
+}
+
+/// Print every run that ended in `failed` in this pass, with the command that continues it.
+fn print_failed(failed: &[String]) {
+    if failed.is_empty() {
+        return;
+    }
+    eprintln!("{} run(s) ended in `{FAILED}` in this pass:", failed.len());
+    for id in failed {
+        eprintln!("  run {id}: decree process --retry {id}");
     }
 }
 

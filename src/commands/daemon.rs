@@ -23,7 +23,12 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
-    let mut pipeline = Pipeline::new(project_root, &project, Arc::clone(&shutdown))?;
+    let mut pipeline = Pipeline::new(
+        project_root,
+        &project,
+        Arc::clone(&shutdown),
+        "decree daemon: ",
+    )?;
     println!("decree daemon: polling every {}s", interval.as_secs());
 
     let mut cron_tracker = CronTracker::new();
@@ -42,6 +47,8 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
             Err(stop) => return Err(stop.into_error()),
             Ok(()) => {}
         }
+        // The pipeline printed each failed run as it ended; the daemon keeps no list of them.
+        pipeline.take_failed();
         // Sleep, checking for a signal every 100 ms. An interval past what `Instant` holds
         // sleeps until a signal.
         let wake = Instant::now().checked_add(interval);
@@ -96,11 +103,11 @@ fn pass(
     Ok(())
 }
 
-/// A failed run, or a blocked migration, is printed and the daemon goes on; a signal or a
-/// fault stops it.
+/// A blocked migration is printed and the daemon goes on; a signal or a fault stops it. The
+/// pipeline reports a failed run itself.
 fn report(result: Result<(), Stop>) -> Result<(), Stop> {
     match result {
-        Err(Stop::Failed(message) | Stop::Blocked(message)) => {
+        Err(Stop::Blocked(message)) => {
             eprintln!("decree daemon: {message}");
             Ok(())
         }

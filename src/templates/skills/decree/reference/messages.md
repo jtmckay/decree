@@ -44,7 +44,8 @@ history in git.
   and the ledger line together. decree never runs git itself.
 - **Strict order.** Migration N+1 starts only when N is processed and `inbox/` is empty, so
   follow-ups that N emits run first. A migration whose run is `failed`, `interrupted` or
-  `waiting` blocks every later one.
+  `waiting` blocks every later one, and a failed migration stops `decree process` at once.
+  A failed follow-up has left `inbox/`, so it does not hold back the next migration.
 - **Validated first.** `decree process` checks every pending migration (frontmatter, machine,
   `params`) before running any, and runs nothing if one is invalid.
 
@@ -66,6 +67,10 @@ history in git.
 ## Inbox: first in, first out
 
 `.decree/inbox/*.md` holds queued messages, run in filename order. Not committed.
+
+- A failed inbox run does not stop `decree process`: it prints the run with
+  `decree process --retry <id>` and goes on with the next file. When the inbox is empty it lists
+  every run that failed in the pass and exits 1.
 
 - People may drop a file in directly. Programs write `.<name>.tmp`, then rename it to `<name>.md`;
   files starting with `.` are ignored, so nobody reads a partial file.
