@@ -3,7 +3,7 @@
 
 Reads RSS 2.0 and Atom, and writes $DECREE_RUN_DIR/items.jsonl, one JSON object per line
 (title, link, source, published, summary), newest first, at most $NEWSLETTER_MAX_ITEMS.
-An item is new when its link is not in $NEWSLETTER_DIR/seen.tsv. It does not mark items
+An item is new when its link is not in $DECREE_STORE/seen.tsv. It does not mark items
 seen: deliver does, so a failed run gathers them again next time. A feed that fails is
 logged and skipped; every feed failing is an error. Python 3 standard library only.
 """
@@ -114,14 +114,13 @@ def fetch(url):
 def main():
     lib = os.environ["DECREE_LIB"]
     run_dir = os.environ["DECREE_RUN_DIR"]
-    newsletter_dir = os.environ.get("NEWSLETTER_DIR", "newsletter")
     max_items = int(os.environ.get("NEWSLETTER_MAX_ITEMS", "60"))
 
     urls = feed_urls(os.path.join(lib, "newsletter", "feeds.txt"))
     if not urls:
         print("gather: feeds.txt lists no feeds", file=sys.stderr)
         return 1
-    seen = seen_links(os.path.join(newsletter_dir, "seen.tsv"))
+    seen = seen_links(os.path.join(os.environ["DECREE_STORE"], "seen.tsv"))
 
     items, failed = {}, 0
     for url in urls:

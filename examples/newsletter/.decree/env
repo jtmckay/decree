@@ -1,7 +1,7 @@
 # The local model that writes the issue (Ollama's /api/chat).
 OLLAMA_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma4:e4b
-# Where issues and seen.tsv go, from the project root.
+# Where issues go, from the project root.
 NEWSLETTER_DIR=newsletter
 # The most new items gather hands to the model, newest first.
 NEWSLETTER_MAX_ITEMS=60

@@ -442,6 +442,10 @@ impl Executor {
             return Err(interrupted());
         }
 
+        // The machine's store, created before its first script runs (docs/reference/scripts.md, Store).
+        let store = crate::layout::store_dir(&self.info.project_root, &self.info.machine);
+        fs::create_dir_all(&store).map_err(io_err(&store))?;
+
         let log = self.reserve_log(run.state, run.script);
         let log_path = self.info.run_dir.join(&log);
         let log_file = File::create(&log_path).map_err(io_err(&log_path))?;
@@ -606,6 +610,10 @@ impl Executor {
             ("PHASE", run.phase.as_str().into()),
             ("VISITS", run.visits.to_string().into()),
             ("RUN_DIR", info.run_dir.as_os_str().into()),
+            (
+                "STORE",
+                crate::layout::store_dir(&info.project_root, &info.machine).into(),
+            ),
             ("ATTEMPT", run.attempt.to_string().into()),
             ("MAX_ATTEMPTS", run.attempt_count.to_string().into()),
             (
@@ -1397,6 +1405,10 @@ pub(crate) mod executor_tests {
             ("DECREE_PHASE", "invoke".to_string()),
             ("DECREE_VISITS", "2".to_string()),
             ("DECREE_RUN_DIR", run_dir.to_str().unwrap().to_string()),
+            (
+                "DECREE_STORE",
+                root.join(".decree/store/m").to_str().unwrap().to_string(),
+            ),
             ("DECREE_ATTEMPT", "1".to_string()),
             ("DECREE_MAX_ATTEMPTS", "1".to_string()),
             ("DECREE_FINAL_ATTEMPT", "true".to_string()),
@@ -1428,6 +1440,10 @@ pub(crate) mod executor_tests {
         for (name, value) in &expected {
             assert_eq!(vars.get(name), Some(&value.as_str()), "{name}\n{log}");
         }
+        assert!(
+            root.join(".decree/store/m").is_dir(),
+            "store folder created"
+        );
     }
 
     /// An invoke's `env` wins over `.decree/env` for that invoke only; `DECREE_*` stays

@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::{
-    event_matches, is_attempt_value, is_event_name, is_ident, is_reserved_event, Attempts,
-    DataType, Edge, Invoke, LoadedMachine, MachineInvoke, FAILED, ROUTER_MACHINE,
+    event_matches, is_attempt_value, is_event_name, is_ident, is_reserved_event, is_store_name,
+    Attempts, DataType, Edge, Invoke, LoadedMachine, MachineInvoke, FAILED, ROUTER_MACHINE,
 };
 use crate::cond::{Condition, Operand, Subject, Test};
 use crate::runtime::resolve::resolve_script;
@@ -125,6 +125,7 @@ impl LoadedMachine {
         v.v12_scripts();
         v.v13_emits();
         v.v14_data();
+        v.v14_store();
         v.v15_done_state();
         v.v16_invokes();
         v.v17_internal();
@@ -165,7 +166,8 @@ impl Validator<'_> {
         format!("line {n}")
     }
 
-    /// `line <n>` of entry `name` under root key `key` (block style), else of `key`.
+    /// `line <n>` of entry `name` under root key `key` (block style, the name bare or quoted),
+    /// else of `key`.
     fn nested_line(&self, key: &str, name: &str) -> String {
         let lines: Vec<&str> = self.text.lines().collect();
         let start = lines
@@ -176,8 +178,16 @@ impl Validator<'_> {
                 .iter()
                 .take_while(|l| l.is_empty() || l.starts_with([' ', '#']))
                 .position(|l| {
-                    l.trim_start()
-                        .strip_prefix(name)
+                    // The key bare, or in double or single quotes.
+                    let l = l.trim_start();
+                    let quoted = |q: char| {
+                        l.strip_prefix(q)
+                            .and_then(|r| r.strip_prefix(name))
+                            .and_then(|r| r.strip_prefix(q))
+                    };
+                    l.strip_prefix(name)
+                        .or_else(|| quoted('"'))
+                        .or_else(|| quoted('\''))
                         .is_some_and(|r| r.starts_with(':'))
                 })
                 .map(|i| s + 1 + i)
@@ -734,6 +744,27 @@ impl Validator<'_> {
                 self.push(
                     self.nested_line("data", name),
                     format!("data `{name}`: {problem} (V14)"),
+                );
+            }
+        }
+    }
+
+    /// V14 for `store`: each name a file or folder directly in the store folder, each with a
+    /// description.
+    fn v14_store(&mut self) {
+        for (name, description) in &self.m.store {
+            if !is_store_name(name) {
+                self.push(
+                    self.nested_line("store", name),
+                    format!(
+                        "store `{name}`: the name does not match ^[A-Za-z0-9][A-Za-z0-9._-]*$: a file or folder directly in the store folder (V14)"
+                    ),
+                );
+            }
+            if description.trim().is_empty() {
+                self.push(
+                    self.nested_line("store", name),
+                    format!("store `{name}`: the description is empty: say what it is and which states read or write it (V14)"),
                 );
             }
         }

@@ -117,15 +117,17 @@ fn invoke_suffix(invoke: &Invoke, is_error: bool) -> String {
     }
 }
 
-/// The notes after the root's last line: the root's scripts, then each state's decision,
-/// child machine and scripts, in arena order.
+/// The notes after the root's last line: the root's scripts and store, then each state's
+/// decision, child machine and scripts, in arena order.
 fn notes(m: &LoadedMachine, out: &mut String) {
     let root = m.root();
-    if !root.onentry.is_empty() || !root.onexit.is_empty() {
+    if !root.onentry.is_empty() || !root.onexit.is_empty() || !m.store.is_empty() {
         let initial = root.initial.as_deref().unwrap_or_default();
         push(out, 1, &format!("note left of {initial}"));
         script_lines(out, "machine onentry", &root.onentry);
         script_lines(out, "machine onexit", &root.onexit);
+        let store: Vec<String> = m.store.keys().cloned().collect();
+        script_lines(out, "store", &store);
         push(out, 1, "end note");
     }
     // Arena order: depth-first, children in `BTreeMap` order.
@@ -362,6 +364,18 @@ mod tests {
         assert_eq!(
             state_diagram(&m).unwrap(),
             "stateDiagram-v2\n    [*] --> s\n    s --> done: done\n    s --> failed: error\n    done --> [*]\n    failed --> [*]\n    note left of s\n        machine onentry: a, b\n    end note\n    note right of s\n        onexit: x, y\n    end note\n"
+        );
+    }
+
+    #[test]
+    fn store_is_a_note_on_the_machine() {
+        let m = load(
+            "m",
+            "name: m\ndescription: d\nstore:\n  seen.tsv: Sent links.\n  cache: Pages.\ninitial: s\nstates:\n  s:\n    invoke: s\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
+        );
+        assert_eq!(
+            state_diagram(&m).unwrap(),
+            "stateDiagram-v2\n    [*] --> s\n    s --> done: done\n    s --> failed: error (implicit)\n    done --> [*]\n    failed --> [*]\n    note left of s\n        store: cache, seen.tsv\n    end note\n"
         );
     }
 

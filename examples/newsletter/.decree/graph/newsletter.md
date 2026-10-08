@@ -15,4 +15,7 @@ stateDiagram-v2
     write --> failed: error (implicit)
     done --> [*]
     failed --> [*]
+    note left of gather
+        store: seen.tsv
+    end note
 ```

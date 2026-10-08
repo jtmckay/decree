@@ -5,8 +5,8 @@ decree runs durable state-machine workflows from plain files: every run is an ap
 | File | Subject |
 | --- | --- |
 | [messages.md](messages.md) | Frontmatter, parsing, the lifecycle of a message, replies, the run lock, migrations, cron files |
-| [machines.md](machines.md) | Examples, `invoke`, keys, the SCXML subset, rules, the machine schema, validation V1–V21, M1–M3 and E1 |
-| [scripts.md](scripts.md) | Resolution, execution, environment (`.decree/env`, invoke `env`), shared code in `lib/`, run-directory files, events from an invoke |
+| [machines.md](machines.md) | Examples, `invoke`, keys, the store, the SCXML subset, rules, the machine schema, validation V1–V21, M1–M3 and E1 |
+| [scripts.md](scripts.md) | Resolution, execution, environment (`.decree/env`, invoke `env`), shared code in `lib/`, the store, run-directory files, events from an invoke |
 | [runs.md](runs.md) | The step loop, `check`, `model` and routers, sub-machines, `person`, `events.jsonl` |
 | [cli.md](cli.md) | Every command and its exit codes |
 | [graph.md](graph.md) | `decree graph`: the Mermaid documents and how to view them |
@@ -76,7 +76,7 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  .gitignore                        # contains: inbox/ and runs/
+  .gitignore                        # contains: inbox/, runs/ and store/
   migrations/                       # ordered run-once messages, committed, never edited (messages.md)
   processed.md                      # committed ledger: one migration filename per line
   inbox/                            # queued messages: *.md; files starting with "." are ignored
@@ -96,9 +96,10 @@ Each building block has its own directory in `.decree/`:
   scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
   lib/                              # code that scripts source, config and data: $DECREE_LIB; decree never runs anything in it (scripts.md, Shared code); `decree init` writes `ai.sh`
   env                               # optional, committed: KEY=value variables every script gets, no secrets (scripts.md, Environment)
+  store/<machine name>/             # what the machine keeps between runs: $DECREE_STORE, declared under `store:`; never deleted by decree (scripts.md, Store)
 ```
 
-`migrations/` and `processed.md` are committed to git; `inbox/` and `runs/` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
+`migrations/` and `processed.md` are committed to git; `inbox/`, `runs/` and `store/` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
 
 ### No configuration file
 

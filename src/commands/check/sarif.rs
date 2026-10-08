@@ -76,7 +76,7 @@ pub(crate) const RULES: [(&str, &str); 25] = [
     ),
     (
         "V14",
-        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`.",
+        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `store` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the store folder, and has a non-empty description.",
     ),
     (
         "V15",

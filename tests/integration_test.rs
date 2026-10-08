@@ -424,7 +424,7 @@ fn test_init_gitignore_content() {
     decree_cmd(&dir).arg("init").assert().success();
 
     let gitignore = fs::read_to_string(dir.path().join(".decree/.gitignore")).unwrap();
-    assert_eq!(gitignore, "inbox/\nruns/\n");
+    assert_eq!(gitignore, "inbox/\nruns/\nstore/\n");
 }
 
 // --- decree (bare) without .decree/ ---

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # newsletter's deliver: copy the run's issue.md to $NEWSLETTER_DIR/<YYYY-MM-DD>.md (-2, -3
-# when that day already has an issue), record every gathered link in $NEWSLETTER_DIR/seen.tsv
+# when that day already has an issue), record every gathered link in $DECREE_STORE/seen.tsv
 # with the date, and, if NTFY_URL is set, post the issue's first three lines to
 # $NTFY_URL/$NTFY_TOPIC. Safe to re-run: an identical issue is not copied twice, and a link
 # already in seen.tsv is not added again.
@@ -21,7 +21,7 @@ done
 cp "${issue}" "${target}"
 echo "deliver: ${target}"
 
-seen="${dir}/seen.tsv"
+seen="${DECREE_STORE}/seen.tsv"
 touch "${seen}"
 added=0
 if [ -s "${items}" ]; then

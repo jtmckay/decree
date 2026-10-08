@@ -53,6 +53,7 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
 | `DECREE_VISITS` | `visits.<state>` for this state, including the current visit. `0` for `_root`. |
 | `DECREE_RUN_DIR` | Absolute path of `runs/<id>/`. |
+| `DECREE_STORE` | Absolute path of `.decree/store/<machine>/`, what this machine keeps between runs ([Store](#store)); a child machine's scripts get the child's. decree creates it before the script runs. |
 | `DECREE_ATTEMPT` | Attempt number of the invoke in this visit, from 1. `1` for `onentry` and `onexit` scripts. |
 | `DECREE_ATTEMPT_VALUE` | This attempt's entry in the invoke's `attempts` list, e.g. `claude`. Unset with the integer form, and for `onentry` and `onexit` scripts. |
 | `DECREE_ATTEMPT_VALUES` | The whole `attempts` list, space-separated. Unset with the integer form. |
@@ -128,6 +129,20 @@ workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD'
 ```
 
 `decree init` creates it with a one-line `README.md` and `ai.sh`, the `ai` function the built-in `develop` machine's scripts source.
+
+## Store
+
+`.decree/store/<machine>/` holds what a machine remembers from one run to the next: the links a newsletter already sent, the last item a feed reader saw, a counter. Every script of the machine, in every phase, finds it through `DECREE_STORE`; decree creates it before a script runs. It survives runs: `decree prune` never touches it, and nothing else in decree deletes it. It is not committed: `decree init`'s `.decree/.gitignore` lists `store/`. The idea is the *state* directory of the XDG Base Directory spec, n8n's workflow static data and Node-RED's persistent flow context; it is called the store because "state" already means a machine's state (`DECREE_STATE`).
+
+**The convention:** anything a script keeps between runs goes in `$DECREE_STORE` and is declared under the machine's `store:` ([Store](machines.md#store)), with what it is and which states read or write it. A run's own files go in `$DECREE_RUN_DIR` ([Run-directory files](#run-directory-files)); shared code and config in `$DECREE_LIB` ([Shared code](#shared-code)); outputs for people wherever the user wants them.
+
+```bash
+seen="$DECREE_STORE/seen.tsv"
+touch "$seen"
+printf '%s\t%s\n' "$link" "$(date +%F)" >> "$seen"
+```
+
+`decree check` warns, without failing, about a file or folder in `store/<machine>/` that the machine's `store:` does not declare, and about a folder in `store/` with no machine. That is all decree can check: a script that writes outside its store, or into another machine's, is not detectable.
 
 ## Run-directory files
 

@@ -286,6 +286,8 @@ description: Every invoke kind.
 data:
   max_rounds: { type: int, default: 2 }
   file: { type: string, default: a.pdf }
+store:
+  seen.tsv: Links already sent. long reads and appends.
 initial: short
 states:
   short:
@@ -452,6 +454,12 @@ fn mistakes_are_rejected_where_they_are() {
             "{ type: int, default: 2 }",
             "{ type: int, default: two }",
             "/data/max_rounds/default",
+        ),
+        ("  seen.tsv: Links", "  a/seen.tsv: Links", "/store"),
+        (
+            "seen.tsv: Links already sent. long reads and appends.",
+            "seen.tsv: ''",
+            "/store/seen.tsv",
         ),
     ] {
         assert!(EVERY_INVOKE.contains(from), "{from}");

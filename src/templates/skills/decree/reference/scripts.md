@@ -106,6 +106,7 @@ reads none of them; the built-in `develop` machine's scripts follow this convent
 | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
 | `DECREE_VISITS` | Times this state has been entered, including now. |
 | `DECREE_RUN_DIR` | `runs/<id>/`. |
+| `DECREE_STORE` | `.decree/store/<machine>/`: what this machine keeps between runs; created before the script runs. |
 | `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS`, `DECREE_FINAL_ATTEMPT` | Attempt number, the limit, and `true` on the last one. |
 | `DECREE_ATTEMPT_VALUE`, `DECREE_ATTEMPT_VALUES` | With an `attempts` list: this attempt's entry, and the whole list, space-separated. Unset with `attempts: <n>`; no value for `onentry`/`onexit`. |
 | `DECREE_TRIGGER` | `migration`, `cron`, `emit`, `inbox` or `invoke`. |

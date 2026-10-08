@@ -33,7 +33,7 @@ For each container (the root, then each compound state recursively), with 4-spac
 
 After the root's last line, emit notes, also at root level:
 
-- For the root: `note left of <root initial>` with lines `machine onentry: <scripts>` and `machine onexit: <scripts>`, then `end note`. Omit empty lines and omit the note if both are empty.
+- For the root: `note left of <root initial>` with lines `machine onentry: <scripts>`, `machine onexit: <scripts>` and `store: <names>` (the `store:` names in name order, [Store](machines.md#store)), then `end note`. Omit empty lines and omit the note if all three are empty.
 - For each state with `onentry`, `onexit` or a decision invoke, in name order: `note right of <state>` with, in this order and only when present, `check: <condition>` (as `<subject> <name> <op> <value>`, e.g. `visits implement less_than data.max_rounds`, `data file matches '<regex>'`, `confidence big_model at_least 0.4`, or `output read_text matches '<regex>'`), `model: <router machine>` plus `, min_confidence <n>`, `machine: <name>`, `person: <ask script>`, `onentry: <scripts>` and `onexit: <scripts>`, then `end note`.
 
 Labels are the event name plus these suffixes, in this order:

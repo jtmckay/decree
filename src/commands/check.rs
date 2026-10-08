@@ -3,7 +3,8 @@
 //! runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
-//! `.decree/schema/` from what `decree schema` would write.
+//! `.decree/schema/` from what `decree schema` would write, and when `.decree/store/` holds
+//! what no machine's `store:` declares.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -122,7 +123,8 @@ fn split_rule(message: &str) -> (String, Option<String>) {
 }
 
 /// A file in `.decree/graph/` or `.decree/schema/` that differs from what `decree graph`
-/// or `decree schema` would write. `decree check` warns about it without failing.
+/// or `decree schema` would write, or one in `.decree/store/` that no machine declares.
+/// `decree check` warns about it without failing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckWarning {
     /// Path relative to `.decree/`.
@@ -136,7 +138,7 @@ impl std::fmt::Display for CheckWarning {
     }
 }
 
-/// Every warning: stale graphs, then stale schemas.
+/// Every warning: stale graphs, then stale schemas, then the store.
 fn warnings(project_root: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
     let mut out = Vec::new();
     // A machine that fails to load cannot be drawn; its error is reported as an error.
@@ -154,6 +156,64 @@ fn warnings(project_root: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
                 message: format!("{message}; run `decree schema`"),
             }),
     );
+    out.extend(store_warnings(&project_root.join(DECREE_DIR))?);
+    Ok(out)
+}
+
+/// What `.decree/store/` holds that no machine declares (docs/reference/machines.md, Store):
+/// a file or folder in `store/<machine>/` that the machine's `store:` does not name, and
+/// anything in `store/` that is not a machine's folder. A machine that fails to load is
+/// reported as an error, and its folder is not looked into.
+fn store_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
+    let store_dir = decree_dir.join(layout::STORE_DIR);
+    let entries = match std::fs::read_dir(&store_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let paths = machine::machine_paths(decree_dir)?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        names.push((
+            entry.file_name().to_string_lossy().into_owned(),
+            entry.path(),
+        ));
+    }
+    names.sort();
+    let mut out = Vec::new();
+    for (name, path) in names {
+        let file = format!("{}/{name}", layout::STORE_DIR);
+        let message = if !path.is_dir() {
+            "is not a folder: `store/` holds one folder per machine".to_string()
+        } else if !paths.contains_key(&name) {
+            format!("is a store folder with no machine: no `{MACHINES_DIR}/{name}.yml`")
+        } else {
+            String::new()
+        };
+        if !message.is_empty() {
+            out.push(CheckWarning { file, message });
+            continue;
+        }
+        let Ok(m) = std::fs::read_to_string(&paths[&name])
+            .map_err(DecreeError::from)
+            .and_then(|text| machine::load_machine_text(&name, &text))
+        else {
+            continue;
+        };
+        let mut kept: Vec<String> = std::fs::read_dir(&path)?
+            .map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<_, _>>()?;
+        kept.sort();
+        out.extend(
+            kept.into_iter()
+                .filter(|kept| !m.store.contains_key(kept))
+                .map(|kept| CheckWarning {
+                    file: format!("{file}/{kept}"),
+                    message: format!("is not declared in {name}'s `store:`"),
+                }),
+        );
+    }
     Ok(out)
 }
 

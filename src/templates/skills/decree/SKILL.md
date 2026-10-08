@@ -81,12 +81,15 @@ appear only where a machine invokes `model` or `person`.
 - **Shared code, config and data go in `.decree/lib/`** (`$DECREE_LIB`); `scripts/` holds only
   what states invoke. Project config goes in `.decree/env`; per-state values in the invoke's
   `env:`.
+- **What a machine keeps between runs goes in `$DECREE_STORE`** (`.decree/store/<machine>/`)
+  and is declared under the machine's `store:`, with what it is and which states read or write
+  it. A run's own files go in `$DECREE_RUN_DIR`; shared code and config in `$DECREE_LIB`.
 - **A step that waits for a shared resource is an invoked state with a `timeout`** (ComfyUI's
   queue, a model unloading), not an `onentry` script, which has none. Keep `onentry` for quick
   steps.
 - **Never delete run folders to clean up**; they are the record. Use
   `decree prune --older-than <age>`.
-- Do not commit `.decree/inbox/` or `.decree/runs/`.
+- Do not commit `.decree/inbox/`, `.decree/runs/` or `.decree/store/`.
 
 ## Commands
 

@@ -19,11 +19,16 @@ stateDiagram-v2
     write --> failed: error (implicit)
     done --> [*]
     failed --> [*]
+    note left of gather
+        store: seen.tsv
+    end note
 ```
 
-1. [`gather`](.decree/scripts/newsletter/gather.py) (Python 3, standard library only: a script can be any executable) fetches every feed in `lib/newsletter/feeds.txt`, RSS 2.0 or Atom, and writes the run's `items.jsonl`: `title`, `link`, `source`, `published` and `summary` (plain text, at most 500 characters) for each item whose link is not in `newsletter/seen.tsv`, newest first, at most `NEWSLETTER_MAX_ITEMS`. A feed that fails is logged and skipped; every feed failing fails the run.
+The machine remembers one thing between runs, declared under `store:`: `seen.tsv`, the links already sent, in `.decree/store/newsletter/` (`$DECREE_STORE`). It survives `decree prune`, and is not committed.
+
+1. [`gather`](.decree/scripts/newsletter/gather.py) (Python 3, standard library only: a script can be any executable) fetches every feed in `lib/newsletter/feeds.txt`, RSS 2.0 or Atom, and writes the run's `items.jsonl`: `title`, `link`, `source`, `published` and `summary` (plain text, at most 500 characters) for each item whose link is not in `seen.tsv`, in the machine's store, newest first, at most `NEWSLETTER_MAX_ITEMS`. A feed that fails is logged and skipped; every feed failing fails the run.
 2. [`write`](.decree/scripts/newsletter/write.sh) (bash, `curl` and `jq`) sends `lib/newsletter/taste.md` and `items.jsonl` to Ollama's `/api/chat`, and writes the run's `issue.md`: a title with the date, then the model's picks as markdown links. With no new items it writes an issue saying so, and does not call the model.
-3. [`deliver`](.decree/scripts/newsletter/deliver.sh) copies `issue.md` to `newsletter/<YYYY-MM-DD>.md` (`-2`, `-3` if that day has one), records every gathered link in `seen.tsv` with the date, and, if `NTFY_URL` is set, posts the issue's first three lines to `$NTFY_URL/$NTFY_TOPIC`. Without `NTFY_URL` it says it skipped the ping.
+3. [`deliver`](.decree/scripts/newsletter/deliver.sh) copies `issue.md` to `newsletter/<YYYY-MM-DD>.md` (`-2`, `-3` if that day has one), records every gathered link in the store's `seen.tsv` with the date, and, if `NTFY_URL` is set, posts the issue's first three lines to `$NTFY_URL/$NTFY_TOPIC`. Without `NTFY_URL` it says it skipped the ping.
 
 `gather` does not mark items seen; `deliver` does, so items from a run that fails are gathered again next time. Each script is safe to re-run.
 
@@ -41,7 +46,8 @@ examples/newsletter/
     cron/newsletter.md                every Monday at 07:00
     env                               OLLAMA_URL, OLLAMA_MODEL, NEWSLETTER_DIR, NEWSLETTER_MAX_ITEMS, NTFY_*
     graph/  schema/                   written by `decree graph` and `decree schema`
-  newsletter/                         the issues and seen.tsv, once it has run
+    store/newsletter/seen.tsv         links already sent, once it has run (not committed)
+  newsletter/                         the issues, once it has run
 ```
 
 Edit `feeds.txt` and `taste.md` to make it yours. `taste.md` is the whole prompt about you: write it as you would to a friend picking links for you.

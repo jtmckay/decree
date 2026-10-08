@@ -25,6 +25,7 @@ every state is reachable. `decree schema` rewrites `.decree/schema/` if it is mi
 | Root | `name` | Equals the file stem; `^[a-z][a-z0-9_]*$`. |
 | Root | `description` | Required. Shown in prompts, `decree status` and graphs. |
 | Root | `data` | `name: { type: string\|int\|number\|bool, default: ..., enum?: [...] }`. `number` is an int or a float; `enum` (string only) lists the allowed values, which the default and `params` must be one of (V14). Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
+| Root | `store` | `name: description`: what the machine keeps between runs in `.decree/store/<machine>/` (`$DECREE_STORE`). A name is a file or folder directly in that folder, `^[A-Za-z0-9][A-Za-z0-9._-]*$`; a description says what it is and which states read or write it (V14). `decree check` warns about undeclared files there. |
 | Root | `onentry`, `onexit` | Scripts run once when the run starts, and once after a root final state is entered. |
 | Root | `initial`, `states` | Required. `initial` is a direct child. |
 | State | `invoke` | The state's function (below). `attempts`, `timeout` and `env` go inside it. |

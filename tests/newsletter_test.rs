@@ -3,7 +3,7 @@
 //! local `file://` fixtures (`tests/fixtures/newsletter/`: one RSS 2.0, one Atom, one broken),
 //! and a stub `curl` first on `PATH` stands in for Ollama's `/api/chat` and for ntfy. Covers:
 //! a first run writes `newsletter/<today>.md` with the stub's picks and records the five links
-//! in `seen.tsv`; a second run writes the "nothing new" issue without calling the model; a
+//! in the machine's store, `.decree/store/newsletter/seen.tsv`; a second run writes the "nothing new" issue without calling the model; a
 //! broken feed is skipped, and all feeds broken fails `gather`; `deliver` posts to ntfy once
 //! with `NTFY_URL` set, and skips the ping, saying so, without it. Skipped without `python3`
 //! or `jq`, which the example's scripts need.
@@ -211,9 +211,14 @@ impl Project {
         fs::read_to_string(self.root().join("newsletter").join(file)).unwrap()
     }
 
+    /// `seen.tsv`, in the machine's store.
+    fn seen_tsv(&self) -> String {
+        fs::read_to_string(self.root().join(".decree/store/newsletter/seen.tsv")).unwrap()
+    }
+
     /// The first column of `seen.tsv`.
     fn seen(&self) -> Vec<String> {
-        self.newsletter("seen.tsv")
+        self.seen_tsv()
             .lines()
             .map(|l| l.split('\t').next().unwrap().to_string())
             .collect()
@@ -252,7 +257,7 @@ fn a_run_writes_the_stub_issue_and_records_the_links() {
     );
     assert_eq!(p.seen(), LINKS);
     assert!(p
-        .newsletter("seen.tsv")
+        .seen_tsv()
         .lines()
         .all(|l| l.ends_with(&format!("\t{today}"))));
 
@@ -385,6 +390,7 @@ fn deliver_is_safe_to_re_run() {
     let out = Command::new(script)
         .current_dir(p.root())
         .env("DECREE_RUN_DIR", p.run_dir(&id))
+        .env("DECREE_STORE", p.root().join(".decree/store/newsletter"))
         .env("NEWSLETTER_DIR", "newsletter")
         .env_remove("NTFY_URL")
         .output()
@@ -395,12 +401,12 @@ fn deliver_is_safe_to_re_run() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     files.sort();
-    assert_eq!(files, [format!("{}.md", today()), "seen.tsv".to_string()]);
+    assert_eq!(files, [format!("{}.md", today())]);
     assert_eq!(p.seen(), LINKS);
 }
 
-/// One machine, `newsletter`, with the states gather, write, deliver, done and failed, and a
-/// weekly cron file for it.
+/// One machine, `newsletter`, with the states gather, write, deliver, done and failed,
+/// `seen.tsv` declared in its store, and a weekly cron file for it.
 #[test]
 fn newsletter_is_the_only_machine_and_has_five_states() {
     let machines: Vec<String> = fs::read_dir(example().join(".decree/machines"))
@@ -417,9 +423,33 @@ fn newsletter_is_the_only_machine_and_has_five_states() {
         .map(|k| k.as_str().unwrap())
         .collect();
     assert_eq!(states, ["gather", "write", "deliver", "done", "failed"]);
+    let store: Vec<&str> = machine["store"]
+        .as_mapping()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str().unwrap())
+        .collect();
+    assert_eq!(store, ["seen.tsv"]);
     let cron = fs::read_to_string(example().join(".decree/cron/newsletter.md")).unwrap();
     assert!(
         cron.contains("cron: \"0 7 * * 1\"\nmachine: newsletter\n"),
         "{cron}"
     );
+}
+
+/// `seen.tsv` lives in the machine's store: declared under `store:`, drawn in the graph, and
+/// read and written by the scripts through `$DECREE_STORE` (docs/reference/scripts.md, Store).
+#[test]
+fn seen_tsv_is_in_the_store() {
+    let graph = fs::read_to_string(example().join(".decree/graph/newsletter.md")).unwrap();
+    assert!(
+        graph.contains("    note left of gather\n        store: seen.tsv\n    end note\n"),
+        "{graph}"
+    );
+    for script in ["gather.py", "deliver.sh"] {
+        let text =
+            fs::read_to_string(example().join(".decree/scripts/newsletter").join(script)).unwrap();
+        assert!(text.contains("DECREE_STORE"), "{script}");
+        assert!(!text.contains("NEWSLETTER_DIR/seen.tsv"), "{script}");
+    }
 }

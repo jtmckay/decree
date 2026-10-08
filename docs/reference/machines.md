@@ -215,6 +215,7 @@ A duration is a whole number of at most 9 digits followed by one unit: `s` (seco
 | Root | `name` | string | `<scxml name>` | Must equal the file stem. `^[a-z][a-z0-9_]*$`. |
 | Root | `description` | string | extension | Required. Used in prompts, `decree status` and graphs. |
 | Root | `data` | map of name to `{type, default, enum?}` | `<datamodel><data id>` | Optional. `type` is `string`, `int`, `number` (a JSON number: an int or a float, as in JSON Schema) or `bool`. `default` is required and must match `type`. `enum`, on `string` data only, is a non-empty list of distinct strings, as in JSON Schema: the `default` and every `params` value must be one of them. A message's `params` override the defaults; nothing else changes them. |
+| Root | `store` | map of name to description | extension | Optional. What the machine keeps between runs in `.decree/store/<machine>/` ([Store](#store)). Each name is a file or folder directly in that folder, `^[A-Za-z0-9][A-Za-z0-9._-]*$` (no `/`); each description is a non-empty string (V14). |
 | Root | `onentry`, `onexit` | list of script names | extension (`<scxml>` has neither; they act like a top-level compound state around all others) | Optional. Root `onentry` runs once when the run starts (and again when `decree process --retry` continues it); root `onexit` runs once after a root final state is entered. |
 | Root | `initial` | state id | `<scxml initial>` | Required. Must be a direct child in `states`. |
 | Root | `states` | map of id to state | child `<state>` and `<final>` | Required. The map key is the state's `id`. |
@@ -225,6 +226,21 @@ A duration is a whole number of at most 9 digits followed by one unit: `s` (seco
 | State | `initial`, `states` | as root | `<state initial>`, child states | Present together on compound states, absent on all others. |
 | State | `transitions` | map of event to target | `<transition event target type>` | Short form `event: target`, or long form `{target, description, type}`. Not allowed on final states. |
 | State | `emits` | list of machine names | extension | Machines this state's scripts may emit messages for. Enforced by `decree emit`, drawn by `decree graph`. |
+
+## Store
+
+A machine that remembers something from one run to the next keeps it in its store, `.decree/store/<machine>/`, which its scripts find as `$DECREE_STORE` ([Store](scripts.md#store)), and says so under `store:`, so the machine file shows what it remembers and where:
+
+```yaml
+store:
+  seen.tsv: Links already sent, so an item is never in two issues. gather reads it; deliver appends.
+```
+
+Each name is a file or folder directly in the store folder; its description says what it is and which states read or write it. `decree graph` shows the names in a note on the machine, `store: seen.tsv` ([Graph](graph.md)).
+
+What goes in the store is what the machine itself reads back in a later run: what it has seen, sent or counted. What does not: a run's own files (`$DECREE_RUN_DIR`), shared code and config (`$DECREE_LIB`), and outputs for people, such as an issue, a report or a video, which go wherever the user wants them.
+
+The store survives runs and `decree prune`, and is not committed. `decree check` warns, without failing, about a file or folder in `store/<machine>/` that `store:` does not declare, and about a store folder with no machine. Nothing else is enforced: a script that writes outside its store is not detectable.
 
 ## SCXML subset
 
@@ -288,7 +304,7 @@ The path is relative to the machine file. VS Code with the YAML extension by Red
 
 **Models.** A model that writes or edits a machine reads `.decree/schema/v1/machine.schema.json` first, writes against it, and runs `decree check` after.
 
-**What the schema checks** is everything about one file's shape: its keys and their types, required keys and unknown keys (V19, including each shape migration 71 replaced), each `invoke` kind and its short forms, transitions in short and long form (with `true:` and `false:` keys read as the event names), conditions with exactly one subject and one operator that subject takes and a value of the right type (V10), the name patterns (V1, V2, V18, script and machine names), the ranges of `min_confidence` and `confidence` values (V10, V16), the root-level final state `failed` (V5), which keys each kind of state may have (V6, V7, `type: internal` only on a compound state for V17), the options of a `model` or `person` state (at least two, each with a `description`, none reserved; V8, V18), `true` and `false` rather than `yes` and `no` on a `check` state (V8), and `data` defaults of their `type`, with `enum` a non-empty list of distinct strings on `string` data only (V14). A message has one of two shapes: a message that names its `machine`, or a reply with `to` and `event`.
+**What the schema checks** is everything about one file's shape: its keys and their types, required keys and unknown keys (V19, including each shape migration 71 replaced), each `invoke` kind and its short forms, transitions in short and long form (with `true:` and `false:` keys read as the event names), conditions with exactly one subject and one operator that subject takes and a value of the right type (V10), the name patterns (V1, V2, V18, script and machine names), the ranges of `min_confidence` and `confidence` values (V10, V16), the root-level final state `failed` (V5), which keys each kind of state may have (V6, V7, `type: internal` only on a compound state for V17), the options of a `model` or `person` state (at least two, each with a `description`, none reserved; V8, V18), `true` and `false` rather than `yes` and `no` on a `check` state (V8), `data` defaults of their `type`, with `enum` a non-empty list of distinct strings on `string` data only, and `store` names and their non-empty descriptions (V14). A message has one of two shapes: a message that names its `machine`, or a reply with `to` and `event`.
 
 **What only `decree check` checks** is what a schema of one file cannot see: whether a name resolves (`initial` V3, targets V4, `output` V9, the `data`, `visits` and `confidence` a condition names and the types it compares V10, that a `data` default is one of its `enum` values V14, scripts V12, `emits` V13, `router`, `machine` and `params` V16, a message's machine and params M1–M3), that `name` equals the file stem (V1), that state ids are unique across nesting levels (V2), reachability (V11), `done.state.<id>` handling (V15), events handled through an ancestor (V8), that an internal transition targets a descendant (V17), cycles (V20), overlapping events (V21), that a regular expression compiles in the `regex` crate's syntax (V10), that a cron file has a `cron:` expression that parses (M3), that `.decree/env` is a valid dotenv file (E1), and that a value written `1.0` is not an int (JSON Schema counts it as an integer).
 
@@ -296,7 +312,7 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 
 ## Validation
 
-`decree check` runs every rule below, plus the message checks M1–M3 and the `.decree/env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/` from what `decree schema` would write. `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
+`decree check` runs every rule below, plus the message checks M1–M3 and the `.decree/env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/` from what `decree schema` would write, or when `.decree/store/` holds what no machine's `store:` declares ([Store](#store)). `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
 
 | Rule | Check |
 | --- | --- |
@@ -313,7 +329,7 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 | V11 | Every state is reachable from root `initial`, and every non-final state can reach a root-level final state. |
 | V12 | Every script name (`script`, `ask`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file ([Resolution](scripts.md#resolution)); a `person` has an `ask` script. |
 | V13 | Every `emits` entry is an existing machine name. |
-| V14 | Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. |
+| V14 | Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `store` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the store folder, and has a non-empty description. |
 | V15 | Every compound state with a final child handles `done.state.<id>`, itself or through an ancestor, so the run cannot stall. |
 | V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; every `env` key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`; `attempts`, `timeout` and `env` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19. |
 | V17 | `type: internal` appears only on a compound state's transition whose target is one of its descendants. |

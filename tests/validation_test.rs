@@ -732,6 +732,33 @@ machines/m.yml: line 5: data `rounds`: `enum` is for type `string`, not `int` (V
 machines/m.yml: line 7: data `twice`: `enum` lists `a` twice (V14)
 ",
     },
+    Case {
+        rule: "V14",
+        name: "store names are files or folders in the store folder, with a description",
+        files: &[(
+            "machines/m.yml",
+            "\
+name: m
+description: Stored.
+store:
+  seen.tsv: Links already sent. work reads and appends.
+  \"a/b\": x
+  cache: \"  \"
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+",
+        )],
+        scripts: &[],
+        expected: "\
+machines/m.yml: line 5: store `a/b`: the name does not match ^[A-Za-z0-9][A-Za-z0-9._-]*$: a file or folder directly in the store folder (V14)
+machines/m.yml: line 6: store `cache`: the description is empty: say what it is and which states read or write it (V14)
+",
+    },
     // V15
     Case {
         rule: "V15",

@@ -22,6 +22,22 @@
       "additionalProperties": { "$ref": "#/$defs/dataSpec" },
       "examples": [{ "max_rounds": { "type": "int", "default": 2 } }]
     },
+    "store": {
+      "type": "object",
+      "description": "Extension: what the machine keeps between runs, in .decree/store/<machine>/ (DECREE_STORE). A map of names to descriptions: each name is a file or folder directly in the store folder, matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (no `/`), and each description says what it is and which states read or write it (V14). `decree check` warns about anything in the store folder that is not declared. Outputs for people go wherever the user wants, not here.",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S",
+        "description": "What the file or folder is, and which states read or write it."
+      },
+      "examples": [
+        {
+          "seen.tsv": "Links already sent, so an item is never in two issues. gather reads it; deliver appends."
+        }
+      ]
+    },
     "onentry": {
       "$ref": "#/$defs/scriptList",
       "description": "Extension (SCXML's <scxml> has none): scripts run once when the run starts, in order, and again when `decree process --retry` continues it. They produce no event; a failure raises `error`."

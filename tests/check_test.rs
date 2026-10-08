@@ -128,6 +128,41 @@ fn check_warns_when_the_graph_files_are_out_of_date() {
     );
 }
 
+/// What `.decree/store/` holds that no machine declares is a warning, not an error
+/// (docs/reference/machines.md, Store).
+#[test]
+fn check_warns_about_undeclared_store_files_and_orphan_store_folders() {
+    let (code, stdout, stderr) = check_project(PROJECT, |decree| {
+        let hello = decree.join("machines/hello.yml");
+        let text = fs::read_to_string(&hello).unwrap().replace(
+            "initial: greet\n",
+            "store:\n  seen.tsv: Who was greeted. greet reads and appends.\ninitial: greet\n",
+        );
+        fs::write(&hello, text).unwrap();
+        let store = decree.join("store");
+        fs::create_dir_all(store.join("hello/cache")).unwrap();
+        fs::write(store.join("hello/seen.tsv"), "ada\n").unwrap();
+        fs::write(store.join("hello/other.txt"), "x\n").unwrap();
+        fs::create_dir_all(store.join("deploy")).unwrap();
+        fs::write(store.join("deploy/count"), "1\n").unwrap();
+        fs::create_dir_all(store.join("old")).unwrap();
+        fs::write(store.join("notes.txt"), "x\n").unwrap();
+    });
+    assert_eq!((code, stdout.as_str()), (0, ""));
+    let store: Vec<&str> = stderr.lines().filter(|l| l.contains(" store/")).collect();
+    assert_eq!(
+        store,
+        [
+            "warning: store/deploy/count: is not declared in deploy's `store:`",
+            "warning: store/hello/cache: is not declared in hello's `store:`",
+            "warning: store/hello/other.txt: is not declared in hello's `store:`",
+            "warning: store/notes.txt: is not a folder: `store/` holds one folder per machine",
+            "warning: store/old: is a store folder with no machine: no `machines/old.yml`",
+        ],
+        "{stderr}"
+    );
+}
+
 /// A new machine makes `graph/` stale until `decree graph` rewrites it.
 #[test]
 fn check_warns_until_the_graph_is_rewritten() {

@@ -97,3 +97,4 @@
 97-guidance-from-real-runs.md
 98-newsletter-example.md
 99-no-tmux-services.md
+100-machine-store.md

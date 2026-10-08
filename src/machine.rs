@@ -32,6 +32,8 @@ struct Machine {
     #[serde(default)]
     pub data: BTreeMap<String, DataSpec>,
     #[serde(default)]
+    pub store: BTreeMap<String, String>,
+    #[serde(default)]
     pub onentry: Vec<String>,
     #[serde(default)]
     pub onexit: Vec<String>,
@@ -445,12 +447,15 @@ pub struct Node {
     pub emits: Vec<String>,
 }
 
-/// A loaded machine: its `data` and its arena.
+/// A loaded machine: its `data`, its `store` and its arena.
 #[derive(Debug)]
 pub struct LoadedMachine {
     /// The file stem, which V1 requires to equal `name`.
     pub id: String,
     pub data: BTreeMap<String, DataSpec>,
+    /// What the machine keeps in `.decree/store/<machine>/` between runs: name to description
+    /// (docs/reference/machines.md, Store).
+    pub store: BTreeMap<String, String>,
     pub nodes: Vec<Node>,
 }
 
@@ -506,6 +511,7 @@ fn flatten(id: &str, machine: Machine) -> LoadedMachine {
     LoadedMachine {
         id: id.to_string(),
         data: machine.data,
+        store: machine.store,
         nodes,
     }
 }
@@ -881,6 +887,14 @@ pub(crate) fn is_ident(s: &str) -> bool {
     let mut bytes = s.bytes();
     bytes.next().is_some_and(|b| b.is_ascii_lowercase())
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// `^[A-Za-z0-9][A-Za-z0-9._-]*$`, the pattern for a `store` name: a file or folder directly
+/// in the store folder (docs/reference/machines.md, Store).
+pub(crate) fn is_store_name(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_alphanumeric())
+        && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`, the pattern for event names (docs/reference/machines.md, Rules).
