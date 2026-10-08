@@ -2,7 +2,7 @@
 
 This example runs long-running services in tmux sessions, so you can attach to them and watch them, and switches the GPU between two of them by unloading models, not by stopping servers. [`docs/services.md`](../../docs/services.md) shows the same switch with systemd units.
 
-The pattern: `onentry` scripts named for what they do, listed in the order they run.
+The pattern: scripts named for what they do, listed in the order they run. The quick ones are `onentry` scripts; the one that waits for ComfyUI's queue is its own invoked state with a `timeout`, since `onentry` scripts have none ([`docs/services.md`](../../docs/services.md#prep-that-waits-an-invoked-state-with-a-timeout)).
 
 - **`use_<service>`** uses the service if its health URL answers, whoever runs it (a tmux session, a systemd service, anything). Otherwise it uses the service's tmux session, or starts the service in a new detached session named after it, then waits until it answers, and fails with a clear message if it does not.
 - **`without_<service>`** unloads the service's models through its API and waits until they are gone, freeing the GPU. The server keeps running, with its queue and history, so the next `use_<service>` finds it answering and a swap costs a model load, not a server start. ComfyUI and Ollama never hold models together, so a state that needs one lists `without_<the other>` first.
@@ -23,11 +23,13 @@ What is freed: the models' weights, and for ComfyUI also PyTorch's cache, so `to
 ```mermaid
 stateDiagram-v2
     [*] --> needs_picture
+    drain_comfy --> write: done
+    drain_comfy --> failed: error (implicit)
     needs_picture --> failed: error (implicit)
-    needs_picture --> write: text_only (model: gliner_router)
-    needs_picture --> write: unsure (model: gliner_router)
+    needs_picture --> drain_comfy: text_only (model: gliner_router)
+    needs_picture --> drain_comfy: unsure (model: gliner_router)
     needs_picture --> render: with_picture (model: gliner_router)
-    render --> write: done
+    render --> drain_comfy: done
     render --> failed: error (implicit)
     write --> done: done
     write --> failed: error (implicit)
@@ -43,16 +45,17 @@ stateDiagram-v2
         onentry: without_ollama, use_comfy
     end note
     note right of write
-        onentry: without_comfy_wait, use_ollama
+        onentry: use_ollama
     end note
 ```
 
 1. The root `onentry`, `use_gliner`, uses or starts the `gliner` session, running the one copy of [`decide_server.py`](../route-by-complexity/gliner/decide_server.py), and waits for its `GET /health`.
-2. `needs_picture` asks [`gliner_router`](.decree/machines/gliner_router.yml) (the same file as in `route-by-complexity`) "Does this post need a picture?". `with_picture` goes to `render`; `text_only`, and `unsure` below `min_confidence: 0.7`, go straight to `write`.
+2. `needs_picture` asks [`gliner_router`](.decree/machines/gliner_router.yml) (the same file as in `route-by-complexity`) "Does this post need a picture?". `with_picture` goes to `render`; `text_only`, and `unsure` below `min_confidence: 0.7`, go straight to `drain_comfy`.
 3. `render`'s `onentry` is `[without_ollama, use_comfy]`: it unloads Ollama's models, then uses ComfyUI or starts the `comfyui` session. `render` queues the FLUX2 text-to-image workflow from [`text-to-media`](../text-to-media/README.md) with the message as its prompt and returns at once: ComfyUI renders in the background, and the prompt id goes to `comfy-prompts.txt` in the run directory. Queue as many jobs as you like this way; nothing waits until something is about to unload ComfyUI's models.
-4. `write`'s `onentry` is `[without_comfy_wait, use_ollama]`. [`without_comfy_wait`](.decree/scripts/without_comfy_wait.sh) polls ComfyUI's `GET /queue` until nothing is running or pending, so unloading cuts no job short; then it writes the images this run's prompts made to `images.txt`, and fails if one of them failed or ComfyUI lost it (a restart forgets the queue and the history), unloading nothing; otherwise it runs `without_comfy_no_wait`, which unloads ComfyUI's models. If ComfyUI is not running it has nothing to wait for, unless this run queued prompts. Then `use_ollama` uses Ollama or starts `ollama serve`, and `write` asks Ollama's `/api/generate` for the post and writes `post.md` in the run directory, linking the images.
+4. `drain_comfy` invokes [`without_comfy_wait`](.decree/scripts/without_comfy_wait.sh) with `timeout: 1h`: it waits for other jobs too, so it is a state of its own and not an `onentry` script, which would have no timeout and could hang. It polls ComfyUI's `GET /queue` until nothing is running or pending, so unloading cuts no job short; then it writes the images this run's prompts made to `images.txt`, and fails if one of them failed or ComfyUI lost it (a restart forgets the queue and the history), unloading nothing; otherwise it runs `without_comfy_no_wait`, which unloads ComfyUI's models. If ComfyUI is not running it has nothing to wait for, unless this run queued prompts.
+5. `write`'s `onentry` is `[use_ollama]`: it uses Ollama or starts `ollama serve`, and `write` asks Ollama's `/api/generate` for the post and writes `post.md` in the run directory, linking the images.
 
-An `onentry` failure is the state's `error` event, and these states have no `error` transition, so a service that does not start, or an unload that does not take effect within its timeout, ends the run in `failed`, with the reason in that script's log.
+An `onentry` failure, a failed script and a passed `timeout` are each the state's `error` event, and these states have no `error` transition, so a service that does not start, an unload that does not take effect within its timeout, or a queue that does not drain within the hour ends the run in `failed`, with the reason in that script's log.
 
 ## The scripts
 
@@ -74,10 +77,10 @@ Every name, command, URL and timeout is a variable with a default at the top of 
 | [`without_ollama`](.decree/scripts/without_ollama.sh) | `OLLAMA_URL` (`http://127.0.0.1:11434`), `OLLAMA_UNLOAD_TIMEOUT_S` (60) |
 | [`without_comfy_no_wait`](.decree/scripts/without_comfy_no_wait.sh) | `COMFY_URL` (`http://127.0.0.1:8188`), `COMFY_RESERVED_MAX_MB` (1024), `COMFY_UNLOAD_TIMEOUT_S` (60) |
 | [`without_comfy_wait`](.decree/scripts/without_comfy_wait.sh) | `COMFY_URL`, `COMFYUI_DIR` (its `output/` holds the images), `COMFY_DRAIN_TIMEOUT_S` (1800), and `without_comfy_no_wait`'s |
-| [`illustrated_post/render`](.decree/scripts/illustrated_post/render.sh) | `COMFY_URL`, `COMFY_WORKFLOW` (`../text-to-media/workflows/image_flux2_text_landscape.json` from this example) |
+| [`illustrated_post/render`](.decree/scripts/illustrated_post/render.sh) | `COMFY_URL`, `COMFY_WORKFLOW` (`../text-to-media/.decree/lib/comfy/image_flux2_text_landscape.json` from this example) |
 | [`illustrated_post/write`](.decree/scripts/illustrated_post/write.sh) | `OLLAMA_URL`, `OLLAMA_MODEL` (`gemma4:e4b`), `OLLAMA_TIMEOUT_S` (300) |
 
-A new tmux session gets the tmux server's environment, which may not be your shell's. If GLiNER or ComfyUI live in a virtual environment, point `GLINER_PYTHON` or `COMFYUI_PYTHON` at its `python` (or set `GLINER_PYTHON="uv run --with 'gliner2[local]' python"`).
+A new tmux session gets the tmux server's environment, which may not be your shell's. If GLiNER or ComfyUI live in a virtual environment, point `GLINER_PYTHON` or `COMFYUI_PYTHON` at its `python` (or set `GLINER_PYTHON="uv run --with 'gliner2[local,train]' python"`).
 
 ## Running it
 
@@ -94,7 +97,7 @@ To use it, install:
 - `tmux`, `curl` and `jq`;
 - [Ollama](https://ollama.com), and the model: `ollama pull gemma4:e4b`;
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) in `~/ComfyUI` (or set `COMFYUI_DIR`), with the FLUX2 models the [`text-to-media`](../text-to-media/README.md) workflows load;
-- GLiNER2.5-Decide's Python package, Python 3.10 or newer: `pip install 'gliner2[local]'`.
+- GLiNER2.5-Decide's Python package, Python 3.10 or newer: `pip install 'gliner2[local,train]'` (plain `gliner2` is only the cloud API client, and the local runtime imports the training modules too).
 
 Then, from this directory in the repository, queue a message and process it:
 
@@ -129,7 +132,7 @@ tmux gives you each service live, in a terminal you can attach to, scroll and ty
 examples/tmux-services/
   .decree/
     machines/
-      illustrated_post.yml             picture or not, render, write
+      illustrated_post.yml             picture or not, render, drain ComfyUI, write
       gliner_router.yml                a typed router: asks the classifier server (the same file as in route-by-complexity)
     scripts/
       tmux_service.sh                  answers, ensure_session, wait_until_up; sourced, not run
@@ -137,7 +140,7 @@ examples/tmux-services/
       use_comfy.sh                     onentry: uses ComfyUI if it answers, or uses or starts the comfyui session
       use_ollama.sh                    onentry: uses Ollama if it answers, or uses or starts the ollama session
       without_ollama.sh                onentry: unloads Ollama's models (nothing waits on Ollama by then)
-      without_comfy_wait.sh            onentry: waits until ComfyUI's queue is empty, writes images.txt, unloads
+      without_comfy_wait.sh            drain_comfy's invoke: waits until ComfyUI's queue is empty, writes images.txt, unloads
       without_comfy_no_wait.sh         onentry: clears ComfyUI's queue, interrupts, unloads its models
       illustrated_post/render.sh       queues the workflow and returns; ComfyUI renders in the background
       illustrated_post/write.sh        asks Ollama for the post, writes post.md

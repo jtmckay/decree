@@ -2136,9 +2136,9 @@ fn model_router_reply_is_the_event_and_the_request_matches_the_reference() {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "properties": {
+                "reason": {"type": "string"},
                 "event": {"enum": ["retry", "split"]},
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                "reason": {"type": "string"},
                 "probabilities": {
                     "type": "object",
                     "properties": {"retry": {"type": "number"}, "split": {"type": "number"}},
@@ -2169,6 +2169,13 @@ fn model_router_reply_is_the_event_and_the_request_matches_the_reference() {
     .map(|k| copied.find(k).unwrap())
     .collect();
     assert!(keys.windows(2).all(|w| w[0] < w[1]), "{copied}");
+    // A constrained decoder emits properties in schema order: `reason` before `event`, so
+    // the model reasons before it picks.
+    let schema = &copied[copied.find("\"reply_schema\"").unwrap()..];
+    assert!(
+        schema.find("\"reason\"").unwrap() < schema.find("\"event\"").unwrap(),
+        "{copied}"
+    );
 
     // The router's script saw DECREE_REQUEST and DECREE_REPLY in its own folder.
     assert!(child_dir.join(REPLY_FILE).is_file());

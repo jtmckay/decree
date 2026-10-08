@@ -92,6 +92,8 @@ states:
   failed: { final: true }
 ```
 
+Keep a child machine's final states few and generic, such as `resolved`, `answered` and `failed`: V8 makes every caller handle every root final state of the child except `failed`, so each one is a transition every caller must have. A child that ends in `approved_by_lead`, `approved_by_owner` and `approved_late` asks each caller to tell them apart; one that ends in `approved` and records who and when in its events does not.
+
 ## Fragment: a compound state
 
 A state with `states` is a compound state: its children run as one unit, starting at its `initial`. When a child final state is reached, decree raises `done.state.<id>`, which the compound state handles like any event. `onentry` and `onexit` scripts run every time a state is entered or exited, and report no event; at the machine's root they run once, when the run starts and after it ends.

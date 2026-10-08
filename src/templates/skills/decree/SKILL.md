@@ -78,6 +78,14 @@ appear only where a machine invokes `model` or `person`.
   `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
   `message`.
 - **Scripts must be safe to re-run**: `decree process --retry` re-runs a step that was interrupted.
+- **Shared code, config and data go in `.decree/lib/`** (`$DECREE_LIB`); `scripts/` holds only
+  what states invoke. Project config goes in `.decree/env`; per-state values in the invoke's
+  `env:`.
+- **A step that waits for a shared resource is an invoked state with a `timeout`** (ComfyUI's
+  queue, a model unloading), not an `onentry` script, which has none. Keep `onentry` for quick
+  steps.
+- **Never delete run folders to clean up**; they are the record. Use
+  `decree prune --older-than <age>`.
 - Do not commit `.decree/inbox/` or `.decree/runs/`.
 
 ## Commands

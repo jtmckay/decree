@@ -17,6 +17,8 @@ What the pages confirm (read 2026-10-04):
 - The gliner2 README, https://github.com/fastino-ai/GLiNER2: include_confidence=True
   returns {task: {"label": ..., "confidence": ...}}, and local inference needs the
   `gliner2[local]` extra.
+Found running it: the plain `gliner2` package is only the cloud API client, and the local
+runtime imports the training modules too, so install `gliner2[local,train]`.
 Not confirmed: the pages show described labels and include_confidence in separate examples,
 not together; they document no separate instructions argument (so the question goes in front
 of the text), and no scores for every label (so the reply has no `probabilities`).

@@ -2,12 +2,12 @@
 # Graph: ../graph/comfy.md
 # Text to media on ComfyUI. Its API is fire and forget, so a render is four
 # steps: build the workflow, submit it, await the render, fetch the files. The
-# message names the method, a workflow in workflows/ by file stem, and its body
+# message names the method, a workflow in .decree/lib/comfy/ by file stem, and its body
 # is the prompt.
 name: comfy
 description: Render the message body on ComfyUI with the workflow `method` names, wait for the render, and save it to the repo path in `output`.
 data:
-  method: { type: string, default: "" }        # a workflow in workflows/, by file stem; required
+  method: { type: string, default: "" }        # a workflow in .decree/lib/comfy/, by file stem; required
   output: { type: string, default: "" }        # repo path without extension; required
   input_image: { type: string, default: "" }   # repo path, uploaded to ComfyUI; for image-to-* methods
   width:  { type: int, default: 0 }            # 0 keeps the workflow's own value
@@ -16,7 +16,7 @@ data:
 onentry: [precheck]                # fails fast if curl or jq is missing
 initial: build
 states:
-  build:                           # patches workflows/<method>.json with the params; fails on an unknown method or a missing required param
+  build:                           # patches lib/comfy/<method>.json with the params; fails on an unknown method or a missing required param
     invoke: build
     transitions: { done: submit }
   submit:                          # uploads input_image, POST /prompt, keeps the prompt id

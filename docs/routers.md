@@ -62,7 +62,7 @@ Its scripts get two extra variables ([Environment](reference/scripts.md#environm
   "input": "<the output state's output>",
   "message_body": "<the parent message's body>",
   "history": ["precheck: done", "implement: done", "verify: fail", "rounds_left: true"],
-  "reply_schema": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": {"event": {"enum": ["retry", "split"]}, "…": "…"}, "required": ["event"], "additionalProperties": false}
+  "reply_schema": {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": {"reason": {"type": "string"}, "event": {"enum": ["retry", "split"]}, "…": "…"}, "required": ["event"], "additionalProperties": false}
 }
 ```
 
@@ -104,12 +104,12 @@ So a threshold only means something for the router it was set with. When a `mode
 [GLiNER2.5-Decide](https://huggingface.co/fastino/GLiNER2.5-Decide-1B) is a typed router: a 1B classifier built for operational decisions, which picks one of the labels it is given and reports its score for that label. It runs on CPU (Apache-2.0). Loading it takes far longer than one decision, so a small long-running server, [`examples/route-by-complexity/gliner/decide_server.py`](../examples/route-by-complexity/gliner/decide_server.py), loads it once and answers `POST /classify` on `127.0.0.1:8090`: `{instructions, labels: {name: description}, text}` in, `{event, confidence}` out. `GET /health` answers `{"ok": true}`; the server only listens once the model is loaded, so any answer means ready. Quick start, from `examples/route-by-complexity/` (Python 3.10 or newer):
 
 ```sh
-pip install 'gliner2[local]'           # or skip this and start it with: uv run --with 'gliner2[local]' python gliner/decide_server.py
+pip install 'gliner2[local,train]'     # or skip this and start it with: uv run --with 'gliner2[local,train]' python gliner/decide_server.py
 python gliner/decide_server.py         # the first start downloads the model, about 4.8 GB
 curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does this change need?", "labels": {"small": "A typo or a config value", "large": "Design across several files"}, "text": "Fix a typo in README.md"}'
 ```
 
-To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time), or a tmux session as in [`examples/tmux-services/`](../examples/tmux-services/README.md). The `gliner2` package's plain install is only its API client; `[local]` adds local inference ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
+To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time), or a tmux session as in [`examples/tmux-services/`](../examples/tmux-services/README.md). The `gliner2` package's plain install is only its cloud API client; running the model locally needs `gliner2[local,train]`, since the local runtime imports its training modules too ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
 
 `machines/gliner_router.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) and [`examples/tmux-services/`](../examples/tmux-services/README.md)):
 
@@ -139,6 +139,17 @@ jq -r '"picked \(.event)"' "$DECREE_REPLY"   # for the log only, as in ask_claud
 
 `classify_text` takes the labels with their descriptions, and no separate instructions, so the server puts the question in front of the text. The pages document a score for the picked label only, so the reply has no `probabilities`. If the server is down, `curl` fails, the router run ends in `failed`, and the state's event is `error`: give the state an `error` transition (to a bigger model, or to a person) if a missing classifier should not fail the run, as `develop_by_size` does.
 
+#### Where GLiNER fits
+
+Measured on real runs:
+
+- It is good when the answer shows in the wording: choosing a ComfyUI method from a request, it picked 16 of 18 right once the options were split into smaller decisions.
+- It is poor at judging: asked whether specs were routine or needed review, it called every one "routine", at 0.92 or more.
+- Its confidence spreads thin across many labels: among 7 options, correct picks scored 0.25 to 0.35.
+- With two options, the winner always scores at least 0.5, so a `min_confidence` floor near 0.5 filters almost nothing.
+
+So keep each decision to a few options, and settle anything the params already answer with [`check`](reference/runs.md#check) states first, before a model is asked.
+
 ### Ollama with `format`
 
 A language model served by [Ollama](https://docs.ollama.com/capabilities/structured-outputs) is a typed router when its call passes the request's `reply_schema` as `format`: Ollama constrains the model's output to the JSON Schema it is given, and the schema's `event` enum holds the pick to the options. Ollama's docs suggest also putting the schema in the prompt, and a temperature of 0, and say the same works through its OpenAI-compatible API's `response_format`. vLLM's guided decoding takes a JSON Schema too; SGLang's `select` picks among the option names directly. The confidence is still the model's own estimate.
@@ -166,7 +177,7 @@ jq '.message.content | fromjson' <<<"$answer" > "$DECREE_REPLY"
 jq -r '"picked \(.event)"' "$DECREE_REPLY"
 ```
 
-The reply is in the response's `message.content`. Ollama's docs do not list which JSON Schema keywords `format` supports, so check that your version honours `enum` before relying on it; decree validates the reply either way.
+The reply is in the response's `message.content`. A constrained decoder emits properties in the schema's order, so when a schema-constrained model routes, put the reasoning field first: decree's `reply_schema` lists `reason` before `event`, so the model reasons before it commits to a pick. With `event` first, a local model (Qwen, through Ollama's `format`) picked the first option for every request, and its reason then argued for another. [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) has this router as `llm_router`. Ollama's docs do not list which JSON Schema keywords `format` supports, so check that your version honours `enum` before relying on it; decree validates the reply either way.
 
 ### TypeSafe Jev
 

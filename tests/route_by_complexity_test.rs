@@ -3,7 +3,8 @@
 //! `gliner_router/ask_gliner.sh` is a stub that writes a chosen reply, with stub `opencode`,
 //! `claude` and test commands first on `PATH`. No model, no network. Also: the request decree
 //! writes carries a `reply_schema` over the options, the GLiNER quick starts are at most five
-//! commands, the server code is in one file, and it byte-compiles.
+//! commands, the server code is in one file, it byte-compiles, and `llm_router` sends
+//! `reply_schema` as Ollama's `format` (to a stub `curl`).
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
@@ -459,7 +460,7 @@ fn the_gliner_quick_start_is_at_most_five_commands() {
             .collect();
         assert!(commands.len() <= 5, "{doc}: {commands:?}");
         for word in [
-            "pip install 'gliner2[local]'",
+            "pip install 'gliner2[local,train]'",
             "python gliner/decide_server.py",
             "curl ",
         ] {
@@ -511,4 +512,86 @@ fn the_gliner_server_code_is_in_exactly_one_file() {
             "examples/route-by-complexity/gliner/decide_server.py"
         )]
     );
+}
+
+/// Answers Ollama's `/api/chat`: saves the body it was sent and replies with a chat message
+/// whose content is the reply, as Ollama does with `format`.
+const STUB_OLLAMA_CURL: &str = r#"#!/usr/bin/env bash
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) printf '%s' "$2" > "$(dirname "$0")/body.json"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+echo '{"message": {"role": "assistant", "content": "{\"reason\": \"One config value.\", \"event\": \"small\"}"}, "done": true}'
+"#;
+
+/// `llm_router`'s script asks `/api/chat` with `format` set to the request's `reply_schema`
+/// (reason first) and writes the message content as the reply. A stub `curl`, no network.
+#[test]
+fn the_llm_router_sends_reply_schema_as_format_and_writes_the_reply() {
+    if Command::new("jq").arg("--version").output().is_err() {
+        eprintln!("jq is not on PATH: skipping ask_llm.sh");
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let bin = tmp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    write_script(&bin.join("curl"), STUB_OLLAMA_CURL);
+    let schema = r#"{"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+        "properties": {"reason": {"type": "string"}, "event": {"enum": ["large", "small"]}},
+        "required": ["event"], "additionalProperties": false}"#;
+    let request = tmp.path().join("request.json");
+    fs::write(
+        &request,
+        format!(
+            r#"{{"question": "How much reasoning does this change need?",
+                "options": [{{"event": "large", "description": "Design"}},
+                            {{"event": "small", "description": "A config value"}}],
+                "input": "12 src/config.rs", "message_body": "Raise the limit.",
+                "reply_schema": {schema}}}"#
+        ),
+    )
+    .unwrap();
+    let reply = tmp.path().join("reply.json");
+    let path = std::env::join_paths(
+        std::iter::once(bin.clone())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let out = Command::new(example().join(".decree/scripts/llm_router/ask_llm.sh"))
+        .env("PATH", path)
+        .env("DECREE_REQUEST", &request)
+        .env("DECREE_REPLY", &reply)
+        .env_remove("LLM_URL")
+        .env_remove("LLM_MODEL")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: Value =
+        serde_json::from_str(&fs::read_to_string(bin.join("body.json")).unwrap()).unwrap();
+    assert_eq!(
+        body["format"],
+        serde_json::from_str::<Value>(schema).unwrap()
+    );
+    assert_eq!(body["stream"], false);
+    let content = body["messages"][0]["content"].as_str().unwrap();
+    for want in [
+        "A config value",
+        "12 src/config.rs",
+        "Raise the limit.",
+        "reason first",
+    ] {
+        assert!(content.contains(want), "{want:?} not in:\n{content}");
+    }
+    let reply: Value = serde_json::from_str(&fs::read_to_string(&reply).unwrap()).unwrap();
+    assert_eq!(
+        reply,
+        serde_json::json!({"reason": "One config value.", "event": "small"})
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("picked small: One config value."));
 }

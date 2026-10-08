@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# comfy's build: patch workflows/<method>.json with the message and its params,
-# and save it as runs/<id>/comfy-payload.json for submit. Every workflow is
+# comfy's build: patch $DECREE_LIB/comfy/<method>.json with the message and its
+# params, and save it as runs/<id>/comfy-payload.json for submit. The method is
+# $METHOD when the invoke's env sets it, else the `method` param. Every workflow is
 # patched the same way, by node type, so a new method is a new workflow file:
 #   the prompt (the message body)  every CLIPTextEncode no `negative` input uses
 #   width, height (0 keeps)        every node with numeric width and height
@@ -9,8 +10,8 @@
 # input_image is required when the workflow has a LoadImage node; submit
 # uploads it and points LoadImage at it.
 set -euo pipefail
-workflows="${DECREE_PROJECT_ROOT}/workflows"
-method="${DECREE_DATA_METHOD}"
+workflows="${DECREE_LIB}/comfy"
+method="${METHOD:-${DECREE_DATA_METHOD}}"
 
 methods() {
   local f

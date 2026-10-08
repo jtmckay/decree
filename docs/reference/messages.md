@@ -104,6 +104,8 @@ Before stepping a run, decree creates `runs/<id>/.lock` exclusively (`O_EXCL`) a
 5. **Ledger write.** When a migration's run enters a final state other than `failed`, decree appends the filename to `processed.md` (temp file plus rename) before that state's `onentry` scripts run. If one of them fails ([runs.md](runs.md#step-loop)), decree removes the line again.
 6. **Validate first.** Before starting the first pending migration, `process` and `daemon` parse every pending migration (frontmatter, machine, `params` against the machine's `data`). If any are invalid, they print every error and run nothing: `N migration(s) are invalid; nothing was processed.`, exit 1.
 
+**Batching by resource.** Rule 3 batches work by resource for free. A migration that does the LLM work and emits a message for each GPU step runs every LLM step first; only then do its emitted messages run, all the ComfyUI work, before the next migration starts. Ollama and ComfyUI then swap the GPU once per migration, not once per step.
+
 **Committing.** decree never runs git. Because the ledger is written before the final state's `onentry` scripts, put the commit there: `done: { final: true, onentry: [commit] }`. The commit then includes the code and the `processed.md` line, and a fresh clone knows which migrations ran. Do not commit `runs/`.
 
 ## Cron files

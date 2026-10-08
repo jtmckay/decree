@@ -6,7 +6,7 @@
 set -euo pipefail
 COMFY_URL="${COMFY_URL:-http://127.0.0.1:8188}"
 # Reused by path from examples/text-to-media/; set this when the example is copied elsewhere.
-COMFY_WORKFLOW="${COMFY_WORKFLOW:-$DECREE_PROJECT_ROOT/../text-to-media/workflows/image_flux2_text_landscape.json}"
+COMFY_WORKFLOW="${COMFY_WORKFLOW:-$DECREE_PROJECT_ROOT/../text-to-media/.decree/lib/comfy/image_flux2_text_landscape.json}"
 
 # The message body, after the frontmatter, is the prompt.
 prompt=$(awk 'NR == 1 && /^---$/ { fm = 1; next } fm == 1 && /^---$/ { fm = 2; next } fm != 1' "$DECREE_MESSAGE")

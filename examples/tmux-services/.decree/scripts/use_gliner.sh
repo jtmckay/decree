@@ -7,7 +7,7 @@ GLINER_SESSION="${GLINER_SESSION:-gliner}"
 # The one copy of the server, in examples/route-by-complexity/; set this when the
 # example is copied out of the repository.
 GLINER_SERVER="${GLINER_SERVER:-$DECREE_PROJECT_ROOT/../route-by-complexity/gliner/decide_server.py}"
-GLINER_PYTHON="${GLINER_PYTHON:-python3}"   # or: uv run --with 'gliner2[local]' python
+GLINER_PYTHON="${GLINER_PYTHON:-python3}"   # or: uv run --with 'gliner2[local,train]' python
 GLINER_HEALTH="${GLINER_HEALTH:-http://127.0.0.1:8090/health}"
 GLINER_START_TIMEOUT_S="${GLINER_START_TIMEOUT_S:-600}"   # the first start downloads about 4.8 GB
 source "$(dirname "${BASH_SOURCE[0]}")/tmux_service.sh"

@@ -42,7 +42,7 @@ pub(super) struct Request<'r> {
     input: String,
     message_body: &'r str,
     history: Vec<String>,
-    reply_schema: Value,
+    reply_schema: ReplySchema,
 }
 
 #[derive(serde::Serialize)]
@@ -120,28 +120,50 @@ impl Reply {
 
 /// `reply_schema` in `request.json` (docs/reference/runs.md, Model, step 1): a JSON Schema
 /// (draft 2020-12) for `reply.json` over `options`, which a typed router passes unchanged
-/// to a constrained decoder (Ollama's `format`, OpenAI-style `response_format`).
-pub(super) fn reply_schema(options: &[String]) -> Value {
+/// to a constrained decoder (Ollama's `format`, OpenAI-style `response_format`). A struct,
+/// not a [`Value`], so `properties` keeps its order: `reason` before `event`, since a
+/// constrained decoder emits properties in schema order and should reason before it picks.
+#[derive(serde::Serialize)]
+pub(super) struct ReplySchema {
+    #[serde(rename = "$schema")]
+    schema: &'static str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    properties: ReplyProperties,
+    required: [&'static str; 1],
+    #[serde(rename = "additionalProperties")]
+    additional_properties: bool,
+}
+
+#[derive(serde::Serialize)]
+struct ReplyProperties {
+    reason: Value,
+    event: Value,
+    confidence: Value,
+    probabilities: Value,
+}
+
+pub(super) fn reply_schema(options: &[String]) -> ReplySchema {
     let probabilities: Map<String, Value> = options
         .iter()
         .map(|o| (o.clone(), json!({ "type": "number" })))
         .collect();
-    json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-            "event": { "enum": options },
-            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-            "reason": { "type": "string" },
-            "probabilities": {
+    ReplySchema {
+        schema: "https://json-schema.org/draft/2020-12/schema",
+        kind: "object",
+        properties: ReplyProperties {
+            reason: json!({ "type": "string" }),
+            event: json!({ "enum": options }),
+            confidence: json!({ "type": "number", "minimum": 0, "maximum": 1 }),
+            probabilities: json!({
                 "type": "object",
                 "properties": probabilities,
                 "additionalProperties": false,
-            },
+            }),
         },
-        "required": ["event"],
-        "additionalProperties": false,
-    })
+        required: ["event"],
+        additional_properties: false,
+    }
 }
 
 /// The options of `model` or `person` state `n`, in name order (docs/reference/machines.md, Choices).

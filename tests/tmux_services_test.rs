@@ -146,7 +146,7 @@ impl Project {
         );
         for file in [
             "route-by-complexity/gliner/decide_server.py",
-            "text-to-media/workflows/image_flux2_text_landscape.json",
+            "text-to-media/.decree/lib/comfy/image_flux2_text_landscape.json",
         ] {
             let to = examples.join(file);
             fs::create_dir_all(to.parent().unwrap()).unwrap();
@@ -308,7 +308,8 @@ fn with_picture_starts_each_service_once_and_unloads_comfyui_before_ollama() {
         path(&run),
         [
             "needs_picture with_picture render",
-            "render done write",
+            "render done drain_comfy",
+            "drain_comfy done write",
             "write done done"
         ]
     );
@@ -411,13 +412,17 @@ fn text_only_never_touches_comfyui() {
     let run = p.run("A post about our new release.\n", &[]);
     assert_eq!(
         path(&run),
-        ["needs_picture text_only write", "write done done"]
+        [
+            "needs_picture text_only drain_comfy",
+            "drain_comfy done write",
+            "write done done"
+        ]
     );
     assert_eq!(final_state(&run), "done");
     assert_eq!(p.switches(), ["new-session gliner", "new-session ollama"]);
     // ComfyUI does not answer, so without_comfy_wait has nothing to wait for or unload.
     assert!(!p.stub().join("comfy-payload.json").exists());
-    assert!(log(&run, "-write-without_comfy_wait.log").contains("comfyui is not running"));
+    assert!(log(&run, "-drain_comfy-without_comfy_wait.log").contains("comfyui is not running"));
     assert_eq!(
         fs::read_to_string(run.join("post.md")).unwrap(),
         "A stub post.\n"
@@ -491,20 +496,20 @@ fn an_unload_that_never_takes_effect_fails_the_state() {
     assert!(text.contains(want), "{want:?} not in:\n{text}");
     assert_eq!(p.switches(), ["new-session gliner"]);
 
-    // ComfyUI keeps its model: write fails before use_ollama.
+    // ComfyUI keeps its model: drain_comfy fails, and write's use_ollama never runs.
     let p = Project::new(WITH_PICTURE);
     p.mark("stuck", "comfyui");
     let run = p.run(PICTURE_POST, &[("COMFY_UNLOAD_TIMEOUT_S", "2")]);
     assert_eq!(final_state(&run), "failed");
-    assert_eq!(path(&run).last().unwrap(), "write error failed");
-    let text = log(&run, "-write-without_comfy_wait.log");
+    assert_eq!(path(&run).last().unwrap(), "drain_comfy error failed");
+    let text = log(&run, "-drain_comfy-without_comfy_wait.log");
     let want = "[stderr] comfyui: still cuda:0 Stub GPU : cudaMallocAsync: 12288 MB reserved \
                 (more than 1024 MB) 2 s after /free";
     assert!(text.contains(want), "{want:?} not in:\n{text}");
     assert_eq!(p.switches(), ["new-session gliner", "new-session comfyui"]);
 }
 
-/// `without_comfy_wait` fails `write`'s onentry, before anything is unloaded, when this run's
+/// `without_comfy_wait` fails `drain_comfy`, before anything is unloaded, when this run's
 /// prompt failed or ComfyUI lost it.
 #[test]
 fn a_failed_or_lost_prompt_fails_without_comfy_wait_before_anything_is_unloaded() {
@@ -525,9 +530,9 @@ fn a_failed_or_lost_prompt_fails_without_comfy_wait_before_anything_is_unloaded(
         fs::write(p.stub().join("history.json"), history).unwrap();
         let run = p.run(PICTURE_POST, &[]);
         assert_eq!(final_state(&run), "failed");
-        assert_eq!(path(&run).last().unwrap(), "write error failed");
+        assert_eq!(path(&run).last().unwrap(), "drain_comfy error failed");
         assert!(
-            log(&run, "-write-without_comfy_wait.log").contains(expected),
+            log(&run, "-drain_comfy-without_comfy_wait.log").contains(expected),
             "{history}"
         );
         // Nothing was cleared, interrupted or unloaded, and use_ollama never ran.
@@ -595,4 +600,25 @@ fn without_comfy_no_wait_clears_and_interrupts_before_free() {
         "comfyui has unloaded its models; its server keeps running"
     );
     assert_eq!(p.switches(), Vec::<String>::new());
+}
+
+/// Unloading ComfyUI waits for its queue, so it is an invoked state with a `timeout`, not an
+/// `onentry` script, which has none (docs/services.md); the quick steps stay `onentry`.
+#[test]
+fn the_comfyui_drain_is_an_invoked_state_with_a_timeout() {
+    let text = fs::read_to_string(
+        repo().join("examples/tmux-services/.decree/machines/illustrated_post.yml"),
+    )
+    .unwrap();
+    let machine: Value = serde_norway::from_str(&text).unwrap();
+    let script = &machine["states"]["drain_comfy"]["invoke"]["script"];
+    assert_eq!(script["name"], "without_comfy_wait");
+    assert_eq!(script["timeout"], "1h");
+    let onentry = |state: &str| machine["states"][state]["onentry"].clone();
+    assert_eq!(
+        onentry("render"),
+        serde_json::json!(["without_ollama", "use_comfy"])
+    );
+    assert_eq!(onentry("write"), serde_json::json!(["use_ollama"]));
+    assert!(!text.contains("onentry: [without_comfy_wait"), "{text}");
 }

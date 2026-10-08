@@ -72,7 +72,7 @@
     },
     "reply_schema": {
       "type": "object",
-      "description": "The exact JSON Schema (draft 2020-12) for this request's reply.json: `event` one of the options, `confidence` a number from 0 to 1, `reason` a string and `probabilities` a number per option; only `event` is required, and no other key is allowed. A typed router hands it unchanged to a constrained decoder. reply.schema.json is the general shape of every reply."
+      "description": "The exact JSON Schema (draft 2020-12) for this request's reply.json: `reason` a string, `event` one of the options, `confidence` a number from 0 to 1 and `probabilities` a number per option, in that order (a constrained decoder emits properties in schema order, so the model reasons before it picks); only `event` is required, and no other key is allowed. A typed router hands it unchanged to a constrained decoder. reply.schema.json is the general shape of every reply."
     }
   },
   "examples": [
@@ -89,7 +89,7 @@
       "input": "",
       "message_body": "Add a login page.\n",
       "history": ["precheck: done", "implement: done", "verify: fail"],
-      "reply_schema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": { "event": { "enum": ["retry", "split"] } }, "required": ["event"], "additionalProperties": false }
+      "reply_schema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": { "reason": { "type": "string" }, "event": { "enum": ["retry", "split"] } }, "required": ["event"], "additionalProperties": false }
     }
   ]
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# onentry: ComfyUI's API is fire and forget, so jobs queued earlier (render)
-# may still be running. Wait until ComfyUI's queue is empty, nothing running
+# drain_comfy's invoke, which has a timeout because this waits: ComfyUI's API
+# is fire and forget, so jobs queued earlier (render) may still be running. Wait until ComfyUI's queue is empty, nothing running
 # and nothing pending; then, while ComfyUI still holds its history, write what
 # this run's prompts (comfy-prompts.txt) made to images.txt, failing if one of
 # them failed or ComfyUI lost it; then run without_comfy_no_wait, which unloads

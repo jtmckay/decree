@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/llm_router.md
+# A typed router (docs/routers.md): a local language model served by Ollama,
+# whose output Ollama's `format` holds to the request's reply_schema, so its
+# answer is always an option. Its confidence is still the model's own estimate.
+# Use it where the classifier is poor: decisions that need judging, not only
+# reading the wording. To use it, point a model invoke's `router:` here.
+name: llm_router
+description: Ask a local language model, held to the request's reply_schema, to pick one of the options in the request.
+initial: ask
+states:
+  ask:                             # one chat call with format set to reply_schema; writes $DECREE_REPLY
+    invoke: ask_llm
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

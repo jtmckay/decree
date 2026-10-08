@@ -17,7 +17,7 @@ states:
     invoke:
       model:
         question: How much reasoning does this change need?
-        router: gliner_router
+        router: gliner_router      # or llm_router, for a decision that needs judging
         min_confidence: 0.7
         output: describe
     transitions:

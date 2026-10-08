@@ -1,5 +1,5 @@
 //! `examples/text-to-media/`: the `comfy` machine run through the binary against a stub
-//! ComfyUI. The example's `.decree/` and `workflows/` are copied to a temp project, with a
+//! ComfyUI. The example's `.decree/`, with its workflows in `lib/comfy/`, is copied to a temp project, with a
 //! stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`, `/prompt`,
 //! `/history/<id>` and `/view` from files under `stub/`, and logs each request. No ComfyUI,
 //! no network.
@@ -86,7 +86,7 @@ struct Project {
 }
 
 impl Project {
-    /// The example's `.decree/` and `workflows/` with no messages, a stub ComfyUI that
+    /// The example's `.decree/` (its workflows in `lib/comfy/`) with no messages, a stub ComfyUI that
     /// finishes the prompt after `polls_before_done` empty answers with `status`, and an
     /// image in `images/ref.png`.
     fn new(polls_before_done: u32, status: &str) -> Project {
@@ -96,7 +96,6 @@ impl Project {
         copy_dir(&example().join(".decree"), &p.root().join(".decree"));
         fs::remove_dir_all(p.root().join(".decree/migrations")).unwrap();
         fs::create_dir(p.root().join(".decree/migrations")).unwrap();
-        copy_dir(&example().join("workflows"), &p.root().join("workflows"));
         fs::create_dir(p.root().join("images")).unwrap();
         fs::write(p.root().join("images/ref.png"), PNG).unwrap();
         fs::create_dir(p.stub()).unwrap();
@@ -275,6 +274,31 @@ fn an_image_method_uploads_input_image() {
     assert_eq!(prompt["93"]["inputs"]["text"], "The fox runs");
     assert_ne!(prompt["89"]["inputs"]["text"], "The fox runs");
     assert_eq!(fs::read(p.root().join("art/fox.png")).unwrap(), PNG);
+}
+
+/// The invoke's `env: { METHOD: … }` names the method, as in the README's "When messages stop
+/// naming a method": `build` reads it before the `method` param, from `$DECREE_LIB/comfy/`.
+#[test]
+fn an_invoke_env_method_is_built_from_lib() {
+    let p = Project::new(0, "success");
+    let machine = p.root().join(".decree/machines/comfy.yml");
+    let text = fs::read_to_string(&machine).unwrap();
+    let text = text.replacen(
+        "    invoke: build\n",
+        "    invoke: { script: { name: build, env: { METHOD: image_flux2_text_landscape } } }\n",
+        1,
+    );
+    assert!(text.contains("METHOD: image_flux2_text_landscape"));
+    fs::write(&machine, text).unwrap();
+    p.process(&["output=art/fox"], "A red fox in the snow", 0);
+    assert_eq!(p.final_state(), "done");
+    assert!(p
+        .log("build")
+        .contains("=== image_flux2_text_landscape ==="));
+    assert_eq!(
+        p.submitted()["6"]["inputs"]["text"],
+        "A red fox in the snow"
+    );
 }
 
 /// An unknown method fails in `build`, before any request, and the log lists the methods.

@@ -2,7 +2,7 @@
 
 Model servers, ComfyUI and decision models such as GLiNER2.5-Decide run for hours and are shared by many runs. They are not scripts, and decree does not manage them. This guide shows how to run them so decree can use them, how to switch a GPU between them, and how to watch everything.
 
-Nothing here is required. decree does not depend on systemd, llama-swap, Docker, NVIDIA tools or tmux; they are examples of how one setup might look. The only mechanism decree provides is `onentry`: a script of yours that runs before a state does its work, and that can prepare whatever the state needs in whatever way suits your machine.
+Nothing here is required. decree does not depend on systemd, llama-swap, Docker, NVIDIA tools or tmux; they are examples of how one setup might look. The only mechanisms decree provides are `onentry`, a script of yours that runs before a state does its work, and an invoked state with a `timeout` for prep that waits; either can prepare whatever the state needs in whatever way suits your machine.
 
 The rule of thumb:
 
@@ -67,7 +67,7 @@ Description=GLiNER2.5-Decide on CPU, for model routers
 [Service]
 # examples/route-by-complexity/gliner/decide_server.py, copied to ~/gliner/: loads the
 # model once and serves POST /classify and GET /health on 127.0.0.1:8090 (docs/routers.md)
-ExecStart=%h/.local/bin/uv run --with gliner2[local] python %h/gliner/decide_server.py
+ExecStart=%h/.local/bin/uv run --with 'gliner2[local,train]' python %h/gliner/decide_server.py
 Restart=on-failure
 ```
 
@@ -118,6 +118,21 @@ describe_images:
   invoke: describe
   transitions: { done: done }
 ```
+
+### Prep that waits: an invoked state with a timeout
+
+`onentry` scripts have no `timeout`. That suits a quick prep step, such as starting a service that answers in seconds or unloading an idle one, but a prep step that waits, for ComfyUI's queue to drain or for a model to unload, can hang the run. Whenever the prep waits, make it a state of its own that invokes the script with a `timeout` ([Invoke](reference/machines.md#invoke-the-states-function)); a passed timeout is the state's `error` event, like a failed script:
+
+```yaml
+prep_gpu:                         # waits for the queue to drain, so it is invoked with a timeout
+  invoke: { script: { name: use_comfy, timeout: 1h } }
+  transitions: { done: generate_images }
+generate_images:
+  invoke: render
+  transitions: { done: describe_images }
+```
+
+Keep `onentry` for the quick ones. [`examples/tmux-services/`](../examples/tmux-services/README.md) does both: `without_ollama`, `use_comfy` and `use_ollama` stay `onentry`, and `without_comfy_wait`, which waits for every queued render, is the invoked state `drain_comfy` with `timeout: 1h`.
 
 Each switch is a timed `script` event, so Grafana shows how long swaps take. decree runs one run at a time per process, so one `decree daemon` never asks for two GPU services at once.
 

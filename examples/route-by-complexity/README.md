@@ -7,6 +7,10 @@ This example sends each change to the cheapest model that can do it. A local cla
 
 [`docs/routers.md`](../../docs/routers.md) explains the two kinds of router.
 
+## Which router
+
+Use [`gliner_router`](.decree/machines/gliner_router.yml) when the answer shows in the wording and there are a few options: it costs milliseconds of CPU, but it is poor at judging ([Where GLiNER fits](../../docs/routers.md#where-gliner-fits)). Use [`llm_router`](.decree/machines/llm_router.yml), a local model held to the request's `reply_schema` by Ollama's `format`, when the decision needs judging, at seconds of GPU per decision; point `size_up`'s `router:` at it to switch.
+
 ## The machine
 
 [`machines/develop_by_size.yml`](.decree/machines/develop_by_size.yml) ([graph](.decree/graph/develop_by_size.md)):
@@ -63,12 +67,16 @@ To use it, copy `.decree/` into a project and queue a change, such as [`migratio
 [`gliner/decide_server.py`](gliner/decide_server.py) loads the model once and answers `POST /classify` on `127.0.0.1:8090`, so no decision starts Python. It needs Python 3.10 or newer:
 
 ```sh
-pip install 'gliner2[local]'           # or skip this and start it with: uv run --with 'gliner2[local]' python gliner/decide_server.py
+pip install 'gliner2[local,train]'     # or skip this and start it with: uv run --with 'gliner2[local,train]' python gliner/decide_server.py
 python gliner/decide_server.py         # the first start downloads the model, about 4.8 GB
 curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does this change need?", "labels": {"small": "A typo or a config value", "large": "Design across several files"}, "text": "Fix a typo in README.md"}'
 ```
 
-The `curl` prints the reply as `gliner_router` writes it, `{"event": "small", "confidence": ...}`. To keep the server running, use the `decide` systemd user unit in [`docs/services.md`](../../docs/services.md).
+The `curl` prints the reply as `gliner_router` writes it, `{"event": "small", "confidence": ...}`.
+
+Install pitfall: `pip install gliner2` alone is only the cloud API client, and the server fails to load the model. Running it locally needs `gliner2[local,train]`: `[local]` adds local inference, and the local runtime imports the training modules too.
+
+To keep the server running, use the `decide` systemd user unit in [`docs/services.md`](../../docs/services.md).
 
 ### The local model, through OpenCode
 
@@ -117,10 +125,12 @@ examples/route-by-complexity/
     machines/
       develop_by_size.yml              size up, then implement and test: locally first, or with Claude only
       gliner_router.yml                a typed router: asks the classifier server (the same file as in tmux-services)
+      llm_router.yml                   a typed router: asks a local model through Ollama, held to reply_schema
     scripts/
       develop_by_size/describe.sh      prints the title, acceptance criteria and named files with line counts
       develop_by_size/implement.sh     one attempt: opencode with an Ollama model (local) or claude -p (claude), then $TEST_CMD
       gliner_router/ask_gliner.sh      posts the request to the classifier server, writes the reply
+      llm_router/ask_llm.sh            posts the request to Ollama's /api/chat with format: reply_schema (or llama.cpp's server)
     migrations/01-raise-upload-limit.md   a small change to try it with
     graph/  schema/                    written by `decree graph` and `decree schema`
 ```

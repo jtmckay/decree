@@ -169,7 +169,7 @@ fn the_0_4_scan_matches_versions_not_thresholds() {
     );
     assert_eq!(old_words(doc, "In v0.4, a Routine"), ["routine", "v0.4"]);
     assert!(old_words(
-        Path::new("examples/text-to-media/workflows/a.json"),
+        Path::new("examples/text-to-media/.decree/lib/comfy/a.json"),
         "\"version\": 0.4"
     )
     .is_empty());

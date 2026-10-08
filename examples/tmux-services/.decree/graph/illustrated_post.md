@@ -7,11 +7,13 @@ Machine: [machines/illustrated_post.yml](../machines/illustrated_post.yml)
 ```mermaid
 stateDiagram-v2
     [*] --> needs_picture
+    drain_comfy --> write: done
+    drain_comfy --> failed: error (implicit)
     needs_picture --> failed: error (implicit)
-    needs_picture --> write: text_only (model: gliner_router)
-    needs_picture --> write: unsure (model: gliner_router)
+    needs_picture --> drain_comfy: text_only (model: gliner_router)
+    needs_picture --> drain_comfy: unsure (model: gliner_router)
     needs_picture --> render: with_picture (model: gliner_router)
-    render --> write: done
+    render --> drain_comfy: done
     render --> failed: error (implicit)
     write --> done: done
     write --> failed: error (implicit)
@@ -27,6 +29,6 @@ stateDiagram-v2
         onentry: without_ollama, use_comfy
     end note
     note right of write
-        onentry: without_comfy_wait, use_ollama
+        onentry: use_ollama
     end note
 ```
