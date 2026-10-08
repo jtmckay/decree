@@ -98,3 +98,4 @@
 98-newsletter-example.md
 99-no-tmux-services.md
 100-machine-store.md
+101-attempts-and-named-events.md

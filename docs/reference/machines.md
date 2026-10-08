@@ -167,7 +167,24 @@ implement:
 
 `implement` runs with `DECREE_ATTEMPT_VALUE=local`; if it exits non-zero or times out, it runs again with `local`, then `claude`, then `local`. The first attempt that ends in anything but `error` (`done`, or an event the script names) is the state's event; if all four fail, the event is `error`. Each entry matches `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`, so model ids such as `claude-opus-5-5` or `qwen3:8b` fit, and repeats are allowed. A new visit starts again at attempt 1; a script that should start higher on a later round reads `$DECREE_VISITS`.
 
+Only `error`, a non-zero exit or a timeout, runs the next attempt. `done`, or any event the script names, such as `stop`, ends the list at once and goes to the state's `transitions`: with `attempts: [local, claude]`, a local model that writes `STOP` (and names `stop`) is never followed by Claude.
+
 Use a list when the same step, with the same inputs and the same next state, is only done by something else: a stronger model, another host. Use a transition to a different state when what happens next differs: another script, a person, a step whose output the machine branches on.
+
+A stronger model answering a weaker one's question (its `STOP`) is not an attempt: the question is a named event, so make it a transition to a child machine:
+
+```yaml
+implement:
+  invoke:
+    script: { name: implement, attempts: [local, local] }
+  transitions: { done: gate, stop: escalate }
+escalate:                        # a stronger model answers the local model's question
+  invoke:
+    machine: { name: escalate }
+  transitions: { answered: implement }
+```
+
+The child reads the question from `$DECREE_PARENT_RUN_DIR/STOP`, appends the answer to `$DECREE_PARENT_RUN_DIR/plan.md`, which the next `implement` visit follows, deletes `STOP` and ends in `answered`; a child that ends in `failed` reaches the parent as `error`, which goes to `failed` implicitly. A child machine's final states are transitions every caller must handle, so keep them few.
 
 ## Invoke: the state's function
 

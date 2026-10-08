@@ -706,6 +706,40 @@ states:
     assert_eq!(visits(&p.events())["implement"], 1);
 }
 
+/// Only `error` moves an attempt list on: a `stop` named by the local attempt is the state's
+/// event, and Claude never runs to answer it.
+#[test]
+fn stop_on_the_first_attempt_ends_the_list_without_claude() {
+    let text = "\
+name: attempt_stop
+description: A local model that asks a question, then Claude.
+initial: implement
+states:
+  implement:
+    invoke:
+      script: { name: stop_unless_claude, attempts: [local, claude] }
+    transitions: { done: done, stop: stopped }
+  stopped: { final: true }
+  done:   { final: true }
+  failed: { final: true }
+";
+    let p = Project::from_text(
+        "attempt_stop",
+        text,
+        &[("stop_unless_claude", "stop_unless_claude")],
+    );
+    assert_eq!(p.run(), Outcome::Finished("stopped".into()));
+    let scripts = p.events_of("script");
+    assert_eq!(scripts.len(), 1);
+    assert_eq!(scripts[0]["attempt_value"], json!("local"));
+    let log = fs::read_to_string(p.run_dir().join(scripts[0]["log"].as_str().unwrap())).unwrap();
+    assert_eq!(log, "attempt 1 of 2: local\n");
+    assert_eq!(
+        p.transitions(),
+        ["- claimed implement claim", "implement stop stopped script"]
+    );
+}
+
 #[test]
 fn visits_check_ends_a_retry_loop_after_two_visits() {
     let p = Project::new(

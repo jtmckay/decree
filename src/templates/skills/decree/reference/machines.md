@@ -160,6 +160,28 @@ Entries match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$` (`claude-opus-5-5`, `qwen3
 when the same step is only done by something else (a stronger model); use a transition to another
 state when what happens next differs. Each new visit starts again at attempt 1.
 
+Only `error` (a non-zero exit or a timeout) runs the next attempt. `done`, or any event the
+script names, such as `stop`, ends the list at once and goes to the state's `transitions`.
+
+A stronger model answering a weaker one's `STOP` is not an attempt: transition to a child
+machine.
+
+```yaml
+implement:
+  invoke:
+    script: { name: implement, attempts: [local, local] }
+  transitions: { done: gate, stop: escalate }
+escalate:                        # a stronger model answers the local model's question
+  invoke:
+    machine: { name: escalate }
+  transitions: { answered: implement }
+```
+
+The child reads `$DECREE_PARENT_RUN_DIR/STOP`, appends the answer to
+`$DECREE_PARENT_RUN_DIR/plan.md` for the next `implement` visit, deletes `STOP` and ends in
+`answered`; a child that ends in `failed` reaches the parent as `error`, which goes to `failed`
+implicitly. Every caller must handle a child's final states, so keep them few.
+
 ## Not supported (and the alternative)
 
 `cond` on transitions (make the decision a `check` state), `<parallel>`, `<history>`, `<send>`

@@ -217,6 +217,9 @@ states:
 
 The script picks the model from the attempt: a choice of *how*, not of what runs next.
 
+`attempts` retries after `error` only; to have a stronger model answer a weaker one's `STOP`,
+transition to a child machine.
+
 ```sh
 case "$DECREE_ATTEMPT_VALUE" in
   claude) claude -p "$(cat "$DECREE_MESSAGE")" ;;

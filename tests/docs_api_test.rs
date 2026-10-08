@@ -1282,3 +1282,55 @@ fn the_skill_has_the_lib_env_runs_and_timeout_rules() {
         assert!(skill.contains(rule), "the skill lacks: {rule}");
     }
 }
+
+/// Migration 101: the reference and the skill say that only `error` moves an attempt list on,
+/// and their child-machine fragment for answering a `STOP` passes `decree check` as a whole
+/// machine.
+#[test]
+fn the_escalate_fragment_is_a_machine_that_passes_decree_check() {
+    for rel in [
+        "docs/reference/machines.md",
+        "src/templates/skills/decree/reference/machines.md",
+    ] {
+        let text = read(rel);
+        let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("Only `error`") && flat.contains("ends the list at once"),
+            "{rel} does not say that only `error` moves an attempt list on"
+        );
+        assert!(flat.contains("$DECREE_PARENT_RUN_DIR/STOP"), "{rel}");
+        let fragments: Vec<serde_norway::Mapping> = machine_blocks(&text)
+            .into_iter()
+            .filter_map(|(_, b)| match b {
+                MachineBlock::Fragment(map) if map.contains_key("escalate") => Some(map),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fragments.len(), 1, "{rel}: one escalate fragment");
+        let mut states = fragments[0].clone();
+        assert_eq!(
+            states["implement"]["transitions"]["stop"].as_str(),
+            Some("escalate")
+        );
+        for (id, state) in [
+            ("gate", "{ invoke: gate, transitions: { done: done } }"),
+            ("done", "{ final: true }"),
+            ("failed", "{ final: true }"),
+        ] {
+            states.insert(id.into(), serde_norway::from_str(state).unwrap());
+        }
+        let machine = format!(
+            "name: develop\ndescription: The escalate fragment.\ninitial: implement\nstates:\n{}",
+            serde_norway::to_string(&states)
+                .unwrap()
+                .lines()
+                .map(|l| format!("  {l}\n"))
+                .collect::<String>()
+        );
+        assert_eq!(check_machine(&machine), None, "{rel}:\n{machine}");
+    }
+    let skill = read("src/templates/skills/decree/SKILL.md");
+    let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = "`attempts` retries after `error` only; to have a stronger model answer a weaker one's `STOP`, transition to a child machine.";
+    assert!(skill.contains(line), "the skill lacks: {line}");
+}
