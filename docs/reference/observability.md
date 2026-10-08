@@ -4,7 +4,7 @@
 
 - **Ship** `.decree/runs/*/events.jsonl` (events) and, optionally, `.decree/runs/*/*.log` (script output). `traces.jsonl` goes to a trace store instead ([Traces](#traces)).
 - **Timestamps.** Use the event's `ts` as the log timestamp, so back-filled and late-shipped events land at the right time.
-- **Labels** must stay low-cardinality: `machine`, `type`, and for script output `script`. `run_id`, `state` and `seq` are fields or structured metadata, never labels, because a label per run makes Loki slow.
+- **Labels** must stay low-cardinality: `machine`, `type`, and for script output `script`. `run_id`, `state` and `seq` are fields or structured metadata, never labels, because a label per run makes Loki slow. The one exception is `state` on `run_finished` lines, whose values are a machine's few final states, for [Metrics](#metrics).
 - **Script output files** carry their context in the path: `runs/<run_id>/<NNNN>-<state>-<script>.log`. State and script names cannot contain `-`, so the regex `/runs/(?P<run_id>[^/]+)/(?P<n>\d{4,})-(?P<state>[^-]+)-(?P<script>[^/]+)\.log$` is unambiguous.
 - **Retention.** Loki's retention is the history. `decree prune --older-than <age>` deletes finished run folders ([cli.md](cli.md)), and nothing else does, so the local `runs/` is a working copy: ship runs before pruning them, and prune with an age longer than the shipper's lag.
 - **Stability.** Field names and meanings in [events.jsonl](runs.md#eventsjsonl) are a public contract under `v: 1`. Dashboards may depend on them.
@@ -23,6 +23,30 @@ sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | s
 
 # model decisions below a confidence floor
 {job="decree", type="decision"} | json | kind="model" and confidence < 0.6
+```
+
+## Metrics
+
+decree serves no metrics. A Prometheus metric is derived from `events.jsonl` by the log shipper, as Alloy's `stage.metrics` does in [`examples/observability/config.alloy`](../../examples/observability/config.alloy). It reads each `run_finished` line and serves two metrics on Alloy's own `/metrics`, which Prometheus scrapes:
+
+| Metric | Type | Labels | From |
+| --- | --- | --- | --- |
+| `decree_runs_total` | counter | `machine`, `state` | one per `run_finished`; success is `state="done"` |
+| `decree_run_duration_milliseconds` | histogram | `machine`, `state` | `run_finished.duration_ms` |
+
+- **Drop the file name label** before the metrics, because it names the run and would make one series per run.
+- **Set `max_idle_duration`** longer than the slowest cadence you alert on. Alloy drops a series that has seen no new line for that long, so a weekly job's series would otherwise vanish between runs.
+- **A counter starts at zero when Alloy restarts.** `increase()` and `rate()` handle that.
+
+```promql
+# a backup machine that has not finished in done for two days
+increase(decree_runs_total{machine="backup", state="done"}[48h]) == 0
+
+# any run that ended in failed in the last 10 minutes
+increase(decree_runs_total{state="failed"}[10m]) > 0
+
+# p95 run duration per machine, in seconds
+histogram_quantile(0.95, sum by (machine, le) (rate(decree_run_duration_milliseconds_bucket[1d]))) / 1000
 ```
 
 ## Traces

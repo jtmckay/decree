@@ -26,6 +26,41 @@ loki.process "decree_events" {
   stage.structured_metadata {
     values = { run_id = "" }
   }
+  // Prometheus metrics from each run's last line, served on Alloy's own /metrics.
+  stage.match {
+    selector = "{type=\"run_finished\"}"
+    stage.json {
+      expressions = { state = "", duration_ms = "" }
+    }
+    stage.labels {
+      values = { state = "" }
+    }
+    // A metric takes the line's labels; filename names the run, so it would make
+    // one series per run.
+    stage.label_drop {
+      values = ["filename"]
+    }
+    stage.metrics {
+      // decree_runs_total{job, machine, state, type}: success is state="done".
+      metric.counter {
+        name              = "runs_total"
+        prefix            = "decree_"
+        description       = "Finished decree runs, by machine and final state."
+        match_all         = true
+        action            = "inc"
+        max_idle_duration = "168h"
+      }
+      // decree_run_duration_milliseconds{job, machine, state, type}.
+      metric.histogram {
+        name              = "run_duration_milliseconds"
+        prefix            = "decree_"
+        description       = "Wall time of finished decree runs."
+        source            = "duration_ms"
+        buckets           = [1000, 10000, 60000, 300000, 900000, 3600000, 14400000]
+        max_idle_duration = "168h"
+      }
+    }
+  }
   forward_to = [loki.write.default.receiver]
 }
 

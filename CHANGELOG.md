@@ -10,6 +10,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Added
 
+- Prometheus metrics without an exporter: `examples/observability/config.alloy` derives `decree_runs_total` and `decree_run_duration_milliseconds` from `run_finished` events with Alloy's `stage.metrics`, and `docs/reference/observability.md` has a Metrics section with alert queries.
 - A JSON Schema (draft 2020-12) for machines and message frontmatter, written by `decree schema` and by `decree init`. Every machine starts with a `# yaml-language-server: $schema=…` line, so editors complete keys and underline mistakes; `decree check` warns when the schemas are missing or stale (migration 72, [D45](docs/decisions.md#d45-json-schema-for-shape-decree-check-for-meaning)).
 - `reply_schema` in `request.json`: the exact JSON Schema of the reply, which a typed router hands to a constrained decoder. Docs and examples for typed routers (GLiNER2.5-Decide, Ollama with `format`) and untyped ones, and the `route-by-complexity` example (migration 74, [D47](docs/decisions.md#d47-typed-routers-for-routing-untyped-models-for-the-work)).
 - The `tmux-services` example: services in tmux sessions, with GLiNER beside ComfyUI and Ollama sharing a GPU (migration 75). Its ComfyUI jobs run in the background, and the queue is drained only before ComfyUI's GPU memory is needed (migration 76).

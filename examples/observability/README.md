@@ -1,6 +1,6 @@
 # Observability: decree runs in Loki, Grafana and Jaeger
 
-decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record, and `traces.jsonl` holds the same run as OpenTelemetry spans ([Observability](../../docs/reference/observability.md)). This example ships the events, and optionally each script's output, to Loki with Grafana Alloy, and lists LogQL queries to explore them in Grafana; and it ships the traces to Jaeger with the OpenTelemetry Collector ([Traces](#traces)). It has no `.decree/` of its own: point it at the recorded runs in [`project`](../project/README.md), or at your own project.
+decree adds no metrics endpoint and no exporter: `events.jsonl` is the telemetry as well as the record, and `traces.jsonl` holds the same run as OpenTelemetry spans ([Observability](../../docs/reference/observability.md)). This example ships the events, and optionally each script's output, to Loki with Grafana Alloy, derives Prometheus metrics from them ([Metrics](#metrics)), and lists LogQL queries to explore them in Grafana; and it ships the traces to Jaeger with the OpenTelemetry Collector ([Traces](#traces)). It has no `.decree/` of its own: point it at the recorded runs in [`project`](../project/README.md), or at your own project.
 
 ## What gets shipped
 
@@ -50,6 +50,19 @@ topk(10, max_over_time({job="decree", type="script", machine="develop"} | json |
 ```
 
 `run_id` and `machine` on every event, and the state an event names (`state`, or a transition's `from` and `to`), are also what a UI built outside decree needs to link each node of a [graph](../../docs/reference/graph.md) to its logs here.
+
+## Metrics
+
+`config.alloy` also turns each `run_finished` event into Prometheus metrics, `decree_runs_total` and `decree_run_duration_milliseconds`, by `machine` and `state`, on Alloy's own `/metrics` (port 12345 by default). Scrape it from Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+```
+
+With the recorded runs in [`project`](../project/README.md), Alloy reports `decree_runs_total{machine="develop",state="done"} 1`: the one finished run. The waiting and interrupted runs have no `run_finished` line yet. Alert queries are in [Metrics](../../docs/reference/observability.md#metrics).
 
 ## Traces
 
