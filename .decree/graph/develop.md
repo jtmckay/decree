@@ -7,13 +7,15 @@ Machine: [machines/develop.yml](../machines/develop.yml)
 ```mermaid
 stateDiagram-v2
     [*] --> precheck
-    final_gate --> verify: done
     final_gate --> failed: error (implicit)
+    final_gate --> failed: fail
+    final_gate --> verify: pass
     fix --> final_gate: done
     fix --> failed: error (implicit)
     fix --> failed: stop
-    gate --> verify: done
-    gate --> fix: error
+    gate --> failed: error (implicit)
+    gate --> fix: fail
+    gate --> verify: pass
     implement --> gate: done
     implement --> failed: error (implicit)
     implement --> failed: stop

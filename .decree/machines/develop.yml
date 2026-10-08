@@ -10,16 +10,16 @@ states:
     invoke:
       script: { name: implement, attempts: 3 }
     transitions: { done: gate, stop: failed }
-  gate:                            # the project's own checks (scripts/develop/gate.sh), kept in gate.log
+  gate:                            # the project's checks (scripts/develop/gate.sh): pass or fail; error means they could not run
     invoke: gate
-    transitions: { done: verify, error: fix }
+    transitions: { pass: verify, fail: fix }
   fix:                             # Claude fixes what gate.log reports
     invoke:
       script: { name: fix, attempts: 3 }
     transitions: { done: final_gate, stop: failed }
-  final_gate:                      # the gate again; if it fails, so does the run
+  final_gate:                      # the gate again; fail ends the run
     invoke: gate
-    transitions: { done: verify }
+    transitions: { pass: verify, fail: failed }
   verify:                          # Claude checks the acceptance criteria and names pass or fail
     invoke:
       script: { name: verify, attempts: 3 }
