@@ -99,6 +99,7 @@ fn every_example_passes_check_without_a_warning() {
     assert_eq!(
         names,
         [
+            "newsletter",
             "project",
             "route-by-complexity",
             "text-to-media",
@@ -416,6 +417,11 @@ fn assert_readme_reads_only(name: &str) {
             rel.display()
         );
     }
+}
+
+#[test]
+fn newsletter_readme_commands_run() {
+    assert_readme_reads_only("newsletter");
 }
 
 #[test]

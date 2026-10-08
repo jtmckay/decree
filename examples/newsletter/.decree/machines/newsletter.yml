@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# Graph: ../graph/newsletter.md
+name: newsletter
+description: Gather new items from my feeds, pick and summarise the ones that fit my taste, and write the issue.
+initial: gather
+states:
+  gather:     # new items from lib/newsletter/feeds.txt since the last issue, by link -> items.jsonl
+    invoke: gather
+    transitions: { done: write }
+  write:      # a local model reads lib/newsletter/taste.md and items.jsonl, writes issue.md
+    invoke: write
+    transitions: { done: deliver }
+  deliver:    # issue.md to newsletter/<date>.md; an ntfy ping if NTFY_URL is set
+    invoke: deliver
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }

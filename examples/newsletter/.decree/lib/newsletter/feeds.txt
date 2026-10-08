@@ -1,0 +1,4 @@
+# One RSS or Atom feed URL per line. Lines starting with # are comments.
+https://blog.rust-lang.org/feed.xml
+https://lwn.net/headlines/rss
+https://simonwillison.net/atom/everything/

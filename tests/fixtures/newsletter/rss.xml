@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example RSS</title>
+    <link>https://rss.example/</link>
+    <description>An RSS 2.0 fixture</description>
+    <item>
+      <title>Oldest RSS item</title>
+      <link>https://rss.example/oldest</link>
+      <pubDate>Mon, 05 Oct 2026 08:00:00 +0000</pubDate>
+      <description>&lt;p&gt;An &lt;b&gt;HTML&lt;/b&gt; summary.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Newest RSS item</title>
+      <link>https://rss.example/newest</link>
+      <pubDate>Wed, 07 Oct 2026 10:00:00 +0200</pubDate>
+      <description>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word </description>
+    </item>
+    <item>
+      <title>Middle RSS item</title>
+      <link>https://rss.example/middle</link>
+      <pubDate>Tue, 06 Oct 2026 12:00:00 +0000</pubDate>
+      <description>A plain summary.</description>
+    </item>
+  </channel>
+</rss>
