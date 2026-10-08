@@ -6,7 +6,7 @@ decree runs durable state-machine workflows from plain files: every run is an ap
 | --- | --- |
 | [messages.md](messages.md) | Frontmatter, parsing, the lifecycle of a message, replies, the run lock, migrations, cron files |
 | [machines.md](machines.md) | Examples, `invoke`, keys, the SCXML subset, rules, the machine schema, validation V1–V21, M1–M3 and E1 |
-| [scripts.md](scripts.md) | Resolution, execution, environment (`.decree/env`, invoke `env`), shared code in `lib/`, events from an invoke |
+| [scripts.md](scripts.md) | Resolution, execution, environment (`.decree/env`, invoke `env`), shared code in `lib/`, run-directory files, events from an invoke |
 | [runs.md](runs.md) | The step loop, `check`, `model` and routers, sub-machines, `person`, `events.jsonl` |
 | [cli.md](cli.md) | Every command and its exit codes |
 | [graph.md](graph.md) | `decree graph`: the Mermaid documents and how to view them |
@@ -94,7 +94,7 @@ Each building block has its own directory in `.decree/`:
   schema/v1/*.schema.json             # written by `decree schema`; committed, so editors check machines as you type (Schemas, below)
   scripts/<name>                    # executables shared by every machine; optional extension: verify.sh (scripts.md)
   scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
-  lib/                              # code that scripts source, config and data: $DECREE_LIB; decree never runs anything in it (scripts.md, Shared code)
+  lib/                              # code that scripts source, config and data: $DECREE_LIB; decree never runs anything in it (scripts.md, Shared code); `decree init` writes `ai.sh`
   env                               # optional, committed: KEY=value variables every script gets, no secrets (scripts.md, Environment)
 ```
 

@@ -1,5 +1,5 @@
 //! `.github/workflows/ci.yml` parses as YAML, its `test` job runs exactly the commands of
-//! the gate script (`.decree/scripts/rust_develop/gate.sh`), so the two cannot drift apart,
+//! the gate script (`.decree/scripts/develop/gate.sh`), so the two cannot drift apart,
 //! and its `decree-check` job checks every project with `--format sarif` and uploads the
 //! results. Reads this repository's files only; writes nothing.
 
@@ -46,7 +46,7 @@ fn uses(job: &Value) -> Vec<&str> {
 
 /// The commands the gate script runs: each `cargo` line, without its trailing `&&`.
 fn gate_commands() -> Vec<String> {
-    let path = repo().join(".decree/scripts/rust_develop/gate.sh");
+    let path = repo().join(".decree/scripts/develop/gate.sh");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
     text.lines()
         .map(|line| line.trim().trim_end_matches("&&").trim())

@@ -1,19 +1,29 @@
 # yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
-description: Implement a message with {ai_title}, then have it verify the acceptance criteria.
+description: Implement a message with {ai_title} in small, logged steps, run the project's gate, have {ai_title} fix failures only if the gate fails, then have {ai_title} check the acceptance criteria.
 initial: precheck
 states:
   precheck:                        # fails fast if {ai} is not on PATH
     invoke: precheck
     transitions: { done: implement }
-  implement:                       # waits out a usage limit and resumes the session
+  implement:                       # logs each step in progress.md; writes STOP instead of guessing
     invoke:
       script: { name: implement, attempts: 3 }
+    transitions: { done: gate, stop: failed }
+  gate:                            # the project's own checks (scripts/develop/gate.sh), kept in gate.log
+    invoke: gate
+    transitions: { done: verify, error: fix }
+  fix:                             # {ai_title} fixes what gate.log reports
+    invoke:
+      script: { name: fix, attempts: 3 }
+    transitions: { done: final_gate, stop: failed }
+  final_gate:                      # the gate again; if it fails, so does the run
+    invoke: gate
     transitions: { done: verify }
-  verify:                          # {ai_title} checks the requirements and runs the tests
+  verify:                          # {ai_title} checks the acceptance criteria and names pass or fail
     invoke:
       script: { name: verify, attempts: 3 }
-    transitions: { done: done }
+    transitions: { pass: done, fail: failed, stop: failed }
   done:   { final: true }
   failed: { final: true }

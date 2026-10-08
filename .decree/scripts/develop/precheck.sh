@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Fail fast if a tool develop needs is missing.
+# Fail fast if the AI CLI, or cargo for the gate, is missing.
 set -euo pipefail
-for tool in claude; do
+for tool in claude cargo; do
   command -v "${tool}" >/dev/null || { echo "${tool} not found" >&2; exit 1; }
 done
 echo "tools ok"

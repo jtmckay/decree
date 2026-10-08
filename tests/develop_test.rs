@@ -1,9 +1,9 @@
-//! The built-in `develop` and `rust_develop` machines `decree init` writes (docs/reference/cli.md,
-//! `decree init`): they pass `decree check`, `develop` ends in `done` or `failed` as its
-//! steps succeed or fail, `rust_develop` runs QA only when its gate
-//! fails and stops on a `STOP` file, and their scripts wait out Claude's usage
-//! limit and resume the session. `claude`, `cargo`, `date` and `sleep` are stubs on
-//! `PATH`; no test calls a model.
+//! The built-in `develop` machine `decree init` writes (docs/reference/cli.md, `decree init`):
+//! it passes `decree check`, its scripts source `lib/ai.sh`, the default gate runs nothing
+//! and says so, `verify` names `pass` or `fail` from the AI's `VERDICT:` line, a run hands a
+//! failed gate to `fix` and stops on a `STOP` file, and Claude's usage limit is waited out
+//! and the session resumed. `claude`, `date` and `sleep` are stubs on `PATH`, and the gate
+//! is a stub script; no test calls a model.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
@@ -21,7 +21,8 @@ const MESSAGE: &str =
 /// Records its flags and the prompt's first line in `calls`. With `CLAUDE_LIMIT` set,
 /// the first call prints it and exits 1; a prompt containing `CLAUDE_FAIL_ON` exits 1.
 /// With `CLAUDE_STOP` set, it writes that to the run's `STOP` file, as an agent that
-/// cannot go on would.
+/// cannot go on would. A prompt asking for a verdict is answered with `CLAUDE_REPLY`,
+/// by default `VERDICT: pass`.
 const STUB_CLAUDE: &str = r#"#!/usr/bin/env bash
 dir=$(dirname "$0")
 prompt=${!#}
@@ -39,17 +40,21 @@ if [ -n "${CLAUDE_FAIL_ON:-}" ] && [[ $prompt == *"$CLAUDE_FAIL_ON"* ]]; then
   exit 1
 fi
 echo "stub done"
+if [[ $prompt == *"VERDICT: pass"* ]]; then
+  printf '%b\n' "${CLAUDE_REPLY-VERDICT: pass}"
+fi
 "#;
 
-/// Exits `CARGO_EXIT` (default 0). With `CARGO_FAIL_ONCE` set, only its first call
-/// fails, as if QA then fixed the code.
-const STUB_CARGO: &str = r#"#!/usr/bin/env bash
-echo "cargo $*"
-if [ -n "${CARGO_FAIL_ONCE:-}" ] && [ ! -e "$(dirname "$0")/failed" ]; then
-  touch "$(dirname "$0")/failed"
-  exit 101
+/// The gate: prints its checks to gate.log and exits `GATE_EXIT` (default 0). With
+/// `GATE_FAIL_ONCE` set, only its first call fails, as if `fix` then fixed the code.
+const STUB_GATE: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+status=${GATE_EXIT:-0}
+if [ -n "${GATE_FAIL_ONCE:-}" ] && [ ! -e "$DECREE_RUN_DIR/gate.failed" ]; then
+  touch "$DECREE_RUN_DIR/gate.failed"
+  status=1
 fi
-exit "${CARGO_EXIT:-0}"
+{ echo "checks ran"; exit "$status"; } 2>&1 | tee "$DECREE_RUN_DIR/gate.log"
 "#;
 
 /// The local time is always `STUB_NOW`.
@@ -63,7 +68,7 @@ struct Project {
 }
 
 impl Project {
-    /// `decree init --ai claude`, plus a `bin/` holding stub `claude` and `cargo`.
+    /// `decree init --ai claude`, plus a `bin/` holding a stub `claude`, and a stub gate.
     fn init() -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
@@ -71,8 +76,14 @@ impl Project {
         p.decree(&["init", "--ai", "claude"]).assert().success();
         fs::create_dir(p.bin()).unwrap();
         p.stub("claude", STUB_CLAUDE);
-        p.stub("cargo", STUB_CARGO);
+        write_script(&p.script("gate"), STUB_GATE);
         p
+    }
+
+    /// `.decree/scripts/develop/<name>.sh`.
+    fn script(&self, name: &str) -> PathBuf {
+        self.root()
+            .join(format!(".decree/scripts/develop/{name}.sh"))
     }
 
     fn root(&self) -> &Path {
@@ -107,11 +118,11 @@ impl Project {
         cmd
     }
 
-    /// `decree emit --machine <machine>` then `decree process`, with the stubs on
+    /// `decree emit --machine develop` then `decree process`, with the stubs on
     /// `PATH` and `env` set: the run's id.
-    fn run(&self, machine: &str, env: &[(&str, &str)]) -> String {
+    fn run(&self, env: &[(&str, &str)]) -> String {
         let out = self
-            .decree(&["emit", "--machine", machine])
+            .decree(&["emit", "--machine", "develop"])
             .write_stdin(MESSAGE)
             .assert()
             .success()
@@ -158,49 +169,146 @@ impl Project {
     }
 }
 
-/// AC: each built-in machine passes `decree check` (with every backend `init` supports).
-#[test]
-fn init_writes_develop_and_rust_develop_and_they_pass_check() {
-    for ai in ["claude", "opencode", "copilot"] {
-        let tmp = TempDir::new().unwrap();
-        let p = Project { tmp };
-        p.decree(&["init", "--ai", ai]).assert().success();
-        for machine in ["develop", "rust_develop"] {
-            assert!(
-                p.root()
-                    .join(format!(".decree/machines/{machine}.yml"))
-                    .is_file(),
-                "{ai} {machine}"
+/// Every file under `dir`, relative to it, sorted.
+fn files_under(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            out.extend(
+                files_under(&path)
+                    .into_iter()
+                    .map(|f| format!("{name}/{f}")),
             );
-            assert!(
-                p.root()
-                    .join(format!(".decree/graph/{machine}.md"))
-                    .is_file(),
-                "{ai} {machine}"
-            );
+        } else {
+            out.push(path.file_name().unwrap().to_string_lossy().into_owned());
         }
+    }
+    out.sort();
+    out
+}
+
+/// AC: `decree init` writes `develop` and `router` only, and `lib/ai.sh`; no script defines
+/// `ai()`; everything passes `decree check` (with every backend `init` supports).
+#[test]
+fn init_writes_develop_router_and_lib_ai_sh_and_they_pass_check() {
+    for ai in ["claude", "opencode", "copilot"] {
+        let p = Project {
+            tmp: TempDir::new().unwrap(),
+        };
+        p.decree(&["init", "--ai", ai]).assert().success();
+        let decree = p.root().join(".decree");
+        assert_eq!(
+            files_under(&decree.join("machines")),
+            ["develop.yml", "router.yml"],
+            "{ai}"
+        );
+        assert_eq!(
+            files_under(&decree.join("scripts")),
+            [
+                "develop/fix.sh".to_string(),
+                "develop/gate.sh".to_string(),
+                "develop/implement.sh".to_string(),
+                "develop/precheck.sh".to_string(),
+                "develop/verify.sh".to_string(),
+                "git_baseline.sh".to_string(),
+                "router/".to_string() + &format!("ask_{ai}.sh"),
+                "snapshot.sh".to_string(),
+            ],
+            "{ai}"
+        );
+        assert_eq!(
+            files_under(&decree.join("lib")),
+            ["README.md", "ai.sh"],
+            "{ai}"
+        );
+        let lib = fs::read_to_string(decree.join("lib/ai.sh")).unwrap();
+        assert!(lib.contains("\nai() {\n"), "{ai}: {lib}");
+        for script in files_under(&decree.join("scripts")) {
+            let text = fs::read_to_string(decree.join("scripts").join(&script)).unwrap();
+            assert!(!text.contains("ai()"), "{ai}: {script} defines ai()");
+        }
+        assert!(decree.join("graph/develop.md").is_file(), "{ai}");
         p.decree(&["check"]).assert().code(0);
+    }
+}
+
+/// The gate `init` writes runs no checks, says so in its output and in gate.log, and exits 0.
+#[test]
+fn the_default_gate_exits_0_and_says_it_is_unconfigured() {
+    let p = Project {
+        tmp: TempDir::new().unwrap(),
+    };
+    p.decree(&["init", "--ai", "claude"]).assert().success();
+    let run_dir = p.root().join("run");
+    fs::create_dir(&run_dir).unwrap();
+    let out = std::process::Command::new(p.script("gate"))
+        .current_dir(p.root())
+        .env("DECREE_RUN_DIR", &run_dir)
+        .output()
+        .unwrap();
+    let said = "gate: no checks configured; edit .decree/scripts/develop/gate.sh\n";
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), said);
+    assert_eq!(fs::read_to_string(run_dir.join("gate.log")).unwrap(), said);
+    let text = fs::read_to_string(p.script("gate")).unwrap();
+    for check in [
+        "# cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test\n",
+        "# npm ci && npm run lint && npm test\n",
+        "# gofmt -l . | (! grep .) && go vet ./... && go test ./...\n",
+    ] {
+        assert!(text.contains(check), "{check}");
+    }
+}
+
+/// `verify.sh` run on its own, with the stub `claude` replying `reply`: its exit code and
+/// the event it wrote.
+fn verify_alone(reply: &str) -> (Option<i32>, String) {
+    let p = Project::init();
+    let run_dir = p.root().join("run");
+    fs::create_dir(&run_dir).unwrap();
+    fs::write(run_dir.join("message.md"), MESSAGE).unwrap();
+    let event_file = run_dir.join("event");
+    fs::write(&event_file, "").unwrap();
+    let out = std::process::Command::new(p.script("verify"))
+        .current_dir(p.root())
+        .env("PATH", p.path())
+        .env("DECREE_LIB", p.root().join(".decree/lib"))
+        .env("DECREE_RUN_DIR", &run_dir)
+        .env("DECREE_MESSAGE", run_dir.join("message.md"))
+        .env("DECREE_EVENT_FILE", &event_file)
+        .env("DECREE_STATE", "verify")
+        .env("CLAUDE_REPLY", reply)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("stub done\n"), "{out:?}");
+    (out.status.code(), fs::read_to_string(&event_file).unwrap())
+}
+
+/// `verify` names the last `VERDICT:` line's `pass` or `fail`, and fails without one.
+#[test]
+fn verify_writes_the_last_verdict_or_fails_without_one() {
+    for (reply, want) in [
+        ("All criteria met.\nVERDICT: pass", (Some(0), "pass\n")),
+        ("A test fails.\nVERDICT: fail", (Some(0), "fail\n")),
+        ("**VERDICT: fail**", (Some(0), "fail\n")),
+        (
+            "VERDICT: pass\nOn a second look, no.\nVERDICT: fail",
+            (Some(0), "fail\n"),
+        ),
+        ("Everything passes.", (Some(1), "")),
+        ("VERDICT: maybe", (Some(1), "")),
+        ("", (Some(1), "")),
+    ] {
+        let (code, event) = verify_alone(reply);
+        assert_eq!((code, event.as_str()), want, "{reply:?}");
     }
 }
 
 /// Environment variables for the stubs.
 type Env = &'static [(&'static str, &'static str)];
-
-/// `develop` ends in `done` when every step succeeds, and in `failed` when the agent fails
-/// to implement or to verify.
-#[test]
-fn develop_ends_done_or_failed() {
-    let cases: &[(Env, &str)] = &[
-        (&[], "done"),
-        (&[("CLAUDE_FAIL_ON", "Read")], "failed"),
-        (&[("CLAUDE_FAIL_ON", "Verify that")], "failed"),
-    ];
-    for (env, want) in cases {
-        let p = Project::init();
-        let id = p.run("develop", env);
-        assert_eq!(p.outcome(&id), *want, "{env:?}: {:?}", p.events(&id));
-    }
-}
 
 /// The transitions a run took, as `from -event-> to`.
 fn path(p: &Project, id: &str) -> Vec<String> {
@@ -211,11 +319,11 @@ fn path(p: &Project, id: &str) -> Vec<String> {
         .collect()
 }
 
-/// A gate that passes the first time skips QA.
+/// A gate that passes the first time skips `fix`: implement, gate, verify, done.
 #[test]
-fn rust_develop_skips_qa_when_the_gate_passes() {
+fn develop_skips_fix_when_the_gate_passes() {
     let p = Project::init();
-    let id = p.run("rust_develop", &[]);
+    let id = p.run(&[]);
     assert_eq!(p.outcome(&id), "done");
     assert_eq!(
         path(&p, &id),
@@ -223,54 +331,87 @@ fn rust_develop_skips_qa_when_the_gate_passes() {
             "null -claimed-> precheck",
             "precheck -done-> implement",
             "implement -done-> gate",
-            "gate -done-> done",
+            "gate -done-> verify",
+            "verify -pass-> done",
         ]
     );
-    let gate = fs::read_to_string(p.run_dir(&id).join("gate.log")).unwrap();
     assert_eq!(
-        gate,
-        "cargo fmt --check\ncargo clippy --all-targets -- -D warnings\ncargo test\n"
+        fs::read_to_string(p.run_dir(&id).join("gate.log")).unwrap(),
+        "checks ran\n"
     );
     let calls = p.calls();
-    assert_eq!(calls.len(), 1, "implement only: {calls:?}");
+    assert_eq!(calls.len(), 2, "implement and verify: {calls:?}");
     assert!(
-        calls[0].contains("| You are a senior Rust engineer. Read "),
+        calls[0].contains("| You are a senior engineer. Read "),
         "{calls:?}"
     );
+    assert!(calls[1].contains("| Read "), "{calls:?}");
 }
 
-/// A failed gate goes to QA, which reads gate.log; the final gate decides the outcome.
+/// A failed gate goes to `fix`, which reads gate.log; the final gate decides whether
+/// verify runs.
 #[test]
-fn rust_develop_hands_a_failed_gate_to_qa() {
-    let qa_path = [
+fn develop_hands_a_failed_gate_to_fix() {
+    let fix_path = [
         "null -claimed-> precheck",
         "precheck -done-> implement",
         "implement -done-> gate",
-        "gate -error-> qa",
-        "qa -done-> final_gate",
+        "gate -error-> fix",
+        "fix -done-> final_gate",
     ];
-    for (env, last, want) in [
-        (("CARGO_FAIL_ONCE", "1"), "final_gate -done-> done", "done"),
+    let cases: &[(Env, &[&str], &str)] = &[
         (
-            ("CARGO_EXIT", "101"),
-            "final_gate -error-> failed",
+            &[("GATE_FAIL_ONCE", "1")],
+            &["final_gate -done-> verify", "verify -pass-> done"],
+            "done",
+        ),
+        (
+            &[("GATE_EXIT", "1")],
+            &["final_gate -error-> failed"],
             "failed",
         ),
-    ] {
+    ];
+    for (env, last, want) in cases {
         let p = Project::init();
-        let id = p.run("rust_develop", &[env]);
-        assert_eq!(p.outcome(&id), want, "{env:?}");
-        let mut expected: Vec<&str> = qa_path.to_vec();
-        expected.push(last);
+        let id = p.run(env);
+        assert_eq!(p.outcome(&id), *want, "{env:?}");
+        let mut expected: Vec<&str> = fix_path.to_vec();
+        expected.extend(last.iter());
         assert_eq!(path(&p, &id), expected, "{env:?}");
         let run = p.run_dir(&id);
-        let qa = p.calls().pop().unwrap();
+        let fix = &p.calls()[1];
         assert!(
-            qa.ends_with(&format!(
-                "| Read {}/message.md. The gate (cargo fmt --check, cargo clippy",
+            fix.ends_with(&format!(
+                "| Read {}/message.md. The project's gate",
                 run.display()
             )),
-            "{qa}"
+            "{fix}"
+        );
+    }
+}
+
+/// AC: an AI whose reply ends `VERDICT: fail` makes verify's event `fail`, and the run
+/// ends in `failed`. A failing agent fails the run too.
+#[test]
+fn develop_ends_failed_on_a_fail_verdict_or_a_failing_agent() {
+    let p = Project::init();
+    let id = p.run(&[("CLAUDE_REPLY", "A test fails.\nVERDICT: fail")]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(path(&p, &id).last().unwrap(), "verify -fail-> failed");
+
+    let cases: &[(Env, &str)] = &[
+        (&[("CLAUDE_FAIL_ON", "senior engineer")], "implement"),
+        (&[("CLAUDE_FAIL_ON", "Verify that")], "verify"),
+        (&[("CLAUDE_REPLY", "")], "verify"),
+    ];
+    for (env, state) in cases {
+        let p = Project::init();
+        let id = p.run(env);
+        assert_eq!(p.outcome(&id), "failed", "{env:?}");
+        assert_eq!(
+            path(&p, &id).last().unwrap(),
+            &format!("{state} -error-> failed"),
+            "{env:?}"
         );
     }
 }
@@ -278,9 +419,9 @@ fn rust_develop_hands_a_failed_gate_to_qa() {
 /// An agent that writes `STOP` fails the run without retrying, and the file keeps
 /// stopping it until a person deletes it.
 #[test]
-fn rust_develop_stops_when_the_agent_writes_stop() {
+fn develop_stops_when_the_agent_writes_stop() {
     let p = Project::init();
-    let id = p.run("rust_develop", &[("CLAUDE_STOP", "Which greeting?")]);
+    let id = p.run(&[("CLAUDE_STOP", "Which greeting?")]);
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(
         path(&p, &id).last().unwrap(),
@@ -305,17 +446,29 @@ fn rust_develop_stops_when_the_agent_writes_stop() {
     assert_eq!(retry, 1);
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(p.calls().len(), 1);
+
+    // `fix` and `verify` stop on it too.
+    for state in ["fix", "verify"] {
+        let mut cmd = p.decree(&["process", "--retry", &id, "--state", state]);
+        cmd.env("PATH", p.path());
+        cmd.output().unwrap();
+        assert_eq!(
+            path(&p, &id).last().unwrap(),
+            &format!("{state} -stop-> failed")
+        );
+        assert_eq!(p.calls().len(), 1, "{state}");
+    }
 }
 
 /// Each Claude session is listed in sessions.txt with its state and transcript path.
 #[test]
 fn claude_sessions_are_listed_in_sessions_txt() {
     let p = Project::init();
-    let id = p.run("rust_develop", &[("CARGO_FAIL_ONCE", "1")]);
+    let id = p.run(&[("GATE_FAIL_ONCE", "1")]);
     let sessions = fs::read_to_string(p.run_dir(&id).join("sessions.txt")).unwrap();
     let lines: Vec<Vec<&str>> = sessions.lines().map(|l| l.split(' ').collect()).collect();
     let states: Vec<&str> = lines.iter().map(|l| l[0]).collect();
-    assert_eq!(states, ["implement", "qa"], "{sessions}");
+    assert_eq!(states, ["implement", "fix", "verify"], "{sessions}");
     let calls = p.calls();
     for (line, call) in lines.iter().zip(&calls) {
         assert_eq!(line[1], session(call).1, "{sessions}");
@@ -378,58 +531,52 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
             "13:00 (60m 0s)",
         ),
     ] {
-        for machine in ["develop", "rust_develop"] {
-            let p = Project::init();
-            p.stub("date", STUB_DATE);
-            p.stub("sleep", STUB_SLEEP);
-            let id = p.run(machine, &[("CLAUDE_LIMIT", limit), ("STUB_NOW", now)]);
-            assert_eq!(p.outcome(&id), "done", "{machine} {limit}");
+        let p = Project::init();
+        p.stub("date", STUB_DATE);
+        p.stub("sleep", STUB_SLEEP);
+        let id = p.run(&[("CLAUDE_LIMIT", limit), ("STUB_NOW", now)]);
+        assert_eq!(p.outcome(&id), "done", "{limit}");
 
-            assert_eq!(
-                fs::read_to_string(p.bin().join("slept")).unwrap(),
-                format!("{slept}\n"),
-                "{machine} {limit}"
-            );
-            let calls = p.calls();
-            let (flag, first) = session(&calls[0]);
-            assert_eq!(flag, "--session-id", "{calls:?}");
-            assert_eq!(first.len(), 36, "a UUID: {first}");
-            let (flag, resumed) = session(&calls[1]);
-            assert_eq!((flag, resumed), ("--resume", first), "{calls:?}");
-            assert_eq!(
-                calls[0].split(" | ").nth(1),
-                calls[1].split(" | ").nth(1),
-                "the same prompt again: {calls:?}"
-            );
-            // The next AI step starts a session of its own (rust_develop's gate
-            // passes, so it has no next AI step).
-            if machine == "develop" {
-                let (flag, next) = session(calls.last().unwrap());
-                assert_eq!(flag, "--session-id", "{calls:?}");
-                assert_ne!(next, first);
-            }
+        assert_eq!(
+            fs::read_to_string(p.bin().join("slept")).unwrap(),
+            format!("{slept}\n"),
+            "{limit}"
+        );
+        let calls = p.calls();
+        let (flag, first) = session(&calls[0]);
+        assert_eq!(flag, "--session-id", "{calls:?}");
+        assert_eq!(first.len(), 36, "a UUID: {first}");
+        let (flag, resumed) = session(&calls[1]);
+        assert_eq!((flag, resumed), ("--resume", first), "{calls:?}");
+        assert_eq!(
+            calls[0].split(" | ").nth(1),
+            calls[1].split(" | ").nth(1),
+            "the same prompt again: {calls:?}"
+        );
+        // The next AI step starts a session of its own.
+        let (flag, next) = session(calls.last().unwrap());
+        assert_eq!(flag, "--session-id", "{calls:?}");
+        assert_ne!(next, first);
 
-            // One implement attempt: the wait is inside the script, not a retry of the run.
-            let log =
-                fs::read_to_string(p.run_dir(&id).join("0002-implement-implement.log")).unwrap();
-            assert!(
-                log.contains(&format!("[stderr] === claude session {first} ===\n")),
-                "{log}"
-            );
-            assert!(log.contains(&format!("[stderr] [Claude token limit] Usage limit reached. Waiting until {until} to retry.\n")), "{log}");
-            assert!(
-                log.contains(&format!(
-                    "[stderr] [Claude token limit] Resuming session {first}\n"
-                )),
-                "{log}"
-            );
-            let attempts = p
-                .events(&id)
-                .iter()
-                .filter(|e| e["type"] == "script" && e["state"] == "implement")
-                .count();
-            assert_eq!(attempts, 1, "{machine}");
-        }
+        // One implement attempt: the wait is inside the script, not a retry of the run.
+        let log = fs::read_to_string(p.run_dir(&id).join("0002-implement-implement.log")).unwrap();
+        assert!(
+            log.contains(&format!("[stderr] === claude session {first} ===\n")),
+            "{log}"
+        );
+        assert!(log.contains(&format!("[stderr] [Claude token limit] Usage limit reached. Waiting until {until} to retry.\n")), "{log}");
+        assert!(
+            log.contains(&format!(
+                "[stderr] [Claude token limit] Resuming session {first}\n"
+            )),
+            "{log}"
+        );
+        let attempts = p
+            .events(&id)
+            .iter()
+            .filter(|e| e["type"] == "script" && e["state"] == "implement")
+            .count();
+        assert_eq!(attempts, 1, "{limit}");
     }
 }
 
@@ -440,10 +587,7 @@ fn other_failures_do_not_wait() {
     let p = Project::init();
     p.stub("date", STUB_DATE);
     p.stub("sleep", STUB_SLEEP);
-    let id = p.run(
-        "develop",
-        &[("CLAUDE_FAIL_ON", "Read"), ("STUB_NOW", "12:00:00")],
-    );
+    let id = p.run(&[("CLAUDE_FAIL_ON", "Read"), ("STUB_NOW", "12:00:00")]);
     assert_eq!(p.outcome(&id), "failed");
     assert!(!p.bin().join("slept").exists());
     let calls = p.calls();

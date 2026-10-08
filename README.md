@@ -49,7 +49,7 @@ Every command in this section runs as written, in order, in an empty directory.
 decree init
 ```
 
-This writes `.decree/` with the `develop` and `rust_develop` machines and their scripts, the `router` machine for your AI tool (`--ai claude|copilot|opencode`; by default the first one found on `PATH`), and the decree skill for Claude Code or Copilot.
+This writes `.decree/` with the `develop` machine and its scripts, the `router` machine for your AI tool (`--ai claude|copilot|opencode`; by default the first one found on `PATH`), `lib/ai.sh` (the `ai` function the scripts source), and the decree skill for Claude Code or Copilot. `develop` implements a message with your AI in logged steps, runs your project's checks, has the AI fix them only if they fail, then has it check the acceptance criteria and name `pass` or `fail`. Fill in its gate, `.decree/scripts/develop/gate.sh` (commented lines show cargo, npm and Go); until you do, it runs nothing and says so.
 
 **2. Write a script.** A script does one thing. Exit 0 is the event `done`, anything else is `error`.
 
@@ -231,7 +231,7 @@ An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`,
 
 Model servers and other long-running processes are not scripts and decree does not manage them: an `onentry` script starts what a state needs. [docs/services.md](docs/services.md) shows systemd units, llama-swap and a tmux layout for that.
 
-An agent a script starts runs with your own configuration, because decree adds nothing between them. The built-in machines call plain `claude -p` (with `--permission-mode`, default `auto`, set by `CLAUDE_PERMISSION_MODE`), so your Claude Code settings, hook scripts and skills apply to every agent step. A token filter such as [rtk](https://github.com/rtk-ai/rtk), which shortens the output of the agent's own shell commands through a Claude Code hook, therefore needs no setup in decree: install its hook once and every run uses it. It does not filter files the agent reads, such as the `gate.log` that `rust_develop`'s `qa` step reads, and decree's own logs stay complete.
+An agent a script starts runs with your own configuration, because decree adds nothing between them. The built-in machines call plain `claude -p` (with `--permission-mode`, default `auto`, set by `CLAUDE_PERMISSION_MODE`), so your Claude Code settings, hook scripts and skills apply to every agent step. A token filter such as [rtk](https://github.com/rtk-ai/rtk), which shortens the output of the agent's own shell commands through a Claude Code hook, therefore needs no setup in decree: install its hook once and every run uses it. It does not filter files the agent reads, such as the `gate.log` that `develop`'s `fix` step reads, and decree's own logs stay complete.
 
 ## Commands
 

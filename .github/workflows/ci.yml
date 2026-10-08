@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  # The same commands as the gate script, .decree/scripts/rust_develop/gate.sh
+  # The same commands as the gate script, .decree/scripts/develop/gate.sh
   # (tests/ci_test.rs keeps them equal).
   test:
     runs-on: ubuntu-latest

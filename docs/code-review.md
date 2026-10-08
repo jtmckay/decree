@@ -125,7 +125,7 @@ Non-test lines (`#[cfg(test)]` items and `tests.rs` files excluded), before and 
 | # | Where | Finding | Status |
 | --- | --- | --- | --- |
 | 58 | `mock/README.md:3` | "Nothing here runs yet ... once 0.5 ships", stale after 0.5. | Fixed: the mock is described as a snapshot. |
-| 59 | `README.md:273` (Docker) | The image has no Rust toolchain, so `rust_develop` (whose scripts run `cargo`) cannot run in it. | Fixed: noted in the Docker section. |
+| 59 | `README.md:273` (Docker) | The image has no Rust toolchain, so a Rust project's `develop` gate (which runs `cargo`) cannot run in it. | Fixed: noted in the Docker section. |
 | 60 | `src/commands/process.rs:460` | `process` prints a waiting run's question from the state's `description`, not the `choose: person` invoke's `question`. | Kept: `docs/reference/messages.md` (Replies) says "its question (the state's `description`)" and `docs/reference/cli.md` gives the format `<the state's description, else its id>`. |
 
 ## Summary

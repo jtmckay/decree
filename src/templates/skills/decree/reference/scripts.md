@@ -81,6 +81,19 @@ Given ... When ... Then ...
 EOF
 ```
 
+## Run-directory files
+
+Scripts hand work to one another, and to a person, through files in `$DECREE_RUN_DIR`. decree
+reads none of them; the built-in `develop` machine's scripts follow this convention:
+
+- `progress.md`: the step log, one line per step, what is done and what is next. A retry
+  reads it and continues.
+- `STOP`: a question instead of a guess. A script that finds it prints it and writes `stop` to
+  `$DECREE_EVENT_FILE`; it keeps stopping retries until a person answers and deletes it.
+- `gate.log`: the output of the project's checks (`scripts/develop/gate.sh`), for the step that
+  fixes them.
+- `plan.md`: an optional plan a step writes for later ones.
+
 ## Environment
 
 | Variable | Value |

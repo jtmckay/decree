@@ -67,12 +67,13 @@ fn test_init_creates_directory_structure() {
     }
     assert!(decree.join("graph/router.md").is_file());
     assert!(decree.join("graph/system.md").is_file());
-    // `lib/` holds only its README until a project adds shared code.
-    let lib: Vec<_> = fs::read_dir(decree.join("lib"))
+    // `lib/` holds its README and the AI helper `develop`'s scripts source.
+    let mut lib: Vec<_> = fs::read_dir(decree.join("lib"))
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .collect();
-    assert_eq!(lib, ["README.md"]);
+    lib.sort();
+    assert_eq!(lib, ["README.md", "ai.sh"]);
 }
 
 #[test]

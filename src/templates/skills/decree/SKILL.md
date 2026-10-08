@@ -96,6 +96,16 @@ appear only where a machine invokes `model` or `person`.
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 
+## The built-in `develop`
+
+`decree init` writes one working machine besides the router, `develop`: `precheck` →
+`implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
+source `lib/ai.sh` (the `ai` function for the chosen `--ai`; add another backend there) and
+follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
+`plan.md`). The project fills in `scripts/develop/gate.sh` with its own checks; until then it
+runs nothing and says so. `verify` ends in `pass` or `fail` from the AI's `VERDICT:` line.
+Start from it before writing a new develop-style machine.
+
 ## Worked example
 
 A migration for the `feature` machine:

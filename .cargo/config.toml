@@ -1,4 +1,4 @@
-# decree's tests run decree. When a decree run's script runs them (rust_develop's gate),
+# decree's tests run decree. When a decree run's script runs them (develop's gate),
 # they would inherit that run's variables, and the decree they start would read them:
 # `decree emit` checks `emits` against DECREE_MACHINE and DECREE_STATE, sets `parent` from
 # DECREE_MESSAGE_ID, and continues the trace in TRACEPARENT. Empty means unset to decree,

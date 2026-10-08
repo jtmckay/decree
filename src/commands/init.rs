@@ -7,7 +7,7 @@ use crate::runtime::resolve::SCRIPTS_DIR;
 use std::path::Path;
 use std::process::Command;
 
-/// An AI backend: its CLI, and how the develop machines' scripts and its router call it.
+/// An AI backend: its CLI, and how `develop`'s scripts and its router call it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Backend {
     /// The command, which also names the router's script (`ask_<name>`).
@@ -18,7 +18,7 @@ struct Backend {
     invoke: &'static str,
     /// The line of `ask_<name>` that sends `$prompt` and prints the reply.
     ask: &'static str,
-    /// The bash function `ai <prompt>` that the develop machines' scripts call.
+    /// `lib/ai.sh`'s bash function `ai <prompt>`, which `develop`'s scripts source and call.
     ai_function: &'static str,
     /// Where `init` writes the decree skill, relative to the project root; `None` if
     /// the backend reads no skills.
@@ -68,48 +68,27 @@ struct BuiltinMachine {
     scripts: &'static [(&'static str, &'static str)],
 }
 
-const DEVELOP_MACHINES: &[BuiltinMachine] = &[
-    BuiltinMachine {
-        name: "develop",
-        yml: include_str!("../templates/machines/develop.yml"),
-        scripts: &[
-            (
-                "precheck",
-                include_str!("../templates/scripts/develop/precheck.sh"),
-            ),
-            (
-                "implement",
-                include_str!("../templates/scripts/develop/implement.sh"),
-            ),
-            (
-                "verify",
-                include_str!("../templates/scripts/develop/verify.sh"),
-            ),
-        ],
-    },
-    BuiltinMachine {
-        name: "rust_develop",
-        yml: include_str!("../templates/machines/rust_develop.yml"),
-        scripts: &[
-            (
-                "precheck",
-                include_str!("../templates/scripts/rust_develop/precheck.sh"),
-            ),
-            (
-                "implement",
-                include_str!("../templates/scripts/rust_develop/implement.sh"),
-            ),
-            (
-                "gate",
-                include_str!("../templates/scripts/rust_develop/gate.sh"),
-            ),
-            (
-                "qa",
-                include_str!("../templates/scripts/rust_develop/qa.sh"),
-            ),
-        ],
-    },
-];
+/// `develop`, the one built-in machine besides the router.
+const DEVELOP: BuiltinMachine = BuiltinMachine {
+    name: "develop",
+    yml: include_str!("../templates/machines/develop.yml"),
+    scripts: &[
+        (
+            "precheck",
+            include_str!("../templates/scripts/develop/precheck.sh"),
+        ),
+        (
+            "implement",
+            include_str!("../templates/scripts/develop/implement.sh"),
+        ),
+        ("gate", include_str!("../templates/scripts/develop/gate.sh")),
+        ("fix", include_str!("../templates/scripts/develop/fix.sh")),
+        (
+            "verify",
+            include_str!("../templates/scripts/develop/verify.sh"),
+        ),
+    ],
+};
 
 /// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution;
 /// docs/decisions.md, D15). `git_baseline` is a root
@@ -123,10 +102,15 @@ const SHARED_SCRIPTS: &[(&str, &str)] = &[
     ("snapshot", include_str!("../templates/scripts/snapshot.sh")),
 ];
 
+/// The top of `lib/ai.sh`: how scripts use it, and how to add another backend.
+const AI_HEADER_SH: &str = include_str!("../templates/ai/header.sh");
 /// `ai <prompt>` for Claude: waits out its usage limit and resumes the session.
 const AI_CLAUDE_SH: &str = include_str!("../templates/ai/claude.sh");
 /// `ai <prompt>` for the other backends: one call.
 const AI_PLAIN_SH: &str = include_str!("../templates/ai/plain.sh");
+
+/// The AI helper under `lib/`, which `develop`'s scripts source.
+const LIB_AI_FILE: &str = "ai.sh";
 
 const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
 
@@ -202,9 +186,13 @@ impl Backend {
         self.fill(ROUTER_ASK_SH)
     }
 
+    /// `lib/ai.sh`: the header, then the backend's `ai` function.
+    fn lib_ai_sh(&self) -> String {
+        self.fill(&format!("{AI_HEADER_SH}\n{}", self.ai_function))
+    }
+
     fn fill(&self, template: &str) -> String {
         template
-            .replace("{ai_function}", self.ai_function.trim_end())
             .replace("{ai_title}", self.title)
             .replace("{ai_call}", self.ask)
             .replace("{ai_cli}", self.invoke)
@@ -261,21 +249,19 @@ fn write_script(path: &Path, content: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Write the `develop` and `rust_develop` machines and their executable scripts
-/// (`scripts/<machine>/<name>.sh`) under `decree_dir`, for `backend`.
-fn write_develop_machines(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
-    for machine in DEVELOP_MACHINES {
-        std::fs::write(
-            decree_dir
-                .join(MACHINES_DIR)
-                .join(format!("{}.yml", machine.name)),
-            backend.fill(machine.yml),
-        )?;
-        let dir = decree_dir.join(SCRIPTS_DIR).join(machine.name);
-        std::fs::create_dir_all(&dir)?;
-        for (name, script) in machine.scripts {
-            write_script(&dir.join(format!("{name}.sh")), &backend.fill(script))?;
-        }
+/// Write the `develop` machine and its executable scripts (`scripts/develop/<name>.sh`)
+/// under `decree_dir`, for `backend`.
+fn write_develop(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
+    std::fs::write(
+        decree_dir
+            .join(MACHINES_DIR)
+            .join(format!("{}.yml", DEVELOP.name)),
+        backend.fill(DEVELOP.yml),
+    )?;
+    let dir = decree_dir.join(SCRIPTS_DIR).join(DEVELOP.name);
+    std::fs::create_dir_all(&dir)?;
+    for (name, script) in DEVELOP.scripts {
+        write_script(&dir.join(format!("{name}.sh")), &backend.fill(script))?;
     }
     Ok(())
 }
@@ -338,8 +324,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 }
 
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
-/// `processed.md`, the empty queues, `lib/` with its `README.md`, the router machine with its script, the
-/// `develop` and `rust_develop` machines with theirs, and the shared scripts.
+/// `processed.md`, the empty queues, `lib/` with its `README.md` and `ai.sh`, the router machine with
+/// its script, the `develop` machine with its scripts, and the shared scripts.
 /// `graph/` and `schema/` are written by `decree graph` and `decree schema`.
 fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
     for dir in [
@@ -358,9 +344,13 @@ fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> 
         decree_dir.join(layout::LIB_DIR).join("README.md"),
         LIB_README,
     )?;
+    std::fs::write(
+        decree_dir.join(layout::LIB_DIR).join(LIB_AI_FILE),
+        backend.lib_ai_sh(),
+    )?;
     std::fs::write(decree_dir.join(layout::PROCESSED_FILE), "")?;
     write_router(decree_dir, backend)?;
-    write_develop_machines(decree_dir, backend)?;
+    write_develop(decree_dir, backend)?;
     write_shared_scripts(decree_dir)
 }
 
@@ -475,42 +465,63 @@ mod tests {
         }
     }
 
-    /// `develop` and `rust_develop` are written with every script executable and every
-    /// placeholder filled; only Claude's scripts wait out a usage limit.
+    /// `develop` is written with every script executable and every placeholder filled; the
+    /// scripts that ask the AI source `lib/ai.sh` and define no `ai` function.
     #[test]
-    fn test_write_develop_machines_writes_machines_and_executable_scripts() {
+    fn test_write_develop_writes_the_machine_and_executable_scripts() {
         use std::os::unix::fs::PermissionsExt;
         for ai in [AiBackend::Claude, AiBackend::Opencode, AiBackend::Copilot] {
             let b = backend_entry(ai);
             let dir = tempfile::TempDir::new().unwrap();
             std::fs::create_dir_all(dir.path().join(MACHINES_DIR)).unwrap();
-            write_develop_machines(dir.path(), b).unwrap();
-            for BuiltinMachine {
-                name: machine,
-                scripts,
-                ..
-            } in DEVELOP_MACHINES
-            {
-                let yml =
-                    std::fs::read_to_string(dir.path().join(format!("machines/{machine}.yml")))
-                        .unwrap();
-                assert!(yml.contains(&format!("name: {machine}\n")));
-                assert!(yml.contains(b.title), "{machine}");
-                for (name, _) in *scripts {
-                    let path = dir.path().join(format!("scripts/{machine}/{name}.sh"));
-                    let text = std::fs::read_to_string(&path).unwrap();
-                    assert!(!text.contains("{ai"), "{}: {text}", path.display());
-                    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-                    assert_eq!(mode & 0o777, 0o755, "{}", path.display());
-                    let calls_ai = text.contains("\nai \"${prompt}\"\n");
-                    assert_eq!(text.contains("\nai() {\n"), calls_ai, "{}", path.display());
-                    assert_eq!(
-                        text.contains("Usage limit reached"),
-                        calls_ai && b.name == "claude",
-                        "{}",
-                        path.display()
-                    );
-                }
+            write_develop(dir.path(), b).unwrap();
+            let yml = std::fs::read_to_string(dir.path().join("machines/develop.yml")).unwrap();
+            assert!(yml.contains("name: develop\n"));
+            assert!(yml.contains(b.title), "{}", b.name);
+            assert!(!yml.contains("{ai"), "{yml}");
+            for (name, _) in DEVELOP.scripts {
+                let path = dir.path().join(format!("scripts/develop/{name}.sh"));
+                let text = std::fs::read_to_string(&path).unwrap();
+                assert!(!text.contains("{ai"), "{}: {text}", path.display());
+                let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o755, "{}", path.display());
+                assert!(!text.contains("ai() {"), "{}", path.display());
+                let calls_ai = text.contains("\nai \"${prompt}\"");
+                assert_eq!(
+                    text.contains(". \"${DECREE_LIB}/ai.sh\"\n"),
+                    calls_ai,
+                    "{}",
+                    path.display()
+                );
+                assert_eq!(
+                    calls_ai,
+                    ["implement", "fix", "verify"].contains(name),
+                    "{}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    /// `lib/ai.sh` holds the `ai` function, filled for the backend, under a header that
+    /// shows how to add another; only Claude's waits out a usage limit.
+    #[test]
+    fn test_lib_ai_sh_defines_ai_for_each_backend() {
+        for b in AI_BACKENDS {
+            let text = b.lib_ai_sh();
+            assert!(text.starts_with(AI_HEADER_SH.replace("{ai_title}", b.title).as_str()));
+            assert!(!text.contains("{ai"), "{}: {text}", b.name);
+            assert!(text.contains("\nai() {\n"), "{}", b.name);
+            assert!(text.contains("opencode run --model ollama/<model>"));
+            assert!(text.contains("DECREE_ATTEMPT_VALUE"));
+            assert_eq!(
+                text.contains("Usage limit reached"),
+                b.name == "claude",
+                "{}",
+                b.name
+            );
+            if b.name != "claude" {
+                assert!(text.contains(&format!("  {} \"$1\"\n", b.invoke)), "{text}");
             }
         }
     }

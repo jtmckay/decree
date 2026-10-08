@@ -127,7 +127,18 @@ ai "Summarize $DECREE_MESSAGE" > summary.md
 workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD']}.json"
 ```
 
-`decree init` creates it with a one-line `README.md`.
+`decree init` creates it with a one-line `README.md` and `ai.sh`, the `ai` function the built-in `develop` machine's scripts source.
+
+## Run-directory files
+
+Scripts that hand work to one another, or to a person, do it through files in `DECREE_RUN_DIR`. decree reads none of them; they are a convention the built-in `develop` machine's scripts follow, and a script of your own can too:
+
+| File | Written by | Meaning |
+| --- | --- | --- |
+| `progress.md` | The AI, one line per step | The step log: what is done and what is next. A retry reads it and continues where the last attempt stopped. |
+| `STOP` | The AI, instead of guessing | A question the message does not answer. A script that finds it prints it and names the event `stop`, before asking the AI and after; it stops every later attempt and retry until a person answers, deletes it and runs `decree process --retry`. |
+| `gate.log` | The `gate` script | The output of the project's own checks, which the step that fixes them reads. |
+| `plan.md` | Any step, optionally | A plan a step writes for later ones to follow. |
 
 ## Events from an invoke
 
