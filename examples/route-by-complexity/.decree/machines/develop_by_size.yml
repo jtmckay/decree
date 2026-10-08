@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop_by_size.md
 # Route by complexity: a typed classifier (GLiNER2.5-Decide, on CPU, in
 # milliseconds) decides whether a change is small enough to try first with a

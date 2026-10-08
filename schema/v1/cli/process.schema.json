@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/process.schema.json",
+  "title": "decree process --dry-run --format json",
+  "description": "What `decree process --dry-run --format json` prints on stdout: the pending migrations and inbox messages, in the order `process` would take them, with their machines. Errors go to stderr; with any, the exit code is 1 and nothing would run. `--format` is only for --dry-run: `process` itself produces a stream. Reference: docs/reference/cli.md, Machine-readable output.",
+  "type": "object",
+  "required": [
+    "migrations",
+    "inbox"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "migrations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      },
+      "description": "Migrations not in processed.md, in filename order."
+    },
+    "inbox": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      },
+      "description": "Messages in inbox/, in filename order."
+    }
+  },
+  "examples": [
+    {
+      "migrations": [
+        {
+          "file": "01-add-login.md",
+          "valid": true,
+          "machine": "develop"
+        }
+      ],
+      "inbox": [
+        {
+          "file": "D0007-1432-hello-0.md",
+          "valid": true,
+          "to": "D0006-1100-review-0.w3"
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "item": {
+      "type": "object",
+      "description": "One queued message.",
+      "required": [
+        "file",
+        "valid"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "The filename in its directory."
+        },
+        "valid": {
+          "type": "boolean",
+          "description": "False when the message fails M1 or M2; its errors go to stderr and nothing would run."
+        },
+        "machine": {
+          "type": "string",
+          "description": "The machine the message would run through, for a valid message without `to:`."
+        },
+        "to": {
+          "type": "string",
+          "description": "The wait id or run id a reply (a message with `to:`) would be delivered to."
+        }
+      }
+    }
+  }
+}

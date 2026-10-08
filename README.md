@@ -65,11 +65,10 @@ EOF
 chmod +x .decree/scripts/greet.sh .decree/scripts/ask_person.sh
 ```
 
-**3. Write a machine.** It names scripts, never paths: `greet` resolves to `scripts/hello/greet*`, else `scripts/greet*`. The first line points your editor at the machine schema `decree init` wrote, so it completes keys and underlines mistakes.
+**3. Write a machine.** It names scripts, never paths: `greet` resolves to `scripts/hello/greet*`, else `scripts/greet*`. Editors that read SchemaStore apply the machine schema by path, so they complete keys and underline mistakes ([editors](docs/editors.md)).
 
 ```bash
 cat > .decree/machines/hello.yml <<'EOF'
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 name: hello
 description: Greet, ask a person to approve, then finish.
 initial: greet
@@ -162,7 +161,6 @@ A reply to a waiting run is a message with `to:` (the wait id or run id) and `ev
 A machine is an SCXML statechart written in YAML, in `.decree/machines/<name>.yml`. Keys use SCXML's names: `initial`, `states`, `transitions`, `target`, `type`, `onentry`, `onexit`, `invoke`, `data`, `final`.
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/deploy.md
 name: deploy
 description: Build, ask a person to approve, then ship.
@@ -212,7 +210,7 @@ Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, 
 
 ### Schema
 
-`decree schema` writes a JSON Schema for every file decree reads or writes to `.decree/schema/v1/` (`decree init` writes them too): machines, message frontmatter, `events.jsonl` lines, and a router's `request.json` and `reply.json`. They are versioned: within `v1` changes are additive only ([Versioning](docs/reference/README.md#versioning), [changelog](CHANGELOG.md)). Every machine starts with `# yaml-language-server: $schema=../schema/v1/machine.schema.json`, so VS Code with Red Hat's YAML extension, or any editor running the YAML language server, completes keys, shows what each one means and underlines mistakes as you type. A model reads the same file as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
+decree has a JSON Schema for every file it reads or writes: machines, message frontmatter, `events.jsonl` lines, and a router's `request.json` and `reply.json`. They live in [`schema/v1/`](schema/v1/), published at `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/`, and are versioned: within `v1` changes are additive only ([Versioning](docs/reference/README.md#versioning), [changelog](CHANGELOG.md)). Editors apply the machine schema to `.decree/machines/*.yml` through SchemaStore, or a setting until then, with no line in the file, so VS Code with Red Hat's YAML extension, JetBrains IDEs, or any editor running the YAML language server completes keys, shows what each one means and underlines mistakes as you type ([editors](docs/editors.md)). `decree schema` writes a local copy to `.decree/schema/v1/`, ignored by git, for agents and offline use: a model reads it as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
 
 ### Routers
 
@@ -240,7 +238,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree init [--ai AI] [--permissions]` | Create `.decree/` with machines, scripts, the `router` machine and the decree skill |
 | `decree check [--format text\|json\|sarif]` | Validate machines and pending messages; `sarif` for code scanning |
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
-| `decree schema` | Write JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
+| `decree schema` | Write a local copy of the JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
 | `decree skill [--ai AI]` | Refresh the decree skill in `.claude/skills/decree/` or `.github/skills/decree/` after an upgrade |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
 | `decree process --retry [ID] [--state S]` | First continue a failed or interrupted run: `ID`, or the migration blocking the queue |
@@ -254,7 +252,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree --version` | Print the version |
 
-`--format json` on `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema` and `process --dry-run` prints one JSON document, described by `.decree/schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
+`--format json` on `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema` and `process --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
 decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree process --retry`, because a kill may be deliberate. A failed migration blocks the ones after it the same way, and `decree process` prints the exact command that continues it.
 
@@ -275,7 +273,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   runs/<id>/                      # one folder per run: message.md, events.jsonl, traces.jsonl, logs
   store/<machine>/                # what a machine keeps between runs ($DECREE_STORE), declared under its store:; never pruned
   graph/                          # written by decree graph; committed
-  schema/v1/                      # written by decree schema; committed
+  schema/v1/                      # optional local copy written by decree schema; not committed
 ```
 
 There is no configuration file. Each setting is a convention or a fixed limit:

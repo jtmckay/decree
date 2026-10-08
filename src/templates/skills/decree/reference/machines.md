@@ -5,18 +5,18 @@ YAML. Keys are SCXML's names (`initial`, `states`, `transitions`, `onentry`, `on
 `data`, `final`); decree implements a strict subset of SCXML, plus a few marked extensions. If
 you know SCXML, you know how a machine behaves.
 
-The first two lines point editors at the schema and link the machine to its graph:
+The first line links the machine to its graph:
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/<name>.md
 ```
 
-**Read `.decree/schema/v1/machine.schema.json` before writing a machine.** It is the precise
+**Before writing a machine, run `decree schema` and read `.decree/schema/v1/machine.schema.json`.**
+The folder is generated and ignored by git. The schema is the precise
 contract for every key below: types, required keys, each `invoke` kind and condition, name
 patterns and ranges, with a description and examples for each key. Write against it, then run
 `decree check`, which also checks what a schema cannot: that names resolve, targets exist and
-every state is reachable. `decree schema` rewrites `.decree/schema/` if it is missing.
+every state is reachable. Editors apply the same schema by path; machines carry no schema line.
 
 ## Keys
 
@@ -90,7 +90,8 @@ sees by what it prints, which is also how to keep secrets out of a prompt.
 
 A `model` state never calls a model itself. decree writes `request.json` (question,
 options, the `output` state's output as `input`, message body, the run's history, and
-`reply_schema`, a JSON Schema for the reply; `.decree/schema/v1/request.schema.json`) and runs a
+`reply_schema`, a JSON Schema for the reply; `.decree/schema/v1/request.schema.json` after
+`decree schema`) and runs a
 **router**: an ordinary machine (`router:` on the invoke, else the machine named `router`, which
 `decree init` writes).
 Its script reads `$DECREE_REQUEST`, asks a model, and writes
@@ -193,7 +194,6 @@ the new shape for an old one (`choose`, `input`, a bare `matches`, the old retry
 ## Example: everything at once
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/feature.md
 name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.
@@ -255,7 +255,6 @@ states:
 ## Example: composing machines
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/ship.md
 name: ship
 description: Implement a feature, then deploy it.
@@ -284,4 +283,5 @@ name resolves, decision states cover their events, options have descriptions, `e
 `router` name real machines, no invoke cycles, nothing outside the SCXML subset) and M1–M3 (every
 pending migration, inbox message and cron file parses and names a machine with valid `params`)
 and E1 (`.decree/env` is a valid dotenv file without reserved keys). Errors look like `machines/feature.yml: work.verify: <message>`. It also warns when
-`.decree/graph/` or `.decree/schema/` is out of date: run `decree graph` or `decree schema`.
+`.decree/graph/` is out of date, or `.decree/schema/` when it exists: run `decree graph` or
+`decree schema`.

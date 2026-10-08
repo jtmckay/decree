@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
 description: Implement a message with {ai_title} in small, logged steps, run the project's gate, have {ai_title} fix failures only if the gate fails, then have {ai_title} check the acceptance criteria.

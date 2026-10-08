@@ -1,4 +1,4 @@
-//! The JSON Schemas of `src/templates/schema/v1/` (docs/reference/README.md, Schemas),
+//! The JSON Schemas of `schema/v1/` (docs/reference/README.md, Schemas),
 //! compiled with the `jsonschema` crate (draft 2020-12); the lines of `events.jsonl` and
 //! JSON files checked against them; and YAML read as the YAML language server sees it:
 //! converted to JSON, with the boolean keys `true:` and `false:` as the strings "true" and
@@ -12,55 +12,46 @@ use jsonschema::Validator;
 use serde_json::Value as Json;
 
 /// The machine schema, as `decree schema` writes it.
-pub const MACHINE_SCHEMA: &str = include_str!("../../src/templates/schema/v1/machine.schema.json");
+pub const MACHINE_SCHEMA: &str = include_str!("../../schema/v1/machine.schema.json");
 
 /// The message frontmatter schema, as `decree schema` writes it.
-pub const MESSAGE_SCHEMA: &str = include_str!("../../src/templates/schema/v1/message.schema.json");
+pub const MESSAGE_SCHEMA: &str = include_str!("../../schema/v1/message.schema.json");
 
 /// The schema of one line of `events.jsonl`.
-pub const EVENTS_SCHEMA: &str = include_str!("../../src/templates/schema/v1/events.schema.json");
+pub const EVENTS_SCHEMA: &str = include_str!("../../schema/v1/events.schema.json");
 
 /// The schema of a router's `request.json`.
-pub const REQUEST_SCHEMA: &str = include_str!("../../src/templates/schema/v1/request.schema.json");
+pub const REQUEST_SCHEMA: &str = include_str!("../../schema/v1/request.schema.json");
 
 /// The schema of a router's `reply.json`.
-pub const REPLY_SCHEMA: &str = include_str!("../../src/templates/schema/v1/reply.schema.json");
+pub const REPLY_SCHEMA: &str = include_str!("../../schema/v1/reply.schema.json");
 
 /// The schema of `decree check --format json`.
-pub const CLI_CHECK_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/check.schema.json");
+pub const CLI_CHECK_SCHEMA: &str = include_str!("../../schema/v1/cli/check.schema.json");
 
 /// The schema of `decree emit --format json`.
-pub const CLI_EMIT_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/emit.schema.json");
+pub const CLI_EMIT_SCHEMA: &str = include_str!("../../schema/v1/cli/emit.schema.json");
 
 /// The schema of `decree event --format json`.
-pub const CLI_EVENT_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/event.schema.json");
+pub const CLI_EVENT_SCHEMA: &str = include_str!("../../schema/v1/cli/event.schema.json");
 
 /// The schema of `decree graph --format json`.
-pub const CLI_GRAPH_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/graph.schema.json");
+pub const CLI_GRAPH_SCHEMA: &str = include_str!("../../schema/v1/cli/graph.schema.json");
 
 /// The schema of `decree process --format json`.
-pub const CLI_PROCESS_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/process.schema.json");
+pub const CLI_PROCESS_SCHEMA: &str = include_str!("../../schema/v1/cli/process.schema.json");
 
 /// The schema of `decree prune --format json`.
-pub const CLI_PRUNE_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/prune.schema.json");
+pub const CLI_PRUNE_SCHEMA: &str = include_str!("../../schema/v1/cli/prune.schema.json");
 
 /// The schema of `decree schema --format json`.
-pub const CLI_SCHEMA_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/schema.schema.json");
+pub const CLI_SCHEMA_SCHEMA: &str = include_str!("../../schema/v1/cli/schema.schema.json");
 
 /// The schema of `decree skill --format json`.
-pub const CLI_SKILL_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/skill.schema.json");
+pub const CLI_SKILL_SCHEMA: &str = include_str!("../../schema/v1/cli/skill.schema.json");
 
 /// The schema of `decree status --format json`.
-pub const CLI_STATUS_SCHEMA: &str =
-    include_str!("../../src/templates/schema/v1/cli/status.schema.json");
+pub const CLI_STATUS_SCHEMA: &str = include_str!("../../schema/v1/cli/status.schema.json");
 
 /// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
 /// `.schema.json`.
@@ -101,8 +92,7 @@ impl jsonschema::Retrieve for Bundled {
         &self,
         uri: &jsonschema::Uri<String>,
     ) -> Result<Json, Box<dyn std::error::Error + Send + Sync>> {
-        let prefix =
-            "https://raw.githubusercontent.com/jtmckay/decree/main/src/templates/schema/v1/";
+        let prefix = "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/";
         let name = uri
             .as_str()
             .strip_prefix(prefix)

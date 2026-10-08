@@ -186,9 +186,10 @@ Viewing:
 /// How editors use `decree schema` output (docs/reference/machines.md, Schema).
 const SCHEMA_EDITORS: &str = "\
 Editors:
-  Every machine starts with `# yaml-language-server: $schema=../schema/v1/machine.schema.json`.
-  Editors with the YAML language server (VS Code's YAML extension by Red Hat, and others)
-  then complete keys and underline mistakes as you type. `decree check` remains the authority:
+  Editors that read SchemaStore (VS Code's YAML extension by Red Hat, JetBrains IDEs, and
+  others) apply the hosted machine schema to .decree/machines/*.yml and complete keys and
+  underline mistakes as you type; this local copy is for agents and offline editors, and git
+  ignores it (docs/editors.md). `decree check` remains the authority:
   the schema checks shape, `decree check` also checks names, targets and reachability.";
 
 /// How a command prints its report (docs/reference/cli.md, Machine-readable output).

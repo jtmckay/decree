@@ -1,5 +1,6 @@
 {
-  // The YAML extension reads the `# yaml-language-server: $schema=…` line at
-  // the top of a config or machine file, then checks and completes it.
+  // The YAML extension applies decree's machine schema to `.decree/machines/*.yml`
+  // through `yaml.schemas` in settings.json (or SchemaStore), then checks and
+  // completes each machine (docs/editors.md).
   "recommendations": ["redhat.vscode-yaml"]
 }

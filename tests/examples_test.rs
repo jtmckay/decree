@@ -185,16 +185,17 @@ fn the_0_4_scan_matches_versions_not_thresholds() {
 }
 
 #[test]
-fn every_example_ships_its_graph_and_schema_and_starts_fresh_unless_recorded() {
+fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded() {
     for name in projects() {
         let decree = examples().join(&name).join(".decree");
         assert!(decree.join("graph/system.md").is_file(), "{name}: no graph");
-        for schema in ["v1/machine.schema.json", "v1/message.schema.json"] {
-            assert!(
-                decree.join("schema").join(schema).is_file(),
-                "{name}: no {schema}"
-            );
-        }
+        // Editors read the hosted schemas; a local copy is generated and ignored.
+        assert!(!decree.join("schema").exists(), "{name}: .decree/schema");
+        let gitignore = fs::read_to_string(decree.join(".gitignore")).unwrap();
+        assert!(
+            gitignore.lines().any(|l| l == "schema/"),
+            "{name}: .gitignore does not list schema/"
+        );
         for gone in ["routines", "outbox"] {
             assert!(!decree.join(gone).exists(), "{name}: .decree/{gone} exists");
         }
@@ -214,16 +215,13 @@ fn every_example_ships_its_graph_and_schema_and_starts_fresh_unless_recorded() {
         for machine in machines {
             let text = fs::read_to_string(&machine).unwrap();
             let stem = machine.file_stem().unwrap().to_string_lossy();
-            let head: Vec<&str> = text.lines().take(2).collect();
             assert_eq!(
-                head,
-                [
-                    "# yaml-language-server: $schema=../schema/v1/machine.schema.json",
-                    format!("# Graph: ../graph/{stem}.md").as_str()
-                ],
+                text.lines().next(),
+                Some(format!("# Graph: ../graph/{stem}.md").as_str()),
                 "{}",
                 machine.display()
             );
+            assert!(!text.contains("$schema="), "{}", machine.display());
         }
     }
 }

@@ -280,7 +280,7 @@ fn misspelled_root_key_names_line() {
     let text = fixture("hello").replace("description:", "descripton:");
     let err = load_err("hello", &text);
     assert!(
-        err.starts_with("machines/hello.yml: line 4: unknown field `descripton`"),
+        err.starts_with("machines/hello.yml: line 3: unknown field `descripton`"),
         "{err}"
     );
 }

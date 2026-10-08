@@ -91,7 +91,7 @@ Each building block has its own directory in `.decree/`:
   cron/                             # *.md cron templates (messages.md, Cron files)
   machines/<machine name>.yml         # statecharts (machines.md)
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
-  schema/v1/*.schema.json             # written by `decree schema`; committed, so editors check machines as you type (Schemas, below)
+  schema/v1/*.schema.json             # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)
   scripts/<name>                    # executables shared by every machine; optional extension: verify.sh (scripts.md)
   scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
   lib/                              # code that scripts source, config and data: $DECREE_LIB; decree never runs anything in it (scripts.md, Shared code); `decree init` writes `ai.sh`
@@ -118,11 +118,11 @@ The daemon poll interval is the `decree daemon --interval` flag.
 
 ## Schemas
 
-Every file decree reads or writes, and every document a command prints with `--format json`, has a JSON Schema (draft 2020-12). `decree schema` writes them into `.decree/schema/v1/` and removes anything else in `.decree/schema/`, `decree init` writes them, and `decree check` warns when one is missing, out of date, or joined by a file decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds). Their single source is [`src/templates/schema/v1/`](../../src/templates/schema/v1/), compiled into decree; each schema's `$id` is its raw URL in the decree repository on GitHub. Every property has a description taken from this reference.
+Every file decree reads or writes, and every document a command prints with `--format json`, has a JSON Schema (draft 2020-12). Their single source is [`schema/v1/`](../../schema/v1/) at the root of the decree repository, compiled into decree, so the published files and the binary's are the same bytes. Each schema's `$id` is its raw URL there, `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/<path>` (such as `…/schema/v1/cli/check.schema.json`), which resolves once 0.5 is on `main`; editors find the machine schema through SchemaStore ([editors.md](../editors.md)). `decree schema` writes a local copy into `.decree/schema/v1/`, for agents and offline use, and removes anything else in `.decree/schema/`; `decree init` does not write it, and its `.gitignore` lists `schema/`. When `.decree/schema/` exists, `decree check` warns when a file there is missing, out of date, or one decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds); with no folder it says nothing. Every property has a description taken from this reference.
 
 | Schema | Covers | Documented in |
 | --- | --- | --- |
-| `machine.schema.json` | A machine file, `machines/<name>.yml`. Machines point editors at it ([Schema](machines.md#schema)). | [machines.md](machines.md) |
+| `machine.schema.json` | A machine file, `machines/<name>.yml`. Editors apply it by path ([Schema](machines.md#schema)). | [machines.md](machines.md) |
 | `message.schema.json` | The frontmatter of a migration, inbox message, cron file or reply. | [messages.md](messages.md#frontmatter-keys) |
 | `events.schema.json` | One line of `runs/<id>/events.jsonl`: the common fields, then one branch per `type`. | [runs.md](runs.md#eventsjsonl) |
 | `request.schema.json` | A router run's `request.json`, including `reply_schema`. | [runs.md](runs.md#model) |
@@ -136,5 +136,5 @@ The schemas describe shape; `decree check` stays the authority for meaning. The 
 The files above are decree's contract with editors, routers, dashboards and pipelines. Its version is in the schema path, `v1`, and in the `v` field of every event and request. The rule follows Semantic Versioning 2.0.0, with the version in the path as Kubernetes API groups do (`apps/v1`):
 
 - Within `v1`, changes are additive only: new optional fields, new event types, new optional keys.
-- A rename, a removal, or a change of meaning is `v2`: a new directory, `.decree/schema/v2/`, and `v: 2` in events.
+- A rename, a removal, or a change of meaning is `v2`: a new directory, `schema/v2/`, and `v: 2` in events.
 - decree 0.x may still change `v1` before 1.0 (SemVer item 4: major version zero is for initial development), and every such change is listed in the [changelog](../../CHANGELOG.md).

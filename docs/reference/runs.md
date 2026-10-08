@@ -69,7 +69,6 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
 `decree init` writes `machines/router.yml` and its script. It is a normal machine: edit it, replace it, or write another and point a `model` invoke's `router:` at it. Below is the `--ai claude` version; `--ai copilot` and `--ai opencode` differ only in the script name (`ask_copilot`, `ask_opencode`) and the CLI call ([cli.md](cli.md)).
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/router.md
 name: router
 description: Ask Claude to pick one of the options in the request.

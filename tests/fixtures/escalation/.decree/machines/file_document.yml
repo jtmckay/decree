@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/file_document.md
 # An escalation ladder: the cheapest way to decide goes first, and each step
 # passes on only what it cannot decide. A `check` says `false`; a model below its

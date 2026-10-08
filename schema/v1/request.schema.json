@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/request.schema.json",
+  "title": "decree router request",
+  "description": "request.json: the question decree asks a router for a `model` invoke, written in the router's child run folder (runs/<child id>/request.json) and named to its scripts by DECREE_REQUEST. The router answers with reply.json (reply.schema.json). Reference: docs/reference/runs.md, Model.",
+  "type": "object",
+  "required": ["v", "machine", "machine_description", "state", "state_description", "question", "options", "input", "message_body", "history", "reply_schema"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "Request format version, 1."
+    },
+    "machine": {
+      "type": "string",
+      "description": "The machine whose `model` state asks."
+    },
+    "machine_description": {
+      "type": "string",
+      "description": "That machine's `description`."
+    },
+    "state": {
+      "type": "string",
+      "description": "The asking `model` state."
+    },
+    "state_description": {
+      "type": "string",
+      "description": "That state's `description`, or empty."
+    },
+    "question": {
+      "type": "string",
+      "description": "The `model` invoke's `question`."
+    },
+    "options": {
+      "type": "array",
+      "description": "The state's transitions except `unsure` and `error`, in name order: the events the router may pick from.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["event", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "The option: an event of the state."
+          },
+          "description": {
+            "type": "string",
+            "description": "The transition's `description`: what picking it means."
+          }
+        }
+      }
+    },
+    "min_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "The `model` invoke's `min_confidence`, when it sets one: a reply with a lower or missing `confidence` produces `unsure`."
+    },
+    "input": {
+      "type": "string",
+      "description": "The latest script output of the invoke's `output` state, as logged (stdout, and stderr lines with their `[stderr] ` prefix); empty when the invoke names no `output`."
+    },
+    "message_body": {
+      "type": "string",
+      "description": "The parent message's body, kept apart from `input`."
+    },
+    "history": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "One `<from>: <event>` entry for each `transition` event of the asking run so far, in order, except the claim."
+    },
+    "reply_schema": {
+      "type": "object",
+      "description": "The exact JSON Schema (draft 2020-12) for this request's reply.json: `reason` a string, `event` one of the options, `confidence` a number from 0 to 1 and `probabilities` a number per option, in that order (a constrained decoder emits properties in schema order, so the model reasons before it picks); only `event` is required, and no other key is allowed. A typed router hands it unchanged to a constrained decoder. reply.schema.json is the general shape of every reply."
+    }
+  },
+  "examples": [
+    {
+      "v": 1,
+      "machine": "feature", "machine_description": "Implement one feature spec with an AI agent, verify it, and commit.",
+      "state": "triage", "state_description": "",
+      "question": "Should we implement again or split the work?",
+      "options": [
+        { "event": "retry", "description": "The failures look fixable; implement again." },
+        { "event": "split", "description": "The scope is too large; emit smaller follow-up messages." }
+      ],
+      "min_confidence": 0.8,
+      "input": "",
+      "message_body": "Add a login page.\n",
+      "history": ["precheck: done", "implement: done", "verify: fail"],
+      "reply_schema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "properties": { "reason": { "type": "string" }, "event": { "enum": ["retry", "split"] } }, "required": ["event"], "additionalProperties": false }
+    }
+  ]
+}

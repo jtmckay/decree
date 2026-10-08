@@ -2,3 +2,4 @@
 # In your own project it is ignored, as decree init writes it.
 inbox/
 runs/
+schema/

@@ -102,3 +102,4 @@
 102-gate-pass-fail.md
 103-env-interpolation.md
 104-decree-skill.md
+105-hosted-schemas.md

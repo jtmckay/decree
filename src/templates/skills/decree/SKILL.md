@@ -50,13 +50,14 @@ appear only where a machine invokes `model` or `person`.
 - **One concern per migration**, day-sized, with Given / When / Then acceptance criteria whose
   outcomes are observable (exit codes, file contents, output).
 - **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
-- **Read `.decree/schema/v1/machine.schema.json` before writing a machine**, and write against it.
-  It is the JSON Schema of every machine key: types, required keys, each `invoke` kind and
-  condition, name patterns, with a description and examples for each. Every machine starts
-  with `# yaml-language-server: $schema=../schema/v1/machine.schema.json`, so editors check it
-  too. Run `decree schema` if `.decree/schema/v1/` is missing. The same folder holds the
-  schemas of `events.jsonl` lines (`events.schema.json`) and of a router's `request.json` and
-  `reply.json`: read them before writing a router or anything that reads a run.
+- **Before writing a machine, run `decree schema` and read
+  `.decree/schema/v1/machine.schema.json`**, and write against it (the folder is generated and
+  ignored by git). It is the JSON Schema of every machine key: types, required keys, each
+  `invoke` kind and condition, name patterns, with a description and examples for each.
+  Editors apply the same schema by path, so machines carry no schema line. The same folder
+  holds the schemas of `events.jsonl` lines (`events.schema.json`) and of a router's
+  `request.json` and `reply.json` (`request.schema.json`, `reply.schema.json`): run
+  `decree schema` and read them before writing a router or anything that reads a run.
 - **Scripts choose how, machines choose what runs next.** A script may decide *how* to do its
   one job from its params and environment: which workflow file, which model for this attempt,
   which flags. A choice of *which step runs next* is a transition, on `done` or an event the
@@ -97,7 +98,7 @@ appear only where a machine invokes `model` or `person`.
 | --- | --- |
 | `decree check [--format json\|sarif]` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
 | `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
-| `decree schema` | Write the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/`. |
+| `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
@@ -146,7 +147,6 @@ Limit each API key to 10 uploads per minute on `POST /api/upload`.
 The smallest machine:
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/hello.md
 name: hello
 description: Run one script.
@@ -162,7 +162,6 @@ states:
 A machine grows one reason at a time. First, the straight line that does the job:
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
 description: Implement a message, then test it.
@@ -182,7 +181,6 @@ Real runs then fail at random in `implement`, and a re-run passes. The cheapest 
 `attempts`:
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
 description: Implement a message, then test it.
@@ -203,7 +201,6 @@ Later the local model often fails where Claude would not. Give each attempt a va
 of adding a state:
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
 description: Implement a message, then test it.
@@ -238,7 +235,7 @@ Read the one you need; don't load them all upfront:
 
 - **`reference/messages.md`**: frontmatter keys, migrations and `processed.md`, the inbox,
   cron files, `decree emit`, replies to a waiting run.
-- **`reference/machines.md`**: the schema line, every machine key, the invoke types, conditions, choices and
+- **`reference/machines.md`**: the graph line, every machine key, the invoke types, conditions, choices and
   routers, composition, events and transitions, validation rules, full examples.
 - **`reference/scripts.md`**: where scripts live, how they run, how they report an event,
   every `DECREE_*` variable.

@@ -9,7 +9,6 @@ The first three examples are the machines of [`examples/project`](../../examples
 ## Example: the smallest machine
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/hello.md
 name: hello
 description: Run one script.
@@ -25,7 +24,6 @@ states:
 ## Example: an attempt list
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/develop.md
 name: develop
 description: Implement a message, then test it.
@@ -45,7 +43,6 @@ states:
 ## Example: asking a person
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/deploy.md
 name: deploy
 description: Build, ask a person to approve, then ship.
@@ -76,7 +73,6 @@ states:
 A state can invoke a whole machine. It runs as a child run, and the final state it reaches becomes this state's event: `done`, `rejected`, and `failed` as `error`.
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/release.md
 name: release
 description: Implement a change, then deploy it.
@@ -309,17 +305,17 @@ Unknown keys fail validation everywhere: at the root, in a state, a `data` entry
 
 ## Schema
 
-`decree schema` writes a JSON Schema (draft 2020-12) for every file decree reads or writes into `.decree/schema/v1/` ([Schemas](README.md#schemas)): among them `machine.schema.json` for machine files and `message.schema.json` for message frontmatter ([messages.md](messages.md)). Their single source is compiled into decree, `decree init` writes them, and `decree check` warns when they are missing or differ from what `decree schema` would write. Every property has a description taken from this reference, and the schemas carry examples, so they are one precise contract for people, editors and models alike.
+decree has a JSON Schema (draft 2020-12) for every file it reads or writes ([Schemas](README.md#schemas)): among them `machine.schema.json` for machine files and `message.schema.json` for message frontmatter ([messages.md](messages.md)). They are compiled into decree and published at a stable URL, `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json` for the machine schema. `decree schema` writes a local copy into `.decree/schema/v1/`; the copy is optional and ignored by git, and `decree check` warns that it is missing or out of date only when `.decree/schema/` exists. Every property has a description taken from this reference, and the schemas carry examples, so they are one precise contract for people, editors and models alike.
 
-**Editors.** Every machine starts with a comment that points the YAML language server at the schema, above its `# Graph:` line:
+**Editors.** Machines carry no schema line. Editors that read SchemaStore, such as VS Code with the YAML extension by Red Hat and JetBrains IDEs, apply the machine schema to `.decree/machines/*.yml` by path, then complete keys, show each key's description on hover, and underline a misspelled key or a wrong value as you type. Until decree's entry is in SchemaStore, or offline, map the schema in your editor's settings, or put the per-file line above a machine's `# Graph:` line; both ways work ([editors.md](../editors.md)):
 
 ```text
 # yaml-language-server: $schema=../schema/v1/machine.schema.json
 ```
 
-The path is relative to the machine file. VS Code with the YAML extension by Red Hat, and other editors that run the YAML language server, then complete keys, show each key's description on hover, and underline a misspelled key or a wrong value as you type. No setting is needed. The language server does not read Markdown, so message frontmatter is checked by `decree check`, or by any JSON Schema validator given `message.schema.json`.
+That path is relative to the machine file, so it needs the local copy: run `decree schema` first. The language server does not read Markdown, so message frontmatter is checked by `decree check`, or by any JSON Schema validator given `message.schema.json`.
 
-**Models.** A model that writes or edits a machine reads `.decree/schema/v1/machine.schema.json` first, writes against it, and runs `decree check` after.
+**Models.** A model that writes or edits a machine runs `decree schema`, reads `.decree/schema/v1/machine.schema.json` first, writes against it, and runs `decree check` after.
 
 **What the schema checks** is everything about one file's shape: its keys and their types, required keys and unknown keys (V19, including each shape migration 71 replaced), each `invoke` kind and its short forms, transitions in short and long form (with `true:` and `false:` keys read as the event names), conditions with exactly one subject and one operator that subject takes and a value of the right type (V10), the name patterns (V1, V2, V18, script and machine names), the ranges of `min_confidence` and `confidence` values (V10, V16), the root-level final state `failed` (V5), which keys each kind of state may have (V6, V7, `type: internal` only on a compound state for V17), the options of a `model` or `person` state (at least two, each with a `description`, none reserved; V8, V18), `true` and `false` rather than `yes` and `no` on a `check` state (V8), `data` defaults of their `type`, with `enum` a non-empty list of distinct strings on `string` data only, and `store` names and their non-empty descriptions (V14). A message has one of two shapes: a message that names its `machine`, or a reply with `to` and `event`.
 
@@ -329,7 +325,7 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 
 ## Validation
 
-`decree check` runs every rule below, plus the message checks M1–M3 and the `.decree/env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/` from what `decree schema` would write, or when `.decree/store/` holds what no machine's `store:` declares ([Store](#store)), or when `.decree/env` uses a variable that is not set ([Project variables](scripts.md#project-variables-decreeenv)). `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
+`decree check` runs every rule below, plus the message checks M1–M3 and the `.decree/env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/`, when it exists, from what `decree schema` would write, or when `.decree/store/` holds what no machine's `store:` declares ([Store](#store)), or when `.decree/env` uses a variable that is not set ([Project variables](scripts.md#project-variables-decreeenv)). `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
 
 | Rule | Check |
 | --- | --- |

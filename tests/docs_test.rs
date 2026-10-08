@@ -2,7 +2,7 @@
 //! in `docs/reference/machines.md` are the files in `examples/project/` (but for `release`,
 //! which composes them), nothing points at the
 //! removed implementation spec, `CHANGELOG.md` has the 0.5.0 entry and links the
-//! versioning rule, and `SECURITY.md` states the permission mode the built-in machines use. Reads this repository's files only; writes nothing.
+//! versioning rule, the SchemaStore entry in `docs/editors.md` names the machine schema, and `SECURITY.md` states the permission mode the built-in machines use. Reads this repository's files only; writes nothing.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -179,6 +179,69 @@ fn relative_markdown_links_resolve() {
         }
     }
     assert!(broken.is_empty(), "broken links:\n{}", broken.join("\n"));
+}
+
+/// The body of each fenced code block in `text` whose info string is `lang`.
+fn code_blocks<'a>(text: &'a str, lang: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut block: Option<Vec<&'a str>> = None;
+    for line in text.lines() {
+        match block.as_mut() {
+            None if line == format!("```{lang}") => block = Some(Vec::new()),
+            Some(lines) if line == "```" => {
+                out.push(lines.join("\n"));
+                block = None;
+            }
+            Some(lines) => lines.push(line),
+            None => {}
+        }
+    }
+    out
+}
+
+/// The SchemaStore catalog entry in `docs/editors.md` is valid JSON with the keys the catalog
+/// takes, matches machine files by path, and its `url` is the machine schema's `$id`; the VS
+/// Code setting maps the same schema, from the `v0.5` branch while 0.5 is in beta.
+#[test]
+fn the_schemastore_entry_names_the_machine_schema() {
+    let root = repo();
+    let text = std::fs::read_to_string(root.join("docs/editors.md")).unwrap();
+    let blocks: Vec<serde_json::Value> = code_blocks(&text, "json")
+        .iter()
+        .map(|b| serde_json::from_str(b).unwrap_or_else(|e| panic!("{e}:\n{b}")))
+        .collect();
+    assert_eq!(
+        blocks.len(),
+        2,
+        "the SchemaStore entry and the VS Code setting"
+    );
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("schema/v1/machine.schema.json")).unwrap(),
+    )
+    .unwrap();
+    let id = schema["$id"].as_str().unwrap();
+    assert_eq!(
+        id,
+        "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json"
+    );
+
+    let entry = blocks[0].as_object().unwrap();
+    let mut keys: Vec<&str> = entry.keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, ["description", "fileMatch", "name", "url"]);
+    assert_eq!(entry["name"], "decree machine");
+    assert!(entry["description"].as_str().is_some_and(|d| !d.is_empty()));
+    assert_eq!(
+        entry["fileMatch"],
+        serde_json::json!(["**/.decree/machines/*.yml", "**/.decree/machines/*.yaml"])
+    );
+    assert_eq!(entry["url"], id);
+
+    let beta = id.replace("/decree/main/", "/decree/v0.5/");
+    assert_eq!(
+        blocks[1]["yaml.schemas"][&beta],
+        serde_json::json!([".decree/machines/*.yml", ".decree/machines/*.yaml"])
+    );
 }
 
 #[test]

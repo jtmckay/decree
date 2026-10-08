@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/feature.md
 name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.

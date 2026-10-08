@@ -3,7 +3,7 @@
 //! runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
-//! `.decree/schema/` from what `decree schema` would write, when `.decree/store/` holds
+//! `.decree/schema/`, when it exists, from what `decree schema` would write, when `.decree/store/` holds
 //! what no machine's `store:` declares, and when `.decree/env` uses a variable that is not set.
 
 use std::collections::{BTreeMap, BTreeSet};

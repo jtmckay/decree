@@ -1,0 +1,11 @@
+{
+  // This repository's own copy of the machine schema, for its machines, the examples'
+  // and the test fixtures' (docs/editors.md).
+  "yaml.schemas": {
+    "./schema/v1/machine.schema.json": [
+      ".decree/machines/*.yml",
+      "examples/*/.decree/machines/*.yml",
+      "tests/fixtures/*/.decree/machines/*.yml"
+    ]
+  }
+}

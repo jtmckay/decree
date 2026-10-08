@@ -1,9 +1,10 @@
 //! `decree schema`: write the JSON Schemas (draft 2020-12) of every file decree reads or
 //! writes, and of every document a command prints with `--format json` (in `cli/`), into
 //! `.decree/schema/v1/` (docs/reference/README.md, Schemas), each through a temp
-//! file and a rename, and remove anything else in `.decree/schema/`. `decree check` uses
-//! `stale_files` to warn when they are missing, out of date, or joined by files decree does not
-//! write. The schemas describe shape only; `decree check` stays the authority for meaning.
+//! file and a rename, and remove anything else in `.decree/schema/`. The local copy is
+//! optional (editors read the hosted copy in `schema/`, docs/editors.md); when it exists,
+//! `decree check` uses `stale_files` to warn when one is missing, out of date, or joined by
+//! files decree does not write. The schemas describe shape only; `decree check` stays the authority for meaning.
 
 use std::path::Path;
 
@@ -17,65 +18,65 @@ use crate::message::write_replace;
 pub const SCHEMA_DIR: &str = "schema";
 
 /// Every schema `decree schema` writes: its path under `.decree/schema/` and its content,
-/// compiled into the binary from `src/templates/schema/`, their single source. The first
+/// compiled into the binary from `schema/` at the repository root, their single source and the published copy. The first
 /// path segment is the contract version (docs/reference/README.md, Versioning); `cli/` holds
 /// the documents commands print with `--format json` (docs/reference/cli.md).
 const SCHEMAS: [(&str, &str); 14] = [
     (
         "v1/cli/check.schema.json",
-        include_str!("../templates/schema/v1/cli/check.schema.json"),
+        include_str!("../../schema/v1/cli/check.schema.json"),
     ),
     (
         "v1/cli/emit.schema.json",
-        include_str!("../templates/schema/v1/cli/emit.schema.json"),
+        include_str!("../../schema/v1/cli/emit.schema.json"),
     ),
     (
         "v1/cli/event.schema.json",
-        include_str!("../templates/schema/v1/cli/event.schema.json"),
+        include_str!("../../schema/v1/cli/event.schema.json"),
     ),
     (
         "v1/cli/graph.schema.json",
-        include_str!("../templates/schema/v1/cli/graph.schema.json"),
+        include_str!("../../schema/v1/cli/graph.schema.json"),
     ),
     (
         "v1/cli/process.schema.json",
-        include_str!("../templates/schema/v1/cli/process.schema.json"),
+        include_str!("../../schema/v1/cli/process.schema.json"),
     ),
     (
         "v1/cli/prune.schema.json",
-        include_str!("../templates/schema/v1/cli/prune.schema.json"),
+        include_str!("../../schema/v1/cli/prune.schema.json"),
     ),
     (
         "v1/cli/schema.schema.json",
-        include_str!("../templates/schema/v1/cli/schema.schema.json"),
+        include_str!("../../schema/v1/cli/schema.schema.json"),
     ),
     (
         "v1/cli/skill.schema.json",
-        include_str!("../templates/schema/v1/cli/skill.schema.json"),
+        include_str!("../../schema/v1/cli/skill.schema.json"),
     ),
     (
         "v1/cli/status.schema.json",
-        include_str!("../templates/schema/v1/cli/status.schema.json"),
+        include_str!("../../schema/v1/cli/status.schema.json"),
     ),
     (
         "v1/events.schema.json",
-        include_str!("../templates/schema/v1/events.schema.json"),
+        include_str!("../../schema/v1/events.schema.json"),
     ),
     (
         "v1/machine.schema.json",
-        include_str!("../templates/schema/v1/machine.schema.json"),
+        include_str!("../../schema/v1/machine.schema.json"),
     ),
     (
         "v1/message.schema.json",
-        include_str!("../templates/schema/v1/message.schema.json"),
+        include_str!("../../schema/v1/message.schema.json"),
     ),
     (
         "v1/reply.schema.json",
-        include_str!("../templates/schema/v1/reply.schema.json"),
+        include_str!("../../schema/v1/reply.schema.json"),
     ),
     (
         "v1/request.schema.json",
-        include_str!("../templates/schema/v1/request.schema.json"),
+        include_str!("../../schema/v1/request.schema.json"),
     ),
 ];
 
@@ -130,10 +131,14 @@ fn stale(project_root: &Path) -> Result<Vec<String>, DecreeError> {
 }
 
 /// How `.decree/schema/` differs from what `decree schema` would write, one (file relative
-/// to `.decree/`, what is wrong) pair per file. Empty when it is up to date.
+/// to `.decree/`, what is wrong) pair per file. Empty when it is up to date, and when there
+/// is no `.decree/schema/`: the local copy is optional, editors read the hosted schemas.
 pub fn stale_files(project_root: &Path) -> Result<Vec<(String, String)>, DecreeError> {
     let dir = project_root.join(DECREE_DIR).join(SCHEMA_DIR);
     let mut out = Vec::new();
+    if !dir.exists() {
+        return Ok(out);
+    }
     for (name, text) in SCHEMAS {
         match std::fs::read_to_string(dir.join(name)) {
             Ok(on_disk) if on_disk == text => {}
@@ -219,13 +224,23 @@ mod tests {
             );
             assert_eq!(
                 schema["$id"],
-                format!(
-                    "https://raw.githubusercontent.com/jtmckay/decree/main/src/templates/schema/{name}"
-                ),
+                format!("https://raw.githubusercontent.com/jtmckay/decree/main/schema/{name}"),
                 "{name}"
             );
             assert!(schema["title"].is_string(), "{name}");
         }
+    }
+
+    /// The schemas compiled into decree are the bytes of `schema/` at the repository root,
+    /// the copy published at each `$id`, and nothing there is left out.
+    #[test]
+    fn embedded_schemas_are_the_repository_schema_folder() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(SCHEMA_DIR);
+        for (name, text) in SCHEMAS {
+            let on_disk = std::fs::read_to_string(root.join(name)).unwrap();
+            assert!(on_disk == text, "{name} differs from schema/{name}");
+        }
+        assert!(others(&root).unwrap().is_empty(), "{:?}", others(&root));
     }
 
     fn files(dir: &Path) -> Vec<String> {
@@ -248,10 +263,13 @@ mod tests {
             .iter()
             .map(|n| format!("schema/{n}: missing"))
             .collect();
+        // No `.decree/schema/`: the local copy is optional, nothing to warn about.
+        assert!(stale(tmp.path()).unwrap().is_empty());
+        let dir = tmp.path().join(DECREE_DIR).join(SCHEMA_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(stale(tmp.path()).unwrap(), missing);
         assert_eq!(write(tmp.path()).unwrap(), names);
         assert!(stale(tmp.path()).unwrap().is_empty());
-        let dir = tmp.path().join(DECREE_DIR).join(SCHEMA_DIR);
         assert_eq!(files(&dir), names);
 
         std::fs::write(dir.join("v1/message.schema.json"), "{}\n").unwrap();

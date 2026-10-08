@@ -1,4 +1,3 @@
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
 # Graph: ../graph/comfy.md
 # Text to media on ComfyUI. Its API is fire and forget, so a render is four
 # steps: build the workflow, submit it, await the render, fetch the files. The

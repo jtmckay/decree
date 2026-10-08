@@ -23,9 +23,9 @@ Commands:
                               (--format sarif: a SARIF 2.1.0 log for code
                               scanning)
   decree graph                Write .decree/graph/: Mermaid diagrams in Markdown
-  decree schema               Write .decree/schema/v1/: JSON Schemas for
-                              machines, messages, events, router files and
-                              --format json output
+  decree schema               Write .decree/schema/v1/, a local copy of the
+                              JSON Schemas for machines, messages, events,
+                              router files and --format json output
   decree skill [--ai AI]      Refresh the decree skill (.claude/skills/decree/
                               or .github/skills/decree/) after an upgrade;
                               your own files there are kept
@@ -70,8 +70,8 @@ Files (.decree/):
   store/<machine>/            What a machine keeps between runs ($DECREE_STORE), declared
                               under its `store:`; never pruned, not committed
   graph/                      Written by `decree graph`; commit it
-  schema/v1/                  Written by `decree schema`; commit it. Each machine's
-                              first line points editors at it
+  schema/v1/                  Optional; written by `decree schema`, not committed.
+                              Editors use the hosted copy (docs/editors.md)
 
 Messages:
   ---
@@ -88,7 +88,6 @@ Messages:
   filename order, and a failed one blocks the ones after it.
 
 Machines:
-  # yaml-language-server: $schema=../schema/v1/machine.schema.json
   # Graph: ../graph/deploy.md
   name: deploy
   description: Build, ask a person to approve, then ship.

@@ -5,7 +5,8 @@
 //! against `message.schema.json`; every `events.jsonl` line, `request.json` and `reply.json`
 //! in their recorded runs and in a run made here against `events.schema.json`, `request.schema.json`
 //! and `reply.schema.json`; `decree schema` writes them all to `.decree/schema/v1/` and
-//! removes anything else, and `decree check` warns until it has. Whether the schemas reject
+//! removes anything else, and `decree check` warns until it has when `.decree/schema/` exists;
+//! `decree init` writes no such folder. Whether the schemas reject
 //! what `decree check` rejects is tested case by case in `validation_test.rs`; every line
 //! the property test in `interpreter_props.rs` writes is validated there.
 
@@ -229,17 +230,33 @@ fn every_machine_of_a_fresh_init_validates_for_each_ai() {
         assert_eq!(paths.len(), 2, "{ai}");
         for path in &paths {
             let text = fs::read_to_string(path).unwrap();
-            assert!(
-                text.starts_with(
-                    "# yaml-language-server: $schema=../schema/v1/machine.schema.json\n# Graph: "
-                ),
-                "{ai}: {}",
-                path.display()
-            );
+            assert!(text.starts_with("# Graph: "), "{ai}: {}", path.display());
+            assert!(!text.contains("$schema="), "{ai}: {}", path.display());
         }
         let found = machine_rejects(&read(&paths));
         assert!(found.is_empty(), "{ai}: {found}");
     }
+}
+
+/// Editors read the hosted schemas (docs/editors.md): `decree init` writes no
+/// `.decree/schema/`, ignores one `decree schema` writes later, and `decree check` passes
+/// with no warning.
+#[test]
+fn init_writes_no_schema_folder_and_check_does_not_ask_for_one() {
+    let tmp = TempDir::new().unwrap();
+    cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .args(["init", "--ai", "claude"])
+        .assert()
+        .success();
+    assert!(!tmp.path().join(".decree/schema").exists());
+    let gitignore = fs::read_to_string(tmp.path().join(".decree/.gitignore")).unwrap();
+    assert!(gitignore.lines().any(|l| l == "schema/"), "{gitignore}");
+    assert_eq!(
+        decree(tmp.path(), "check"),
+        (0, String::new(), String::new())
+    );
 }
 
 /// Migrations, inbox messages, cron files, and the messages and replies in the recorded runs
@@ -546,6 +563,14 @@ fn decree_schema_writes_every_schema_in_v1() {
 fn check_warns_when_the_schema_is_missing_or_stale_until_decree_schema_runs() {
     let tmp = project();
     decree(tmp.path(), "graph");
+    // No `.decree/schema/`: the local copy is optional, so no warning.
+    assert_eq!(
+        decree(tmp.path(), "check"),
+        (0, String::new(), String::new())
+    );
+
+    // A folder that is there but empty is a copy gone missing.
+    fs::create_dir_all(tmp.path().join(".decree/schema")).unwrap();
     let (code, stdout, stderr) = decree(tmp.path(), "check");
     assert_eq!((code, stdout.as_str()), (0, ""));
     let missing: String = schema::ALL
@@ -567,6 +592,29 @@ fn check_warns_when_the_schema_is_missing_or_stale_until_decree_schema_runs() {
     );
 
     decree(tmp.path(), "schema");
+    assert_eq!(
+        decree(tmp.path(), "check"),
+        (0, String::new(), String::new())
+    );
+}
+
+/// A machine that keeps the per-file `$schema` line docs/editors.md gives as the fallback
+/// still checks, and the line points at a file `decree schema` writes.
+#[test]
+fn a_machine_with_the_schema_line_still_checks() {
+    let editors = fs::read_to_string(repo().join("docs/editors.md")).unwrap();
+    let line = editors
+        .lines()
+        .find(|l| l.starts_with("# ") && l.contains("$schema="))
+        .expect("docs/editors.md gives the per-file line");
+    let target = line.split_once("$schema=").unwrap().1;
+    let tmp = project();
+    let path = tmp.path().join(".decree/machines/hello.yml");
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, format!("{line}\n{text}")).unwrap();
+    decree(tmp.path(), "graph");
+    decree(tmp.path(), "schema");
+    assert!(tmp.path().join(".decree/machines").join(target).is_file());
     assert_eq!(
         decree(tmp.path(), "check"),
         (0, String::new(), String::new())
