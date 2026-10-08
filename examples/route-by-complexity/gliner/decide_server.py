@@ -8,7 +8,7 @@ Loads fastino/GLiNER2.5-Decide-1B once, then serves POST /classify on 127.0.0.1:
 The output is a decree reply.json as it stands, so the router script writes it unchanged.
 
 GET /health answers 200 {"ok": true}. The server only starts listening once the model is
-loaded, so any answer means ready (examples/tmux-services/ waits on it).
+loaded, so any answer means ready.
 
 What the pages confirm (read 2026-10-04):
 - The model card, https://huggingface.co/fastino/GLiNER2.5-Decide-1B: loading with

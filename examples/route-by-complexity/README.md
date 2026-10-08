@@ -124,7 +124,7 @@ examples/route-by-complexity/
   .decree/
     machines/
       develop_by_size.yml              size up, then implement and test: locally first, or with Claude only
-      gliner_router.yml                a typed router: asks the classifier server (the same file as in tmux-services)
+      gliner_router.yml                a typed router: asks the classifier server
       llm_router.yml                   a typed router: asks a local model through Ollama, held to reply_schema
     scripts/
       develop_by_size/describe.sh      prints the title, acceptance criteria and named files with line counts

@@ -1,0 +1,5 @@
+{
+  // The YAML extension reads the `# yaml-language-server: $schema=…` line at
+  // the top of a config or machine file, then checks and completes it.
+  "recommendations": ["redhat.vscode-yaml"]
+}

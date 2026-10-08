@@ -15,7 +15,6 @@ The rule of thumb:
 | --- | --- |
 | The things you swap all speak HTTP and you reach them through one address | **llama-swap**: loads the server for the requested model, unloads the previous one |
 | Anything else, or you want restarts, logs and "never both at once" for any process | **systemd user units** with `Conflicts=` |
-| You want to watch and use the services live, and need no restarts or start at boot | **tmux sessions**, started by the `onentry` scripts, which free the GPU by unloading models through each API |
 | decree itself runs in a container without systemd | **Docker Compose** services, started and stopped by the `onentry` scripts |
 
 ## llama-swap: hot-swapping model servers
@@ -81,18 +80,19 @@ systemctl --user start comfyui                             # also stops ollama
 journalctl --user -u comfyui -f                            # its log, live
 ```
 
-## tmux sessions as the supervisor
+## Freeing VRAM through the APIs
 
-If you would rather watch the services live, run each in a tmux session named after it. A `use_<service>` `onentry` script uses the service if its health URL answers, whoever runs it, or starts it in a new detached session, then waits until it answers. For "never both on the GPU", a `without_<service>` script before it unloads the other service's models through its API, so the servers stay up, keeping their queues and history, and a swap costs a model load, not a server start. [`examples/tmux-services/`](../examples/tmux-services/README.md) does this for GLiNER2.5-Decide (on CPU, always up), Ollama and ComfyUI, with one sourced helper for the three `use_*` scripts:
+Two GPU services can also share a GPU without a supervisor that stops one: the servers stay up, and only their models are unloaded, so a swap costs a model load, not a server start, and each server keeps its queue and history. A `without_<service>` script before the state that needs the GPU unloads the other service's models:
 
-- Ollama: `GET /api/ps` lists the loaded models, `POST /api/generate {"model": <name>, "keep_alive": 0}` unloads one, and the VRAM is free once `/api/ps` lists none ([API](https://docs.ollama.com/api/ps), [FAQ](https://docs.ollama.com/faq)). decree calls Ollama synchronously, so `without_ollama` never needs to wait for work.
-- ComfyUI: `POST /free {"unload_models": true, "free_memory": true}` makes its worker unload the models and empty PyTorch's cache between jobs, and `GET /system_stats` reports what PyTorch still reserves (`torch_vram_total`). Jobs are queued without waiting, and a queued job would load its models again, so there are two ways to unload: `without_comfy_wait` polls `GET /queue` until nothing is running or pending, so no render is cut short, and `without_comfy_no_wait` drops the queue at once (`POST /queue {"clear": true}`, `POST /interrupt`). The process keeps its CUDA context, a few hundred MB.
+- **Ollama:** `GET /api/ps` lists the loaded models, `POST /api/generate {"model": <name>, "keep_alive": 0}` unloads one, and the VRAM is free once `/api/ps` lists none ([API](https://docs.ollama.com/api/ps), [FAQ](https://docs.ollama.com/faq)). decree waits on its scripts, so nothing decree runs is using Ollama when another state starts.
+- **ComfyUI:** its API is fire and forget, so first wait until `GET /queue` shows nothing running or pending; a queued job would load its models again. Then `POST /free {"unload_models": true, "free_memory": true}`, and poll `GET /system_stats` until `torch_vram_total` drops. The process keeps its CUDA context, a few hundred MB.
+- A service that does not answer has nothing loaded, so there is nothing to free.
 
-tmux restarts nothing after a crash and starts nothing at boot, but you can `tmux attach -t comfyui` and watch or use the service as it runs.
+Waiting for ComfyUI's queue can take as long as the renders in it, so that step is an invoked state with a `timeout`, not an `onentry` script ([Prep that waits](#prep-that-waits-an-invoked-state-with-a-timeout)).
 
 ## Using a service from a machine
 
-An `onentry` script starts what the state needs and waits until it answers. As in [`examples/tmux-services/`](../examples/tmux-services/README.md), a `use_<service>` script makes its service answer; with these units `Conflicts=` stops the other one, so no `without_<service>` script is needed to free the GPU:
+An `onentry` script starts what the state needs and waits until it answers. A `use_<service>` script makes its service answer; with these units `Conflicts=` stops the other one, so no `without_<service>` script is needed to free the GPU:
 
 ```bash
 #!/usr/bin/env bash
@@ -132,7 +132,7 @@ generate_images:
   transitions: { done: describe_images }
 ```
 
-Keep `onentry` for the quick ones. [`examples/tmux-services/`](../examples/tmux-services/README.md) does both: `without_ollama`, `use_comfy` and `use_ollama` stay `onentry`, and `without_comfy_wait`, which waits for every queued render, is the invoked state `drain_comfy` with `timeout: 1h`.
+Keep `onentry` for the quick ones. With the servers kept up ([Freeing VRAM through the APIs](#freeing-vram-through-the-apis)), `without_ollama`, `use_comfy` and `use_ollama` stay `onentry`, and `without_comfy`, which waits for every queued render, is an invoked state with `timeout: 1h`.
 
 Each switch is a timed `script` event, so Grafana shows how long swaps take. decree runs one run at a time per process, so one `decree daemon` never asks for two GPU services at once.
 

@@ -159,7 +159,7 @@ fn missing_example_or_template_file_names_the_pair() {
 }
 
 /// `gliner_router` has no template: `init` does not write it. Its copies in
-/// `route-by-complexity`, `tmux-services` and `tests/fixtures/escalation` are byte-identical.
+/// `route-by-complexity` and `tests/fixtures/escalation` are byte-identical.
 #[test]
 fn gliner_router_copies_are_identical() {
     let original = "examples/route-by-complexity";
@@ -169,11 +169,10 @@ fn gliner_router_copies_are_identical() {
     ] {
         let read =
             |project: &str| fs::read(repo().join(project).join(".decree").join(path)).unwrap();
-        for copy in ["examples/tmux-services", "tests/fixtures/escalation"] {
-            assert!(
-                read(original) == read(copy),
-                "{path} differs between {original} and {copy}"
-            );
-        }
+        let copy = "tests/fixtures/escalation";
+        assert!(
+            read(original) == read(copy),
+            "{path} differs between {original} and {copy}"
+        );
     }
 }

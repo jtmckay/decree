@@ -53,6 +53,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 - Everything 0.4: the upgrade script and its fixtures, the `config.yml` error, and the `routine:` alias for `machine:` (migration 73, [D46](docs/decisions.md#d46-no-04-compatibility-and-examples-by-topic)).
 - The statement of work at the repository root: decree 0.4's pitch, written around routines and `config.yml` (migration 86).
 - The `business-eval`, `sort-documents`, `text-to-speech`, `whisper-transcribe` and `decree` examples: other examples cover what they showed, so fewer examples stay current with the API (migration 91). `sort-documents`' escalation ladder and its recorded run are now the test fixture `tests/fixtures/escalation/`, and `docs/routers.md` shows the ladder.
+- The `tmux-services` example: GPU sharing keeps the servers running and unloads their models through each API, so supervising the services in tmux sessions added nothing. Its API unloading is in `docs/services.md`, "Freeing VRAM through the APIs" (migration 99).
 
 ### Fixed
 

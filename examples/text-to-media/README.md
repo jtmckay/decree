@@ -34,7 +34,7 @@ stateDiagram-v2
 4. [`await`](.decree/scripts/comfy/await.sh) polls `GET /history/<prompt id>` every `COMFY_POLL_S` seconds (5) until the prompt is there, which it is once it finishes, and fails if it did not succeed. It has no attempts: a render that never finishes, within its 3 h timeout, is something to look at, not to retry.
 5. [`fetch`](.decree/scripts/comfy/fetch.sh) downloads each file the prompt saved (`GET /view`) to `output` plus the file's extension, or `output-<n>` plus it when there are several. It is safe to repeat, so it has `attempts: 3`.
 
-The scripts find ComfyUI at `COMFY_URL`, `http://127.0.0.1:8188` by default, as in [`tmux-services`](../tmux-services/README.md).
+The scripts find ComfyUI at `COMFY_URL`, `http://127.0.0.1:8188` by default.
 
 ## Methods and messages
 

@@ -109,9 +109,9 @@ python gliner/decide_server.py         # the first start downloads the model, ab
 curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does this change need?", "labels": {"small": "A typo or a config value", "large": "Design across several files"}, "text": "Fix a typo in README.md"}'
 ```
 
-To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time), or a tmux session as in [`examples/tmux-services/`](../examples/tmux-services/README.md). The `gliner2` package's plain install is only its cloud API client; running the model locally needs `gliner2[local,train]`, since the local runtime imports its training modules too ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
+To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time). The `gliner2` package's plain install is only its cloud API client; running the model locally needs `gliner2[local,train]`, since the local runtime imports its training modules too ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
 
-`machines/gliner_router.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) and [`examples/tmux-services/`](../examples/tmux-services/README.md)):
+`machines/gliner_router.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md)):
 
 ```yaml
 name: gliner_router
