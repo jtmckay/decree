@@ -31,6 +31,8 @@ data:
   n: { type: int, default: 0 }
   ok: { type: bool, default: false }
   label: { type: string, default: x }
+  need: { type: string, enum: [plan, fix], default: fix }
+  megapixels: { type: number, default: 1.0 }
 initial: done
 states:
   done: { final: true }
@@ -219,7 +221,7 @@ fn emit_from_a_run_at_max_depth_exits_1() {
 #[test]
 fn emit_with_bad_params_or_machine_exits_1() {
     let p = Project::new();
-    let cases: [(&[&str], &str); 5] = [
+    let cases: [(&[&str], &str); 7] = [
         (
             &["--machine", "other", "--param", "nope=1"],
             "unknown param `nope`",
@@ -236,6 +238,14 @@ fn emit_with_bad_params_or_machine_exits_1() {
             &["--machine", "other", "--param", "n"],
             "is not `name=value`",
         ),
+        (
+            &["--machine", "other", "--param", "need=review"],
+            "param `need` is `review`, not one of the allowed values: plan, fix",
+        ),
+        (
+            &["--machine", "other", "--param", "megapixels=x"],
+            "param `megapixels` must be of type `number`",
+        ),
         (&["--machine", "ghost"], "unknown machine `ghost`"),
     ];
     for (args, want) in cases {
@@ -248,6 +258,40 @@ fn emit_with_bad_params_or_machine_exits_1() {
         );
     }
     assert!(p.inbox().is_empty());
+}
+
+#[test]
+fn emit_takes_an_enum_value_and_a_number() {
+    let p = Project::new();
+    for megapixels in ["1.5", "2"] {
+        let args = [
+            "--machine",
+            "other",
+            "--param",
+            "need=plan",
+            "--param",
+            &format!("megapixels={megapixels}"),
+        ];
+        let output = p.emit(&[], &args).write_stdin("x\n").output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    let texts: Vec<String> = p
+        .inbox()
+        .iter()
+        .map(|name| fs::read_to_string(p.decree().join("inbox").join(name)).unwrap())
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("megapixels: 1.5\n")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("megapixels: 2\n")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().all(|t| t.contains("need: plan\n")),
+        "{texts:?}"
+    );
 }
 
 /// The events of run `id`.

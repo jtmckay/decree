@@ -96,13 +96,20 @@
     },
     "dataSpec": {
       "type": "object",
-      "description": "One `data` entry, SCXML <data id>: its type and its default, which must match the type (V14).",
+      "description": "One `data` entry, SCXML <data id>: its type, its default, which must match the type, and for a `string` an optional `enum` of the values allowed (V14).",
       "required": ["type", "default"],
       "additionalProperties": false,
       "properties": {
         "type": {
-          "enum": ["string", "int", "bool"],
-          "description": "The value's type: `string`, `int` or `bool`."
+          "enum": ["string", "int", "number", "bool"],
+          "description": "The value's type: `string`, `int`, `number` (a JSON number: an int or a float) or `bool`."
+        },
+        "enum": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "JSON Schema `enum`, on `string` data only: the values allowed. The `default` and every message's `params` value must be one of them (V14, M1-M3)."
         },
         "default": {
           "description": "The value when a message's `params` does not set it. Required, and of the entry's `type` (V14)."
@@ -118,13 +125,23 @@
           "then": { "properties": { "default": { "type": "integer" } } }
         },
         {
+          "if": { "properties": { "type": { "const": "number" } } },
+          "then": { "properties": { "default": { "type": "number" } } }
+        },
+        {
           "if": { "properties": { "type": { "const": "bool" } } },
           "then": { "properties": { "default": { "type": "boolean" } } }
+        },
+        {
+          "if": { "required": ["enum"] },
+          "then": { "properties": { "type": { "const": "string" } } }
         }
       ],
       "examples": [
         { "type": "int", "default": 2 },
         { "type": "string", "default": "fast" },
+        { "type": "string", "enum": ["plan", "fix"], "default": "fix" },
+        { "type": "number", "default": 1.0 },
         { "type": "bool", "default": false }
       ]
     },
@@ -376,8 +393,8 @@
             "name": { "$ref": "#/$defs/machineName" },
             "params": {
               "type": "object",
-              "description": "Sets the child's `data` for this run, like SCXML <invoke><param>. Each name must be a `data` entry of the child, with a value of its type (V16).",
-              "additionalProperties": { "type": ["string", "integer", "boolean"] }
+              "description": "Sets the child's `data` for this run, like SCXML <invoke><param>. Each name must be a `data` entry of the child, with a value of its type, and one of its `enum` values if it has one (V16).",
+              "additionalProperties": { "type": ["string", "number", "boolean"] }
             }
           }
         }
@@ -397,7 +414,7 @@
         },
         "data": {
           "type": "string",
-          "description": "Subject: this `data` value. Takes the comparison operators, with a value of its type, and `matches` when its type is `string` (V10)."
+          "description": "Subject: this `data` value. Takes the comparison operators, with a value of its type (an int or a number for `int` and `number` data, compared numerically), and `matches` when its type is `string` (V10)."
         },
         "visits": {
           "$ref": "#/$defs/stateId",
@@ -414,10 +431,10 @@
         },
         "equals": { "description": "Operator: the subject equals this value: a literal or `{ data: <name> }`." },
         "not_equals": { "description": "Operator: the subject does not equal this value: a literal or `{ data: <name> }`." },
-        "less_than": { "description": "Operator: the subject is less than this value: an int (a number from 0 to 1 for `confidence`) or `{ data: <name> }`." },
-        "at_most": { "description": "Operator: the subject is at most this value: an int (a number from 0 to 1 for `confidence`) or `{ data: <name> }`." },
-        "more_than": { "description": "Operator: the subject is more than this value: an int (a number from 0 to 1 for `confidence`) or `{ data: <name> }`." },
-        "at_least": { "description": "Operator: the subject is at least this value: an int (a number from 0 to 1 for `confidence`) or `{ data: <name> }`." }
+        "less_than": { "description": "Operator: the subject is less than this value: an int (any number for `number` data, a number from 0 to 1 for `confidence`) or `{ data: <name> }`." },
+        "at_most": { "description": "Operator: the subject is at most this value: an int (any number for `number` data, a number from 0 to 1 for `confidence`) or `{ data: <name> }`." },
+        "more_than": { "description": "Operator: the subject is more than this value: an int (any number for `number` data, a number from 0 to 1 for `confidence`) or `{ data: <name> }`." },
+        "at_least": { "description": "Operator: the subject is at least this value: an int (any number for `number` data, a number from 0 to 1 for `confidence`) or `{ data: <name> }`." }
       },
       "oneOf": [
         {
@@ -487,8 +504,8 @@
       "properties": { "data": { "type": "string", "description": "A `data` entry's name." } }
     },
     "value": {
-      "description": "A literal (an int, a string or a bool) or `{ data: <name> }`, of the same type as the subject's data (V10). Ordering operators compare ints only.",
-      "anyOf": [{ "type": ["integer", "string", "boolean"] }, { "$ref": "#/$defs/dataRef" }]
+      "description": "A literal (an int, a number, a string or a bool) or `{ data: <name> }`, of the same type as the subject's data, where an int and a number compare numerically; a float only for `number` data (V10). Ordering operators compare ints and numbers only.",
+      "anyOf": [{ "type": ["number", "string", "boolean"] }, { "$ref": "#/$defs/dataRef" }]
     },
     "intValue": {
       "description": "An int, or `{ data: <name> }` naming int data.",

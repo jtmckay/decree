@@ -169,8 +169,8 @@ fn target<'p>(project: &'p Project, machine: &str) -> Result<&'p LoadedMachine, 
     })
 }
 
-/// `--param k=v` values as YAML values of the type `k` has in the target's `data`: an int
-/// or a bool where it parses as one, else a string, so `message::validate` reports a wrong
+/// `--param k=v` values as YAML values of the type `k` has in the target's `data`: an int,
+/// a number or a bool where it parses as one, else a string, so `message::validate` reports a wrong
 /// type or an unknown name.
 fn parse_params(m: &LoadedMachine, params: &[String]) -> Result<Mapping, DecreeError> {
     let mut mapping = Mapping::new();
@@ -182,6 +182,11 @@ fn parse_params(m: &LoadedMachine, params: &[String]) -> Result<Mapping, DecreeE
             Some(DataType::Int) => text
                 .parse::<i64>()
                 .map_or_else(|_| Value::from(text), Value::from),
+            Some(DataType::Number) => match (text.parse::<i64>(), text.parse::<f64>()) {
+                (Ok(n), _) => Value::from(n),
+                (_, Ok(x)) if x.is_finite() => Value::from(x),
+                _ => Value::from(text),
+            },
             Some(DataType::Bool) => match text {
                 "true" => Value::Bool(true),
                 "false" => Value::Bool(false),

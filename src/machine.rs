@@ -46,6 +46,9 @@ pub struct DataSpec {
     #[serde(rename = "type")]
     pub kind: DataType,
     pub default: serde_norway::Value,
+    /// JSON Schema `enum`: the only values a `string` entry may take.
+    #[serde(rename = "enum")]
+    pub allowed: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -53,6 +56,7 @@ pub struct DataSpec {
 pub enum DataType {
     String,
     Int,
+    Number,
     Bool,
 }
 
@@ -829,17 +833,46 @@ impl DataType {
         match self {
             DataType::String => "string",
             DataType::Int => "int",
+            DataType::Number => "number",
             DataType::Bool => "bool",
         }
     }
 
-    /// Whether `value` has this type: a YAML string, an integer, or a boolean.
+    /// Whether `value` has this type: a YAML string, an integer, a finite number (an
+    /// integer or a float), or a boolean.
     pub fn matches(self, value: &serde_norway::Value) -> bool {
         match self {
             DataType::String => value.is_string(),
             DataType::Int => value.as_i64().is_some(),
+            DataType::Number => value.as_f64().is_some_and(f64::is_finite),
             DataType::Bool => value.is_bool(),
         }
+    }
+
+    /// Whether the type is `int` or `number`, which conditions compare numerically.
+    pub fn is_numeric(self) -> bool {
+        matches!(self, DataType::Int | DataType::Number)
+    }
+}
+
+impl DataSpec {
+    /// What is wrong with `value` as the param `key`: not of the type, or not one of the
+    /// `enum` values.
+    pub fn param_problem(&self, key: &str, value: &serde_norway::Value) -> Option<String> {
+        if !self.kind.matches(value) {
+            return Some(format!(
+                "param `{key}` must be of type `{}`",
+                self.kind.as_str()
+            ));
+        }
+        let allowed = self.allowed.as_ref()?;
+        let text = value.as_str()?;
+        (!allowed.iter().any(|a| a == text)).then(|| {
+            format!(
+                "param `{key}` is `{text}`, not one of the allowed values: {}",
+                allowed.join(", ")
+            )
+        })
     }
 }
 

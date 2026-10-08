@@ -100,7 +100,8 @@ pub fn register_signals(flag: &Arc<AtomicBool>) -> io::Result<()> {
 }
 
 /// `DECREE_DATA_<NAME>` for each `data` entry: the message's `params` value, else the
-/// default. Ints as decimal, bools as `true` or `false` (docs/reference/scripts.md, Environment).
+/// default. Ints as decimal, numbers in their shortest round-trip form (`0.5`, `2`), bools
+/// as `true` or `false` (docs/reference/scripts.md, Environment).
 pub fn data_env(
     data: &BTreeMap<String, DataSpec>,
     params: &serde_norway::Mapping,
@@ -111,7 +112,12 @@ pub fn data_env(
             let text = match value {
                 serde_norway::Value::String(s) => s.clone(),
                 serde_norway::Value::Bool(b) => b.to_string(),
-                serde_norway::Value::Number(n) => n.to_string(),
+                serde_norway::Value::Number(n) => match (n.as_i64(), n.as_f64()) {
+                    (Some(i), _) => i.to_string(),
+                    // `{}` on an f64 is its shortest round-trip form, without `.0`.
+                    (None, Some(x)) => x.to_string(),
+                    (None, None) => n.to_string(),
+                },
                 other => serde_norway::to_string(other)
                     .unwrap_or_default()
                     .trim_end()
@@ -1780,6 +1786,29 @@ pub(crate) mod executor_tests {
         let env = data_env(&m.data, &params);
         assert_eq!(env[0].1, "false");
         assert_eq!(env[1].1, "-7");
+    }
+
+    #[test]
+    fn data_env_gives_a_number_in_its_shortest_form() {
+        let m = load_machine_text(
+            "m",
+            "name: m\ndescription: T.\ndata:\n  x: { type: number, default: 1.0 }\n\
+             initial: x\nstates:\n  x: { final: true }\n",
+        )
+        .unwrap();
+        for (yaml, want) in [
+            ("{}", "1"),
+            ("x: 0.5", "0.5"),
+            ("x: 2", "2"),
+            ("x: 1.5e-7", "0.00000015"),
+        ] {
+            let params: serde_norway::Mapping = serde_norway::from_str(yaml).unwrap();
+            assert_eq!(
+                data_env(&m.data, &params),
+                [("DECREE_DATA_X".to_string(), want.to_string())],
+                "{yaml}"
+            );
+        }
     }
 
     #[test]

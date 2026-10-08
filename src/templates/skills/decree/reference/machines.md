@@ -24,7 +24,7 @@ every state is reachable. `decree schema` rewrites `.decree/schema/` if it is mi
 | --- | --- | --- |
 | Root | `name` | Equals the file stem; `^[a-z][a-z0-9_]*$`. |
 | Root | `description` | Required. Shown in prompts, `decree status` and graphs. |
-| Root | `data` | `name: { type: string\|int\|bool, default: ... }`. Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
+| Root | `data` | `name: { type: string\|int\|number\|bool, default: ..., enum?: [...] }`. `number` is an int or a float; `enum` (string only) lists the allowed values, which the default and `params` must be one of (V14). Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
 | Root | `onentry`, `onexit` | Scripts run once when the run starts, and once after a root final state is entered. |
 | Root | `initial`, `states` | Required. `initial` is a direct child. |
 | State | `invoke` | The state's function (below). `attempts`, `timeout` and `env` go inside it. |
@@ -119,7 +119,7 @@ Typed objects: exactly one subject, exactly one operator.
 | `confidence: <state>` | Confidence of that `model` state's latest decision, 0 to 1. | `<op>` |
 
 `<op>`: `equals`, `not_equals`, `less_than`, `at_most`, `more_than`, `at_least`. `<value>` is a
-literal or `{ data: <name> }`. For example `{ output: read_text, matches: '(?i)invoice' }`. No
+literal or `{ data: <name> }`; `int` and `number` data compare numerically. For example `{ output: read_text, matches: '(?i)invoice' }`. No
 `and`/`or`: use two `check` states in a row.
 
 ## Events and transitions

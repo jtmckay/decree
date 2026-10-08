@@ -70,7 +70,7 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_QUESTION` | For the `ask` script of a `person` state: its `question`. Empty otherwise. |
 | `DECREE_CHOICES` | For the `ask` script: absolute path of a JSON file mapping each option to its description. Empty otherwise. |
 | `DECREE_RECEIVED` | Absolute path of the last reply this run received (`runs/<id>/received/<file>`), or empty. |
-| `DECREE_DATA_<NAME>` | One per `data` entry, `<NAME>` uppercased: the message's `params` value, else the default. Ints as decimal, bools as `true` or `false`. |
+| `DECREE_DATA_<NAME>` | One per `data` entry, `<NAME>` uppercased: the message's `params` value, else the default. Ints as decimal, numbers in their shortest round-trip form without an exponent (`0.5`, `2`; a default of `1.0` is `1`), bools as `true` or `false`. |
 | `TRACEPARENT` | W3C Trace Context `00-<trace id>-<span id>-01`: the run's trace and this script execution's own span, the `span_id` of its `script` event. Set for every script, replacing any `TRACEPARENT` decree inherited ([Traces](observability.md#traces)). |
 | `TRACESTATE` | The message's `tracestate`, when it carried one beside a valid `traceparent`; unset otherwise. |
 

@@ -635,7 +635,7 @@ fn condition_rules() {
         [
             "b: check: `visits` names `w`, which is not an atomic state (V10)",
             "b: check: unknown data `rounds` (V10)",
-            "c: check: `less_than` compares ints only, not string (V10)",
+            "c: check: `less_than` compares ints and numbers only, not string (V10)",
             "d: check: `data` compares int with string (V10)",
             "e: check: `matches` '(' is not a regular expression: unclosed group (V10)",
             "f: check: a condition has exactly one subject, not `visits` and `data`; use two `check` states in a row (V10)",
@@ -1006,6 +1006,49 @@ fn data_types() {
     assert!(!DataType::String.matches(&Value::from(true)));
     assert!(DataType::Bool.matches(&Value::from(false)));
     assert!(!DataType::Bool.matches(&Value::from("no")));
+    assert!(DataType::Number.matches(&Value::from(1.5)));
+    assert!(DataType::Number.matches(&Value::from(2)));
+    assert!(!DataType::Number.matches(&Value::from("x")));
+    assert!(!DataType::Number.matches(&Value::from(f64::NAN)));
+    assert!(!DataType::Number.matches(&Value::from(f64::INFINITY)));
+}
+
+#[test]
+fn param_problems_name_the_param_the_value_and_the_allowed_values() {
+    use serde_norway::Value;
+    let m = load_machine_text(
+        "m",
+        "name: m\ndescription: d\ndata:\n  need: { type: string, enum: [plan, fix], default: fix }\n  \
+         megapixels: { type: number, default: 1.0 }\ninitial: x\nstates:\n  x: { final: true }\n",
+    )
+    .unwrap();
+    let need = &m.data["need"];
+    assert_eq!(need.param_problem("need", &Value::from("plan")), None);
+    assert_eq!(
+        need.param_problem("need", &Value::from("review"))
+            .as_deref(),
+        Some("param `need` is `review`, not one of the allowed values: plan, fix")
+    );
+    assert_eq!(
+        need.param_problem("need", &Value::from(1)).as_deref(),
+        Some("param `need` must be of type `string`")
+    );
+    let megapixels = &m.data["megapixels"];
+    assert_eq!(megapixels.kind, DataType::Number);
+    assert_eq!(
+        megapixels.param_problem("megapixels", &Value::from(1.5)),
+        None
+    );
+    assert_eq!(
+        megapixels.param_problem("megapixels", &Value::from(2)),
+        None
+    );
+    assert_eq!(
+        megapixels
+            .param_problem("megapixels", &Value::from("x"))
+            .as_deref(),
+        Some("param `megapixels` must be of type `number`")
+    );
 }
 
 #[test]

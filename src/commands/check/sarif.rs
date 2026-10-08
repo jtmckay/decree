@@ -76,7 +76,7 @@ pub(crate) const RULES: [(&str, &str); 25] = [
     ),
     (
         "V14",
-        "Every `data` default matches its `type`.",
+        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`.",
     ),
     (
         "V15",

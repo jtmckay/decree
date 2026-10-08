@@ -65,6 +65,32 @@ states:
 ";
 
 /// A machine with one datum of each type.
+/// An `enum` and a `number`, compared with a float, an int and an int `data` value.
+const CHOICES: &str = "\
+name: m
+description: An enum and a number.
+data:
+  need: { type: string, enum: [plan, fix], default: fix }
+  megapixels: { type: number, default: 1.0 }
+  max: { type: int, default: 2 }
+initial: big
+states:
+  big:
+    invoke: { check: { data: megapixels, more_than: 0.75 } }
+    transitions: { true: capped, false: one }
+  one:
+    invoke: { check: { data: megapixels, equals: 1 } }
+    transitions: { true: capped, false: capped }
+  capped:
+    invoke: { check: { data: megapixels, at_most: { data: max } } }
+    transitions: { true: work, false: work }
+  work:
+    invoke: work
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
 const TYPED: &str = "\
 name: m
 description: Typed data.
@@ -666,6 +692,45 @@ states:
         )],
         scripts: &[],
         expected: "machines/m.yml: line 6: data `strict`: default `yes` is not of type `bool` (V14)\n",
+    },
+    Case {
+        rule: "V14",
+        name: "an enum and a number, compared numerically",
+        files: &[("machines/m.yml", CHOICES)],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "V14",
+        name: "an enum default not in the list, an enum on an int, an empty or repeating enum, a non-number",
+        files: &[(
+            "machines/m.yml",
+            "\
+name: m
+description: Typed data.
+data:
+  need: { type: string, enum: [plan, fix], default: review }
+  rounds: { type: int, enum: [one], default: 1 }
+  empty: { type: string, enum: [], default: x }
+  twice: { type: string, enum: [a, a], default: a }
+  megapixels: { type: number, default: x }
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+",
+        )],
+        scripts: &[],
+        expected: "\
+machines/m.yml: line 6: data `empty`: `enum` is empty (V14)
+machines/m.yml: line 8: data `megapixels`: default `x` is not of type `number` (V14)
+machines/m.yml: line 4: data `need`: default `review` is not one of the `enum` values: plan, fix (V14)
+machines/m.yml: line 5: data `rounds`: `enum` is for type `string`, not `int` (V14)
+machines/m.yml: line 7: data `twice`: `enum` lists `a` twice (V14)
+",
     },
     // V15
     Case {
@@ -1373,6 +1438,30 @@ migrations/02-second.md: line 2: unknown machine `nope` (M1)
 migrations/03-third.md: line 1: no `machine` key (M1)
 ",
     },
+    Case {
+        rule: "M1",
+        name: "a param outside the enum, a number param that is not a number",
+        files: &[
+            ("machines/m.yml", CHOICES),
+            (
+                "processed.md",
+                "",
+            ),
+            (
+                "migrations/01-first.md",
+                "---\nmachine: m\nparams:\n  need: review\n---\n# First\n",
+            ),
+            (
+                "migrations/02-second.md",
+                "---\nmachine: m\nparams:\n  megapixels: x\n---\n# Second\n",
+            ),
+        ],
+        scripts: &[],
+        expected: "\
+migrations/01-first.md: line 3: param `need` is `review`, not one of the allowed values: plan, fix (M1)
+migrations/02-second.md: line 3: param `megapixels` must be of type `number` (M1)
+",
+    },
     // M2
     Case {
         rule: "M2",
@@ -1418,6 +1507,36 @@ inbox/c.md: line 1: frontmatter has an opening `---` but no closing `---` (M2)
 inbox/d.md: line 3: duplicate entry with key \"machine\" (M2)
 ",
     },
+    Case {
+        rule: "M2",
+        name: "an enum value, a float and an int for a number",
+        files: &[
+            ("machines/m.yml", CHOICES),
+            (
+                "inbox/a.md",
+                "---\nmachine: m\nparams: { need: plan, megapixels: 1.5 }\n---\nbody\n",
+            ),
+            (
+                "inbox/b.md",
+                "---\nmachine: m\nparams: { megapixels: 2 }\n---\nbody\n",
+            ),
+        ],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "M2",
+        name: "a param outside the enum",
+        files: &[
+            ("machines/m.yml", CHOICES),
+            (
+                "inbox/a.md",
+                "---\nmachine: m\nparams: { need: review }\n---\nbody\n",
+            ),
+        ],
+        scripts: &[],
+        expected: "inbox/a.md: line 3: param `need` is `review`, not one of the allowed values: plan, fix (M2)\n",
+    },
     // M3
     Case {
         rule: "M3",
@@ -1453,6 +1572,19 @@ cron/a.md: line 1: no `cron:` expression (M3)
 cron/b.md: line 3: unknown machine `nope` (M3)
 cron/c.md: line 1: no `machine` key (M3)
 ",
+    },
+    Case {
+        rule: "M3",
+        name: "a param outside the enum",
+        files: &[
+            ("machines/m.yml", CHOICES),
+            (
+                "cron/a.md",
+                "---\ncron: '0 2 * * *'\nmachine: m\nparams: { need: review }\n---\n# Nightly\n",
+            ),
+        ],
+        scripts: &[],
+        expected: "cron/a.md: line 4: param `need` is `review`, not one of the allowed values: plan, fix (M3)\n",
     },
     // E1
     Case {
@@ -2004,6 +2136,30 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
         "a reserved key, a line that is not a pair, a bad key, an unclosed quote",
         "env",
         "`.decree/env` is a dotenv file, not YAML or JSON; no schema covers it",
+    ),
+    (
+        "M1",
+        "a param outside the enum, a number param that is not a number",
+        "migrations/01-first.md",
+        "valid params depend on the machine's `data`, in another file",
+    ),
+    (
+        "M1",
+        "a param outside the enum, a number param that is not a number",
+        "migrations/02-second.md",
+        "valid params depend on the machine's `data`, in another file",
+    ),
+    (
+        "M2",
+        "a param outside the enum",
+        "inbox/a.md",
+        "valid params depend on the machine's `data`, in another file",
+    ),
+    (
+        "M3",
+        "a param outside the enum",
+        "cron/a.md",
+        "valid params depend on the machine's `data`, in another file",
     ),
 ];
 

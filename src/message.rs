@@ -521,11 +521,11 @@ fn check_params(fm: &Message, m: &LoadedMachine) -> Vec<(usize, String)> {
                     m.id
                 ),
             )),
-            Some(spec) if !spec.kind.matches(value) => errors.push((
-                line,
-                format!("param `{key}` must be of type `{}`", spec.kind.as_str()),
-            )),
-            Some(_) => {}
+            Some(spec) => {
+                if let Some(problem) = spec.param_problem(key, value) {
+                    errors.push((line, problem));
+                }
+            }
         }
     }
     errors

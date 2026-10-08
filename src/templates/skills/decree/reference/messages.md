@@ -18,7 +18,7 @@ Given ... When ... Then ...
 | Key | Who sets it | Meaning |
 | --- | --- | --- |
 | `machine` | Author, `decree emit`, cron | Machine name (`machines/<name>.yml`). Required: there is no default machine. |
-| `params` | Author, `decree emit --param` | Values for the machine's `data` (string, int or bool). Unknown names fail validation. |
+| `params` | Author, `decree emit --param` | Values for the machine's `data` (string, int, number or bool), one of the `enum` values if the entry has one. Unknown names, wrong types and values outside the `enum` fail validation. |
 | `id` | decree, at claim | `YYYYMMDDTHHMMSSZ-xxxxxx`; a migration's id is its file stem. Names the run folder. |
 | `state` | decree only | Mirror of the run's current state, in `runs/<id>/message.md`. Never set it. |
 | `parent`, `depth` | `decree emit`, decree | The run that emitted this message (or invoked this child run), and the chain depth. |

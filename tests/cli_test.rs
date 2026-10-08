@@ -847,6 +847,81 @@ fn emit_params_and_the_trigger_reach_the_script() {
     );
 }
 
+/// A machine with an `enum` and a `number`: a check compares the number with a float.
+const SIZED: &str = "\
+name: sized
+description: Renders at a size.
+data:
+  need: { type: string, enum: [plan, fix], default: fix }
+  megapixels: { type: number, default: 1.0 }
+initial: size
+states:
+  size:
+    invoke: { check: { data: megapixels, more_than: 0.75 } }
+    transitions: { true: big, false: small }
+  big:
+    invoke: render
+    transitions: { done: done }
+  small:
+    invoke: render
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// A `number` param reaches the script in its shortest form, and a check compares it
+/// numerically; the default takes the other branch.
+#[test]
+fn a_number_param_reaches_the_script_and_a_check() {
+    let p = Project::init();
+    p.machine("sized", SIZED);
+    p.script(
+        "render",
+        "#!/usr/bin/env bash\necho \"megapixels=${DECREE_DATA_MEGAPIXELS} need=${DECREE_DATA_NEED}\"\n",
+    );
+    let out = p
+        .decree(&["emit", "--machine", "sized", "--param", "megapixels=0.5"])
+        .write_stdin("# Small\n")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let small = String::from_utf8(out).unwrap().trim().to_string();
+    let big = p.emit("sized", "# Default\n");
+    p.decree(&["process"]).assert().success();
+    assert_eq!(
+        fs::read_to_string(p.run_dir(&small).join("0001-small-render.log")).unwrap(),
+        "megapixels=0.5 need=fix\n"
+    );
+    assert_eq!(
+        fs::read_to_string(p.run_dir(&big).join("0001-big-render.log")).unwrap(),
+        "megapixels=1 need=fix\n"
+    );
+}
+
+/// A message whose param is not one of the `enum` values fails at claim.
+#[test]
+fn a_param_outside_the_enum_fails_at_claim() {
+    let p = Project::init();
+    p.machine("sized", SIZED);
+    p.script("render", "#!/usr/bin/env bash\nexit 0\n");
+    fs::write(
+        p.decree_dir().join("inbox/a.md"),
+        "---\nid: run-a\nmachine: sized\nparams: { need: review }\n---\nbody\n",
+    )
+    .unwrap();
+    p.decree(&["process"]).assert().code(1);
+    let events = p.events("run-a");
+    assert_eq!(events[0]["source"], "invalid_message");
+    let error = events[0]["error"].as_str().unwrap();
+    assert!(
+        error.contains("param `need` is `review`, not one of the allowed values: plan, fix"),
+        "{error}"
+    );
+    assert_eq!(transitions(&events), ["- -> failed (invalid_message)"]);
+}
+
 /// The event a script writes to `$DECREE_EVENT_FILE` picks the transition.
 #[test]
 fn a_named_event_picks_the_transition() {

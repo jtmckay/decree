@@ -35,7 +35,7 @@ use crate::events::{
 };
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
-use crate::machine::{event_matches, Attempts, Invoke, LoadedMachine, FAILED};
+use crate::machine::{event_matches, Attempts, DataType, Invoke, LoadedMachine, FAILED};
 use crate::message::{Message, MessageError, RunLock, LOCK_FILE, MAX_DEPTH};
 use crate::runtime::{
     data_env, Executor, InvokeEvent, Phase, RouterFiles, RunInfo, RuntimeError, ScriptRun,
@@ -788,14 +788,15 @@ fn data_values(
     let mut data = BTreeMap::new();
     for (name, spec) in &m.data {
         let value = params.get(name.as_str()).unwrap_or(&spec.default);
-        let value = match (value, value.as_i64()) {
-            (serde_norway::Value::String(s), _) => cond::Value::Str(s.clone()),
-            (serde_norway::Value::Bool(b), _) => cond::Value::Bool(*b),
-            (_, Some(n)) => cond::Value::Int(n),
+        let value = match (value, value.as_i64(), value.as_f64()) {
+            (serde_norway::Value::String(s), _, _) => cond::Value::Str(s.clone()),
+            (serde_norway::Value::Bool(b), _, _) => cond::Value::Bool(*b),
+            (_, _, Some(x)) if spec.kind == DataType::Number => cond::Value::Number(x),
+            (_, Some(n), _) => cond::Value::Int(n),
             _ => {
                 return Err(InterpreterError::Invalid {
                     machine: m.id.clone(),
-                    message: format!("data `{name}` is not a string, int or bool"),
+                    message: format!("data `{name}` is not a string, int, number or bool"),
                 })
             }
         };

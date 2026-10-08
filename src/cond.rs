@@ -10,8 +10,8 @@
 //! ```
 //!
 //! The reference defines no type coercion, so evaluation refuses to compare values of different
-//! types, and the ordering operators apply to integers only. `confidence` is the exception:
-//! it is a number from 0 to 1, the only place floats appear.
+//! types, except an int with a `number`, and the ordering operators apply to ints and numbers
+//! only. Floats appear in `confidence`, a number from 0 to 1, and in `number` data.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -108,9 +108,11 @@ pub struct Facts<'a> {
 }
 
 /// A value a condition compares: a literal, a `data` value or a visit count.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
+    /// A `number` data value, or a float literal it is compared with.
+    Number(f64),
     Str(String),
     Bool(bool),
 }
@@ -140,7 +142,7 @@ pub enum CondError {
         left: &'static str,
         right: &'static str,
     },
-    #[error("`{op}` compares integers only, not {kind}")]
+    #[error("`{op}` compares numbers only, not {kind}")]
     NotOrdered { op: Op, kind: &'static str },
     #[error("`confidence` compares to a number from 0 to 1, not {0}")]
     NotConfidence(String),
@@ -170,7 +172,7 @@ impl Op {
         }
     }
 
-    /// Whether the operator orders its operands, and so compares integers only.
+    /// Whether the operator orders its operands, and so compares ints and numbers only.
     pub fn is_ordering(self) -> bool {
         !matches!(self, Op::Equals | Op::NotEquals)
     }
@@ -186,6 +188,7 @@ impl Value {
     fn kind(&self) -> &'static str {
         match self {
             Value::Int(_) => "an int",
+            Value::Number(_) => "a number",
             Value::Str(_) => "a string",
             Value::Bool(_) => "a bool",
         }
@@ -335,6 +338,7 @@ impl Condition {
         };
         let right = match operand {
             Operand::Int(n) => Value::Int(*n),
+            Operand::Float(x) if matches!(left, Value::Number(_)) => Value::Number(*x),
             Operand::Float(_) => {
                 return Err(CondError::TypeMismatch {
                     left: left.kind(),
@@ -444,6 +448,9 @@ fn lookup(data: &BTreeMap<String, Value>, name: &str) -> Result<Value, CondError
 fn compare(left: &Value, op: Op, right: &Value) -> Result<bool, CondError> {
     match (left, right) {
         (Value::Int(a), Value::Int(b)) => Ok(op.compare(a, b)),
+        (Value::Number(a), Value::Number(b)) => Ok(op.compare(a, b)),
+        (Value::Number(a), Value::Int(b)) => Ok(op.compare(*a, *b as f64)),
+        (Value::Int(a), Value::Number(b)) => Ok(op.compare(*a as f64, *b)),
         (Value::Str(_), Value::Str(_)) | (Value::Bool(_), Value::Bool(_)) => match op {
             Op::Equals => Ok(left == right),
             Op::NotEquals => Ok(left != right),
@@ -473,6 +480,7 @@ mod tests {
             ("mode".to_string(), Value::Str("fast".to_string())),
             ("strict".to_string(), Value::Bool(true)),
             ("file".to_string(), Value::Str("notes/a.md".to_string())),
+            ("megapixels".to_string(), Value::Number(0.5)),
         ])
     }
 
@@ -540,6 +548,35 @@ mod tests {
     fn op_at_least() {
         assert_eq!(eval("{ data: max_rounds, at_least: 2 }"), Ok(true));
         assert_eq!(eval("{ data: max_rounds, at_least: 3 }"), Ok(false));
+    }
+
+    #[test]
+    fn number_data_compares_numerically() {
+        assert_eq!(eval("{ data: megapixels, less_than: 0.75 }"), Ok(true));
+        assert_eq!(eval("{ data: megapixels, at_least: 1 }"), Ok(false));
+        assert_eq!(eval("{ data: megapixels, equals: 0.5 }"), Ok(true));
+        assert_eq!(
+            eval("{ data: megapixels, less_than: { data: max_rounds } }"),
+            Ok(true)
+        );
+        assert_eq!(
+            eval("{ data: max_rounds, more_than: { data: megapixels } }"),
+            Ok(true)
+        );
+        assert_eq!(
+            eval("{ data: megapixels, equals: fast }"),
+            Err(CondError::TypeMismatch {
+                left: "a number",
+                right: "a string"
+            })
+        );
+        assert_eq!(
+            eval("{ data: max_rounds, less_than: 2.5 }"),
+            Err(CondError::TypeMismatch {
+                left: "an int",
+                right: "a float"
+            })
+        );
     }
 
     // One test per subject.

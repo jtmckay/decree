@@ -35,8 +35,8 @@
     },
     "params": {
       "type": "object",
-      "description": "Sets the machine's `data` for this run, overriding the defaults, like SCXML <invoke><param>. Each name must be a `data` entry of the machine, with a value of its type (M1-M3).",
-      "additionalProperties": { "type": ["string", "integer", "boolean"] },
+      "description": "Sets the machine's `data` for this run, overriding the defaults, like SCXML <invoke><param>. Each name must be a `data` entry of the machine, with a value of its type, and one of its `enum` values if it has one (M1-M3).",
+      "additionalProperties": { "type": ["string", "number", "boolean"] },
       "examples": [{ "max_rounds": 3 }]
     },
     "traceparent": {

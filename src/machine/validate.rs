@@ -528,9 +528,10 @@ impl Validator<'_> {
         };
         let right = match operand {
             Operand::Int(_) => Some(DataType::Int),
+            Operand::Float(_) if left == Some(DataType::Number) => Some(DataType::Number),
             Operand::Float(x) => {
                 out.push(format!(
-                    "`{}` compares with {x}, but only `confidence` takes a number that is not an int",
+                    "`{}` compares with {x}, but only `confidence` and `number` data take a number that is not an int",
                     subject.key()
                 ));
                 None
@@ -540,15 +541,18 @@ impl Validator<'_> {
             Operand::Data(name) => self.data_type(name, &mut out),
         };
         if let (Some(left), Some(right)) = (left, right) {
-            if left != right {
+            if left != right && !(left.is_numeric() && right.is_numeric()) {
                 out.push(format!(
                     "`{}` compares {} with {}",
                     subject.key(),
                     left.as_str(),
                     right.as_str()
                 ));
-            } else if op.is_ordering() && left != DataType::Int {
-                out.push(format!("`{op}` compares ints only, not {}", left.as_str()));
+            } else if op.is_ordering() && !left.is_numeric() {
+                out.push(format!(
+                    "`{op}` compares ints and numbers only, not {}",
+                    left.as_str()
+                ));
             }
         }
         out
@@ -692,15 +696,44 @@ impl Validator<'_> {
 
     fn v14_data(&mut self) {
         for (name, spec) in &self.m.data {
+            let value = serde_norway::to_string(&spec.default).unwrap_or_default();
+            let value = value.trim_end();
+            let mut problems = Vec::new();
             if !spec.kind.matches(&spec.default) {
-                let value = serde_norway::to_string(&spec.default).unwrap_or_default();
+                problems.push(format!(
+                    "default `{value}` is not of type `{}`",
+                    spec.kind.as_str()
+                ));
+            }
+            if let Some(allowed) = &spec.allowed {
+                if spec.kind != DataType::String {
+                    problems.push(format!(
+                        "`enum` is for type `string`, not `{}`",
+                        spec.kind.as_str()
+                    ));
+                } else if allowed.is_empty() {
+                    problems.push("`enum` is empty".to_string());
+                } else {
+                    let mut seen = BTreeSet::new();
+                    for a in allowed {
+                        if !seen.insert(a) {
+                            problems.push(format!("`enum` lists `{a}` twice"));
+                        }
+                    }
+                    if let Some(default) = spec.default.as_str() {
+                        if !allowed.iter().any(|a| a == default) {
+                            problems.push(format!(
+                                "default `{default}` is not one of the `enum` values: {}",
+                                allowed.join(", ")
+                            ));
+                        }
+                    }
+                }
+            }
+            for problem in problems {
                 self.push(
                     self.nested_line("data", name),
-                    format!(
-                        "data `{name}`: default `{}` is not of type `{}` (V14)",
-                        value.trim_end(),
-                        spec.kind.as_str()
-                    ),
+                    format!("data `{name}`: {problem} (V14)"),
                 );
             }
         }
@@ -783,14 +816,11 @@ impl Validator<'_> {
                         mi.name
                     ),
                 ),
-                Some(spec) if !spec.kind.matches(value) => self.push(
-                    at.to_string(),
-                    format!(
-                        "param `{key}` must be of type `{}` (V16)",
-                        spec.kind.as_str()
-                    ),
-                ),
-                Some(_) => {}
+                Some(spec) => {
+                    if let Some(problem) = spec.param_problem(key, value) {
+                        self.push(at.to_string(), format!("{problem} (V16)"));
+                    }
+                }
             }
         }
     }
