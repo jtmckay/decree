@@ -58,10 +58,14 @@ Files (.decree/):
   machines/<name>.yml         Machines
   scripts/<name>              Scripts shared by every machine
   scripts/<machine>/<name>    A machine's own scripts, found before scripts/
+  lib/                        Code, config and data scripts source ($DECREE_LIB)
+  env                         KEY=value for every script; the process environment wins
   migrations/  processed.md   Ordered, run-once messages and their ledger; commit both
   inbox/                      Queued messages, run in filename order
   cron/                       Message templates queued on a schedule
   runs/<id>/                  One folder per run: message.md, events.jsonl, logs
+  store/<machine>/            What a machine keeps between runs ($DECREE_STORE), declared
+                              under its `store:`; never pruned, not committed
   graph/                      Written by `decree graph`; commit it
   schema/v1/                  Written by `decree schema`; commit it. Each machine's
                               first line points editors at it

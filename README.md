@@ -227,7 +227,7 @@ Script `X` used by machine `M` is the first match of `X` or `X.<ext>` in:
 1. `.decree/scripts/M/`
 2. `.decree/scripts/`
 
-An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the script writes an event name to the file `$DECREE_EVENT_FILE` (`echo pass > "$DECREE_EVENT_FILE"`). Output goes to `runs/<id>/<NNNN>-<state>-<script>.log` and is only a log: decree never reads an event from it. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all).
+An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the script writes an event name to the file `$DECREE_EVENT_FILE` (`echo pass > "$DECREE_EVENT_FILE"`). Output goes to `runs/<id>/<NNNN>-<state>-<script>.log` and is only a log: decree never reads an event from it. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all). A run's own files go in `$DECREE_RUN_DIR`; what a machine keeps between runs goes in `$DECREE_STORE` and is declared under the machine's `store:`, so the machine file says what it remembers; shared code and config go in `$DECREE_LIB`.
 
 Model servers and other long-running processes are not scripts and decree does not manage them: an `onentry` script starts what a state needs. [docs/services.md](docs/services.md) shows systemd units, llama-swap and a tmux layout for that.
 
@@ -261,15 +261,18 @@ decree never continues a run that was stopped by a signal or a crash: the run is
 
 ```text
 .decree/
-  .gitignore                      # inbox/ and runs/
+  .gitignore                      # inbox/, runs/ and store/
+  env                             # KEY=value for every script; the process environment wins
   machines/<name>.yml             # machines
   scripts/<name>                  # scripts shared by every machine
   scripts/<machine>/<name>        # a machine's own scripts, found first
+  lib/                            # code, config and data scripts source ($DECREE_LIB); never run by decree
   migrations/                     # ordered, run-once messages; committed, never edited
   processed.md                    # ledger of migrations that ran; committed
   inbox/                          # queued messages
   cron/                           # message templates queued on a schedule
   runs/<id>/                      # one folder per run: message.md, events.jsonl, traces.jsonl, logs
+  store/<machine>/                # what a machine keeps between runs ($DECREE_STORE), declared under its store:; never pruned
   graph/                          # written by decree graph; committed
   schema/v1/                      # written by decree schema; committed
 ```
