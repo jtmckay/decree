@@ -301,6 +301,16 @@
             "timeout": {
               "$ref": "#/$defs/duration",
               "description": "How long each attempt may run before decree stops it; a timed-out attempt fails. A duration (V16). Default: no limit."
+            },
+            "env": {
+              "type": "object",
+              "description": "Variables for this invoke only, passed as strings. They win over `.decree/env` and the process environment; decree's own `DECREE_*` variables win over them. Lets several states run one script with different values (V16).",
+              "propertyNames": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "not": { "pattern": "^(DECREE_|TRACEPARENT$|TRACESTATE$)" }
+              },
+              "additionalProperties": { "type": ["string", "integer", "boolean"] },
+              "examples": [{ "METHOD": "image_text" }]
             }
           }
         }
@@ -308,6 +318,7 @@
       "examples": [
         "implement",
         { "name": "implement", "attempts": 2, "timeout": "1h" },
+        { "name": "build", "env": { "METHOD": "image_text" } },
         { "name": "implement", "attempts": ["local", "local", "claude", "local"], "timeout": "3h" }
       ]
     },

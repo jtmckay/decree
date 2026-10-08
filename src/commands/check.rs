@@ -1,4 +1,5 @@
-//! `decree check`: validate machines (V1–V21) and pending messages (M1–M3) before anything
+//! `decree check`: validate machines (V1–V21), pending messages (M1–M3) and `.decree/env`
+//! (E1) before anything
 //! runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
@@ -12,6 +13,7 @@ use serde_norway::Value;
 use crate::cli::CheckFormat;
 use crate::commands::{graph, print_json, schema};
 use crate::cron;
+use crate::dotenv;
 use crate::error::DecreeError;
 use crate::layout::{self, DECREE_DIR};
 use crate::machine::validate::CheckEnv;
@@ -48,7 +50,7 @@ pub fn run(project_root: &Path, format: CheckFormat) -> Result<(), DecreeError> 
 /// Validation); the parts are kept apart for `--format json` and `sarif`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckError {
-    /// `V1`–`V21` or `M1`–`M3`; `None` for an error no rule names, such as bad YAML.
+    /// `V1`–`V21`, `M1`–`M3` or `E1`; `None` for an error no rule names, such as bad YAML.
     pub(crate) rule: Option<String>,
     /// Path relative to `.decree/`.
     pub(crate) file: String,
@@ -168,7 +170,7 @@ fn json_document(problems: &[CheckError], warnings: &[CheckWarning]) -> serde_js
 }
 
 /// Every error `decree check` reports, in order: machines by id, then pending migrations,
-/// `inbox/` and `cron/`, each by filename.
+/// `inbox/` and `cron/`, each by filename, then `.decree/env` by line.
 fn check(project_root: &Path) -> Result<Vec<CheckError>, DecreeError> {
     let project = Project::load(project_root)?;
     let mut problems = project.problems.clone();
@@ -182,7 +184,43 @@ fn check(project_root: &Path) -> Result<Vec<CheckError>, DecreeError> {
     for name in md_files(&decree_dir.join(layout::CRON_DIR))? {
         project.check_file(layout::CRON_DIR, &name, "M3", true, &mut problems)?;
     }
+    problems.extend(env_problems(decree_dir)?);
     Ok(problems)
+}
+
+/// E1: every malformed line of `.decree/env`, none if it is valid or missing.
+fn env_problems(decree_dir: &Path) -> Result<Vec<CheckError>, DecreeError> {
+    Ok(match dotenv::read(decree_dir)? {
+        Ok(_) => Vec::new(),
+        Err(errors) => errors
+            .into_iter()
+            .map(|(line, message)| CheckError {
+                rule: Some("E1".to_string()),
+                file: layout::ENV_FILE.to_string(),
+                line: Some(line),
+                state: None,
+                message,
+            })
+            .collect(),
+    })
+}
+
+/// The variables of `.decree/env` scripts get: those not set in decree's own environment,
+/// which wins (docs/reference/scripts.md, Environment). A malformed file is an error that
+/// lists each E1 problem, as `decree check` prints them.
+pub(crate) fn load_env(decree_dir: &Path) -> Result<Vec<(String, String)>, DecreeError> {
+    let problems = env_problems(decree_dir)?;
+    if !problems.is_empty() {
+        let lines: Vec<String> = problems.iter().map(ToString::to_string).collect();
+        return Err(DecreeError::Other(format!(
+            "{}\n{} error(s) in {DECREE_DIR}/{}; nothing was processed. Run `decree check`.",
+            lines.join("\n"),
+            problems.len(),
+            layout::ENV_FILE
+        )));
+    }
+    let vars = dotenv::read(decree_dir)?.unwrap_or_default();
+    Ok(dotenv::unset_in_process(vars))
 }
 
 /// A project's machines, loaded and checked against V1–V21: where `check` and

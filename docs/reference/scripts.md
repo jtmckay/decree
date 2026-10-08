@@ -35,9 +35,17 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 
 A script inherits decree's environment, with every inherited `DECREE_*` variable and `TRACESTATE` removed, then gets the variables below. So a decree started inside another decree run (a test suite run by a gate script, say) never hands the outer run's variables to its own scripts.
 
+A variable can come from four places. When two set the same name, the first in this list wins:
+
+1. decree's own variables: the table below.
+2. The script invoke's `env` ([Invoke](machines.md#invoke-the-states-function)), for that invoke only.
+3. The process environment decree was started with.
+4. `.decree/env` ([Project variables](#project-variables-decreeenv)).
+
 | Variable | Value |
 | --- | --- |
 | `DECREE_PROJECT_ROOT` | Absolute path of the directory containing `.decree/`. |
+| `DECREE_LIB` | Absolute path of `.decree/lib/`, where scripts find shared code, config and data ([Shared code](#shared-code)). Set whether or not the directory exists. |
 | `DECREE_MESSAGE` | Absolute path of `runs/<id>/message.md`. |
 | `DECREE_MESSAGE_ID` | The message `id`. |
 | `DECREE_MACHINE` | Machine name. |
@@ -54,6 +62,8 @@ A script inherits decree's environment, with every inherited `DECREE_*` variable
 | `DECREE_EVENTS` | The events the current state accepts, space-separated, in name order. Lets a script check what it may name. |
 | `DECREE_EVENT_FILE` | For a script invoke: absolute path of `runs/<id>/.event`, created empty before each attempt, where the script names its event ([Events from an invoke](#events-from-an-invoke)). Empty for `onentry` and `onexit` scripts and the `ask` script of a `person` state, which produce no events. |
 | `DECREE_PARENT` | In a child run: the parent run's id. Empty otherwise. |
+| `DECREE_PARENT_RUN_DIR` | In a child run: absolute path of the parent run's directory, `runs/<parent>/`. Empty otherwise. |
+| `DECREE_ROOT_RUN_DIR` | Absolute path of the directory of the run at the top of the chain, the run with no parent: in a grandchild, the grandparent's. In a top-level run it equals `DECREE_RUN_DIR`. |
 | `DECREE_REQUEST` | In a router run: absolute path of the request JSON ([Model](runs.md#model)). Empty otherwise. |
 | `DECREE_REPLY` | In a router run: absolute path where the reply JSON must be written. Empty otherwise. |
 | `DECREE_WAIT_ID` | For the `ask` script of a `person` state: the wait id a reply must name. Empty otherwise. |
@@ -65,6 +75,59 @@ A script inherits decree's environment, with every inherited `DECREE_*` variable
 | `TRACESTATE` | The message's `tracestate`, when it carried one beside a valid `traceparent`; unset otherwise. |
 
 `TRACEPARENT` and `TRACESTATE` follow OpenTelemetry's environment variable carrier (the `traceparent` and `tracestate` keys of W3C Trace Context, uppercased), so an OpenTelemetry SDK in the script, or a tool that reads them, makes its own spans children of the script's span, and `decree emit` puts them in the message it queues ([Traces](observability.md#traces)).
+
+### Project variables: `.decree/env`
+
+`.decree/env` holds the project's configuration (a service URL, a model name), so no script sources a file of its own and a Python script reads `os.environ` like any other variable. It is optional; when it exists, every script gets its variables. It is a dotenv file, read as Docker Compose's `env_file` and systemd's `EnvironmentFile` read one:
+
+```bash
+# ComfyUI on the GPU box
+COMFY_URL="http://box:8188"
+export COMFY_MODEL=sdxl
+STEPS=30
+```
+
+- One `KEY=value` per line. Blank lines and lines starting with `#` are ignored. `export ` before a key is allowed.
+- A value wrapped in single or double quotes loses them. Everything else is literal: no variable expansion, no escapes, no inline comments, no multi-line values.
+- Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors. A later line wins over an earlier one with the same key.
+- **The process environment wins:** a variable already set when decree starts keeps its value, as with Docker Compose, so a deployment can override the file (`COMFY_URL=http://other:8188 decree daemon`).
+- `process` reads it once at start, `daemon` at start and again before each pass, so an edit applies without a restart. A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and a `daemon` that finds one later prints it and keeps the variables it read last.
+
+The file is meant to be committed. Secrets do not belong in it: put them in the process environment, or in a file the service manager loads (systemd's `EnvironmentFile=`, a Compose `env_file` that is not committed).
+
+### One script, several states: invoke `env`
+
+A script invoke's `env` gives that invoke its own variables, so several states can run one script with different values instead of the script parsing its state name:
+
+```yaml
+build_image_text:
+  invoke:
+    script: { name: build, env: { METHOD: image_text } }
+  transitions: { done: done }
+build_image_image:
+  invoke:
+    script: { name: build, env: { METHOD: image_image } }
+  transitions: { done: done }
+```
+
+Keys follow the rules of `.decree/env`; values are strings, ints or bools, passed as strings (V16). They win over the process environment and `.decree/env` for that invoke only: its `onentry` and `onexit` scripts, and other states running the same script, do not see them.
+
+## Shared code
+
+`.decree/lib/` holds what scripts share but decree never runs: bash functions they source, config and data files (a prompt template, ComfyUI workflow files). decree never resolves a script from it, and `decree check` does not look in it. A script finds it through `DECREE_LIB`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+. "$DECREE_LIB/ai.sh"
+ai "Summarize $DECREE_MESSAGE" > summary.md
+```
+
+```python
+workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD']}.json"
+```
+
+`decree init` creates it with a one-line `README.md`.
 
 ## Events from an invoke
 

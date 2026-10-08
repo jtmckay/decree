@@ -94,7 +94,7 @@ pub enum Invoke {
     Machine(MachineInvoke),
 }
 
-/// `{ script: { name, attempts?, timeout? } }`, or `{ script: <name> }`.
+/// `{ script: { name, attempts?, timeout?, env? } }`, or `{ script: <name> }`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScriptInvoke {
@@ -103,6 +103,39 @@ pub struct ScriptInvoke {
     /// A duration (`crate::duration`).
     #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
     pub timeout: Option<Duration>,
+    /// Variables for this invoke only, over `.decree/env` and the process environment
+    /// (docs/reference/scripts.md, Environment). V16 checks the keys.
+    #[serde(default, deserialize_with = "deserialize_invoke_env")]
+    pub env: BTreeMap<String, String>,
+}
+
+/// An invoke's `env`: a map of keys to strings, ints or bools, each kept as a string.
+fn deserialize_invoke_env<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, String>, D::Error> {
+    const SHAPE: &str = "`env` is a map of variable names to strings, ints or bools";
+    let map = match serde_norway::Value::deserialize(deserializer)? {
+        serde_norway::Value::Mapping(map) => map,
+        _ => return Err(D::Error::custom(SHAPE)),
+    };
+    map.into_iter()
+        .map(|(key, value)| {
+            let Some(key) = key.as_str().map(String::from) else {
+                return Err(D::Error::custom(format!("{SHAPE}: each key is a string")));
+            };
+            let text = match value {
+                serde_norway::Value::String(s) => s,
+                serde_norway::Value::Bool(b) => b.to_string(),
+                serde_norway::Value::Number(n) if n.is_i64() || n.is_u64() => n.to_string(),
+                _ => {
+                    return Err(D::Error::custom(format!(
+                        "{SHAPE}: `{key}` is not a string, int or bool"
+                    )))
+                }
+            };
+            Ok((key, text))
+        })
+        .collect()
 }
 
 /// A script invoke's `attempts` (docs/reference/machines.md, Two kinds of retry): how many
@@ -244,6 +277,7 @@ impl<'de> Deserialize<'de> for Invoke {
                     name,
                     attempts: None,
                     timeout: None,
+                    env: BTreeMap::new(),
                 }))
             }
             serde_norway::Value::Mapping(map) if map.len() == 1 => map,

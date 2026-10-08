@@ -730,6 +730,11 @@ impl Validator<'_> {
                             self.push(at.clone(), message);
                         }
                     }
+                    for key in script.env.keys() {
+                        if let Some(message) = crate::dotenv::key_error(key) {
+                            self.push(at.clone(), format!("env: {message} (V16)"));
+                        }
+                    }
                 }
                 Some(Invoke::Machine(mi)) => self.child_machine(&at, mi),
                 Some(Invoke::Model(c)) => {

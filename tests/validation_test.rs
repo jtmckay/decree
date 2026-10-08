@@ -770,6 +770,49 @@ machines/m.yml: triage: min_confidence 80 is not between 0 and 1 (V16)
     },
     Case {
         rule: "V16",
+        name: "an invoke env with string, int and bool values",
+        files: &[(
+            "machines/m.yml",
+            "\
+name: m
+description: One script run with its own variables.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, env: { METHOD: image_text, STEPS: 30, _FAST: true } } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+",
+        )],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "V16",
+        name: "an invoke env with a reserved key and a bad key",
+        files: &[(
+            "machines/m.yml",
+            "\
+name: m
+description: One script run with its own variables.
+initial: work
+states:
+  work:
+    invoke: { script: { name: work, env: { DECREE_STATE: x, 1A: y, OK: z } } }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+",
+        )],
+        scripts: &[],
+        expected: "\
+machines/m.yml: work: env: key `1A` does not match `^[A-Za-z_][A-Za-z0-9_]*$` (V16)
+machines/m.yml: work: env: key `DECREE_STATE` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (V16)
+",
+    },
+    Case {
+        rule: "V16",
         name: "a timeout in each unit",
         files: &[
             ("machines/a.yml", "\
@@ -1411,6 +1454,39 @@ cron/b.md: line 3: unknown machine `nope` (M3)
 cron/c.md: line 1: no `machine` key (M3)
 ",
     },
+    // E1
+    Case {
+        rule: "E1",
+        name: "a dotenv file with comments, quotes and export",
+        files: &[
+            ("machines/m.yml", BASE),
+            (
+                "env",
+                "# GPU box\n\nexport COMFY_URL=\"http://box:8188\"\nMODEL='sdxl'\nSTEPS=30\n",
+            ),
+        ],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "E1",
+        name: "a reserved key, a line that is not a pair, a bad key, an unclosed quote",
+        files: &[
+            ("machines/m.yml", BASE),
+            (
+                "env",
+                "DECREE_X=1\nnot a pair\nTRACEPARENT=x\n1A=x\nB=\"open\n",
+            ),
+        ],
+        scripts: &[],
+        expected: "\
+env: line 1: key `DECREE_X` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (E1)
+env: line 2: `not a pair` is not `KEY=value` (E1)
+env: line 3: key `TRACEPARENT` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (E1)
+env: line 4: key `1A` does not match `^[A-Za-z_][A-Za-z0-9_]*$` (E1)
+env: line 5: the value of `B` opens a \" quote it does not close (E1)
+",
+    },
 ];
 
 /// Root and state `onentry`/`onexit` scripts (V12).
@@ -1753,9 +1829,9 @@ fn run_rule(rule: &str) {
     }
 }
 
-const RULES: [&str; 24] = [
+const RULES: [&str; 25] = [
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15",
-    "V16", "V17", "V18", "V19", "V20", "V21", "M1", "M2", "M3",
+    "V16", "V17", "V18", "V19", "V20", "V21", "M1", "M2", "M3", "E1",
 ];
 
 #[test]
@@ -1922,6 +1998,12 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
         "no cron key, an unknown machine, no machine key",
         "cron/b.md",
         "which machines exist depends on other files",
+    ),
+    (
+        "E1",
+        "a reserved key, a line that is not a pair, a bad key, an unclosed quote",
+        "env",
+        "`.decree/env` is a dotenv file, not YAML or JSON; no schema covers it",
     ),
 ];
 

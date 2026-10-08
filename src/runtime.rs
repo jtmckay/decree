@@ -139,9 +139,16 @@ pub struct RunInfo {
     pub data: Vec<(String, String)>,
     /// `DECREE_PARENT`: in a child run, the parent run's id.
     pub parent: Option<String>,
+    /// `DECREE_PARENT_RUN_DIR`: in a child run, the absolute path of the parent's folder.
+    pub parent_run_dir: Option<PathBuf>,
+    /// `DECREE_ROOT_RUN_DIR`: the folder of the run at the top of the chain, the run with
+    /// no parent; `run_dir` itself in a top-level run.
+    pub root_run_dir: PathBuf,
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
     /// where the reply must go (docs/reference/runs.md, Model).
     pub router: Option<RouterFiles>,
+    /// From `.decree/env`, without the variables set in decree's own environment.
+    pub env: Vec<(String, String)>,
 }
 
 /// The two files of a router run, both in its run folder.
@@ -178,6 +185,9 @@ pub struct ScriptRun<'a> {
     /// A script invoke, whose event decree reads: it gets a fresh `.event` file as
     /// `DECREE_EVENT_FILE`. Other scripts get an empty `DECREE_EVENT_FILE`.
     pub names_event: bool,
+    /// The invoke's `env`, which wins over `.decree/env` and the process environment.
+    /// Empty for `onentry` and `onexit` scripts.
+    pub env: Option<&'a BTreeMap<String, String>>,
 }
 
 impl<'a> ScriptRun<'a> {
@@ -198,6 +208,7 @@ impl<'a> ScriptRun<'a> {
             choices: Path::new(""),
             timeout: None,
             names_event: false,
+            env: None,
         }
     }
 }
@@ -352,6 +363,7 @@ impl Executor {
                 events: &events,
                 timeout: script.timeout,
                 names_event: true,
+                env: Some(&script.env),
                 ..ScriptRun::new(&script.name, &node.id, Phase::Invoke)
             })?;
             if execution.succeeded() || attempt >= attempt_count {
@@ -552,7 +564,9 @@ impl Executor {
         Ok(execution)
     }
 
-    /// The environment for `run` (docs/reference/scripts.md, Environment), added to the inherited one.
+    /// The environment for `run` (docs/reference/scripts.md, Environment), added to the
+    /// inherited one, in precedence order: `.decree/env`, the invoke's `env`, then decree's
+    /// own variables.
     /// `event_file` is `DECREE_EVENT_FILE`, if the script names its event. `span_id` is the
     /// script's span, which `TRACEPARENT` names in the run's trace (W3C Trace Context through
     /// OpenTelemetry's environment variable carrier), with the message's `TRACESTATE`.
@@ -572,6 +586,13 @@ impl Executor {
         };
         let mut vars: Vec<(String, std::ffi::OsString)> = [
             ("PROJECT_ROOT", info.project_root.as_os_str().into()),
+            (
+                "LIB",
+                info.project_root
+                    .join(crate::layout::DECREE_DIR)
+                    .join(crate::layout::LIB_DIR)
+                    .into(),
+            ),
             ("MESSAGE", info.run_dir.join(MESSAGE_FILE).into()),
             ("MESSAGE_ID", info.run_id.clone().into()),
             ("MACHINE", info.machine.clone().into()),
@@ -592,6 +613,11 @@ impl Executor {
                 event_file.unwrap_or(Path::new("")).as_os_str().into(),
             ),
             ("PARENT", info.parent.clone().unwrap_or_default().into()),
+            (
+                "PARENT_RUN_DIR",
+                info.parent_run_dir.clone().unwrap_or_default().into(),
+            ),
+            ("ROOT_RUN_DIR", info.root_run_dir.as_os_str().into()),
             ("REQUEST", request.as_os_str().into()),
             ("REPLY", reply.as_os_str().into()),
             ("WAIT_ID", run.wait_id.into()),
@@ -618,7 +644,17 @@ impl Executor {
         if let Some(tracestate) = self.events.tracestate() {
             vars.push((TRACESTATE_ENV.to_string(), tracestate.into()));
         }
-        vars
+        // Later entries win: `.decree/env` (only what decree's own environment does not
+        // set), the invoke's `env`, then decree's own variables.
+        let mut all: Vec<(String, std::ffi::OsString)> = info
+            .env
+            .iter()
+            .map(|(name, value)| (name, value))
+            .chain(run.env.into_iter().flatten())
+            .map(|(name, value)| (name.clone(), value.into()))
+            .collect();
+        all.extend(vars);
+        all
     }
 
     /// A script path as the `script` event records it: relative to the project root.
@@ -865,7 +901,10 @@ pub(crate) mod executor_tests {
                 trigger: "inbox".to_string(),
                 data: Vec::new(),
                 parent: None,
+                parent_run_dir: None,
+                root_run_dir: self.run_dir(),
                 router: None,
+                env: Vec::new(),
             }
         }
 
@@ -1301,6 +1340,9 @@ pub(crate) mod executor_tests {
             serde_norway::from_str("label: release\nmax_rounds: 5").unwrap();
         info.data = data_env(&m.data, &params);
         info.parent = Some("20261001T120000Z-0b12aa".to_string());
+        let parent_dir = p.root().join(".decree/runs/20261001T120000Z-0b12aa");
+        info.parent_run_dir = Some(parent_dir.clone());
+        info.root_run_dir = parent_dir.clone();
         let (request, reply) = (
             p.run_dir().join("request.json"),
             p.run_dir().join("reply.json"),
@@ -1336,6 +1378,10 @@ pub(crate) mod executor_tests {
         let expected = [
             ("DECREE_PROJECT_ROOT", root.to_str().unwrap().to_string()),
             (
+                "DECREE_LIB",
+                root.join(".decree/lib").to_str().unwrap().to_string(),
+            ),
+            (
                 "DECREE_MESSAGE",
                 run_dir.join("message.md").to_str().unwrap().to_string(),
             ),
@@ -1352,6 +1398,14 @@ pub(crate) mod executor_tests {
             ("DECREE_EVENTS", "approve retry".to_string()),
             ("DECREE_EVENT_FILE", String::new()),
             ("DECREE_PARENT", "20261001T120000Z-0b12aa".to_string()),
+            (
+                "DECREE_PARENT_RUN_DIR",
+                parent_dir.to_str().unwrap().to_string(),
+            ),
+            (
+                "DECREE_ROOT_RUN_DIR",
+                parent_dir.to_str().unwrap().to_string(),
+            ),
             ("DECREE_REQUEST", request.to_str().unwrap().to_string()),
             ("DECREE_REPLY", reply.to_str().unwrap().to_string()),
             ("DECREE_WAIT_ID", "w-id".to_string()),
@@ -1368,6 +1422,37 @@ pub(crate) mod executor_tests {
         for (name, value) in &expected {
             assert_eq!(vars.get(name), Some(&value.as_str()), "{name}\n{log}");
         }
+    }
+
+    /// An invoke's `env` wins over `.decree/env` for that invoke only; `DECREE_*` stays
+    /// decree's.
+    #[test]
+    fn invoke_env_wins_over_the_dotenv_file_for_that_invoke_only() {
+        let p = Project::new(&["print_vars"]);
+        let m = machine(
+            "{ invoke: { script: { name: print_vars, env: { METHOD: image_text, STEPS: 30 } } }, \
+             transitions: { done: done } }",
+        );
+        let mut exec = Executor::open(
+            RunInfo {
+                env: vec![
+                    ("METHOD".to_string(), "file".to_string()),
+                    ("OTHER".to_string(), "kept".to_string()),
+                ],
+                ..p.info()
+            },
+            Arc::clone(&p.shutdown),
+        )
+        .unwrap();
+        let out = exec
+            .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 1)
+            .unwrap();
+        let log = p.log(&out.execution.log);
+        assert_eq!(log, "METHOD=image_text OTHER=kept STEPS=30\n");
+        let out = exec
+            .run_script(&ScriptRun::new("print_vars", "s", Phase::OnEntry))
+            .unwrap();
+        assert_eq!(p.log(&out.log), "METHOD=file OTHER=kept STEPS=\n");
     }
 
     #[test]
@@ -1401,6 +1486,7 @@ pub(crate) mod executor_tests {
             "DECREE_FINAL_ATTEMPT=false",
             "DECREE_EVENTS=",
             "DECREE_PARENT=",
+            "DECREE_PARENT_RUN_DIR=",
             "DECREE_REQUEST=",
             "DECREE_REPLY=",
             "DECREE_WAIT_ID=",
@@ -1412,6 +1498,9 @@ pub(crate) mod executor_tests {
         }
         let event_file = p.run_dir().join(EVENT_FILE);
         let line = format!("DECREE_EVENT_FILE={}", event_file.display());
+        assert!(log.lines().any(|l| l == line), "{line}\n{log}");
+        // A top-level run is its own root.
+        let line = format!("DECREE_ROOT_RUN_DIR={}", p.run_dir().display());
         assert!(log.lines().any(|l| l == line), "{line}\n{log}");
         let out = exec
             .run_script(&ScriptRun::new("print_env", ROOT_STATE, Phase::OnExit))

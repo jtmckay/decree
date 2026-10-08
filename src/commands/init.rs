@@ -130,6 +130,10 @@ const AI_PLAIN_SH: &str = include_str!("../templates/ai/plain.sh");
 
 const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
 
+/// `lib/README.md`: what goes in `lib/`.
+const LIB_README: &str = "Code that scripts source (`. \"$DECREE_LIB/<file>\"`), config and data. \
+                          decree never runs anything in it.\n";
+
 /// The decree skill `init` writes: path under the skill directory, and content.
 const DECREE_SKILL: &[(&str, &str)] = &[
     (
@@ -334,7 +338,7 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 }
 
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
-/// `processed.md`, the empty queues, the router machine with its script, the
+/// `processed.md`, the empty queues, `lib/` with its `README.md`, the router machine with its script, the
 /// `develop` and `rust_develop` machines with theirs, and the shared scripts.
 /// `graph/` and `schema/` are written by `decree graph` and `decree schema`.
 fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
@@ -345,10 +349,15 @@ fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> 
         layout::CRON_DIR,
         MACHINES_DIR,
         SCRIPTS_DIR,
+        layout::LIB_DIR,
     ] {
         std::fs::create_dir_all(decree_dir.join(dir))?;
     }
     std::fs::write(decree_dir.join(layout::GITIGNORE_FILE), DECREE_GITIGNORE)?;
+    std::fs::write(
+        decree_dir.join(layout::LIB_DIR).join("README.md"),
+        LIB_README,
+    )?;
     std::fs::write(decree_dir.join(layout::PROCESSED_FILE), "")?;
     write_router(decree_dir, backend)?;
     write_develop_machines(decree_dir, backend)?;

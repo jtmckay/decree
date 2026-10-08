@@ -18,6 +18,10 @@ directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commi
 `snapshot`) once in `scripts/`; put a machine's own version in `scripts/<machine>/`.
 `chmod +x` new scripts; `decree check` fails otherwise.
 
+Code that scripts share but decree never runs (bash functions to source, config, data such as
+workflow files) goes in `.decree/lib/`, found through `$DECREE_LIB`: `. "$DECREE_LIB/ai.sh"`.
+decree never resolves a script from `lib/`.
+
 ## How a script runs
 
 - Directly (no shell wrapper), from the project root, with stdin `/dev/null`, in its own process
@@ -82,6 +86,7 @@ EOF
 | Variable | Value |
 | --- | --- |
 | `DECREE_PROJECT_ROOT` | Directory containing `.decree/`. |
+| `DECREE_LIB` | `.decree/lib/`: shared code, config and data. |
 | `DECREE_MESSAGE` | `runs/<id>/message.md` (the run's copy of the message). |
 | `DECREE_MESSAGE_ID` | The message `id`. |
 | `DECREE_MACHINE`, `DECREE_STATE` | Machine and state (`_root` for root `onentry`/`onexit`). |
@@ -94,11 +99,21 @@ EOF
 | `DECREE_EVENTS` | Events the current state accepts, space-separated. |
 | `DECREE_EVENT_FILE` | For an invoke: the file to write its event to. Empty for other scripts. |
 | `DECREE_PARENT` | In a child run, the parent run's id. |
+| `DECREE_PARENT_RUN_DIR` | In a child run, the parent run's folder; empty otherwise. Reach the task's files from here, never by building `runs/$DECREE_PARENT`. |
+| `DECREE_ROOT_RUN_DIR` | The folder of the run at the top of the chain (no parent); `DECREE_RUN_DIR` in a top-level run. |
 | `DECREE_REQUEST`, `DECREE_REPLY` | In a router run: the request JSON to read and the reply JSON to write. |
 | `DECREE_WAIT_ID`, `DECREE_QUESTION`, `DECREE_CHOICES` | For a `person` `ask` script: the wait id, the question, and a JSON file of options and descriptions. |
 | `DECREE_RECEIVED` | The last reply this run received (`runs/<id>/received/<file>`), or empty. |
 | `DECREE_DATA_<NAME>` | Each `data` value: the message's `params`, else the default. |
 | `TRACEPARENT`, `TRACESTATE` | W3C Trace Context: the run's trace and this script's span (`00-<trace id>-<span id>-01`), and the message's `tracestate` if it had one. OpenTelemetry SDKs read them, so the script's own spans join the run's trace; `decree emit` copies them into the new message. |
+
+Project variables (a service URL, a model name) go in `.decree/env`, a committed dotenv file
+every script gets: `KEY=value` per line, `#` comments, optional `export ` and quotes, no
+expansion. Never source it by hand. No secrets in it: they go in the process environment. One
+script run by several states with different values gets them from the invoke's `env`:
+`script: { name: build, env: { METHOD: image_text } }`. When two set a name, the first wins:
+decree's own `DECREE_*`, the invoke's `env`, the process environment, `.decree/env`.
+`DECREE_*`, `TRACEPARENT` and `TRACESTATE` cannot be set in either.
 
 ## An ask script
 

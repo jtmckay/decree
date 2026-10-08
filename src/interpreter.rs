@@ -36,7 +36,7 @@ use crate::events::{
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
 use crate::machine::{event_matches, Attempts, Invoke, LoadedMachine, FAILED};
-use crate::message::{Message, MessageError, RunLock, LOCK_FILE};
+use crate::message::{Message, MessageError, RunLock, LOCK_FILE, MAX_DEPTH};
 use crate::runtime::{
     data_env, Executor, InvokeEvent, Phase, RouterFiles, RunInfo, RuntimeError, ScriptRun,
     ROOT_STATE,
@@ -123,6 +123,9 @@ pub struct Context<'a> {
     pub machines: &'a BTreeMap<String, LoadedMachine>,
     /// Set on SIGINT or SIGTERM; stops the running script (docs/reference/messages.md, Stopping).
     pub shutdown: Arc<AtomicBool>,
+    /// The `.decree/env` variables every script gets, without those set in decree's own
+    /// environment (docs/reference/scripts.md, Environment).
+    pub env: Vec<(String, String)>,
 }
 
 /// How a call to the step loop ended.
@@ -740,10 +743,40 @@ impl Context<'_> {
             machine: m.id.clone(),
             trigger: trigger.to_string(),
             data: data_env(&m.data, params),
+            parent_run_dir: parent.map(|p| self.runs_dir().join(p)),
+            root_run_dir: self.runs_dir().join(self.root_run(run_id, parent)?),
             parent: parent.map(String::from),
             router,
+            env: self.env.clone(),
         };
         Ok(Executor::open(info, Arc::clone(&self.shutdown))?)
+    }
+}
+
+impl Context<'_> {
+    /// The run at the top of run `run_id`'s chain, whose parent is `parent`: each run's
+    /// `parent`, followed until a run names none. A parent whose folder is gone (pruned)
+    /// ends the chain.
+    fn root_run(&self, run_id: &str, parent: Option<&str>) -> Result<String, InterpreterError> {
+        let mut root = run_id.to_string();
+        let mut next = parent.map(String::from);
+        // A chain is at most `MAX_DEPTH` runs deep; a longer one loops.
+        for _ in 0..=MAX_DEPTH {
+            let Some(id) = next else {
+                return Ok(root);
+            };
+            let path = self.runs_dir().join(&id).join(MESSAGE_FILE);
+            next = if path.is_file() {
+                Message::read(&path)?.text("parent").map(String::from)
+            } else {
+                None
+            };
+            root = id;
+        }
+        Err(InterpreterError::Message {
+            path: self.runs_dir().join(run_id).join(MESSAGE_FILE),
+            message: format!("its chain of `parent` runs is deeper than {MAX_DEPTH}"),
+        })
     }
 }
 

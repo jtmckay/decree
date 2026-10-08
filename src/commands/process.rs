@@ -25,7 +25,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::cli::Format;
-use crate::commands::check::{md_files, Project};
+use crate::commands::check::{self, md_files, Project};
 use crate::commands::print_json;
 use crate::error::DecreeError;
 use crate::events::{
@@ -137,7 +137,8 @@ impl<'a> Pipeline<'a> {
             )));
         }
         validate_migrations(project)?;
-        let ctx = context(project_root, project, shutdown);
+        let mut ctx = context(project_root, project, shutdown);
+        ctx.env = check::load_env(&project.decree_dir)?;
         Ok(Pipeline {
             ctx,
             project,
@@ -145,6 +146,13 @@ impl<'a> Pipeline<'a> {
             prefix,
             failed: Vec::new(),
         })
+    }
+
+    /// Read `.decree/env` again, so edits apply without a restart (each `daemon` pass). On
+    /// an error, scripts keep the variables last read.
+    pub(crate) fn reload_env(&mut self) -> Result<(), DecreeError> {
+        self.ctx.env = check::load_env(&self.project.decree_dir)?;
+        Ok(())
     }
 
     fn shutdown(&self) -> bool {
@@ -326,6 +334,7 @@ pub(crate) fn context<'a>(
         project_root: project_root.to_path_buf(),
         machines: &project.machines,
         shutdown,
+        env: Vec::new(),
     }
 }
 

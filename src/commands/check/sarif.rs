@@ -21,7 +21,7 @@ const HELP_URI: &str =
 
 /// Every rule of docs/reference/machines.md (Validation) with its check, as the table
 /// states it (a test holds the two equal).
-pub(crate) const RULES: [(&str, &str); 24] = [
+pub(crate) const RULES: [(&str, &str); 25] = [
     (
         "V1",
         "`name` equals the file stem and matches `^[a-z][a-z0-9_]*$`.",
@@ -84,7 +84,7 @@ pub(crate) const RULES: [(&str, &str); 24] = [
     ),
     (
         "V16",
-        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19.",
+        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; every `env` key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`; `attempts`, `timeout` and `env` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19.",
     ),
     (
         "V17",
@@ -117,6 +117,10 @@ pub(crate) const RULES: [(&str, &str); 24] = [
     (
         "M3",
         "Every `cron/*.md` passes the same checks, and its `cron:` expression parses.",
+    ),
+    (
+        "E1",
+        "`.decree/env`, if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`.",
     ),
 ];
 
@@ -198,7 +202,7 @@ mod tests {
             .filter_map(|line| {
                 let row = line.strip_prefix("| ")?.strip_suffix(" |")?;
                 let (id, check) = row.split_once(" | ")?;
-                let rule = id.starts_with('V') || id.starts_with('M');
+                let rule = id.starts_with('V') || id.starts_with('M') || id.starts_with('E');
                 (rule && id[1..].parse::<u32>().is_ok())
                     .then(|| (id.to_string(), check.replace("\\|", "|")))
             })

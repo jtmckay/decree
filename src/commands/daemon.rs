@@ -1,5 +1,5 @@
 //! `decree daemon [--interval <duration>]` (docs/reference/cli.md): validate, mark crashed runs
-//! `interrupted`, then loop: deliver replies and timeouts, continue `pending` runs, cron
+//! `interrupted`, then loop: read `.decree/env` again, deliver replies and timeouts, continue `pending` runs, cron
 //! tick, drain the inbox, next migration, sleep. Every step is `process`'s own
 //! (`commands::process::Pipeline`); there is no second pipeline. A failed or interrupted
 //! inbox run does not stop it; a failed, interrupted or waiting migration blocks later
@@ -34,9 +34,12 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
     let mut cron_tracker = CronTracker::new();
     // The last message a blocked migration printed, so each block is reported once.
     let mut blocked = None;
+    // The last `.decree/env` error printed, likewise.
+    let mut env_error = None;
     let mut result = report(pipeline.recover());
     loop {
         if result.is_ok() {
+            reload_env(&mut pipeline, &mut env_error);
             result = pass(project_root, &mut pipeline, &mut cron_tracker, &mut blocked);
         }
         match result {
@@ -63,6 +66,21 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
         }
         if shutdown.load(Ordering::Relaxed) {
             result = Err(Stop::Interrupted);
+        }
+    }
+}
+
+/// Read `.decree/env` again before a pass. A malformed file is printed once per change, and
+/// scripts keep the variables last read until it is fixed.
+fn reload_env(pipeline: &mut Pipeline, env_error: &mut Option<String>) {
+    match pipeline.reload_env() {
+        Ok(()) => *env_error = None,
+        Err(e) => {
+            let message = e.to_string();
+            if env_error.as_ref() != Some(&message) {
+                eprintln!("decree daemon: {message}; keeping the variables last read");
+                *env_error = Some(message);
+            }
         }
     }
 }

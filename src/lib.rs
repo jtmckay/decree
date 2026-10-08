@@ -2,6 +2,7 @@ pub(crate) mod cli;
 pub(crate) mod commands;
 pub(crate) mod cond;
 pub(crate) mod cron;
+pub(crate) mod dotenv;
 pub(crate) mod duration;
 pub(crate) mod error;
 pub(crate) mod events;

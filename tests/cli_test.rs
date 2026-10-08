@@ -869,3 +869,74 @@ fn a_named_event_picks_the_transition() {
         ["- -> verify (claim)", "verify -> passed (script)"]
     );
 }
+
+/// AC: after `decree init`, `.decree/lib/README.md` exists, and a script sees `DECREE_LIB`,
+/// the absolute path of `.decree/lib`, and can source a file from it.
+#[test]
+fn init_creates_lib_and_scripts_see_decree_lib() {
+    let p = Project::init();
+    let readme = fs::read_to_string(p.decree_dir().join("lib/README.md")).unwrap();
+    assert!(readme.contains("never runs anything"), "{readme}");
+    fs::write(
+        p.decree_dir().join("lib/greeting.sh"),
+        "greeting() { echo \"hello from lib\"; }\n",
+    )
+    .unwrap();
+    p.machine(
+        "hello",
+        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
+    );
+    p.script(
+        "greet",
+        "#!/usr/bin/env bash\n. \"$DECREE_LIB/greeting.sh\"\n\
+         { echo \"$DECREE_LIB\"; greeting; } > \"$DECREE_PROJECT_ROOT/lib.txt\"\n",
+    );
+    p.emit("hello", "Say hello.\n");
+    p.decree(&["process"]).assert().success();
+    let out = fs::read_to_string(p.root().join("lib.txt")).unwrap();
+    let lib = p.decree_dir().join("lib");
+    assert_eq!(out, format!("{}\nhello from lib\n", lib.display()));
+}
+
+/// `decree daemon` reads `.decree/env` again on each pass, so an edit applies without a
+/// restart.
+#[test]
+fn daemon_reads_dotenv_again_on_each_pass() {
+    let p = Project::init();
+    p.machine(
+        "hello",
+        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
+    );
+    p.script(
+        "greet",
+        "#!/usr/bin/env bash\necho \"$DOTENV_RELOAD_VALUE\" >> \"$DECREE_PROJECT_ROOT/out.txt\"\n",
+    );
+    let env = p.decree_dir().join("env");
+    fs::write(&env, "DOTENV_RELOAD_VALUE=one\n").unwrap();
+    let first = p.emit("hello", "First.\n");
+
+    let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
+    let finished = |id: &str| {
+        p.run_dir(id).join("events.jsonl").exists()
+            && p.events(id).last().unwrap()["type"] == "run_finished"
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !finished(&first) {
+        assert!(Instant::now() < deadline, "the first message never ran");
+        thread::sleep(Duration::from_millis(50));
+    }
+    fs::write(&env, "DOTENV_RELOAD_VALUE=two\n").unwrap();
+    let second = p.emit("hello", "Second.\n");
+    while !finished(&second) {
+        assert!(Instant::now() < deadline, "the second message never ran");
+        thread::sleep(Duration::from_millis(50));
+    }
+    // SAFETY: sends SIGTERM to the daemon.
+    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        wait_exit(&mut daemon, Duration::from_secs(15)).code(),
+        Some(0)
+    );
+    let out = fs::read_to_string(p.root().join("out.txt")).unwrap();
+    assert_eq!(out, "one\ntwo\n");
+}

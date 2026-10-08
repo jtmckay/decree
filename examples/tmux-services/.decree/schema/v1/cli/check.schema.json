@@ -92,9 +92,10 @@
             "M1",
             "M2",
             "M3",
+            "E1",
             null
           ],
-          "description": "The rule that failed, V1–V21 or M1–M3 (docs/reference/machines.md, Validation), or null for an error no rule names, such as YAML that does not parse."
+          "description": "The rule that failed, V1–V21, M1–M3 or E1 (docs/reference/machines.md, Validation), or null for an error no rule names, such as YAML that does not parse."
         },
         "file": {
           "type": "string",

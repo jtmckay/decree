@@ -42,6 +42,7 @@ fn test_init_creates_directory_structure() {
             "cron",
             "graph",
             "inbox",
+            "lib",
             "machines",
             "migrations",
             "processed.md",
@@ -66,6 +67,12 @@ fn test_init_creates_directory_structure() {
     }
     assert!(decree.join("graph/router.md").is_file());
     assert!(decree.join("graph/system.md").is_file());
+    // `lib/` holds only its README until a project adds shared code.
+    let lib: Vec<_> = fs::read_dir(decree.join("lib"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(lib, ["README.md"]);
 }
 
 #[test]
