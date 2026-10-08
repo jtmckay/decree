@@ -1,3 +1,4 @@
+# store/ is committed in this example, to show what the newsletter remembers.
+# In your own project it is ignored, as decree init writes it.
 inbox/
 runs/
-store/

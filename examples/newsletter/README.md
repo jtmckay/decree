@@ -24,7 +24,7 @@ stateDiagram-v2
     end note
 ```
 
-The machine remembers one thing between runs, declared under `store:`: `seen.tsv`, the links already sent, in `.decree/store/newsletter/` (`$DECREE_STORE`). It survives `decree prune`, and is not committed.
+The machine remembers one thing between runs, declared under `store:`: `seen.tsv`, the links already sent, in `.decree/store/newsletter/` (`$DECREE_STORE`). It survives `decree prune`. In your own project it is not committed (`decree init` ignores `store/`); this example commits a sample, [`store/newsletter/seen.tsv`](.decree/store/newsletter/seen.tsv), so you can see what it holds: one link and the date it was sent, per line.
 
 1. [`gather`](.decree/scripts/newsletter/gather.py) (Python 3, standard library only: a script can be any executable) fetches every feed in `lib/newsletter/feeds.txt`, RSS 2.0 or Atom, and writes the run's `items.jsonl`: `title`, `link`, `source`, `published` and `summary` (plain text, at most 500 characters) for each item whose link is not in `seen.tsv`, in the machine's store, newest first, at most `NEWSLETTER_MAX_ITEMS`. A feed that fails is logged and skipped; every feed failing fails the run.
 2. [`write`](.decree/scripts/newsletter/write.sh) (bash, `curl` and `jq`) sends `lib/newsletter/taste.md` and `items.jsonl` to Ollama's `/api/chat`, and writes the run's `issue.md`: a title with the date, then the model's picks as markdown links. With no new items it writes an issue saying so, and does not call the model.
@@ -46,7 +46,7 @@ examples/newsletter/
     cron/newsletter.md                every Monday at 07:00
     env                               OLLAMA_URL, OLLAMA_MODEL, NEWSLETTER_DIR, NEWSLETTER_MAX_ITEMS, NTFY_*
     graph/  schema/                   written by `decree graph` and `decree schema`
-    store/newsletter/seen.tsv         links already sent, once it has run (not committed)
+    store/newsletter/seen.tsv         links already sent: a committed sample here; ignored in your project
   newsletter/                         the issues, once it has run
 ```
 
