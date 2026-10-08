@@ -329,7 +329,7 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 
 ## Validation
 
-`decree check` runs every rule below, plus the message checks M1–M3 and the `.decree/env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/` from what `decree schema` would write, or when `.decree/store/` holds what no machine's `store:` declares ([Store](#store)). `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
+`decree check` runs every rule below, plus the message checks M1–M3 and the `.decree/env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/` from what `decree schema` would write, or when `.decree/store/` holds what no machine's `store:` declares ([Store](#store)), or when `.decree/env` uses a variable that is not set ([Project variables](scripts.md#project-variables-decreeenv)). `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
 
 | Rule | Check |
 | --- | --- |
@@ -357,4 +357,4 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 | M1 | Every pending migration (not in `processed.md`) parses, names a known machine in `machine:`, and has valid `params` for that machine's `data`. |
 | M2 | Every `inbox/*.md` passes the same checks. |
 | M3 | Every `cron/*.md` passes the same checks, and its `cron:` expression parses. |
-| E1 | `.decree/env`, if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`. |
+| E1 | `.decree/env`, if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes, and interpolated unless single-quoted: `${VAR}`, `$VAR`, `${VAR:-default}`, `${VAR-default}`, `$$`); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`. |

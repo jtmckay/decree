@@ -3,8 +3,8 @@
 //! runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
-//! `.decree/schema/` from what `decree schema` would write, and when `.decree/store/` holds
-//! what no machine's `store:` declares.
+//! `.decree/schema/` from what `decree schema` would write, when `.decree/store/` holds
+//! what no machine's `store:` declares, and when `.decree/env` uses a variable that is not set.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -123,7 +123,8 @@ fn split_rule(message: &str) -> (String, Option<String>) {
 }
 
 /// A file in `.decree/graph/` or `.decree/schema/` that differs from what `decree graph`
-/// or `decree schema` would write, or one in `.decree/store/` that no machine declares.
+/// or `decree schema` would write, one in `.decree/store/` that no machine declares, or a
+/// variable `.decree/env` uses that is not set.
 /// `decree check` warns about it without failing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckWarning {
@@ -138,7 +139,7 @@ impl std::fmt::Display for CheckWarning {
     }
 }
 
-/// Every warning: stale graphs, then stale schemas, then the store.
+/// Every warning: stale graphs, then stale schemas, then the store, then `.decree/env`.
 fn warnings(project_root: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
     let mut out = Vec::new();
     // A machine that fails to load cannot be drawn; its error is reported as an error.
@@ -157,7 +158,25 @@ fn warnings(project_root: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
             }),
     );
     out.extend(store_warnings(&project_root.join(DECREE_DIR))?);
+    out.extend(env_warnings(&project_root.join(DECREE_DIR))?);
     Ok(out)
+}
+
+/// Each variable `.decree/env` references without a default that is set neither in
+/// decree's own environment nor on a line above: it reads as empty, as in Compose. A
+/// malformed file is reported as an error instead.
+fn env_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
+    let Ok(entries) = dotenv::read(decree_dir)? else {
+        return Ok(Vec::new());
+    };
+    Ok(dotenv::resolve(&entries, dotenv::process_var)
+        .unset
+        .into_iter()
+        .map(|(line, name)| CheckWarning {
+            file: layout::ENV_FILE.to_string(),
+            message: format!("line {line}: `${{{name}}}` is not set"),
+        })
+        .collect())
 }
 
 /// What `.decree/store/` holds that no machine declares (docs/reference/machines.md, Store):
@@ -265,8 +284,8 @@ fn env_problems(decree_dir: &Path) -> Result<Vec<CheckError>, DecreeError> {
     })
 }
 
-/// The variables of `.decree/env` scripts get: those not set in decree's own environment,
-/// which wins (docs/reference/scripts.md, Environment). A malformed file is an error that
+/// The variables of `.decree/env` scripts get, interpolated: those not set in decree's own
+/// environment, which wins (docs/reference/scripts.md, Environment). A malformed file is an error that
 /// lists each E1 problem, as `decree check` prints them.
 pub(crate) fn load_env(decree_dir: &Path) -> Result<Vec<(String, String)>, DecreeError> {
     let problems = env_problems(decree_dir)?;
@@ -279,8 +298,8 @@ pub(crate) fn load_env(decree_dir: &Path) -> Result<Vec<(String, String)>, Decre
             layout::ENV_FILE
         )));
     }
-    let vars = dotenv::read(decree_dir)?.unwrap_or_default();
-    Ok(dotenv::unset_in_process(vars))
+    let entries = dotenv::read(decree_dir)?.unwrap_or_default();
+    Ok(dotenv::resolve(&entries, dotenv::process_var).vars)
 }
 
 /// A project's machines, loaded and checked against V1–V21: where `check` and

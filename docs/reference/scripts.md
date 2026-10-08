@@ -89,7 +89,16 @@ STEPS=30
 ```
 
 - One `KEY=value` per line. Blank lines and lines starting with `#` are ignored. `export ` before a key is allowed.
-- A value wrapped in single or double quotes loses them. Everything else is literal: no variable expansion, no escapes, no inline comments, no multi-line values.
+- A value wrapped in single or double quotes loses them. No escapes, no inline comments, no multi-line values.
+- **Interpolation**, as Compose's `env_file` does it ([Variable interpolation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/)), the subset: `${VAR}` and `$VAR` are the value of `VAR`; `${VAR:-default}` is `default` when `VAR` is unset or empty, `${VAR-default}` only when it is unset (a default is interpolated in turn); `$$` is a literal `$`, and a `$` that starts none of these stays a `$`. A single-quoted value is literal. `VAR` is looked up in decree's process environment first, then in the lines above, as their effective values (the process environment winning for their keys too). An unknown variable is empty, as in Compose, and `decree check` warns about each (`env: line 4: `${HOST}` is not set`). An unterminated `${` or a form outside the subset (`${VAR:?error}`, `${VAR:+x}`) is an E1 error. Invoke `env` values are not interpolated: the YAML stays literal.
+
+  ```sh
+  HOST=192.168.1.20
+  OLLAMA_URL=http://${HOST}:11434
+  COMFY_URL=http://${HOST}:8188
+  ```
+
+  `HOST=192.168.1.30 decree daemon` moves both URLs.
 - Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors. A later line wins over an earlier one with the same key.
 - **The process environment wins:** a variable already set when decree starts keeps its value, as with Docker Compose, so a deployment can override the file (`COMFY_URL=http://other:8188 decree daemon`).
 - `process` reads it once at start, `daemon` at start and again before each pass, so an edit applies without a restart. A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and a `daemon` that finds one later prints it and keeps the variables it read last.

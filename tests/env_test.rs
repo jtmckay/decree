@@ -102,7 +102,8 @@ fn dotenv_values_reach_scripts_and_the_process_environment_wins() {
     assert_eq!(out, "http://box:8188\nhttp://other:8188\n");
 }
 
-/// Quotes are removed, `export` and comments are allowed, nothing is expanded.
+/// Quotes are removed, `export` and comments are allowed, double-quoted and plain values
+/// are interpolated, single-quoted ones are not.
 #[test]
 fn dotenv_syntax_as_compose_reads_it() {
     let tmp = project(
@@ -110,12 +111,13 @@ fn dotenv_syntax_as_compose_reads_it() {
     );
     fs::write(
         tmp.path().join(".decree/env"),
-        "# comment\n\nA='single quoted'\nexport B=exported\nC=\"$HOME\"\nD=plain value\n",
+        "# comment\n\nA='single $HOME'\nexport B=exported\nC=\"$HOME\"\nD=plain value\n",
     )
     .unwrap();
     cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
         .arg("process")
+        .env("HOME", "/home/x")
         .env_remove("A")
         .env_remove("B")
         .env_remove("C")
@@ -123,14 +125,120 @@ fn dotenv_syntax_as_compose_reads_it() {
         .assert()
         .success();
     let out = fs::read_to_string(tmp.path().join("out.txt")).unwrap();
-    assert_eq!(out, "single quoted|exported|$HOME|plain value\n");
+    assert_eq!(out, "single $HOME|exported|/home/x|plain value\n");
 }
 
-/// AC: a reserved key or a line that is not a pair is a `decree check` error naming the
-/// file and line, and `process` refuses to start with the same error.
+/// AC: `HOST=box` and `URL=http://${HOST}:8188` print `http://box:8188`, then
+/// `http://other:8188` with `HOST=other` in decree's environment.
+#[test]
+fn dotenv_values_are_interpolated_and_the_process_environment_wins() {
+    let tmp = project("#!/usr/bin/env bash\necho \"$URL\" >> \"$DECREE_PROJECT_ROOT/out.txt\"\n");
+    fs::write(
+        tmp.path().join(".decree/env"),
+        "HOST=box\nURL=http://${HOST}:8188\n",
+    )
+    .unwrap();
+    cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .arg("process")
+        .env_remove("HOST")
+        .env_remove("URL")
+        .assert()
+        .success();
+    queue(&tmp, "b");
+    cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .arg("process")
+        .env("HOST", "other")
+        .env_remove("URL")
+        .assert()
+        .success();
+    let out = fs::read_to_string(tmp.path().join("out.txt")).unwrap();
+    assert_eq!(out, "http://box:8188\nhttp://other:8188\n");
+}
+
+/// AC: `A='${B}'` and `C=$$5` print `${B}` and `$5`.
+#[test]
+fn single_quotes_and_double_dollar_are_literal() {
+    let tmp = project(
+        "#!/usr/bin/env bash\nprintf '%s|%s\\n' \"$A\" \"$C\" > \"$DECREE_PROJECT_ROOT/out.txt\"\n",
+    );
+    fs::write(tmp.path().join(".decree/env"), "A='${B}'\nC=$$5\n").unwrap();
+    cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("check")
+        .assert()
+        .success();
+    cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .arg("process")
+        .env("B", "set")
+        .env_remove("A")
+        .env_remove("C")
+        .assert()
+        .success();
+    let out = fs::read_to_string(tmp.path().join("out.txt")).unwrap();
+    assert_eq!(out, "${B}|$5\n");
+}
+
+/// An unknown variable reads as empty; `decree check` warns about it, naming the line, and
+/// passes. Set in decree's environment, there is no warning.
+#[test]
+fn an_unknown_variable_is_empty_and_check_warns() {
+    let tmp = project("#!/usr/bin/env bash\necho \"[$URL]\" > \"$DECREE_PROJECT_ROOT/out.txt\"\n");
+    fs::write(
+        tmp.path().join(".decree/env"),
+        "# hosts\n\nPORT=1\nURL=http://${DECREE_TEST_UNSET_HOST}:$PORT\n",
+    )
+    .unwrap();
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .env_remove("DECREE_TEST_UNSET_HOST")
+        .arg("check")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("warning: env: line 4: `${DECREE_TEST_UNSET_HOST}` is not set\n"),
+        "{stderr}"
+    );
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .env("DECREE_TEST_UNSET_HOST", "box")
+        .arg("check")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!stderr.contains("is not set"), "{stderr}");
+    cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .arg("process")
+        .env_remove("DECREE_TEST_UNSET_HOST")
+        .env_remove("URL")
+        .env_remove("PORT")
+        .assert()
+        .success();
+    let out = fs::read_to_string(tmp.path().join("out.txt")).unwrap();
+    assert_eq!(out, "[http://:1]\n");
+}
+
+/// AC: a reserved key, a line that is not a pair, an unterminated `${` or a malformed
+/// `${VAR:…}` is a `decree check` error naming the file and line, and `process` refuses to start with the same error.
 #[test]
 fn a_malformed_dotenv_fails_check_and_process() {
-    for (text, line) in [("A=1\nDECREE_X=1\n", 2), ("not a pair\n", 1)] {
+    for (text, line) in [
+        ("A=1\nDECREE_X=1\n", 2),
+        ("not a pair\n", 1),
+        ("A=1\nURL=http://${HOST\n", 2),
+        ("A=1\n\nURL=${HOST:?required}\n", 3),
+    ] {
         let tmp = project(PRINT_COMFY_URL);
         fs::write(tmp.path().join(".decree/env"), text).unwrap();
         let out = cargo_bin_cmd!("decree")
@@ -166,7 +274,8 @@ fn a_malformed_dotenv_fails_check_and_process() {
 
 /// AC: `script: { name: build, env: { METHOD: image_text } }` gives that invoke
 /// `METHOD=image_text`, over `.decree/env` and the process environment; another state
-/// invoking `build` without `env` does not get it.
+/// invoking `build` without `env` does not get it. Invoke `env:` values are not
+/// interpolated: the YAML stays literal.
 #[test]
 fn invoke_env_wins_for_that_invoke_only() {
     let tmp = project("#!/usr/bin/env bash\n");
@@ -174,7 +283,7 @@ fn invoke_env_wins_for_that_invoke_only() {
     fs::write(
         decree.join("machines/m.yml"),
         "name: m\ndescription: One script, two states.\ninitial: build_image_text\nstates:\n  \
-         build_image_text:\n    invoke:\n      script: { name: build, env: { METHOD: image_text, STEPS: 30 } }\n    \
+         build_image_text:\n    invoke:\n      script: { name: build, env: { METHOD: image_text, STEPS: 30, RAW: \"${STEPS}$$\" } }\n    \
          transitions: { done: build_plain }\n  \
          build_plain:\n    invoke: build\n    transitions: { done: done }\n  \
          done: { final: true }\n  failed: { final: true }\n",
@@ -182,7 +291,7 @@ fn invoke_env_wins_for_that_invoke_only() {
     .unwrap();
     write_script(
         &decree.join("scripts/build"),
-        "#!/usr/bin/env bash\necho \"$DECREE_STATE METHOD=${METHOD-unset} STEPS=${STEPS-unset}\" >> \"$DECREE_PROJECT_ROOT/out.txt\"\n",
+        "#!/usr/bin/env bash\necho \"$DECREE_STATE METHOD=${METHOD-unset} STEPS=${STEPS-unset} RAW=${RAW-unset}\" >> \"$DECREE_PROJECT_ROOT/out.txt\"\n",
     );
     fs::write(decree.join("env"), "STEPS=10\n").unwrap();
     cargo_bin_cmd!("decree")
@@ -196,12 +305,13 @@ fn invoke_env_wins_for_that_invoke_only() {
         .arg("process")
         .env("STEPS", "20")
         .env_remove("METHOD")
+        .env_remove("RAW")
         .assert()
         .success();
     let out = fs::read_to_string(tmp.path().join("out.txt")).unwrap();
     assert_eq!(
         out,
-        "build_image_text METHOD=image_text STEPS=30\nbuild_plain METHOD=unset STEPS=20\n"
+        "build_image_text METHOD=image_text STEPS=30 RAW=${STEPS}$$\nbuild_plain METHOD=unset STEPS=20 RAW=unset\n"
     );
 }
 

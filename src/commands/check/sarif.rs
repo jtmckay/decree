@@ -120,7 +120,7 @@ pub(crate) const RULES: [(&str, &str); 25] = [
     ),
     (
         "E1",
-        "`.decree/env`, if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`.",
+        "`.decree/env`, if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes, and interpolated unless single-quoted: `${VAR}`, `$VAR`, `${VAR:-default}`, `${VAR-default}`, `$$`); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`.",
     ),
 ];
 
