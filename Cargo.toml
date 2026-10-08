@@ -1,6 +1,6 @@
 [package]
 name = "decree"
-version = "0.5.0-beta.1"
+version = "0.5.0-beta.2"
 edition = "2021"
 description = "Durable state-machine workflows from plain files, for scripts, AI agents and people"
 license = "MIT"
