@@ -861,17 +861,18 @@ machines/m.yml: triage: min_confidence 80 is not between 0 and 1 (V16)
 ",
     },
     Case {
-        rule: "V16",
-        name: "an invoke env with string, int and bool values",
+        rule: "V14",
+        name: "an env_file named .env.<name>",
         files: &[(
             "machines/m.yml",
             "\
 name: m
-description: One script run with its own variables.
+description: One script with its own secrets.
+env_file: .env.comfy
 initial: work
 states:
   work:
-    invoke: { script: { name: work, env: { METHOD: image_text, STEPS: 30, _FAST: true } } }
+    invoke: work
     transitions: { done: done }
   done: { final: true }
   failed: { final: true }
@@ -881,17 +882,18 @@ states:
         expected: PASSES,
     },
     Case {
-        rule: "V16",
-        name: "an invoke env with a reserved key and a bad key",
+        rule: "V14",
+        name: "an env_file that is the committed template",
         files: &[(
             "machines/m.yml",
             "\
 name: m
-description: One script run with its own variables.
+description: One script with its own secrets.
+env_file: .env.example
 initial: work
 states:
   work:
-    invoke: { script: { name: work, env: { DECREE_STATE: x, 1A: y, OK: z } } }
+    invoke: work
     transitions: { done: done }
   done: { final: true }
   failed: { final: true }
@@ -899,8 +901,7 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: work: env: key `1A` does not match `^[A-Za-z_][A-Za-z0-9_]*$` (V16)
-machines/m.yml: work: env: key `DECREE_STATE` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (V16)
+machines/m.yml: line 3: env_file `.env.example` is not `.env.<name>` with <name> matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (and not `.env.example`): a file directly in .decree/ that .gitignore's `.env*` keeps out of git (V14)
 ",
     },
     Case {
@@ -1620,7 +1621,7 @@ cron/c.md: line 1: no `machine` key (M3)
         files: &[
             ("machines/m.yml", BASE),
             (
-                "env",
+                ".env",
                 "# GPU box\n\nexport COMFY_URL=\"http://box:8188\"\nMODEL='sdxl'\nSTEPS=30\n",
             ),
         ],
@@ -1633,17 +1634,17 @@ cron/c.md: line 1: no `machine` key (M3)
         files: &[
             ("machines/m.yml", BASE),
             (
-                "env",
+                ".env",
                 "DECREE_X=1\nnot a pair\nTRACEPARENT=x\n1A=x\nB=\"open\n",
             ),
         ],
         scripts: &[],
         expected: "\
-env: line 1: key `DECREE_X` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (E1)
-env: line 2: `not a pair` is not `KEY=value` (E1)
-env: line 3: key `TRACEPARENT` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (E1)
-env: line 4: key `1A` does not match `^[A-Za-z_][A-Za-z0-9_]*$` (E1)
-env: line 5: the value of `B` opens a \" quote it does not close (E1)
+.env: line 1: key `DECREE_X` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (E1)
+.env: line 2: `not a pair` is not `KEY=value` (E1)
+.env: line 3: key `TRACEPARENT` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree (E1)
+.env: line 4: key `1A` does not match `^[A-Za-z_][A-Za-z0-9_]*$` (E1)
+.env: line 5: the value of `B` opens a \" quote it does not close (E1)
 ",
     },
 ];
@@ -2161,8 +2162,8 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
     (
         "E1",
         "a reserved key, a line that is not a pair, a bad key, an unclosed quote",
-        "env",
-        "`.decree/env` is a dotenv file, not YAML or JSON; no schema covers it",
+        ".env",
+        "`.decree/.env` is a dotenv file, not YAML or JSON; no schema covers it",
     ),
     (
         "M1",

@@ -973,7 +973,7 @@ fn init_creates_lib_and_scripts_see_decree_lib() {
     assert_eq!(out, format!("{}\nhello from lib\n", lib.display()));
 }
 
-/// `decree daemon` reads `.decree/env` again on each pass, so an edit applies without a
+/// `decree daemon` reads `.decree/.env` again on each pass, so an edit applies without a
 /// restart.
 #[test]
 fn daemon_reads_dotenv_again_on_each_pass() {
@@ -986,7 +986,7 @@ fn daemon_reads_dotenv_again_on_each_pass() {
         "greet",
         "#!/usr/bin/env bash\necho \"$DOTENV_RELOAD_VALUE\" >> \"$DECREE_PROJECT_ROOT/out.txt\"\n",
     );
-    let env = p.decree_dir().join("env");
+    let env = p.decree_dir().join(".env");
     fs::write(&env, "DOTENV_RELOAD_VALUE=one\n").unwrap();
     let first = p.emit("hello", "First.\n");
 

@@ -34,7 +34,7 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
     let mut cron_tracker = CronTracker::new();
     // The last message a blocked migration printed, so each block is reported once.
     let mut blocked = None;
-    // The last `.decree/env` error printed, likewise.
+    // The last `.env` error printed, likewise.
     let mut env_error = None;
     let mut result = report(pipeline.recover());
     loop {
@@ -70,7 +70,7 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
     }
 }
 
-/// Read `.decree/env` again before a pass. A malformed file is printed once per change, and
+/// Read the `.env` files again before a pass. A malformed file is printed once per change, and
 /// scripts keep the variables last read until it is fixed.
 fn reload_env(pipeline: &mut Pipeline, env_error: &mut Option<String>) {
     match pipeline.reload_env() {

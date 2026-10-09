@@ -157,18 +157,19 @@ states:
         description: A video that animates the reference image, used as its first frame.
       unsure: failed
   build: { invoke: build, transitions: { done: submit } }
-  build_text:
-    invoke: { script: { name: build, env: { METHOD: image_flux2_text_landscape } } }
-    transitions: { done: submit }
-  build_restyle:
-    invoke: { script: { name: build, env: { METHOD: image_flux2_text_image } } }
-    transitions: { done: submit }
-  build_animate:
-    invoke: { script: { name: build, env: { METHOD: video_i2v_wan2.2_14B_long } } }
-    transitions: { done: submit }
+  build_text: { invoke: build_text, transitions: { done: submit } }
+  build_restyle: { invoke: build_restyle, transitions: { done: submit } }
+  build_animate: { invoke: build_animate, transitions: { done: submit } }
 ```
 
-`gliner_router` is the typed router from [`route-by-complexity`](../route-by-complexity/README.md). `enum` makes `decree check` and `decree emit` reject a method that is not a workflow before anything runs. Every `build_*` state runs the one `build` script, and its invoke's `env` names the method: `build` takes `$METHOD` when it is set, else the `method` param, so no script parses a state's name. Two options per decision keep the classifier's picks clear ([Where GLiNER fits](../../docs/routers.md#where-gliner-fits)), and the `check` states settle what the params already answer before it is asked. `unsure` fails rather than guessing, since a wrong render costs GPU time and still needs a person. This example leaves all of this out on purpose: it is not needed until senders cannot name the method.
+Each `build_*` script names its method and hands over to `build`, as `scripts/comfy/build_text.sh` does:
+
+```sh
+#!/usr/bin/env bash
+METHOD=image_flux2_text_landscape exec "$(dirname "$0")/build.sh"
+```
+
+`gliner_router` is the typed router from [`route-by-complexity`](../route-by-complexity/README.md). `enum` makes `decree check` and `decree emit` reject a method that is not a workflow before anything runs. Every `build_*` state runs a two-line script that names the method and runs the one `build`: `build` takes `$METHOD` when it is set, else the `method` param, so no script parses a state's name. Two options per decision keep the classifier's picks clear ([Where GLiNER fits](../../docs/routers.md#where-gliner-fits)), and the `check` states settle what the params already answer before it is asked. `unsure` fails rather than guessing, since a wrong render costs GPU time and still needs a person. This example leaves all of this out on purpose: it is not needed until senders cannot name the method.
 
 ## The files
 

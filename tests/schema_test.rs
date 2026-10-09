@@ -253,6 +253,11 @@ fn init_writes_no_schema_folder_and_check_does_not_ask_for_one() {
     assert!(!tmp.path().join(".decree/schema").exists());
     let gitignore = fs::read_to_string(tmp.path().join(".decree/.gitignore")).unwrap();
     assert!(gitignore.lines().any(|l| l == "schema/"), "{gitignore}");
+    assert!(gitignore.lines().any(|l| l == ".env*"), "{gitignore}");
+    assert!(
+        gitignore.lines().any(|l| l == "!.env.example"),
+        "{gitignore}"
+    );
     assert_eq!(
         decree(tmp.path(), "check"),
         (0, String::new(), String::new())

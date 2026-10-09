@@ -24,7 +24,7 @@ Usage errors (an unknown command or flag, a missing argument, `--format` where i
 
 Error formats:
 
-- `process` and `daemon` validate every machine (V1–V21) before anything runs. If any fails, they print each error as `decree check` does, then ``N machine error(s); nothing was processed. Run `decree check`.``, and exit 1. They then read `.decree/env` (E1): a malformed line is printed the same way, followed by ``N error(s) in .decree/env; nothing was processed. Run `decree check`.``, and they exit 1. `daemon` reads it again before each pass ([Environment](scripts.md#environment)).
+- `process` and `daemon` validate every machine (V1–V21) before anything runs. If any fails, they print each error as `decree check` does, then ``N machine error(s); nothing was processed. Run `decree check`.``, and exit 1. They then read `.decree/.env` and every machine's `env_file` (E1): a malformed line is printed the same way, followed by ``N error(s) in .decree/.env; nothing was processed. Run `decree check`.`` (naming each file with an error), and they exit 1. `daemon` reads them again before each pass ([Environment](scripts.md#environment)).
 - An invalid pending migration stops them the same way: `N migration(s) are invalid; nothing was processed.` ([Migrations](messages.md#migrations-ordered-run-once-stop-on-error), rule 6).
 - A waiting run is printed as:
 

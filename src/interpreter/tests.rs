@@ -118,7 +118,7 @@ impl Project {
             project_root: self.root(),
             machines: &self.machines,
             shutdown: Arc::clone(&self.shutdown),
-            env: Vec::new(),
+            env: Default::default(),
         }
     }
 

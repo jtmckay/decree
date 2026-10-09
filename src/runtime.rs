@@ -153,7 +153,8 @@ pub struct RunInfo {
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
     /// where the reply must go (docs/reference/runs.md, Model).
     pub router: Option<RouterFiles>,
-    /// From `.decree/env`, without the variables set in decree's own environment.
+    /// From `.decree/.env`, without the variables decree's own environment sets, then from
+    /// the machine's `env_file`, which wins over that environment.
     pub env: Vec<(String, String)>,
 }
 
@@ -191,9 +192,6 @@ pub struct ScriptRun<'a> {
     /// A script invoke, whose event decree reads: it gets a fresh `.event` file as
     /// `DECREE_EVENT_FILE`. Other scripts get an empty `DECREE_EVENT_FILE`.
     pub names_event: bool,
-    /// The invoke's `env`, which wins over `.decree/env` and the process environment.
-    /// Empty for `onentry` and `onexit` scripts.
-    pub env: Option<&'a BTreeMap<String, String>>,
 }
 
 impl<'a> ScriptRun<'a> {
@@ -214,7 +212,6 @@ impl<'a> ScriptRun<'a> {
             choices: Path::new(""),
             timeout: None,
             names_event: false,
-            env: None,
         }
     }
 }
@@ -369,7 +366,6 @@ impl Executor {
                 events: &events,
                 timeout: script.timeout,
                 names_event: true,
-                env: Some(&script.env),
                 ..ScriptRun::new(&script.name, &node.id, Phase::Invoke)
             })?;
             if execution.succeeded() || attempt >= attempt_count {
@@ -658,13 +654,11 @@ impl Executor {
         if let Some(tracestate) = self.events.tracestate() {
             vars.push((TRACESTATE_ENV.to_string(), tracestate.into()));
         }
-        // Later entries win: `.decree/env` (only what decree's own environment does not
-        // set), the invoke's `env`, then decree's own variables.
+        // Later entries win, and all win over the inherited environment: the `.env` files,
+        // then decree's own variables.
         let mut all: Vec<(String, std::ffi::OsString)> = info
             .env
             .iter()
-            .map(|(name, value)| (name, value))
-            .chain(run.env.into_iter().flatten())
             .map(|(name, value)| (name.clone(), value.into()))
             .collect();
         all.extend(vars);
@@ -1446,15 +1440,11 @@ pub(crate) mod executor_tests {
         );
     }
 
-    /// An invoke's `env` wins over `.decree/env` for that invoke only; `DECREE_*` stays
-    /// decree's.
+    /// The run's `.env` variables reach every script; `DECREE_*` stays decree's.
     #[test]
-    fn invoke_env_wins_over_the_dotenv_file_for_that_invoke_only() {
+    fn the_runs_env_variables_reach_every_script() {
         let p = Project::new(&["print_vars"]);
-        let m = machine(
-            "{ invoke: { script: { name: print_vars, env: { METHOD: image_text, STEPS: 30 } } }, \
-             transitions: { done: done } }",
-        );
+        let m = machine("{ invoke: print_vars, transitions: { done: done } }");
         let mut exec = Executor::open(
             RunInfo {
                 env: vec![
@@ -1469,8 +1459,7 @@ pub(crate) mod executor_tests {
         let out = exec
             .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 1)
             .unwrap();
-        let log = p.log(&out.execution.log);
-        assert_eq!(log, "METHOD=image_text OTHER=kept STEPS=30\n");
+        assert_eq!(p.log(&out.execution.log), "METHOD=file OTHER=kept STEPS=\n");
         let out = exec
             .run_script(&ScriptRun::new("print_vars", "s", Phase::OnEntry))
             .unwrap();

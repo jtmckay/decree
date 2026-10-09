@@ -38,9 +38,9 @@ A script inherits decree's environment, with every inherited `DECREE_*` variable
 A variable can come from four places. When two set the same name, the first in this list wins:
 
 1. decree's own variables: the table below.
-2. The script invoke's `env` ([Invoke](machines.md#invoke-the-states-function)), for that invoke only.
+2. The machine's `env_file`, for that machine's scripts only ([`.env` files](#env-files)).
 3. The process environment decree was started with.
-4. `.decree/env` ([Project variables](#project-variables-decreeenv)).
+4. `.decree/.env` ([`.env` files](#env-files)).
 
 | Variable | Value |
 | --- | --- |
@@ -77,20 +77,27 @@ A variable can come from four places. When two set the same name, the first in t
 
 `TRACEPARENT` and `TRACESTATE` follow OpenTelemetry's environment variable carrier (the `traceparent` and `tracestate` keys of W3C Trace Context, uppercased), so an OpenTelemetry SDK in the script, or a tool that reads them, makes its own spans children of the script's span, and `decree emit` puts them in the message it queues ([Traces](observability.md#traces)).
 
-### Project variables: `.decree/env`
+### `.env` files
 
-`.decree/env` holds the project's configuration (a service URL, a model name), so no script sources a file of its own and a Python script reads `os.environ` like any other variable. It is optional; when it exists, every script gets its variables. It is a dotenv file, read as Docker Compose's `env_file` and systemd's `EnvironmentFile` read one:
+Variables for scripts live in dotenv files in `.decree/`, never committed: `decree init`'s `.decree/.gitignore` lists `.env*`, and `!.env.example`, the one that is committed. They hold secrets and local settings (an API key, a service URL, a model name), so a Python script reads `os.environ` like any other variable and no script sources a file of its own.
+
+- **`.decree/.env`**: every script gets its variables. The process environment wins over it, as with Docker Compose's `.env`, so a deployment can override it (`COMFY_URL=http://other:8188 decree daemon`).
+- **A machine's `env_file`**, the root key `env_file: .env.comfy` ([Keys](machines.md#keys)), as a Compose service's `env_file`: that machine's scripts get its variables too, over `.decree/.env` and over the process environment. The name is `.env.<name>`, a file directly in `.decree/`, so `.env*` keeps it out of git (V14). Only that machine's scripts get them: a child machine it invokes, its router, and a message it emits run with their own machine's file, not this one's. A missing file is a `decree check` warning, and the machine's scripts run without it.
+- **`.decree/.env.example`**: the committed template. decree never reads it; a README tells people to copy it to `.env` and fill it in.
 
 ```bash
-# ComfyUI on the GPU box
+# .decree/.env: every machine
+OLLAMA_URL=http://box:11434
+# .decree/.env.comfy: only machines with `env_file: .env.comfy`
 COMFY_URL="http://box:8188"
-export COMFY_MODEL=sdxl
-STEPS=30
+export COMFY_TOKEN=s3cret
 ```
+
+They are dotenv files, read as Docker Compose's `env_file` and systemd's `EnvironmentFile` read one:
 
 - One `KEY=value` per line. Blank lines and lines starting with `#` are ignored. `export ` before a key is allowed.
 - A value wrapped in single or double quotes loses them. No escapes, no inline comments, no multi-line values.
-- **Interpolation**, as Compose's `env_file` does it ([Variable interpolation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/)), the subset: `${VAR}` and `$VAR` are the value of `VAR`; `${VAR:-default}` is `default` when `VAR` is unset or empty, `${VAR-default}` only when it is unset (a default is interpolated in turn); `$$` is a literal `$`, and a `$` that starts none of these stays a `$`. A single-quoted value is literal. `VAR` is looked up in decree's process environment first, then in the lines above, as their effective values (the process environment winning for their keys too). An unknown variable is empty, as in Compose, and `decree check` warns about each (`env: line 4: `${HOST}` is not set`). An unterminated `${` or a form outside the subset (`${VAR:?error}`, `${VAR:+x}`) is an E1 error. Invoke `env` values are not interpolated: the YAML stays literal.
+- **Interpolation**, as Compose's `env_file` does it ([Variable interpolation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/)), the subset: `${VAR}` and `$VAR` are the value of `VAR`; `${VAR:-default}` is `default` when `VAR` is unset or empty, `${VAR-default}` only when it is unset (a default is interpolated in turn); `$$` is a literal `$`, and a `$` that starts none of these stays a `$`. A single-quoted value is literal. In `.decree/.env`, `VAR` is looked up in decree's process environment first, then in the lines above, as their effective values (the process environment winning for their keys too). In a machine's `env_file`, it is looked up in the lines above first, then as the machine's scripts would see it without the file: the process environment, then `.decree/.env`. An unknown variable is empty, as in Compose, and `decree check` warns about each (``.env: line 4: `${HOST}` is not set``). An unterminated `${` or a form outside the subset (`${VAR:?error}`, `${VAR:+x}`) is an E1 error.
 
   ```sh
   HOST=192.168.1.20
@@ -98,29 +105,20 @@ STEPS=30
   COMFY_URL=http://${HOST}:8188
   ```
 
-  `HOST=192.168.1.30 decree daemon` moves both URLs.
+  `HOST=192.168.1.30 decree daemon` moves both URLs of `.decree/.env`.
 - Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors. A later line wins over an earlier one with the same key.
-- **The process environment wins:** a variable already set when decree starts keeps its value, as with Docker Compose, so a deployment can override the file (`COMFY_URL=http://other:8188 decree daemon`).
-- `process` reads it once at start, `daemon` at start and again before each pass, so an edit applies without a restart. A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and a `daemon` that finds one later prints it and keeps the variables it read last.
+- `process` reads them once at start, `daemon` at start and again before each pass, so an edit applies without a restart. A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and a `daemon` that finds one later prints it and keeps the variables it read last. Commands that run no scripts read none of them, since decree reads no setting of its own from them ([No configuration file](README.md#no-configuration-file)).
+- `decree check` warns when one of them exists and `.decree/.gitignore` has no `.env*` line.
 
-The file is meant to be committed. Secrets do not belong in it: put them in the process environment, or in a file the service manager loads (systemd's `EnvironmentFile=`, a Compose `env_file` that is not committed).
+### One script, several states
 
-### One script, several states: invoke `env`
+To run one script with a different value in each state, give each state a two-line script that sets the value and runs the shared one, rather than having the script parse its state name:
 
-A script invoke's `env` gives that invoke its own variables, so several states can run one script with different values instead of the script parsing its state name:
-
-```yaml
-build_image_text:
-  invoke:
-    script: { name: build, env: { METHOD: image_text } }
-  transitions: { done: done }
-build_image_image:
-  invoke:
-    script: { name: build, env: { METHOD: image_image } }
-  transitions: { done: done }
+```bash
+#!/usr/bin/env bash
+# scripts/build_image_text.sh
+METHOD=image_text exec "$(dirname "$0")/build.sh"
 ```
-
-Keys follow the rules of `.decree/env`; values are strings, ints or bools, passed as strings (V16). They win over the process environment and `.decree/env` for that invoke only: its `onentry` and `onexit` scripts, and other states running the same script, do not see them.
 
 ## Shared code
 

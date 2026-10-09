@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::{
-    event_matches, is_attempt_value, is_event_name, is_ident, is_reserved_event, is_store_name,
-    Attempts, DataType, Edge, Invoke, LoadedMachine, MachineInvoke, FAILED, ROUTER_MACHINE,
+    event_matches, is_attempt_value, is_env_file_name, is_event_name, is_ident, is_reserved_event,
+    is_store_name, Attempts, DataType, Edge, Invoke, LoadedMachine, MachineInvoke, FAILED,
+    ROUTER_MACHINE,
 };
 use crate::cond::{Condition, Operand, Subject, Test};
 use crate::runtime::resolve::resolve_script;
@@ -126,6 +127,7 @@ impl LoadedMachine {
         v.v13_emits();
         v.v14_data();
         v.v14_store();
+        v.v14_env_file();
         v.v15_done_state();
         v.v16_invokes();
         v.v17_internal();
@@ -770,6 +772,21 @@ impl Validator<'_> {
         }
     }
 
+    /// V14 for `env_file`: a `.env.<name>` file directly in `.decree/`, so `.decree/.gitignore`
+    /// keeps it out of git.
+    fn v14_env_file(&mut self) {
+        if let Some(file) = &self.m.env_file {
+            if !is_env_file_name(file) {
+                self.push(
+                    self.root_line("env_file"),
+                    format!(
+                        "env_file `{file}` is not `.env.<name>` with <name> matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (and not `.env.example`): a file directly in .decree/ that .gitignore's `.env*` keeps out of git (V14)"
+                    ),
+                );
+            }
+        }
+    }
+
     fn v15_done_state(&mut self) {
         for i in self.states() {
             let node = &self.m.nodes[i];
@@ -792,11 +809,6 @@ impl Validator<'_> {
                     if let Some(attempts) = &script.attempts {
                         for message in attempts_problems(attempts) {
                             self.push(at.clone(), message);
-                        }
-                    }
-                    for key in script.env.keys() {
-                        if let Some(message) = crate::dotenv::key_error(key) {
-                            self.push(at.clone(), format!("env: {message} (V16)"));
                         }
                     }
                 }

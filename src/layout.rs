@@ -14,8 +14,12 @@ pub const GITIGNORE_FILE: &str = ".gitignore";
 /// (docs/reference/scripts.md, Shared code).
 pub const LIB_DIR: &str = "lib";
 
-/// The project's dotenv file, `.decree/env` (docs/reference/scripts.md, Environment).
-pub const ENV_FILE: &str = "env";
+/// The dotenv file every script gets, `.decree/.env` (docs/reference/scripts.md,
+/// Environment). Never committed, as no `.env*` file but `ENV_EXAMPLE_FILE` is.
+pub const ENV_FILE: &str = ".env";
+
+/// The committed template of the `.env*` files, which decree never reads.
+pub const ENV_EXAMPLE_FILE: &str = ".env.example";
 
 /// The claimed message, in the run directory (docs/reference/README.md).
 pub const MESSAGE_FILE: &str = "message.md";

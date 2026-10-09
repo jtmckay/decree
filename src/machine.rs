@@ -33,6 +33,7 @@ struct Machine {
     pub data: BTreeMap<String, DataSpec>,
     #[serde(default)]
     pub store: BTreeMap<String, String>,
+    pub env_file: Option<String>,
     #[serde(default)]
     pub onentry: Vec<String>,
     #[serde(default)]
@@ -100,7 +101,7 @@ pub enum Invoke {
     Machine(MachineInvoke),
 }
 
-/// `{ script: { name, attempts?, timeout?, env? } }`, or `{ script: <name> }`.
+/// `{ script: { name, attempts?, timeout? } }`, or `{ script: <name> }`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScriptInvoke {
@@ -109,39 +110,6 @@ pub struct ScriptInvoke {
     /// A duration (`crate::duration`).
     #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
     pub timeout: Option<Duration>,
-    /// Variables for this invoke only, over `.decree/env` and the process environment
-    /// (docs/reference/scripts.md, Environment). V16 checks the keys.
-    #[serde(default, deserialize_with = "deserialize_invoke_env")]
-    pub env: BTreeMap<String, String>,
-}
-
-/// An invoke's `env`: a map of keys to strings, ints or bools, each kept as a string.
-fn deserialize_invoke_env<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<BTreeMap<String, String>, D::Error> {
-    const SHAPE: &str = "`env` is a map of variable names to strings, ints or bools";
-    let map = match serde_norway::Value::deserialize(deserializer)? {
-        serde_norway::Value::Mapping(map) => map,
-        _ => return Err(D::Error::custom(SHAPE)),
-    };
-    map.into_iter()
-        .map(|(key, value)| {
-            let Some(key) = key.as_str().map(String::from) else {
-                return Err(D::Error::custom(format!("{SHAPE}: each key is a string")));
-            };
-            let text = match value {
-                serde_norway::Value::String(s) => s,
-                serde_norway::Value::Bool(b) => b.to_string(),
-                serde_norway::Value::Number(n) if n.is_i64() || n.is_u64() => n.to_string(),
-                _ => {
-                    return Err(D::Error::custom(format!(
-                        "{SHAPE}: `{key}` is not a string, int or bool"
-                    )))
-                }
-            };
-            Ok((key, text))
-        })
-        .collect()
 }
 
 /// A script invoke's `attempts` (docs/reference/machines.md, Two kinds of retry): how many
@@ -283,7 +251,6 @@ impl<'de> Deserialize<'de> for Invoke {
                     name,
                     attempts: None,
                     timeout: None,
-                    env: BTreeMap::new(),
                 }))
             }
             serde_norway::Value::Mapping(map) if map.len() == 1 => map,
@@ -456,6 +423,9 @@ pub struct LoadedMachine {
     /// What the machine keeps in `.decree/store/<machine>/` between runs: name to description
     /// (docs/reference/machines.md, Store).
     pub store: BTreeMap<String, String>,
+    /// A dotenv file in `.decree/` whose variables this machine's scripts get, over decree's
+    /// own environment (docs/reference/scripts.md, Environment). V14 checks the name.
+    pub env_file: Option<String>,
     pub nodes: Vec<Node>,
 }
 
@@ -512,6 +482,7 @@ fn flatten(id: &str, machine: Machine) -> LoadedMachine {
         id: id.to_string(),
         data: machine.data,
         store: machine.store,
+        env_file: machine.env_file,
         nodes,
     }
 }
@@ -887,6 +858,14 @@ pub(crate) fn is_ident(s: &str) -> bool {
     let mut bytes = s.bytes();
     bytes.next().is_some_and(|b| b.is_ascii_lowercase())
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// `^\.env\.[A-Za-z0-9][A-Za-z0-9._-]*$` but not `.env.example`, the pattern for an
+/// `env_file` (docs/reference/scripts.md, Environment): a `.env*` file directly in `.decree/`,
+/// which `.decree/.gitignore` keeps out of git, other than the base `.env` and the committed
+/// template.
+pub(crate) fn is_env_file_name(s: &str) -> bool {
+    s != crate::layout::ENV_EXAMPLE_FILE && s.strip_prefix(".env.").is_some_and(is_store_name)
 }
 
 /// `^[A-Za-z0-9][A-Za-z0-9._-]*$`, the pattern for a `store` name: a file or folder directly

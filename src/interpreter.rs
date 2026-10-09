@@ -123,9 +123,9 @@ pub struct Context<'a> {
     pub machines: &'a BTreeMap<String, LoadedMachine>,
     /// Set on SIGINT or SIGTERM; stops the running script (docs/reference/messages.md, Stopping).
     pub shutdown: Arc<AtomicBool>,
-    /// The `.decree/env` variables every script gets, without those set in decree's own
-    /// environment (docs/reference/scripts.md, Environment).
-    pub env: Vec<(String, String)>,
+    /// The variables scripts get from the `.env` files (docs/reference/scripts.md,
+    /// Environment).
+    pub env: crate::dotenv::ProjectEnv,
 }
 
 /// How a call to the step loop ended.
@@ -747,7 +747,7 @@ impl Context<'_> {
             root_run_dir: self.runs_dir().join(self.root_run(run_id, parent)?),
             parent: parent.map(String::from),
             router,
-            env: self.env.clone(),
+            env: self.env.for_machine(&m.id),
         };
         Ok(Executor::open(info, Arc::clone(&self.shutdown))?)
     }

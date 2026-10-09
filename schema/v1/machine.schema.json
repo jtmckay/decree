@@ -22,6 +22,13 @@
       "additionalProperties": { "$ref": "#/$defs/dataSpec" },
       "examples": [{ "max_rounds": { "type": "int", "default": 2 } }]
     },
+    "env_file": {
+      "type": "string",
+      "description": "Extension, as Docker Compose's `env_file`: a dotenv file directly in .decree/ whose variables this machine's scripts get, over .decree/.env and over decree's own environment (V14). It is named `.env.<name>`, so .decree/.gitignore's `.env*` keeps it out of git; `.env.example` is the committed template and never read. A child machine this one invokes gets its own `env_file`, not this one's. `decree check` warns when the file is missing.",
+      "pattern": "^\\.env\\.[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "not": { "const": ".env.example" },
+      "examples": [".env.comfy"]
+    },
     "store": {
       "type": "object",
       "description": "Extension: what the machine keeps between runs, in .decree/store/<machine>/ (DECREE_STORE). A map of names to descriptions: each name is a file or folder directly in the store folder, matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (no `/`), and each description says what it is and which states read or write it (V14). `decree check` warns about anything in the store folder that is not declared. Outputs for people go wherever the user wants, not here.",
@@ -334,16 +341,6 @@
             "timeout": {
               "$ref": "#/$defs/duration",
               "description": "How long each attempt may run before decree stops it; a timed-out attempt fails. A duration (V16). Default: no limit."
-            },
-            "env": {
-              "type": "object",
-              "description": "Variables for this invoke only, passed as strings. They win over `.decree/env` and the process environment; decree's own `DECREE_*` variables win over them. Lets several states run one script with different values (V16).",
-              "propertyNames": {
-                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                "not": { "pattern": "^(DECREE_|TRACEPARENT$|TRACESTATE$)" }
-              },
-              "additionalProperties": { "type": ["string", "integer", "boolean"] },
-              "examples": [{ "METHOD": "image_text" }]
             }
           }
         }
@@ -351,7 +348,6 @@
       "examples": [
         "implement",
         { "name": "implement", "attempts": 2, "timeout": "1h" },
-        { "name": "build", "env": { "METHOD": "image_text" } },
         { "name": "implement", "attempts": ["local", "local", "claude", "local"], "timeout": "3h" }
       ]
     },

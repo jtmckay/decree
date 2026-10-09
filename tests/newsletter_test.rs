@@ -104,6 +104,12 @@ impl Project {
         copy_dir(&example().join(".decree"), &p.root().join(".decree"));
         // The example commits a sample store to show what it holds; a new project starts empty.
         fs::remove_dir_all(p.root().join(".decree/store")).unwrap();
+        // As the README says: copy the template to the `.env` decree reads.
+        fs::copy(
+            p.root().join(".decree/.env.example"),
+            p.root().join(".decree/.env"),
+        )
+        .unwrap();
         let list: String = feeds.iter().map(|f| fixture(f) + "\n").collect();
         fs::write(
             p.root().join(".decree/lib/newsletter/feeds.txt"),

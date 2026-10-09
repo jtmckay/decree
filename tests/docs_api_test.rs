@@ -1267,7 +1267,8 @@ fn the_skill_writes_the_simplest_machine_first() {
     );
 }
 
-/// Rules learned running decree 0.5 (migration 97): shared files in `lib/`, config in `env`,
+/// Rules learned running decree 0.5 (migration 97): shared files in `lib/`, variables in the
+/// gitignored `.env` files (D57),
 /// run folders kept, and waiting prep invoked with a timeout.
 #[test]
 fn the_skill_has_the_lib_env_runs_and_timeout_rules() {
@@ -1275,7 +1276,7 @@ fn the_skill_has_the_lib_env_runs_and_timeout_rules() {
     let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
     for rule in [
         "Shared code, config and data go in `.decree/lib/`** (`$DECREE_LIB`); `scripts/` holds only what states invoke.",
-        "Project config goes in `.decree/env`; per-state values in the invoke's `env:`.",
+        "Variables and secrets go in `.decree/.env` (every script) or a machine's `env_file: .env.<name>` (that machine's scripts only); both are gitignored,",
         "Never delete run folders to clean up**; they are the record. Use `decree prune --older-than <age>`.",
         "A step that waits for a shared resource is an invoked state with a `timeout`**",
     ] {

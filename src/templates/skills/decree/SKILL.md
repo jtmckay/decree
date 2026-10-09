@@ -80,8 +80,9 @@ appear only where a machine invokes `model` or `person`.
   `message`.
 - **Scripts must be safe to re-run**: `decree process --retry` re-runs a step that was interrupted.
 - **Shared code, config and data go in `.decree/lib/`** (`$DECREE_LIB`); `scripts/` holds only
-  what states invoke. Project config goes in `.decree/env`; per-state values in the invoke's
-  `env:`.
+  what states invoke. Variables and secrets go in `.decree/.env` (every script) or a machine's
+  `env_file: .env.<name>` (that machine's scripts only); both are gitignored, and
+  `.decree/.env.example` is the committed template.
 - **What a machine keeps between runs goes in `$DECREE_STORE`** (`.decree/store/<machine>/`)
   and is declared under the machine's `store:`, with what it is and which states read or write
   it. A run's own files go in `$DECREE_RUN_DIR`; shared code and config in `$DECREE_LIB`.

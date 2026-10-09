@@ -276,24 +276,26 @@ fn an_image_method_uploads_input_image() {
     assert_eq!(fs::read(p.root().join("art/fox.png")).unwrap(), PNG);
 }
 
-/// The invoke's `env: { METHOD: … }` names the method, as in the README's "When messages stop
-/// naming a method": `build` reads it before the `method` param, from `$DECREE_LIB/comfy/`.
+/// A `build_*` script names the method and runs `build`, as in the README's "When messages
+/// stop naming a method": `build` reads `$METHOD` before the `method` param, from
+/// `$DECREE_LIB/comfy/`.
 #[test]
-fn an_invoke_env_method_is_built_from_lib() {
+fn a_wrapper_script_names_the_method_built_from_lib() {
     let p = Project::new(0, "success");
+    let scripts = p.root().join(".decree/scripts/comfy");
+    write_script(
+        &scripts.join("build_text.sh"),
+        "#!/usr/bin/env bash\nMETHOD=image_flux2_text_landscape exec \"$(dirname \"$0\")/build.sh\"\n",
+    );
     let machine = p.root().join(".decree/machines/comfy.yml");
     let text = fs::read_to_string(&machine).unwrap();
-    let text = text.replacen(
-        "    invoke: build\n",
-        "    invoke: { script: { name: build, env: { METHOD: image_flux2_text_landscape } } }\n",
-        1,
-    );
-    assert!(text.contains("METHOD: image_flux2_text_landscape"));
+    let text = text.replacen("    invoke: build\n", "    invoke: build_text\n", 1);
+    assert!(text.contains("invoke: build_text"));
     fs::write(&machine, text).unwrap();
     p.process(&["output=art/fox"], "A red fox in the snow", 0);
     assert_eq!(p.final_state(), "done");
     assert!(p
-        .log("build")
+        .log("build_text")
         .contains("=== image_flux2_text_landscape ==="));
     assert_eq!(
         p.submitted()["6"]["inputs"]["text"],

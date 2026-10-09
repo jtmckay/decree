@@ -138,7 +138,7 @@ impl<'a> Pipeline<'a> {
         }
         validate_migrations(project)?;
         let mut ctx = context(project_root, project, shutdown);
-        ctx.env = check::load_env(&project.decree_dir)?;
+        ctx.env = check::load_env(project)?;
         Ok(Pipeline {
             ctx,
             project,
@@ -148,10 +148,10 @@ impl<'a> Pipeline<'a> {
         })
     }
 
-    /// Read `.decree/env` again, so edits apply without a restart (each `daemon` pass). On
-    /// an error, scripts keep the variables last read.
+    /// Read the `.env` files again, so edits apply without a restart (each `daemon` pass).
+    /// On an error, scripts keep the variables last read.
     pub(crate) fn reload_env(&mut self) -> Result<(), DecreeError> {
-        self.ctx.env = check::load_env(&self.project.decree_dir)?;
+        self.ctx.env = check::load_env(self.project)?;
         Ok(())
     }
 
@@ -334,7 +334,7 @@ pub(crate) fn context<'a>(
         project_root: project_root.to_path_buf(),
         machines: &project.machines,
         shutdown,
-        env: Vec::new(),
+        env: Default::default(),
     }
 }
 

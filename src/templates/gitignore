@@ -2,3 +2,5 @@ inbox/
 runs/
 store/
 schema/
+.env*
+!.env.example

@@ -122,17 +122,25 @@ reads none of them; the built-in `develop` machine's scripts follow this convent
 | `DECREE_DATA_<NAME>` | Each `data` value: the message's `params`, else the default. |
 | `TRACEPARENT`, `TRACESTATE` | W3C Trace Context: the run's trace and this script's span (`00-<trace id>-<span id>-01`), and the message's `tracestate` if it had one. OpenTelemetry SDKs read them, so the script's own spans join the run's trace; `decree emit` copies them into the new message. |
 
-Project variables (a service URL, a model name) go in `.decree/env`, a committed dotenv file
-every script gets: `KEY=value` per line, `#` comments, optional `export ` and quotes. Values
-are interpolated as Compose's `env_file` does: `${VAR}`, `$VAR`, `${VAR:-default}`,
-`${VAR-default}`, `$$` for a `$`; single-quoted values stay literal. `VAR` comes from the
-process environment, then the lines above; an unknown one is empty and `decree check` warns.
-Write a shared host once: `HOST=box` then `COMFY_URL=http://${HOST}:8188`. Invoke `env`
-values are not interpolated. Never source it by hand. No secrets in it: they go in the process environment. One
-script run by several states with different values gets them from the invoke's `env`:
-`script: { name: build, env: { METHOD: image_text } }`. When two set a name, the first wins:
-decree's own `DECREE_*`, the invoke's `env`, the process environment, `.decree/env`.
-`DECREE_*`, `TRACEPARENT` and `TRACESTATE` cannot be set in either.
+Variables and secrets (an API key, a service URL, a model name) go in dotenv files in
+`.decree/`, which `.decree/.gitignore` keeps out of git with `.env*`:
+
+- `.decree/.env`: every script gets it. The process environment wins over it.
+- A machine's `env_file: .env.<name>`: that machine's scripts get it, over `.decree/.env` and
+  the process environment. A child machine, router or emitted message runs with its own
+  machine's file, never this one's.
+- `.decree/.env.example`: the committed template; decree never reads it.
+
+Format: `KEY=value` per line, `#` comments, optional `export ` and quotes. Values are
+interpolated as Compose's `env_file` does: `${VAR}`, `$VAR`, `${VAR:-default}`,
+`${VAR-default}`, `$$` for a `$`; single-quoted values stay literal. Write a shared host once:
+`HOST=box` then `COMFY_URL=http://${HOST}:8188`. An unknown variable is empty and
+`decree check` warns. Never source them by hand. `DECREE_*`, `TRACEPARENT` and `TRACESTATE`
+cannot be set in them. When two set a name, the first wins: decree's own `DECREE_*`, the
+machine's `env_file`, the process environment, `.decree/.env`.
+
+One script run by several states with different values: give each state a two-line script,
+`METHOD=image_text exec "$(dirname "$0")/build.sh"`, rather than parsing the state name.
 
 ## An ask script
 

@@ -3,3 +3,5 @@
 inbox/
 runs/
 schema/
+.env*
+!.env.example

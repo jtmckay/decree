@@ -196,6 +196,13 @@ fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded
             gitignore.lines().any(|l| l == "schema/"),
             "{name}: .gitignore does not list schema/"
         );
+        // Secrets stay out of git; only the template is committed.
+        for line in [".env*", "!.env.example"] {
+            assert!(
+                gitignore.lines().any(|l| l == line),
+                "{name}: .gitignore does not list {line}"
+            );
+        }
         for gone in ["routines", "outbox"] {
             assert!(!decree.join(gone).exists(), "{name}: .decree/{gone} exists");
         }

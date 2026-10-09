@@ -1,1 +1,3 @@
 schema/
+.env*
+!.env.example

@@ -1,10 +1,10 @@
-//! `decree check`: validate machines (V1–V21), pending messages (M1–M3) and `.decree/env`
-//! (E1) before anything
-//! runs (docs/reference/machines.md, Validation). Prints one line per error:
+//! `decree check`: validate machines (V1–V21), pending messages (M1–M3) and the `.env`
+//! files (E1) before anything runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
 //! `.decree/schema/`, when it exists, from what `decree schema` would write, when `.decree/store/` holds
-//! what no machine's `store:` declares, and when `.decree/env` uses a variable that is not set.
+//! what no machine's `store:` declares, when an `.env` file uses a variable that is not set,
+//! when a machine's `env_file` is missing, and when `.decree/.gitignore` does not list `.env*`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -24,8 +24,9 @@ use crate::message::{validate, Message};
 mod sarif;
 
 pub fn run(project_root: &Path, format: CheckFormat) -> Result<(), DecreeError> {
-    let problems = check(project_root)?;
-    let warnings = warnings(project_root)?;
+    let project = Project::load(project_root)?;
+    let problems = check(&project)?;
+    let warnings = warnings(project_root, &project)?;
     match format {
         CheckFormat::Text => {
             for problem in &problems {
@@ -124,7 +125,7 @@ fn split_rule(message: &str) -> (String, Option<String>) {
 
 /// A file in `.decree/graph/` or `.decree/schema/` that differs from what `decree graph`
 /// or `decree schema` would write, one in `.decree/store/` that no machine declares, or a
-/// variable `.decree/env` uses that is not set.
+/// problem with an `.env` file that does not stop it being read.
 /// `decree check` warns about it without failing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckWarning {
@@ -139,8 +140,8 @@ impl std::fmt::Display for CheckWarning {
     }
 }
 
-/// Every warning: stale graphs, then stale schemas, then the store, then `.decree/env`.
-fn warnings(project_root: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
+/// Every warning: stale graphs, then stale schemas, then the store, then the `.env` files.
+fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
     let mut out = Vec::new();
     // A machine that fails to load cannot be drawn; its error is reported as an error.
     if let Ok(stale) = graph::stale_files(project_root) {
@@ -158,25 +159,8 @@ fn warnings(project_root: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
             }),
     );
     out.extend(store_warnings(&project_root.join(DECREE_DIR))?);
-    out.extend(env_warnings(&project_root.join(DECREE_DIR))?);
+    out.extend(resolve_env(project)?.1);
     Ok(out)
-}
-
-/// Each variable `.decree/env` references without a default that is set neither in
-/// decree's own environment nor on a line above: it reads as empty, as in Compose. A
-/// malformed file is reported as an error instead.
-fn env_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
-    let Ok(entries) = dotenv::read(decree_dir)? else {
-        return Ok(Vec::new());
-    };
-    Ok(dotenv::resolve(&entries, dotenv::process_var)
-        .unset
-        .into_iter()
-        .map(|(line, name)| CheckWarning {
-            file: layout::ENV_FILE.to_string(),
-            message: format!("line {line}: `${{{name}}}` is not set"),
-        })
-        .collect())
 }
 
 /// What `.decree/store/` holds that no machine declares (docs/reference/machines.md, Store):
@@ -249,9 +233,8 @@ fn json_document(problems: &[CheckError], warnings: &[CheckWarning]) -> serde_js
 }
 
 /// Every error `decree check` reports, in order: machines by id, then pending migrations,
-/// `inbox/` and `cron/`, each by filename, then `.decree/env` by line.
-fn check(project_root: &Path) -> Result<Vec<CheckError>, DecreeError> {
-    let project = Project::load(project_root)?;
+/// `inbox/` and `cron/`, each by filename, then the `.env` files by line.
+fn check(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
     let mut problems = project.problems.clone();
     let decree_dir = &project.decree_dir;
     for name in project.pending_migrations()? {
@@ -263,43 +246,154 @@ fn check(project_root: &Path) -> Result<Vec<CheckError>, DecreeError> {
     for name in md_files(&decree_dir.join(layout::CRON_DIR))? {
         project.check_file(layout::CRON_DIR, &name, "M3", true, &mut problems)?;
     }
-    problems.extend(env_problems(decree_dir)?);
+    problems.extend(env_problems(project)?);
     Ok(problems)
 }
 
-/// E1: every malformed line of `.decree/env`, none if it is valid or missing.
-fn env_problems(decree_dir: &Path) -> Result<Vec<CheckError>, DecreeError> {
-    Ok(match dotenv::read(decree_dir)? {
-        Ok(_) => Vec::new(),
-        Err(errors) => errors
-            .into_iter()
-            .map(|(line, message)| CheckError {
+/// Each machine `env_file` with a valid name (V14), to the machines that name it.
+fn machine_env_files(project: &Project) -> BTreeMap<&str, Vec<&str>> {
+    let mut out: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (id, m) in &project.machines {
+        if let Some(file) = m
+            .env_file
+            .as_deref()
+            .filter(|f| machine::is_env_file_name(f))
+        {
+            out.entry(file).or_default().push(id);
+        }
+    }
+    out
+}
+
+/// Every `.env` file decree reads that exists, parsed: `.env`, then the machines' files by
+/// name.
+fn env_files(project: &Project) -> Result<Vec<(String, ParsedEnv)>, DecreeError> {
+    let mut out = Vec::new();
+    for file in std::iter::once(layout::ENV_FILE).chain(machine_env_files(project).into_keys()) {
+        if let Some(parsed) = dotenv::read(&project.decree_dir.join(file))? {
+            out.push((file.to_string(), parsed));
+        }
+    }
+    Ok(out)
+}
+
+type ParsedEnv = Result<Vec<dotenv::Entry>, dotenv::LineErrors>;
+
+/// E1: every malformed line of every `.env` file decree reads, none if they are valid or
+/// missing.
+fn env_problems(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
+    let mut out = Vec::new();
+    for (file, parsed) in env_files(project)? {
+        for (line, message) in parsed.err().unwrap_or_default() {
+            out.push(CheckError {
                 rule: Some("E1".to_string()),
-                file: layout::ENV_FILE.to_string(),
+                file: file.clone(),
                 line: Some(line),
                 state: None,
                 message,
-            })
-            .collect(),
-    })
+            });
+        }
+    }
+    Ok(out)
 }
 
-/// The variables of `.decree/env` scripts get, interpolated: those not set in decree's own
-/// environment, which wins (docs/reference/scripts.md, Environment). A malformed file is an error that
-/// lists each E1 problem, as `decree check` prints them.
-pub(crate) fn load_env(decree_dir: &Path) -> Result<Vec<(String, String)>, DecreeError> {
-    let problems = env_problems(decree_dir)?;
+/// The variables scripts get from the `.env` files, and the warnings about them: each
+/// variable a file uses that is set nowhere (it reads as empty, as in Compose), each
+/// machine `env_file` that does not exist, and a `.decree/.gitignore` that does not list
+/// `.env*` while one exists. A malformed file is left out; `env_problems` reports it.
+fn resolve_env(project: &Project) -> Result<(dotenv::ProjectEnv, Vec<CheckWarning>), DecreeError> {
+    let mut env = dotenv::ProjectEnv::default();
+    let mut warnings = Vec::new();
+    let mut by_file = BTreeMap::new();
+    let files = env_files(project)?;
+    for (file, parsed) in &files {
+        let Ok(entries) = parsed else { continue };
+        let resolved = if file == layout::ENV_FILE {
+            let resolved = dotenv::resolve(entries, dotenv::process_var);
+            env.base.clone_from(&resolved.vars);
+            resolved
+        } else {
+            // A machine's file reads what its scripts would see without it.
+            let base = &env.base;
+            dotenv::resolve_over(entries, |name| {
+                dotenv::process_var(name).or_else(|| {
+                    base.iter()
+                        .rev()
+                        .find(|(key, _)| key == name)
+                        .map(|(_, value)| value.clone())
+                })
+            })
+        };
+        warnings.extend(resolved.unset.iter().map(|(line, name)| CheckWarning {
+            file: file.clone(),
+            message: format!("line {line}: `${{{name}}}` is not set"),
+        }));
+        by_file.insert(file.as_str(), resolved.vars);
+    }
+    for (file, machines) in machine_env_files(project) {
+        match by_file.get(file) {
+            Some(vars) => {
+                for id in machines {
+                    env.machines.insert(id.to_string(), vars.clone());
+                }
+            }
+            None if !project.decree_dir.join(file).exists() => warnings.push(CheckWarning {
+                file: file.to_string(),
+                message: format!(
+                    "does not exist, so the scripts of {} get no variables from it; `{}` shows what goes in it, if the project has one",
+                    machines
+                        .iter()
+                        .map(|id| format!("`{id}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    layout::ENV_EXAMPLE_FILE
+                ),
+            }),
+            None => {}
+        }
+    }
+    if !files.is_empty() && !gitignores_env_files(&project.decree_dir) {
+        warnings.push(CheckWarning {
+            file: layout::GITIGNORE_FILE.to_string(),
+            message: format!(
+                "does not list `.env*`, so git may commit {}; add the lines `.env*` and `!{}`",
+                files
+                    .iter()
+                    .map(|(file, _)| format!("`{file}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                layout::ENV_EXAMPLE_FILE
+            ),
+        });
+    }
+    Ok((env, warnings))
+}
+
+/// Whether `.decree/.gitignore` has a `.env*` line.
+fn gitignores_env_files(decree_dir: &Path) -> bool {
+    std::fs::read_to_string(decree_dir.join(layout::GITIGNORE_FILE))
+        .is_ok_and(|text| text.lines().any(|l| matches!(l.trim(), ".env*" | "/.env*")))
+}
+
+/// The variables scripts get from the `.env` files, interpolated (docs/reference/scripts.md,
+/// Environment). A malformed file is an error that lists each E1 problem, as `decree check`
+/// prints them.
+pub(crate) fn load_env(project: &Project) -> Result<dotenv::ProjectEnv, DecreeError> {
+    let problems = env_problems(project)?;
     if !problems.is_empty() {
         let lines: Vec<String> = problems.iter().map(ToString::to_string).collect();
+        let files: BTreeSet<String> = problems
+            .iter()
+            .map(|p| format!("{DECREE_DIR}/{}", p.file))
+            .collect();
         return Err(DecreeError::Other(format!(
-            "{}\n{} error(s) in {DECREE_DIR}/{}; nothing was processed. Run `decree check`.",
+            "{}\n{} error(s) in {}; nothing was processed. Run `decree check`.",
             lines.join("\n"),
             problems.len(),
-            layout::ENV_FILE
+            files.into_iter().collect::<Vec<_>>().join(", ")
         )));
     }
-    let entries = dotenv::read(decree_dir)?.unwrap_or_default();
-    Ok(dotenv::resolve(&entries, dotenv::process_var).vars)
+    Ok(resolve_env(project)?.0)
 }
 
 /// A project's machines, loaded and checked against V1–V21: where `check` and

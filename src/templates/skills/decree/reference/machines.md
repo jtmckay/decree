@@ -26,9 +26,10 @@ every state is reachable. Editors apply the same schema by path; machines carry 
 | Root | `description` | Required. Shown in prompts, `decree status` and graphs. |
 | Root | `data` | `name: { type: string\|int\|number\|bool, default: ..., enum?: [...] }`. `number` is an int or a float; `enum` (string only) lists the allowed values, which the default and `params` must be one of (V14). Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
 | Root | `store` | `name: description`: what the machine keeps between runs in `.decree/store/<machine>/` (`$DECREE_STORE`). A name is a file or folder directly in that folder, `^[A-Za-z0-9][A-Za-z0-9._-]*$`; a description says what it is and which states read or write it (V14). `decree check` warns about undeclared files there. |
+| Root | `env_file` | `.env.<name>`: a gitignored dotenv file in `.decree/` whose variables this machine's scripts get, over `.decree/.env` and the process environment; no other machine's scripts see them (V14). |
 | Root | `onentry`, `onexit` | Scripts run once when the run starts, and once after a root final state is entered. |
 | Root | `initial`, `states` | Required. `initial` is a direct child. |
-| State | `invoke` | The state's function (below). `attempts`, `timeout` and `env` go inside it. |
+| State | `invoke` | The state's function (below). `attempts` and `timeout` go inside it. |
 | State | `transitions` | `event: target`, or `event: { target, description, type: internal }`. |
 | State | `onentry`, `onexit` | Scripts run every time the state is entered or exited. They produce no event. |
 | State | `initial`, `states` | Make the state compound (no `invoke`). |
@@ -55,7 +56,7 @@ name is short for `{ name: <name> }`, and `invoke: implement` is short for
 
 | `invoke` | What runs | Events |
 | --- | --- | --- |
-| `script: { name: <script>, attempts?: <n> \| [<value>, …], timeout?: <duration>, env?: {<KEY>: <value>} }` | The script (see `scripts.md`), re-run in place while it fails, once per attempt (default 1), each stopped after `timeout`. A list gives each attempt its value in `$DECREE_ATTEMPT_VALUE`. `env` sets variables for this invoke only. | `done` (exit 0), `error` (non-zero), or the event it writes to `$DECREE_EVENT_FILE`. |
+| `script: { name: <script>, attempts?: <n> \| [<value>, …], timeout?: <duration> }` | The script (see `scripts.md`), re-run in place while it fails, once per attempt (default 1), each stopped after `timeout`. A list gives each attempt its value in `$DECREE_ATTEMPT_VALUE`. | `done` (exit 0), `error` (non-zero), or the event it writes to `$DECREE_EVENT_FILE`. |
 | `check: <condition>` | decree evaluates the condition. No AI. | `true` or `false`. |
 | `model: { question: ..., router?: <machine>, min_confidence?: 0.8, output?: <state> }` | A router machine asks a model to pick one of the state's transitions. | An option; `unsure` below `min_confidence`; `error` if the router fails. |
 | `person: { question: ..., ask: <script>, timeout?: <duration> }` | The `ask` script tells someone; the run pauses for a reply. | An option; `error` on timeout. |
@@ -282,6 +283,6 @@ person's time is worth it, then `person`. Each threshold is a number in the mach
 name resolves, decision states cover their events, options have descriptions, `emits` and
 `router` name real machines, no invoke cycles, nothing outside the SCXML subset) and M1–M3 (every
 pending migration, inbox message and cron file parses and names a machine with valid `params`)
-and E1 (`.decree/env` is a valid dotenv file without reserved keys). Errors look like `machines/feature.yml: work.verify: <message>`. It also warns when
+and E1 (`.decree/.env` and each `env_file` are valid dotenv files without reserved keys). Errors look like `machines/feature.yml: work.verify: <message>`. It also warns when
 `.decree/graph/` is out of date, or `.decree/schema/` when it exists: run `decree graph` or
 `decree schema`.

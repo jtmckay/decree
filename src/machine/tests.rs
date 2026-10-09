@@ -75,7 +75,6 @@ fn reference_examples_load() {
             name: "implement".into(),
             attempts: Some(Attempts::Values(vec!["local".into(), "claude".into()])),
             timeout: None,
-            env: BTreeMap::new(),
         }))
     );
 
@@ -147,7 +146,6 @@ fn feature_arena_has_eleven_states_plus_root() {
             name: "verify".into(),
             attempts: None,
             timeout: None,
-            env: BTreeMap::new(),
         }))
     );
 
@@ -939,7 +937,6 @@ fn script_and_machine_take_a_bare_name_or_the_long_form() {
             name: "s".into(),
             attempts: None,
             timeout: None,
-            env: BTreeMap::new(),
         }))
     );
     assert_eq!(m.attempt_count(b), 1);
@@ -1102,32 +1099,16 @@ fn attempts_of_another_shape_name_both_forms() {
     }
 }
 
-/// An invoke's `env` keeps every value as a string; a float or a list is a parse error.
+/// A machine's `env_file` is kept as written; a script invoke has no `env` (D57).
 #[test]
-fn invoke_env_values_are_strings_ints_or_bools() {
-    let text = "name: m\ndescription: d\ninitial: s\nstates:\n  s:\n    invoke: { script: { name: build, env: { METHOD: image_text, STEPS: 30, FAST: true } } }\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n";
+fn env_file_is_a_root_key_and_invoke_env_is_gone() {
+    let text = "name: m\ndescription: d\nenv_file: .env.comfy\ninitial: s\nstates:\n  s:\n    invoke: build\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n";
     let m = load_machine_text("m", text).unwrap();
-    let script = m.nodes[m.find("s").unwrap()]
-        .invoke
-        .as_ref()
-        .unwrap()
-        .script()
-        .unwrap();
-    let env: Vec<(&str, &str)> = script
-        .env
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    assert_eq!(
-        env,
-        vec![("FAST", "true"), ("METHOD", "image_text"), ("STEPS", "30")]
+    assert_eq!(m.env_file.as_deref(), Some(".env.comfy"));
+    let text = text.replace(
+        "invoke: build",
+        "invoke: { script: { name: build, env: { METHOD: image_text } } }",
     );
-    for bad in ["1.5", "[a]"] {
-        let text = text.replace("30", bad);
-        let err = load_machine_text("m", &text).unwrap_err().to_string();
-        assert!(
-            err.contains("`STEPS` is not a string, int or bool"),
-            "{err}"
-        );
-    }
+    let err = load_machine_text("m", &text).unwrap_err().to_string();
+    assert!(err.contains("unknown field `env`"), "{err}");
 }

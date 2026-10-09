@@ -44,7 +44,7 @@ examples/newsletter/
     lib/newsletter/feeds.txt          one feed URL per line, # comments
     lib/newsletter/taste.md           what you want, what you skip, and the format, in prose
     cron/newsletter.md                every Monday at 07:00
-    env                               OLLAMA_URL, OLLAMA_MODEL, NEWSLETTER_DIR, NEWSLETTER_MAX_ITEMS, NTFY_*
+    .env.example                      OLLAMA_URL, OLLAMA_MODEL, NEWSLETTER_DIR, NEWSLETTER_MAX_ITEMS, NTFY_*; copy it to .env
     graph/  schema/                   written by `decree graph` and `decree schema`
     store/newsletter/seen.tsv         links already sent: a committed sample here; ignored in your project
   newsletter/                         the issues, once it has run
@@ -62,9 +62,10 @@ decree check                             # the machine, scripts and cron file ar
 decree graph                             # rewrites .decree/graph/ with no change
 ```
 
-It needs Python 3, `curl`, `jq`, and Ollama with the model in `.decree/env`:
+It needs Python 3, `curl`, `jq`, and Ollama with the model in `.decree/.env`, which you copy from the committed template:
 
 ```sh
+cp .decree/.env.example .decree/.env
 ollama pull gemma4:e4b
 ```
 
@@ -80,7 +81,7 @@ Every Monday at 07:00, from [`cron/newsletter.md`](.decree/cron/newsletter.md) (
 decree daemon
 ```
 
-For a ping on your phone, uncomment `NTFY_URL` and `NTFY_TOPIC` in `.decree/env`, and subscribe to the topic in the ntfy app.
+For a ping on your phone, uncomment `NTFY_URL` and `NTFY_TOPIC` in `.decree/.env`, and subscribe to the topic in the ntfy app.
 
 ## Growing it
 

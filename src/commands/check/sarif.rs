@@ -76,7 +76,7 @@ pub(crate) const RULES: [(&str, &str); 25] = [
     ),
     (
         "V14",
-        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `store` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the store folder, and has a non-empty description.",
+        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `store` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the store folder, and has a non-empty description. An `env_file` matches `^\\.env\\.[A-Za-z0-9][A-Za-z0-9._-]*$` and is not `.env.example`: a file directly in `.decree/` that `.gitignore`'s `.env*` keeps out of git.",
     ),
     (
         "V15",
@@ -84,7 +84,7 @@ pub(crate) const RULES: [(&str, &str); 25] = [
     ),
     (
         "V16",
-        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; every `env` key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`; `attempts`, `timeout` and `env` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19.",
+        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19.",
     ),
     (
         "V17",
@@ -120,7 +120,7 @@ pub(crate) const RULES: [(&str, &str); 25] = [
     ),
     (
         "E1",
-        "`.decree/env`, if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes, and interpolated unless single-quoted: `${VAR}`, `$VAR`, `${VAR:-default}`, `${VAR-default}`, `$$`); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`.",
+        "`.decree/.env` and every machine's `env_file`, each if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes, and interpolated unless single-quoted: `${VAR}`, `$VAR`, `${VAR:-default}`, `${VAR-default}`, `$$`); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`.",
     ),
 ];
 

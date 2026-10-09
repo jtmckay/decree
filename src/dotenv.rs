@@ -1,16 +1,34 @@
-//! `.decree/env` (docs/reference/scripts.md, Environment): project variables every script
-//! gets, in the dotenv format Docker Compose's `env_file` and systemd's `EnvironmentFile`
-//! read. One `KEY=value` per line; blank lines and `#` lines are ignored; `export ` before a
+//! `.decree/.env` and a machine's `env_file` (docs/reference/scripts.md, Environment):
+//! variables for scripts, in the dotenv format Docker Compose's `env_file` and systemd's
+//! `EnvironmentFile` read. One `KEY=value` per line; blank lines and `#` lines are ignored; `export ` before a
 //! key is allowed; a value wrapped in single or double quotes loses them. Values are
 //! interpolated as Compose does, the subset `${VAR}`, `$VAR`, `${VAR:-default}`,
 //! `${VAR-default}` and `$$`; single-quoted values stay literal. No multi-line values.
-//! Also the key rules of an invoke's `env` map.
 
 use std::io;
 use std::path::Path;
 
 /// Variables in file order, `(key, value)`.
 pub type Vars = Vec<(String, String)>;
+
+/// What scripts get from the `.env` files (docs/reference/scripts.md, Environment).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ProjectEnv {
+    /// `.decree/.env`, without the variables decree's own environment sets, which win.
+    pub base: Vars,
+    /// Each machine's `env_file`, by machine name, which wins over decree's own
+    /// environment. A machine without one, or whose file is missing, has no entry.
+    pub machines: std::collections::BTreeMap<String, Vars>,
+}
+
+impl ProjectEnv {
+    /// What the scripts of `machine` get, later entries winning: `.decree/.env`, then the
+    /// machine's own file. Never another machine's file.
+    pub fn for_machine(&self, machine: &str) -> Vars {
+        let own = self.machines.get(machine).into_iter().flatten();
+        self.base.iter().chain(own).cloned().collect()
+    }
+}
 
 /// Malformed lines, `(line number from 1, message)`.
 pub type LineErrors = Vec<(usize, String)>;
@@ -257,8 +275,8 @@ pub struct Resolved {
     pub unset: Vec<(usize, String)>,
 }
 
-/// Interpolate `entries`: `VAR` is looked up with `process` (decree's own environment)
-/// first, then in the lines above, as their effective values.
+/// Interpolate the entries of `.decree/.env`: `VAR` is looked up with `process` (decree's
+/// own environment) first, then in the lines above, as their effective values.
 pub fn resolve(entries: &[Entry], process: impl Fn(&str) -> Option<String>) -> Resolved {
     let mut effective: std::collections::HashMap<&str, String> = Default::default();
     let mut out = Resolved::default();
@@ -302,20 +320,37 @@ fn interpolate(
     out
 }
 
+/// Interpolate the entries of a machine's `env_file`, which win over decree's own
+/// environment: `VAR` is looked up in the lines above first, as their effective values,
+/// then with `below`, what a script of the machine would see without the file.
+pub fn resolve_over(entries: &[Entry], below: impl Fn(&str) -> Option<String>) -> Resolved {
+    let mut effective: std::collections::HashMap<&str, String> = Default::default();
+    let mut out = Resolved::default();
+    for entry in entries {
+        let lookup = |name: &str| effective.get(name).cloned().or_else(|| below(name));
+        let value = interpolate(&entry.value, &lookup, &mut |name| {
+            out.unset.push((entry.line, name.to_string()));
+        });
+        effective.insert(&entry.key, value.clone());
+        out.vars.push((entry.key.clone(), value));
+    }
+    out
+}
+
 /// Decree's own environment, as `resolve` looks it up.
 pub fn process_var(name: &str) -> Option<String> {
     std::env::var_os(name).map(|v| v.to_string_lossy().into_owned())
 }
 
-/// `.decree/env` under `decree_dir`, parsed: `Ok(Ok(entries))`, empty when there is no
-/// file, or `Ok(Err(errors))` for malformed lines.
-pub fn read(decree_dir: &Path) -> io::Result<Result<Vec<Entry>, LineErrors>> {
-    match std::fs::read(decree_dir.join(crate::layout::ENV_FILE)) {
+/// The dotenv file at `path`, parsed: `Ok(Some(Ok(entries)))`, `Ok(None)` when there is
+/// no file, or `Ok(Some(Err(errors)))` for malformed lines.
+pub fn read(path: &Path) -> io::Result<Option<Result<Vec<Entry>, LineErrors>>> {
+    match std::fs::read(path) {
         Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(text) => Ok(parse(&text)),
-            Err(_) => Ok(Err(vec![(1, "file is not valid UTF-8".to_string())])),
+            Ok(text) => Ok(Some(parse(&text))),
+            Err(_) => Ok(Some(Err(vec![(1, "file is not valid UTF-8".to_string())]))),
         },
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Ok(Vec::new())),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
 }
@@ -570,12 +605,31 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_file_has_no_variables() {
+    fn a_missing_file_is_none() {
         let dir = tempfile::TempDir::new().unwrap();
-        assert_eq!(read(dir.path()).unwrap(), Ok(Vec::new()));
-        std::fs::write(dir.path().join("env"), "A='1'\n").unwrap();
-        let entries = read(dir.path()).unwrap().unwrap();
+        let path = dir.path().join(".env");
+        assert_eq!(read(&path).unwrap(), None);
+        std::fs::write(&path, "A='1'\n").unwrap();
+        let entries = read(&path).unwrap().unwrap().unwrap();
         assert_eq!(resolve(&entries, |_| None).vars, vec![pair("A", "1")]);
+    }
+
+    #[test]
+    fn a_machine_file_wins_over_what_is_below_it_and_reads_it() {
+        let entries = parse("URL=http://${HOST}:${PORT}\nPORT=2\nB=$PORT\n").unwrap();
+        let below = |name: &str| match name {
+            "HOST" => Some("box".to_string()),
+            "PORT" => Some("1".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            resolve_over(&entries, below).vars,
+            vec![
+                pair("URL", "http://box:1"),
+                pair("PORT", "2"),
+                pair("B", "2")
+            ]
+        );
     }
 
     #[test]
