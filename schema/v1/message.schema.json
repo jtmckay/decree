@@ -7,8 +7,8 @@
   "properties": {
     "id": {
       "type": "string",
-      "description": "Names the run folder, runs/<id>/. decree sets it at claim if missing: YYYYMMDDTHHMMSSZ-xxxxxx, the UTC time plus 6 lowercase hex chars. A migration's id is its file stem.",
-      "examples": ["20261001T143005Z-3fa9c1"]
+      "description": "Names the run folder, runs/<id>/. decree sets it at claim if missing: YYYYMMDDTHHMMSS.ffffffZ-xxxxxx, the UTC time to the microsecond plus 6 lowercase hex chars, so ids sort in the order messages were queued. A migration's id is its file stem.",
+      "examples": ["20261001T143005.218734Z-3fa9c1"]
     },
     "machine": {
       "type": "string",

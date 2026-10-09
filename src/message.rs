@@ -2,11 +2,12 @@ use crate::layout;
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{INBOX_DIR, RUNS_DIR};
 use crate::machine::LoadedMachine;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_norway::{Mapping, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 
 // =================================================================
 // Message (docs/reference/messages.md)
@@ -215,15 +216,16 @@ pub fn create_run_dir(decree_dir: &Path) -> Result<(String, PathBuf), MessageErr
     Ok((id, dir))
 }
 
-/// A new message id (docs/reference/messages.md, Frontmatter keys): the UTC time, `YYYYMMDDTHHMMSSZ`, then
-/// `-` and 6 lowercase hex chars, the low 24 bits of (sub-second nanoseconds XOR process
-/// id). While that id exists in `inbox/` or `runs/`, or `take` declines it, add 1.
+/// A new message id (docs/reference/messages.md, Frontmatter keys): the UTC time to the
+/// microsecond, `YYYYMMDDTHHMMSS.ffffffZ`, then `-` and 6 lowercase hex chars, the low 24
+/// bits of (sub-second nanoseconds XOR process id). While that id exists in `inbox/` or
+/// `runs/`, or `take` declines it, add 1.
 fn new_id(
     decree_dir: &Path,
     mut take: impl FnMut(&str) -> Result<bool, MessageError>,
 ) -> Result<String, MessageError> {
-    let now = Utc::now();
-    let stamp = now.format("%Y%m%dT%H%M%SZ");
+    let now = next_time();
+    let stamp = now.format("%Y%m%dT%H%M%S%.6fZ");
     let mut low = (now.timestamp_subsec_nanos() ^ std::process::id()) & 0xff_ffff;
     for _ in 0..=0xff_ffff {
         let id = format!("{stamp}-{low:06x}");
@@ -238,6 +240,21 @@ fn new_id(
     Err(io_err(&runs)(io::Error::other(format!(
         "every id for {stamp} is taken"
     ))))
+}
+
+/// The current UTC time to the microsecond, later than any this process returned before,
+/// so ids from one process sort in the order they were made even if the clock steps back
+/// (RFC 9562, section 6.2, monotonicity).
+fn next_time() -> DateTime<Utc> {
+    static LAST: AtomicI64 = AtomicI64::new(i64::MIN);
+    let now = Utc::now().timestamp_micros();
+    let prev = LAST
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+            Some(now.max(last.saturating_add(1)))
+        })
+        .unwrap_or_else(|last| last);
+    let micros = now.max(prev.saturating_add(1));
+    DateTime::from_timestamp_micros(micros).unwrap_or_else(Utc::now)
 }
 
 /// Queue `message` in `inbox/` (docs/reference/messages.md, Lifecycle step 1): give it a new `id` as its
@@ -793,8 +810,13 @@ mod tests {
         let decree = dir.path().join(".decree");
         let mut message = Message::parse("---\nmachine: x\nid: old\n---\nbody\r\n").unwrap();
         let id = queue(&decree, &mut message).unwrap();
-        assert!(id.len() == 23 && id.as_bytes()[8] == b'T' && id.as_bytes()[15] == b'Z');
-        assert!(id[17..]
+        assert!(
+            id.len() == 30
+                && id.as_bytes()[8] == b'T'
+                && id.as_bytes()[15] == b'.'
+                && id.as_bytes()[22] == b'Z'
+        );
+        assert!(id[24..]
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
         let names: Vec<_> = std::fs::read_dir(decree.join("inbox"))
@@ -809,6 +831,18 @@ mod tests {
         // An id that is queued or has a run is never reused.
         let second = queue(&decree, &mut Message::new("b")).unwrap();
         assert_ne!(second, id);
+    }
+
+    #[test]
+    fn messages_queued_in_the_same_second_sort_in_queue_order() {
+        let dir = TempDir::new().unwrap();
+        let decree = dir.path().join(".decree");
+        let ids: Vec<String> = (0..200)
+            .map(|_| queue(&decree, &mut Message::new("b")).unwrap())
+            .collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(sorted, ids);
     }
 
     #[test]

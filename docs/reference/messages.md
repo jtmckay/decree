@@ -4,10 +4,10 @@ A message is one markdown file. decree reads and writes only the frontmatter, an
 
 ```markdown
 ---
-id: 20261001T143005Z-3fa9c1
+id: 20261001T143005.218734Z-3fa9c1
 machine: feature
 state: verify
-parent: 20261001T120000Z-0b12aa
+parent: 20261001T120000.051907Z-0b12aa
 depth: 1
 trigger: emit
 params:
@@ -21,7 +21,7 @@ Given ... When ... Then ...
 
 | Key | Type | Required | Written by | Meaning |
 | --- | --- | --- | --- | --- |
-| `id` | string | No | decree, at claim, if missing | `YYYYMMDDTHHMMSSZ-xxxxxx`: UTC time plus 6 lowercase hex chars. Names the run folder. (Migrations: the file stem.) |
+| `id` | string | No | decree, at claim, if missing | `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`: UTC time to the microsecond plus 6 lowercase hex chars. Names the run folder. (Migrations: the file stem.) |
 | `machine` | string | Yes | Author, `decree emit`, cron | Machine name, matching `machines/<name>.yml`. |
 | `state` | string | No | decree only | Mirror of the run's current state, in `runs/<id>/message.md` only. Authors never set it. |
 | `parent` | string | No | `decree emit`, decree | `id` of the run that emitted this message, or that invoked this child run. |
@@ -37,7 +37,7 @@ Given ... When ... Then ...
 
 Any other key is kept exactly as written and ignored by decree.
 
-The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id). If that id already exists in `inbox/` or `runs/`, decree adds 1 and retries.
+The time is ISO 8601 basic format with a decimal fraction of the second. Ids sort in the order they were made, so messages queued one after another run in that order, even within one second: one process never makes two ids with the same or an earlier time, even if the clock steps back, as RFC 9562 (section 6.2) has UUIDv7 generators do. The 6 hex chars are the low 24 bits of (sub-second nanoseconds XOR process id), and keep apart ids that processes make at the same microsecond; such messages were queued at once, so either order is right. If that id already exists in `inbox/` or `runs/`, decree adds 1 to them and retries.
 
 ## Parsing and writing
 

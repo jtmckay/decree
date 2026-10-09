@@ -1804,8 +1804,8 @@ impl Project {
 
 fn is_run_id(id: &str) -> bool {
     let (stamp, hex) = id.split_once('-').unwrap();
-    stamp.len() == 16
-        && DateTime::parse_from_str(&format!("{stamp}+0000"), "%Y%m%dT%H%M%SZ%z").is_ok()
+    stamp.len() == 23
+        && DateTime::parse_from_str(&format!("{stamp}+0000"), "%Y%m%dT%H%M%S%.6fZ%z").is_ok()
         && hex.len() == 6
         && hex
             .bytes()
