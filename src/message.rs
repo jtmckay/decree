@@ -7,7 +7,7 @@ use serde_norway::{Mapping, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 // =================================================================
 // Message (docs/reference/messages.md)
@@ -246,15 +246,10 @@ fn new_id(
 /// so ids from one process sort in the order they were made even if the clock steps back
 /// (RFC 9562, section 6.2, monotonicity).
 fn next_time() -> DateTime<Utc> {
-    static LAST: AtomicI64 = AtomicI64::new(i64::MIN);
-    let now = Utc::now().timestamp_micros();
-    let prev = LAST
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
-            Some(now.max(last.saturating_add(1)))
-        })
-        .unwrap_or_else(|last| last);
-    let micros = now.max(prev.saturating_add(1));
-    DateTime::from_timestamp_micros(micros).unwrap_or_else(Utc::now)
+    static LAST: Mutex<i64> = Mutex::new(i64::MIN);
+    let mut last = LAST.lock().unwrap_or_else(PoisonError::into_inner);
+    *last = Utc::now().timestamp_micros().max(last.saturating_add(1));
+    DateTime::from_timestamp_micros(*last).unwrap_or_else(Utc::now)
 }
 
 /// Queue `message` in `inbox/` (docs/reference/messages.md, Lifecycle step 1): give it a new `id` as its
