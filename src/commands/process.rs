@@ -27,6 +27,7 @@ use serde_json::json;
 use crate::cli::Format;
 use crate::commands::check::{self, md_files, Project};
 use crate::commands::print_json;
+use crate::commands::report::{self, Reporter};
 use crate::error::DecreeError;
 use crate::events::{
     current_state, first_text, is_transition, is_type, strings, text, Event, EventLog,
@@ -48,12 +49,14 @@ pub struct Retry {
     pub state: Option<String>,
 }
 
-/// Run `decree process [--dry-run | --retry [<id>] [--state <s>]]`.
+/// Run `decree process [--dry-run | --retry [<id>] [--state <s>]] [--quiet]`. Unless
+/// `quiet`, each run's output is printed as it goes (`commands::report`).
 pub fn run(
     project_root: &Path,
     dry_run: bool,
     retry: Option<Retry>,
     format: Format,
+    quiet: bool,
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     if dry_run {
@@ -61,11 +64,14 @@ pub fn run(
     }
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
-    let mut pipeline = Pipeline::new(project_root, &project, shutdown, "")?;
+    let mut pipeline = Pipeline::new(project_root, &project, Arc::clone(&shutdown), "")?;
     if let Some(Retry { id, state }) = retry {
         retry_run(&pipeline.ctx, &project, id.as_deref(), state.as_deref())?;
     }
-    let result = pipeline.recover().and_then(|()| pipeline.drain());
+    let observer_ctx = context(project_root, &project, shutdown);
+    let result = reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
+        pipeline.recover().and_then(|()| pipeline.drain())
+    });
     print_waiting(&pipeline.ctx)?;
     let failed = pipeline.take_failed();
     print_failed(&failed);
@@ -76,6 +82,29 @@ pub fn run(
             "{n} run(s) ended in `{FAILED}`"
         ))),
     }
+}
+
+/// Run `body` with a thread printing each run as it goes, unless `quiet`; returns once the
+/// thread has printed everything.
+pub(crate) fn reporting<'a, R>(
+    pipeline: &mut Pipeline<'a>,
+    observer_ctx: &Context,
+    quiet: bool,
+    body: impl FnOnce(&mut Pipeline<'a>) -> R,
+) -> R {
+    if quiet {
+        return body(pipeline);
+    }
+    std::thread::scope(|s| {
+        let (reporter, rx) = Reporter::new();
+        pipeline.report = Some(reporter);
+        let observer = s.spawn(move || report::observe(observer_ctx, rx));
+        let result = body(pipeline);
+        // Dropping the reporter closes the channel: the thread prints the rest and ends.
+        pipeline.report = None;
+        let _ = observer.join();
+        result
+    })
 }
 
 /// Why a pass of the pipeline stopped short.
@@ -116,6 +145,8 @@ pub(crate) struct Pipeline<'a> {
     prefix: &'static str,
     /// Runs that are not migrations and ended in `failed` since the last `take_failed`.
     failed: Vec<String>,
+    /// Told when each run starts and stops, unless `--quiet`.
+    pub(crate) report: Option<Reporter>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -145,6 +176,7 @@ impl<'a> Pipeline<'a> {
             lost: HashSet::new(),
             prefix,
             failed: Vec::new(),
+            report: None,
         })
     }
 
@@ -163,11 +195,11 @@ impl<'a> Pipeline<'a> {
     /// Inbox messages are independent, so the pass goes on (docs/reference/messages.md, Lifecycle).
     fn fail(&mut self, id: &str, file: Option<&str>) {
         let file = file.map(|f| format!(" ({f})")).unwrap_or_default();
-        eprintln!(
+        report::notice(format!(
             "{}run {id}{file} ended in `{FAILED}`; see .decree/runs/{id}/, \
              then continue it with `decree process --retry {id}`",
             self.prefix
-        );
+        ));
         self.failed.push(id.to_string());
     }
 
@@ -235,7 +267,9 @@ impl<'a> Pipeline<'a> {
         if self.shutdown() {
             return Err(Stop::Interrupted);
         }
-        let outcome = match continue_run(&self.ctx, id) {
+        let outcome = match reported(self.report.as_ref(), &self.ctx, self.project, id, || {
+            continue_run(&self.ctx, id)
+        }) {
             Ok(outcome) => outcome,
             Err(InterpreterError::Active(_)) => return Ok(()),
             Err(e) => return Err(e.into()),
@@ -300,7 +334,10 @@ impl<'a> Pipeline<'a> {
             return Ok(true);
         };
         let id = claim.id.clone();
-        match run_claim(&self.ctx, self.project, claim, problem)? {
+        let report = self.report.as_ref();
+        match reported(report, &self.ctx, self.project, &id, || {
+            run_claim(&self.ctx, self.project, claim, problem)
+        })? {
             Outcome::Finished(state) if state == FAILED => {
                 self.fail(&id, Some(&file));
                 Ok(true)
@@ -318,10 +355,40 @@ impl<'a> Pipeline<'a> {
             return Err(Stop::Interrupted);
         }
         match self.project.pending_migrations()?.into_iter().next() {
-            Some(migration) => step_migration(&self.ctx, self.project, &migration),
+            Some(migration) => {
+                step_migration(&self.ctx, self.project, &migration, self.report.as_ref())
+            }
             None => Ok(false),
         }
     }
+}
+
+/// Run `run`, the steps of run `id`, telling `report` when it starts and stops.
+fn reported<E>(
+    report: Option<&Reporter>,
+    ctx: &Context,
+    project: &Project,
+    id: &str,
+    run: impl FnOnce() -> Result<Outcome, E>,
+) -> Result<Outcome, E> {
+    let Some(report) = report else {
+        return run();
+    };
+    report.start(id, &ctx.runs_dir().join(id), queued(ctx, project, id));
+    let outcome = run();
+    report.end(id, outcome.as_ref().ok());
+    outcome
+}
+
+/// How many inbox messages and pending migrations wait, besides run `id`.
+fn queued(ctx: &Context, project: &Project, id: &str) -> usize {
+    let inbox = md_files(&ctx.project_root.join(DECREE_DIR).join(INBOX_DIR)).map_or(0, |f| f.len());
+    let migrations = project.pending_migrations().unwrap_or_default();
+    let others = migrations
+        .iter()
+        .filter(|m| m.strip_suffix(".md").unwrap_or(m) != id)
+        .count();
+    inbox + others
 }
 
 /// The context runs of `project` are stepped, or their status derived, in.
@@ -461,14 +528,19 @@ fn reject(
 ) -> Result<Outcome, DecreeError> {
     let mut events = EventLog::open(run_dir, id, machine, trigger)?;
     recover::reject(&mut events, run_dir, file, reason, mirror)?;
-    eprintln!("{file}: invalid message: {reason}");
+    report::notice(format!("{file}: invalid message: {reason}"));
     Ok(Outcome::Finished(FAILED.to_string()))
 }
 
 /// docs/reference/messages.md, Migrations: start migration `file`, or continue or report the run it has.
 /// Returns whether later migrations may start once this one is in `processed.md`; `false`
 /// means it waits.
-fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, Stop> {
+fn step_migration(
+    ctx: &Context,
+    project: &Project,
+    file: &str,
+    report: Option<&Reporter>,
+) -> Result<bool, Stop> {
     let id = file.strip_suffix(".md").unwrap_or(file);
     let run_dir = ctx.runs_dir().join(id);
     let outcome = if run_dir.exists() {
@@ -479,11 +551,13 @@ fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, 
             .run_machine(&events)
             .map_or(RunStatus::Interrupted, |m| ctx.status(m, &events, alive));
         match status {
-            RunStatus::Pending => match continue_run(ctx, id) {
-                Ok(outcome) => outcome,
-                Err(InterpreterError::Active(_)) => return Ok(false),
-                Err(e) => return Err(e.into()),
-            },
+            RunStatus::Pending => {
+                match reported(report, ctx, project, id, || continue_run(ctx, id)) {
+                    Ok(outcome) => outcome,
+                    Err(InterpreterError::Active(_)) => return Ok(false),
+                    Err(e) => return Err(e.into()),
+                }
+            }
             RunStatus::Waiting | RunStatus::Active => return Ok(false),
             RunStatus::Finished | RunStatus::Interrupted => {
                 let state = current_state(&events).unwrap_or("no state");
@@ -494,7 +568,9 @@ fn step_migration(ctx: &Context, project: &Project, file: &str) -> Result<bool, 
             }
         }
     } else {
-        start_migration(ctx, project, file, id)?
+        reported(report, ctx, project, id, || {
+            start_migration(ctx, project, file, id)
+        })?
     };
     match outcome {
         Outcome::Finished(state) if state == FAILED => {

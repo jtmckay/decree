@@ -5,9 +5,12 @@
 //!   `.running`, docs/reference/scripts.md) and the wait of each `waiting` run, then the queued messages.
 //! - With id: the run's frontmatter, status, and its events as a table.
 //! - `--cron`: the cron files and when each fires next.
+//!
+//! Without an id it also lists the active runs of decree projects below the project root,
+//! or below the current folder when it is in no project (`examples/project/`, say).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -29,6 +32,38 @@ use crate::layout::{DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
 use crate::machine::FAILED;
 use crate::message::{run_ids, Message};
 use crate::runtime::Running;
+
+/// How deep below a folder `decree status` looks for nested projects.
+const NESTED_DEPTH: usize = 4;
+
+/// Folders never searched for nested projects: dependencies and build output.
+const SKIPPED: [&str; 4] = ["node_modules", "target", "vendor", "dist"];
+
+/// Run `decree status` from `cwd`: in the project at or above it, else, without an id or
+/// `--cron`, as a listing of the active runs of the projects below it.
+pub fn run_from(
+    cwd: &Path,
+    root: Option<PathBuf>,
+    id: Option<&str>,
+    cron: bool,
+    format: Format,
+) -> Result<(), DecreeError> {
+    if let Some(root) = root {
+        return run(&root, id, cron, format);
+    }
+    if id.is_some() || cron || format == Format::Json {
+        return Err(DecreeError::NoProject);
+    }
+    let nested = nested_projects(cwd)?;
+    if nested.is_empty() {
+        return Err(DecreeError::NoProject);
+    }
+    println!(
+        "No .decree/ here; {} decree project(s) below.",
+        nested.len()
+    );
+    print_nested(cwd, &nested)
+}
 
 /// Run `decree status`.
 pub fn run(
@@ -182,11 +217,25 @@ fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), Decr
             .map(|(state, rows)| (state.clone(), rows.iter().map(Row::json).collect()))
             .collect::<serde_json::Map<String, Value>>()
             .into();
-        return print_json(&json!({
+        let mut out = json!({
             "counts": counts,
             "runs": runs,
             "queued": { "inbox": inbox, "migrations": pending },
-        }));
+        });
+        let nested: Vec<Value> = nested_projects(&ctx.project_root)?
+            .into_iter()
+            .filter(|n| !n.active.is_empty())
+            .map(|n| {
+                json!({
+                    "path": relative(&ctx.project_root, &n.root),
+                    "active": n.active.iter().map(Row::json).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        if !nested.is_empty() {
+            out["nested"] = nested.into();
+        }
+        return print_json(&out);
     }
 
     println!("{} {}", "Runs:".bold(), ids.len());
@@ -211,7 +260,114 @@ fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), Decr
     for file in &pending {
         println!("    {file}");
     }
+    let nested = nested_projects(&ctx.project_root)?;
+    if nested.iter().any(|n| !n.active.is_empty()) {
+        println!("{}", "Nested projects:".bold());
+        print_nested(&ctx.project_root, &nested)?;
+    }
     Ok(())
+}
+
+/// A decree project below another folder, and its active runs.
+struct Nested {
+    root: PathBuf,
+    active: Vec<Row>,
+    /// Why its machines could not be read, when they could not.
+    problem: Option<String>,
+}
+
+/// The decree projects below `dir`, not `dir` itself, at most `NESTED_DEPTH` folders down,
+/// in path order. Hidden folders and those in `SKIPPED` are not searched.
+fn nested_projects(dir: &Path) -> Result<Vec<Nested>, DecreeError> {
+    let mut roots = Vec::new();
+    find_projects(dir, NESTED_DEPTH, &mut roots);
+    roots.sort();
+    roots
+        .into_iter()
+        .map(|root| {
+            Ok(match active_rows(&root) {
+                Ok(active) => Nested {
+                    root,
+                    active,
+                    problem: None,
+                },
+                Err(e) => Nested {
+                    root,
+                    active: Vec::new(),
+                    problem: Some(e.to_string()),
+                },
+            })
+        })
+        .collect()
+}
+
+fn find_projects(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // A symlink is not followed, so a loop cannot be.
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        if !is_dir || name.starts_with('.') || SKIPPED.contains(&name.as_ref()) {
+            continue;
+        }
+        let path = entry.path();
+        if path.join(DECREE_DIR).is_dir() {
+            out.push(path.clone());
+        }
+        find_projects(&path, depth - 1, out);
+    }
+}
+
+/// The `active` runs of the project at `root`, each with the script it runs now.
+fn active_rows(root: &Path) -> Result<Vec<Row>, DecreeError> {
+    let project = Project::load(root)?;
+    let ctx = context(root, &project, Arc::new(AtomicBool::new(false)));
+    let mut rows = Vec::new();
+    for id in run_ids(&ctx.runs_dir())? {
+        if ctx.run_finished(&id)?.is_some() {
+            continue;
+        }
+        let (status, events) = ctx.status_of(&id)?;
+        if status != RunStatus::Active {
+            continue;
+        }
+        rows.push(Row {
+            machine: field(events.first(), "machine").to_string(),
+            state: current_state(&events).unwrap_or("-").to_string(),
+            detail: Running::read(&ctx.runs_dir().join(&id))?.map(Detail::Running),
+            id,
+        });
+    }
+    Ok(rows)
+}
+
+/// Each nested project, relative to `base`, with its active runs.
+fn print_nested(base: &Path, nested: &[Nested]) -> Result<(), DecreeError> {
+    for n in nested {
+        let path = relative(base, &n.root);
+        match &n.problem {
+            Some(problem) => println!("  {path}/: cannot read: {problem}"),
+            None => {
+                println!("  {path}/: active: {}", n.active.len());
+                print_rows(&n.active.iter().collect::<Vec<_>>(), "    ");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `path` relative to `base`, as `/`-separated text.
+fn relative(base: &Path, path: &Path) -> String {
+    path.strip_prefix(base)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn print_rows(rows: &[&Row], indent: &str) {

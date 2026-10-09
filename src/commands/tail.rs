@@ -1,9 +1,12 @@
-//! `decree tail [<id>]` (docs/reference/cli.md): follow the live output of a run, by default the
-//! `active` one. Prints each script's log as it is written, behind a header line
-//! (`== 0004 implement/implement ==`), moves on to the next script's log as the run
-//! proceeds, including into child runs, and stops when the run finishes, waits or is
-//! interrupted. Reads the log files, events and `.running` only; it never touches the run.
+//! `decree tail [<id>]` (docs/reference/cli.md): follow the live output of runs. Prints each
+//! script's log as it is written, behind a header line (`== 0004 implement ==`), moves on to
+//! the next script's log as the run proceeds, including into child runs. With an id it stops
+//! when that run finishes, waits or is interrupted. Without one it follows the active run,
+//! then each run after it, behind a run header (`▶ <id> · <machine>`), until stopped. Reads
+//! the log files, events and `.running` only; it never touches a run. `decree process` and
+//! `daemon` print the same output through `Follower`.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -15,35 +18,111 @@ use std::time::Duration;
 use crate::commands::check::Project;
 use crate::commands::process::context;
 use crate::error::DecreeError;
-use crate::events::{first_text, waiting_child};
+use crate::events::{current_state, first_text, text, waiting_child};
 use crate::interpreter::recover::RunStatus;
 use crate::interpreter::Context;
-use crate::message::{is_valid_id, run_ids};
+use crate::layout::MESSAGE_FILE;
+use crate::message::{is_valid_id, run_ids, Message};
 use crate::runtime::Running;
 
 /// How often the run folder is read again.
-const POLL: Duration = Duration::from_millis(100);
+pub(crate) const POLL: Duration = Duration::from_millis(100);
 
 /// Run `decree tail`.
 pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
-    let id = match id {
-        Some(id) if is_valid_id(id) && ctx.runs_dir().join(id).is_dir() => id.to_string(),
-        Some(id) => return Err(DecreeError::MessageNotFound(id.to_string())),
-        None => {
-            active_run(&ctx)?.ok_or_else(|| DecreeError::Other("no run is active".to_string()))?
-        }
-    };
     let mut out = io::stdout().lock();
-    match follow(&ctx, &id, &mut out) {
+    let result = match id {
+        Some(id) if is_valid_id(id) && ctx.runs_dir().join(id).is_dir() => {
+            follow(&ctx, Follower::join(&ctx, id)?, &mut out)
+        }
+        Some(id) => return Err(DecreeError::MessageNotFound(id.to_string())),
+        None => follow_all(&ctx, &mut out),
+    };
+    match result {
         // Whoever reads the output stopped reading: nothing left to do.
         Err(DecreeError::Io(e)) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         result => result,
     }
 }
 
-/// The `active` run to follow: the first in `id` order that is not a child run (a child
+/// Follow the active run, then every run after it, each behind its run header, until
+/// stopped. A run that starts and ends between two reads is still printed, from its first
+/// log, and so is one claimed while another is followed.
+fn follow_all(ctx: &Context, out: &mut impl Write) -> Result<(), DecreeError> {
+    // Runs that existed before tail started are followed only while active.
+    let mut seen: HashSet<String> = run_ids(&ctx.runs_dir())?.into_iter().collect();
+    let mut follower = match active_run(ctx)? {
+        Some(id) => Some(Follower::join(ctx, &id)?),
+        None => None,
+    };
+    loop {
+        if let Some(f) = follower.take() {
+            seen.insert(f.root().to_string());
+            writeln!(out, "{}", run_header(ctx, f.root())?)?;
+            follow(ctx, f, out)?;
+        }
+        follower = next_run(ctx, &mut seen)?;
+        if follower.is_none() {
+            thread::sleep(POLL);
+        }
+    }
+}
+
+/// The next run for `follow_all`: the first new top-level run folder, from its first log,
+/// else the active run, from where it is.
+fn next_run(ctx: &Context, seen: &mut HashSet<String>) -> Result<Option<Follower>, DecreeError> {
+    for id in run_ids(&ctx.runs_dir())? {
+        if seen.contains(&id) {
+            continue;
+        }
+        // A claim creates the folder, then renames the message into it.
+        let Ok(message) = Message::read(&ctx.runs_dir().join(&id).join(MESSAGE_FILE)) else {
+            continue;
+        };
+        seen.insert(id.clone());
+        // A child run is followed from its parent.
+        if message.text("trigger") != Some("invoke") {
+            return Ok(Some(Follower::from_log(&id, 1)));
+        }
+    }
+    Ok(match active_run(ctx)? {
+        Some(id) => Some(Follower::join(ctx, &id)?),
+        None => None,
+    })
+}
+
+/// `▶ <id> · <machine>`, the line `tail` prints as it moves to a run.
+pub(crate) fn run_header(ctx: &Context, id: &str) -> Result<String, DecreeError> {
+    let (machine, _) = machine_and_state(ctx, id)?;
+    Ok(format!("▶ {id} · {}", machine.as_deref().unwrap_or("?")))
+}
+
+/// The machine of run `id`, from its events or else its message, and its current state.
+pub(crate) fn machine_and_state(
+    ctx: &Context,
+    id: &str,
+) -> Result<(Option<String>, Option<String>), DecreeError> {
+    let events = ctx.events(id)?;
+    let machine = match events.first().and_then(|e| text(e, "machine")) {
+        Some(machine) => Some(machine.to_string()),
+        None => Message::read(&ctx.runs_dir().join(id).join(MESSAGE_FILE))
+            .ok()
+            .and_then(|m| m.machine().map(String::from)),
+    };
+    Ok((machine, current_state(&events).map(String::from)))
+}
+
+/// Follow `follower` until its run finishes, waits or is interrupted.
+fn follow(ctx: &Context, mut follower: Follower, out: &mut impl Write) -> Result<(), DecreeError> {
+    while follower.step(ctx, out)? {
+        thread::sleep(POLL);
+    }
+    Ok(())
+}
+
+/// The active run to follow: the first in `id` order that is not a child run (a child
 /// is followed from its parent), else the first child.
 fn active_run(ctx: &Context) -> Result<Option<String>, DecreeError> {
     let mut child = None;
@@ -81,11 +160,16 @@ impl Cursor {
             Some(n) => n,
             None => logs(&run_dir)?.last().map_or(1, |(n, _)| n + 1),
         };
-        Ok(Cursor {
+        Ok(Cursor::from_log(run, next))
+    }
+
+    /// Start at log `next`.
+    fn from_log(run: &str, next: u32) -> Cursor {
+        Cursor {
             run: run.to_string(),
             log: None,
             next,
-        })
+        }
     }
 
     /// Print what was written to this run's logs since the last call: the rest of the
@@ -112,38 +196,81 @@ impl Cursor {
     }
 }
 
-/// Follow run `id` until it finishes, waits or is interrupted.
-fn follow(ctx: &Context, id: &str, out: &mut impl Write) -> Result<(), DecreeError> {
-    let mut stack = vec![Cursor::join(ctx, id)?];
-    // Join the child runs the run is waiting for now.
-    while let Some(child) = child_of(ctx, &stack[stack.len() - 1].run)? {
-        stack.push(Cursor::join(ctx, &child)?);
+/// One run's output as it is written: its logs, and those of the child runs it waits for.
+pub(crate) struct Follower {
+    /// The run, then each child run it waits for, innermost last.
+    stack: Vec<Cursor>,
+}
+
+impl Follower {
+    /// Follow run `id` from the script running now, joining the child runs it waits for.
+    pub(crate) fn join(ctx: &Context, id: &str) -> Result<Follower, DecreeError> {
+        let mut stack = vec![Cursor::join(ctx, id)?];
+        while let Some(child) = child_of(ctx, &stack[stack.len() - 1].run)? {
+            stack.push(Cursor::join(ctx, &child)?);
+        }
+        Ok(Follower { stack })
     }
-    loop {
-        // Observe first, then print: what the run did before it stopped is all printed.
-        let top = &stack[stack.len() - 1].run;
-        let child = child_of(ctx, top)?;
-        let top_finished = ctx.status_of(top)?.0 == RunStatus::Finished;
-        let live = is_live(ctx, id)?;
-        let depth = stack.len();
-        stack[depth - 1].pump(ctx, out)?;
-        if let Some(child) = child.filter(|c| !stack.iter().any(|cur| cur.run == *c)) {
-            // A child that started while tail was following: print it from its first log.
-            stack.push(Cursor {
-                run: child,
-                log: None,
-                next: 1,
-            });
-            continue;
+
+    /// Follow run `id` from log `next`, as it starts or continues.
+    pub(crate) fn from_log(id: &str, next: u32) -> Follower {
+        Follower {
+            stack: vec![Cursor::from_log(id, next)],
         }
-        if depth > 1 && top_finished {
-            stack.pop();
-            continue;
+    }
+
+    /// The run followed.
+    pub(crate) fn root(&self) -> &str {
+        &self.stack[0].run
+    }
+
+    /// The innermost run followed now: the run, or the child run it waits for.
+    pub(crate) fn current(&self) -> &str {
+        &self.stack[self.stack.len() - 1].run
+    }
+
+    /// Print what was written since the last call, moving into a child run as it starts
+    /// and back as it finishes. Returns whether the run goes on.
+    pub(crate) fn step(
+        &mut self,
+        ctx: &Context,
+        out: &mut impl Write,
+    ) -> Result<bool, DecreeError> {
+        loop {
+            // Observe first, then print: what the run did before it stopped is all printed.
+            let top = self.current().to_string();
+            let child = child_of(ctx, &top)?;
+            let top_finished = ctx.status_of(&top)?.0 == RunStatus::Finished;
+            let live = is_live(ctx, self.root())?;
+            let depth = self.stack.len();
+            self.stack[depth - 1].pump(ctx, out)?;
+            if let Some(child) = child.filter(|c| !self.stack.iter().any(|cur| cur.run == *c)) {
+                // A child that started while tail was following: print it from its first log.
+                self.stack.push(Cursor::from_log(&child, 1));
+                continue;
+            }
+            if depth > 1 && top_finished {
+                self.stack.pop();
+                continue;
+            }
+            return Ok(depth > 1 || live);
         }
-        if depth == 1 && !live {
-            return Ok(());
+    }
+
+    /// Print the rest of every run followed, innermost first, once the run has stopped.
+    pub(crate) fn finish(
+        &mut self,
+        ctx: &Context,
+        out: &mut impl Write,
+    ) -> Result<(), DecreeError> {
+        while let Some(mut cursor) = self.stack.pop() {
+            cursor.pump(ctx, out)?;
+            if self.stack.is_empty() {
+                self.stack.push(cursor);
+                break;
+            }
         }
-        thread::sleep(POLL);
+        Ok(())
     }
 }
 
@@ -168,7 +295,7 @@ fn child_of(ctx: &Context, run: &str) -> Result<Option<String>, DecreeError> {
     Ok(child.map(String::from))
 }
 
-/// The `NNNN-<state>-<script>.log` files in `run_dir`, by number.
+/// The `NNNN-<state>-<script>.log` and `NNNN-<state>.log` files in `run_dir`, by number.
 fn logs(run_dir: &Path) -> io::Result<Vec<(u32, String)>> {
     let mut logs: Vec<(u32, String)> = std::fs::read_dir(run_dir)?
         .filter_map(Result::ok)
@@ -182,23 +309,21 @@ fn logs(run_dir: &Path) -> io::Result<Vec<(u32, String)>> {
 /// The `NNNN` of a script log's filename: 4 digits, more past 9999.
 fn log_number(name: &str) -> Option<u32> {
     let (number, rest) = name.strip_suffix(".log")?.split_once('-')?;
-    if number.len() < 4 || !number.bytes().all(|b| b.is_ascii_digit()) || !rest.contains('-') {
+    if number.len() < 4 || !number.bytes().all(|b| b.is_ascii_digit()) || rest.is_empty() {
         return None;
     }
     number.parse().ok()
 }
 
-/// `0004 implement/implement ==` for `0004-implement-implement.log`. State and script
-/// names cannot contain `-` (docs/reference/observability.md).
+/// `0004 gate ==` for `0004-gate.log`, `0012 _root/setup ==` for `0012-_root-setup.log`.
+/// State and script names cannot contain `-` (docs/reference/observability.md).
 fn header(name: &str) -> String {
     let stem = name.strip_suffix(".log").unwrap_or(name);
-    let mut parts = stem.splitn(3, '-');
-    let (n, state, script) = (
-        parts.next().unwrap_or_default(),
-        parts.next().unwrap_or_default(),
-        parts.next().unwrap_or_default(),
-    );
-    format!("{n} {state}/{script} ==")
+    match stem.splitn(3, '-').collect::<Vec<_>>()[..] {
+        [n, state, script] => format!("{n} {state}/{script} =="),
+        [n, state] => format!("{n} {state} =="),
+        _ => format!("{stem} =="),
+    }
 }
 
 /// Copy `path` from byte `offset` to its end into `out`; returns the new offset. A log
@@ -229,19 +354,12 @@ mod tests {
         assert_eq!(log_number("0004-implement-implement.log"), Some(4));
         assert_eq!(log_number("0012-_root-setup.log"), Some(12));
         assert_eq!(log_number("10000-work-step.log"), Some(10000));
-        for name in [
-            "run.log",
-            "04-a-b.log",
-            "0004-a.log",
-            "0004-a-b.txt",
-            "x004-a-b.log",
-        ] {
+        for name in ["run.log", "04-a-b.log", "0004-a-b.txt", "x004-a-b.log"] {
             assert_eq!(log_number(name), None, "{name}");
         }
-        assert_eq!(
-            header("0004-implement-implement.log"),
-            "0004 implement/implement =="
-        );
+        assert_eq!(log_number("0004-gate.log"), Some(4));
+        assert_eq!(header("0004-gate.log"), "0004 gate ==");
+        assert_eq!(header("0012-_root-setup.log"), "0012 _root/setup ==");
     }
 
     #[test]

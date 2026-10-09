@@ -53,7 +53,7 @@ impl DecreeError {
 }
 
 /// Find the project root by searching upward for `.decree/`.
-fn find_project_root() -> Option<PathBuf> {
+pub fn find_project_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
         if dir.join(DECREE_DIR).is_dir() {

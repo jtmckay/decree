@@ -6,7 +6,8 @@
 //! migrations only. On SIGINT or SIGTERM it interrupts the current run and exits 0.
 
 use crate::commands::check::Project;
-use crate::commands::process::{Pipeline, Stop};
+use crate::commands::process::{context, reporting, Pipeline, Stop};
+use crate::commands::report::{line, notice};
 use crate::cron::{self, CronTracker};
 use crate::error::DecreeError;
 use crate::layout;
@@ -18,8 +19,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Run the daemon polling loop.
-pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
+/// Run the daemon polling loop. Unless `quiet`, each run's output is printed as it goes
+/// (`commands::report`).
+pub fn run(project_root: &Path, interval: Duration, quiet: bool) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
@@ -30,7 +32,19 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
         "decree daemon: ",
     )?;
     println!("decree daemon: polling every {}s", interval.as_secs());
+    let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
+    reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
+        poll(project_root, pipeline, &shutdown, interval)
+    })
+}
 
+/// Recover, then pass and sleep until a signal.
+fn poll(
+    project_root: &Path,
+    pipeline: &mut Pipeline,
+    shutdown: &AtomicBool,
+    interval: Duration,
+) -> Result<(), DecreeError> {
     let mut cron_tracker = CronTracker::new();
     // The last message a blocked migration printed, so each block is reported once.
     let mut blocked = None;
@@ -39,12 +53,12 @@ pub fn run(project_root: &Path, interval: Duration) -> Result<(), DecreeError> {
     let mut result = report(pipeline.recover());
     loop {
         if result.is_ok() {
-            reload_env(&mut pipeline, &mut env_error);
-            result = pass(project_root, &mut pipeline, &mut cron_tracker, &mut blocked);
+            reload_env(pipeline, &mut env_error);
+            result = pass(project_root, pipeline, &mut cron_tracker, &mut blocked);
         }
         match result {
             Err(Stop::Interrupted) => {
-                println!("decree daemon: shutting down (signal received)");
+                line("decree daemon: shutting down (signal received)".to_string());
                 return Ok(());
             }
             Err(stop) => return Err(stop.into_error()),
@@ -78,7 +92,9 @@ fn reload_env(pipeline: &mut Pipeline, env_error: &mut Option<String>) {
         Err(e) => {
             let message = e.to_string();
             if env_error.as_ref() != Some(&message) {
-                eprintln!("decree daemon: {message}; keeping the variables last read");
+                notice(format!(
+                    "decree daemon: {message}; keeping the variables last read"
+                ));
                 *env_error = Some(message);
             }
         }
@@ -110,7 +126,7 @@ fn pass(
             Ok(false) => break,
             Err(Stop::Blocked(message)) => {
                 if blocked.as_ref() != Some(&message) {
-                    eprintln!("decree daemon: {message}");
+                    notice(format!("decree daemon: {message}"));
                     *blocked = Some(message);
                 }
                 break;
@@ -126,7 +142,7 @@ fn pass(
 fn report(result: Result<(), Stop>) -> Result<(), Stop> {
     match result {
         Err(Stop::Blocked(message)) => {
-            eprintln!("decree daemon: {message}");
+            notice(format!("decree daemon: {message}"));
             Ok(())
         }
         other => other,
@@ -138,7 +154,7 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker) {
     let cron_files = match cron::scan_cron_files(project_root) {
         Ok(files) => files,
         Err(e) => {
-            eprintln!("decree daemon: error scanning cron: {e}");
+            notice(format!("decree daemon: error scanning cron: {e}"));
             return;
         }
     };
@@ -152,14 +168,17 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker) {
         let decree_dir = project_root.join(layout::DECREE_DIR);
         match message::queue(&decree_dir, &mut msg) {
             Ok(id) => {
-                println!("decree daemon: cron fired: {} -> {id}.md", cf.filename);
+                line(format!(
+                    "decree daemon: cron fired: {} -> {id}.md",
+                    cf.filename
+                ));
                 tracker.mark_fired(cf);
             }
             Err(e) => {
-                eprintln!(
+                notice(format!(
                     "decree daemon: failed to write cron message for {}: {e}",
                     cf.filename
-                );
+                ));
             }
         }
     }

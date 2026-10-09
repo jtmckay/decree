@@ -50,6 +50,10 @@ pub enum Command {
         #[arg(long = "state", value_name = "STATE", requires = "retry")]
         state: Option<String>,
 
+        /// Print no run output, status line or run summaries: only what needs attention (for cron and CI)
+        #[arg(long, short = 'q', conflicts_with = "dry_run")]
+        quiet: bool,
+
         /// Output format of --dry-run
         #[arg(
             long,
@@ -132,6 +136,10 @@ pub enum Command {
         /// Polling interval: a whole number and s, m, h or d (2s, 1m)
         #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]
         interval: std::time::Duration,
+
+        /// Print no run output, status line or run summaries: only what needs attention
+        #[arg(long, short = 'q')]
+        quiet: bool,
     },
 
     /// Runs by status and queued messages; with an id, one run's events
@@ -148,7 +156,7 @@ pub enum Command {
         format: Format,
     },
 
-    /// Follow the live output of a run, by default the active one, until it stops
+    /// Follow the live output of runs: the active one and each after it, or with an id that run until it stops
     Tail {
         /// Run id
         id: Option<String>,

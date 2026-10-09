@@ -35,8 +35,6 @@ const KILL_GRACE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(10);
 
 /// Prefix of stderr lines in a script log, with one trailing space.
-const STDERR_PREFIX: &[u8] = b"[stderr] ";
-
 /// This attempt's `attempts` entry, set only when the invoke lists its attempts.
 const ATTEMPT_VALUE_ENV: &str = "DECREE_ATTEMPT_VALUE";
 
@@ -418,9 +416,14 @@ impl Executor {
             .map_err(io_err(&path))
     }
 
-    /// The next `NNNN-<state>-<name>.log` filename in the run folder.
+    /// The next `NNNN-<state>-<name>.log` filename in the run folder, `NNNN-<state>.log`
+    /// when the script is named as its state.
     fn reserve_log(&mut self, state: &str, name: &str) -> String {
-        let log = format!("{:04}-{state}-{name}.log", self.next_log);
+        let log = if state == name {
+            format!("{:04}-{state}.log", self.next_log)
+        } else {
+            format!("{:04}-{state}-{name}.log", self.next_log)
+        };
         self.next_log += 1;
         log
     }
@@ -514,11 +517,11 @@ impl Executor {
         let stdout = child
             .stdout
             .take()
-            .map(|out| spawn_reader(out, Arc::clone(&log_file), b""));
+            .map(|out| spawn_reader(out, Arc::clone(&log_file)));
         let stderr = child
             .stderr
             .take()
-            .map(|err| spawn_reader(err, Arc::clone(&log_file), STDERR_PREFIX));
+            .map(|err| spawn_reader(err, Arc::clone(&log_file)));
 
         let deadline = run.timeout.map(|t| start + t);
         let (status, stop) =
@@ -678,7 +681,7 @@ impl Executor {
 }
 
 /// One more than the highest `NNNN-` prefix of a `.log` file in `run_dir`.
-fn next_log_number(run_dir: &Path) -> io::Result<u32> {
+pub(crate) fn next_log_number(run_dir: &Path) -> io::Result<u32> {
     let mut highest = 0;
     for entry in fs::read_dir(run_dir)? {
         let name = entry?.file_name();
@@ -719,12 +722,12 @@ fn remove_event_file(path: Option<&Path>) -> Result<(), RuntimeError> {
     }
 }
 
-/// Copy `source` into `log` line by line, each line prefixed with `prefix`. stdout and
-/// stderr are only logs: nothing in them is parsed.
+/// Copy `source` into `log` line by line, unmarked, so stdout and stderr interleave as a
+/// terminal shows them (as CI runners and `docker logs` do). They are only logs: nothing in
+/// them is parsed.
 fn spawn_reader<R: Read + Send + 'static>(
     source: R,
     log: Arc<Mutex<File>>,
-    prefix: &'static [u8],
 ) -> thread::JoinHandle<io::Result<()>> {
     thread::spawn(move || {
         let mut reader = BufReader::new(source);
@@ -734,15 +737,12 @@ fn spawn_reader<R: Read + Send + 'static>(
             if reader.read_until(b'\n', &mut buf)? == 0 {
                 return Ok(());
             }
-            let mut line = Vec::with_capacity(prefix.len() + buf.len() + 1);
-            line.extend_from_slice(prefix);
-            line.extend_from_slice(&buf);
             if !buf.ends_with(b"\n") {
-                line.push(b'\n');
+                buf.push(b'\n');
             }
             log.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .write_all(&line)?;
+                .write_all(&buf)?;
         }
     })
 }
@@ -1321,7 +1321,7 @@ pub(crate) mod executor_tests {
     }
 
     #[test]
-    fn stderr_lines_carry_the_prefix() {
+    fn stderr_lines_are_logged_unmarked() {
         let p = Project::new(&["stderr"]);
         let out = p
             .executor()
@@ -1329,8 +1329,8 @@ pub(crate) mod executor_tests {
             .unwrap();
         let log = p.log(&out.log);
         assert!(log.contains("to stdout\n"), "{log}");
-        assert!(log.contains("[stderr] to stderr\n"), "{log}");
-        assert!(!log.contains("[stderr] to stdout"), "{log}");
+        assert!(log.contains("to stderr\n"), "{log}");
+        assert!(!log.contains("[stderr]"), "{log}");
     }
 
     #[test]

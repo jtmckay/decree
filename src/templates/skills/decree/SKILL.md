@@ -102,11 +102,11 @@ appear only where a machine invokes `model` or `person`.
 | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
-| `decree process [--dry-run]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order. |
+| `decree process [--dry-run] [--quiet]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order, printing each run's output. `--quiet` for cron and CI. |
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>]` | The same, in a loop, with cron, every `2s` by default. |
-| `decree status [<id>] [--cron] [--format json]` | Runs by status; one run's events; cron schedule (text only). |
-| `decree tail [<id>]` | Follow the output of the script running now. |
+| `decree status [<id>] [--cron] [--format json]` | Runs by status, and active runs in projects below; one run's events; cron schedule (text only). |
+| `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 

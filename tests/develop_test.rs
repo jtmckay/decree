@@ -548,8 +548,8 @@ fn develop_stops_when_the_agent_writes_stop() {
         p.events(&id)
     );
     assert_eq!(p.calls().len(), 1, "no retry after a stop");
-    let log = fs::read_to_string(p.run_dir(&id).join("0002-implement-implement.log")).unwrap();
-    assert!(log.contains("[stderr] Which greeting?\n"), "{log}");
+    let log = fs::read_to_string(p.run_dir(&id).join("0002-implement.log")).unwrap();
+    assert!(log.contains("Which greeting?\n"), "{log}");
 
     // `decree process --retry` with STOP still there stops again, without asking the AI.
     let mut cmd = p.decree(&["process", "--retry", &id, "--state", "implement"]);
@@ -677,16 +677,19 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
         assert_ne!(next, first);
 
         // One implement attempt: the wait is inside the script, not a retry of the run.
-        let log = fs::read_to_string(p.run_dir(&id).join("0002-implement-implement.log")).unwrap();
+        let log = fs::read_to_string(p.run_dir(&id).join("0002-implement.log")).unwrap();
         assert!(
-            log.contains(&format!("[stderr] === claude session {first} ===\n")),
+            log.contains(&format!("=== claude session {first} ===\n")),
             "{log}"
         );
-        assert!(log.contains(&format!("[stderr] [Claude token limit] Usage limit reached. Waiting until {until} to retry.\n")), "{log}");
         assert!(
             log.contains(&format!(
-                "[stderr] [Claude token limit] Resuming session {first}\n"
+                "[Claude token limit] Usage limit reached. Waiting until {until} to retry.\n"
             )),
+            "{log}"
+        );
+        assert!(
+            log.contains(&format!("[Claude token limit] Resuming session {first}\n")),
             "{log}"
         );
         let attempts = p

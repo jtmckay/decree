@@ -275,7 +275,7 @@ fn init_emit_process_status_shows_the_run_done() {
         .lines()
         .find(|l| l.contains("greet/greet (invoke, attempt 1) exit 0 in "))
         .unwrap_or_else(|| panic!("no script line: {status}"));
-    assert!(script.ends_with(", log 0001-greet-greet.log"), "{script}");
+    assert!(script.ends_with(", log 0001-greet.log"), "{script}");
     assert!(status.contains("greet --done--> done (exit_code), exit 0"));
     assert!(status.contains("run_finished done after "), "{status}");
 
@@ -427,6 +427,57 @@ fn dry_run_lists_pending_messages_and_runs_nothing() {
     );
 }
 
+/// AC: `decree process` prints each run's output as `decree tail` does, behind its run
+/// header, and a line as each run stops; `--quiet` prints none of it. Off a terminal there
+/// is no status line.
+#[test]
+fn process_streams_each_run_and_a_line_as_it_stops() {
+    let p = Project::init();
+    p.machine("quick", QUICK);
+    p.script("say", "#!/usr/bin/env bash\necho said\necho warned >&2\n");
+    p.machine("deploy", DEPLOY);
+    p.script("ask_person", "#!/usr/bin/env bash\necho asking\n");
+    let first = p.emit("quick", "Say it.\n");
+    let second = p.emit("deploy", "Ship v1.\n");
+    let out = p.stdout(&["process"], 0);
+    let (head, waiting) = out.split_once("Waiting: ").unwrap();
+    let lines: Vec<&str> = head.lines().collect();
+    assert_eq!(lines.len(), 9, "{out}");
+    assert_eq!(
+        &lines[..2],
+        [format!("▶ {first} · quick").as_str(), "== 0001 work/say ==",]
+    );
+    // stdout and stderr, unmarked, in the order the two pipes deliver them.
+    let mut output = lines[2..4].to_vec();
+    output.sort();
+    assert_eq!(output, ["said", "warned"]);
+    assert!(
+        lines[4].starts_with(&format!("✓ {first} done in ")),
+        "{out}"
+    );
+    assert_eq!(
+        &lines[5..8],
+        [
+            format!("▶ {second} · deploy").as_str(),
+            "== 0001 approval/ask_person ==",
+            "asking",
+        ]
+    );
+    assert!(
+        lines[8].starts_with(&format!("⏸ {second} waiting in approval after ")),
+        "{out}"
+    );
+    assert!(
+        waiting.starts_with(&format!("run {second} in `approval`")),
+        "{out}"
+    );
+    assert!(!out.contains('\r'), "a status line off a terminal: {out:?}");
+
+    p.emit("quick", "Again.\n");
+    let quiet = p.stdout(&["process", "--quiet"], 0);
+    assert!(!quiet.contains("said") && !quiet.contains('✓'), "{quiet}");
+}
+
 /// AC: a run that reaches a `person` state. `decree process` prints the wait id,
 /// the options and a `decree event` command per option, and exits 0; after `decree event`
 /// and another `decree process`, the run is `done`.
@@ -437,7 +488,7 @@ fn person_prints_the_wait_and_a_reply_finishes_the_run() {
     p.script("ask_person", "#!/usr/bin/env bash\nexit 0\n");
     let id = p.emit("deploy", "Ship v1.\n");
 
-    let out = p.stdout(&["process"], 0);
+    let out = p.stdout(&["process", "--quiet"], 0);
     let wait_id = p.events(&id).last().unwrap()["wait_id"]
         .as_str()
         .unwrap()
@@ -556,7 +607,7 @@ fn status_of_a_finished_run_shows_transitions_scripts_and_router_decisions() {
         .lines()
         .find(|l| l.contains("build/build (invoke, attempt 1) exit 0 in "))
         .unwrap_or_else(|| panic!("no script line: {status}"));
-    assert!(script.ends_with(", log 0001-build-build.log"), "{script}");
+    assert!(script.ends_with(", log 0001-build.log"), "{script}");
 
     // The router run is an ordinary run, with its own script and duration.
     let router = p.stdout(&["status", &child], 0);
@@ -603,23 +654,24 @@ fn status_and_tail_follow_a_script_while_it_runs() {
         "  running ticker (invoke of `work`), pid {pid}, for "
     )));
 
-    // `decree tail` with no id follows the active run.
+    // `decree tail` with no id follows the active run, behind its run header.
     let started = Instant::now();
     let mut tail = p.spawn(&["tail"]);
-    let reader = BufReader::new(tail.stdout.take().unwrap());
-    let lines: Vec<(Duration, String)> = reader
-        .lines()
-        .map(|l| (started.elapsed(), l.unwrap()))
-        .collect();
-    let tail_status = wait_exit(&mut tail, Duration::from_secs(5));
-    assert_eq!(tail_status.code(), Some(0));
+    let lines = read_lines(tail.stdout.take().unwrap());
+    let mut got: Vec<(Duration, String)> = Vec::new();
+    while got.last().map(|(_, l)| l.as_str()) != Some("tick 5") {
+        let line = lines
+            .recv_timeout(Duration::from_secs(10))
+            .expect("tail printed no tick 5");
+        got.push((started.elapsed(), line));
+    }
     let decree_status = wait_exit(&mut decree, Duration::from_secs(5));
     assert_eq!(decree_status.code(), Some(0));
-
-    let text: Vec<&str> = lines.iter().map(|(_, l)| l.as_str()).collect();
+    let text: Vec<&str> = got.iter().map(|(_, l)| l.as_str()).collect();
     assert_eq!(
         text,
         [
+            format!("▶ {id} · tick").as_str(),
             "== 0001 work/ticker ==",
             "tick 1",
             "tick 2",
@@ -629,22 +681,72 @@ fn status_and_tail_follow_a_script_while_it_runs() {
         ]
     );
     // Each line arrived as it was written, a second apart, not all at the end.
-    let (first, last) = (lines[2].0, lines[5].0);
+    let (first, last) = (got[3].0, got[6].0);
     assert!(
         last - first >= Duration::from_millis(2500),
-        "lines arrived together: {lines:?}"
+        "lines arrived together: {got:?}"
     );
-    // And tail exited once the run finished.
-    assert_eq!(p.events(&id).last().unwrap()["type"], "run_finished");
-    assert!(started.elapsed() < Duration::from_secs(10));
+
+    // It goes on to the next run, even one that starts and ends between two reads.
+    p.machine("quick", QUICK);
+    p.script("say", "#!/usr/bin/env bash\necho said\n");
+    let next = p.emit("quick", "Say it.\n");
+    p.decree(&["process", "--quiet"]).assert().success();
+    let more: Vec<String> = (0..3)
+        .map(|_| {
+            lines
+                .recv_timeout(Duration::from_secs(5))
+                .expect("tail stopped")
+        })
+        .collect();
+    assert_eq!(
+        more,
+        [
+            format!("▶ {next} · quick"),
+            "== 0001 work/say ==".into(),
+            "said".into()
+        ]
+    );
+    tail.kill().unwrap();
+    tail.wait().unwrap();
 }
 
-/// `decree tail` exits 1 when there is no such run, or no active run.
+/// One state that runs `say`.
+const QUICK: &str = "\
+name: quick
+description: One quick script.
+initial: work
+states:
+  work:
+    invoke: say
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// Each line `out` prints, as it arrives.
+fn read_lines(out: impl std::io::Read + Send + 'static) -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(out).lines() {
+            if tx.send(line.unwrap()).is_err() {
+                return;
+            }
+        }
+    });
+    rx
+}
+
+/// `decree tail <id>` exits 1 when there is no such run; with no id and no run it waits.
 #[test]
-fn tail_without_a_run_exits_1() {
+fn tail_without_a_run_waits_and_an_unknown_id_exits_1() {
     let p = Project::init();
-    p.decree(&["tail"]).assert().code(1);
     p.decree(&["tail", "no-such-run"]).assert().code(1);
+    let mut tail = p.spawn(&["tail"]);
+    thread::sleep(Duration::from_millis(300));
+    assert!(tail.try_wait().unwrap().is_none(), "tail exited");
+    tail.kill().unwrap();
+    tail.wait().unwrap();
 }
 
 /// `decree tail <id>` on a run that waits for a person stops at once, after printing the
@@ -693,7 +795,7 @@ fn tail_follows_into_child_runs() {
     );
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "== 0001 build/build ==\nbuilt\ntested\n== 0001 ask/reply ==\nrouting\n"
+        "== 0001 build ==\nbuilt\ntested\n== 0001 ask/reply ==\nrouting\n"
     );
 }
 
@@ -842,7 +944,7 @@ fn emit_params_and_the_trigger_reach_the_script() {
     let id = String::from_utf8(out).unwrap().trim().to_string();
     p.decree(&["process"]).assert().success();
     assert_eq!(
-        fs::read_to_string(p.run_dir(&id).join("0001-greet-greet.log")).unwrap(),
+        fs::read_to_string(p.run_dir(&id).join("0001-greet.log")).unwrap(),
         "hello decree from hello/greet trigger=emit attempt=1\n"
     );
 }
@@ -1014,4 +1116,76 @@ fn daemon_reads_dotenv_again_on_each_pass() {
     );
     let out = fs::read_to_string(p.root().join("out.txt")).unwrap();
     assert_eq!(out, "one\ntwo\n");
+}
+
+/// AC: `decree status` in a folder above a project, or in a project above another, lists
+/// the nested project's active runs.
+#[test]
+fn status_lists_active_runs_in_nested_projects() {
+    let outer = TempDir::new().unwrap();
+    let web = outer.path().join("apps/web");
+    fs::create_dir_all(&web).unwrap();
+    let decree = |dir: &std::path::Path, args: &[&str]| {
+        let mut cmd = cargo_bin_cmd!("decree");
+        cmd.current_dir(dir).env("NO_COLOR", "1").args(args);
+        cmd
+    };
+    decree(&web, &["init", "--ai", "claude"]).assert().success();
+    fs::write(web.join(".decree/machines/tick.yml"), TICK).unwrap();
+    write_script(&web.join(".decree/scripts/ticker"), TICK_WHILE_FLAG);
+    fs::write(web.join("tick.flag"), "").unwrap();
+    let out = decree(&web, &["emit", "--machine", "tick"])
+        .write_stdin("Tick.\n")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let id = String::from_utf8(out).unwrap().trim().to_string();
+    let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
+        .current_dir(&web)
+        .args(["process", "--quiet"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let running = web.join(format!(".decree/runs/{id}/.running"));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !running.exists() {
+        assert!(Instant::now() < deadline, "no script started");
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    let status = |dir: &std::path::Path| {
+        let out = decree(dir, &["status"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let above = status(outer.path());
+    assert!(
+        above.starts_with(&format!(
+            "No .decree/ here; 1 decree project(s) below.\n  apps/web/: active: 1\n    {id}  tick  `work`\n      running ticker"
+        )),
+        "{above}"
+    );
+    decree(outer.path(), &["init", "--ai", "claude"])
+        .assert()
+        .success();
+    let inside = status(outer.path());
+    assert!(
+        inside.contains(&format!(
+            "Nested projects:\n  apps/web/: active: 1\n    {id}  tick  `work`\n"
+        )),
+        "{inside}"
+    );
+
+    fs::remove_file(web.join("tick.flag")).unwrap();
+    assert_eq!(
+        wait_exit(&mut process, Duration::from_secs(10)).code(),
+        Some(0)
+    );
+    assert!(!status(outer.path()).contains("Nested projects:"));
 }

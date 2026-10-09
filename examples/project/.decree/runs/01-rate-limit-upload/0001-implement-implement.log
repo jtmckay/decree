@@ -1,2 +1,0 @@
-Reading src/routes/upload.rs
-[stderr] error: qwen3:8b: context window exceeded (32768 tokens)

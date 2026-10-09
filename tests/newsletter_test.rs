@@ -193,7 +193,7 @@ impl Project {
 
     /// The log of the run's `state` script.
     fn log(&self, id: &str, state: &str) -> String {
-        let suffix = format!("-{state}-{state}.log");
+        let suffix = format!("-{state}.log");
         let path = fs::read_dir(self.run_dir(id))
             .unwrap()
             .map(|e| e.unwrap().path())

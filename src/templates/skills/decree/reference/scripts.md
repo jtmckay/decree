@@ -26,8 +26,8 @@ decree never resolves a script from `lib/`.
 
 - Directly (no shell wrapper), from the project root, with stdin `/dev/null`, in its own process
   group.
-- stdout and stderr go to `runs/<id>/NNNN-<state>-<script>.log` (stderr lines prefixed
-  `[stderr] `). What an invoke prints is what a later `matches` check or model reads. Output
+- stdout and stderr go, interleaved and unmarked, to `runs/<id>/NNNN-<state>-<script>.log`
+  (`NNNN-<state>.log` when the script is named as its state). What an invoke prints is what a later `matches` check or model reads. Output
   is only a log: decree never reads an event from it.
 - On stop or timeout, decree sends SIGTERM to the group, then SIGKILL after 10 s.
 - Scripts must be safe to re-run: an interrupted step runs again after `decree process --retry`.

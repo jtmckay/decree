@@ -27,7 +27,7 @@ mod common;
 use common::write_script;
 
 /// Every script in the replay project. Execution `n` of script `<name>` replays
-/// `.replay/<name>/<n>/`: `log` (stdout lines, and `[stderr] ` lines to stderr), `exit`,
+/// `.replay/<name>/<n>/`: `log` (printed to stdout), `exit`,
 /// `event` to write to `$DECREE_EVENT_FILE`, and `reply.json` to write to `$DECREE_REPLY`;
 /// `sleep` makes it wait to be stopped.
 const STUB: &str = r#"#!/usr/bin/env bash
@@ -43,12 +43,7 @@ if [ -e "$step/sleep" ]; then
 fi
 [ -e "$step/reply.json" ] && cp "$step/reply.json" "$DECREE_REPLY"
 [ -e "$step/event" ] && cp "$step/event" "$DECREE_EVENT_FILE"
-while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in
-    '[stderr] '*) printf '%s\n' "${line#'[stderr] '}" >&2 ;;
-    *) printf '%s\n' "$line" ;;
-  esac
-done < "$step/log"
+cat "$step/log"
 exit "$(cat "$step/exit")"
 "#;
 

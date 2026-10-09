@@ -140,11 +140,7 @@ impl Project {
             "source": "claim", "exit_code": null,
         });
         self.event(id, trigger, ts, claim);
-        fs::write(
-            self.run_dir(id).join("0002-work-work.log"),
-            "x".repeat(2000),
-        )
-        .unwrap();
+        fs::write(self.run_dir(id).join("0002-work.log"), "x".repeat(2000)).unwrap();
     }
 
     /// A run that reached final state `state`, with `run_finished` at `ts`.

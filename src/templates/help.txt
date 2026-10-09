@@ -29,24 +29,28 @@ Commands:
   decree skill [--ai AI]      Refresh the decree skill (.claude/skills/decree/
                               or .github/skills/decree/) after an upgrade;
                               your own files there are kept
-  decree process [--dry-run]  Deliver replies, continue pending runs, drain
-                              inbox/, then run pending migrations in order.
+  decree process [--dry-run] [--quiet]
+                              Deliver replies, continue pending runs, drain
+                              inbox/, then run pending migrations in order,
+                              printing each run's output and a status line.
                               A failed inbox run is reported and the rest
                               run; a failed migration stops it. Exits 1 if
-                              any run failed
+                              any run failed. --quiet prints only notices
   decree process --retry [ID] [--state S]
                               First continue a failed or interrupted run: ID,
                               or the migration blocking the queue
-  decree daemon [--interval D]
+  decree daemon [--interval D] [--quiet]
                               The same passes plus cron, every D (default 2s)
   decree emit --machine M [--param K=V]...
                               Queue a message for M; the body is read from
                               stdin. Prints its id
   decree event ID EVENT [-m NOTE]
                               Reply to a run waiting for a person
-  decree status [ID]          Runs by status and queued messages; one run's events
+  decree status [ID]          Runs by status and queued messages, and active
+                              runs in projects below; one run's events
   decree status --cron        Cron files and when each fires next
-  decree tail [ID]            Follow the live output of a run
+  decree tail [ID]            Follow the live output of each run as it comes,
+                              or of run ID until it stops
   decree prune --older-than AGE [--dry-run]
                               Delete finished runs older than AGE (30d, 12h,
                               90m, 90s); --dry-run lists them
@@ -62,7 +66,8 @@ Files (.decree/):
   scripts/<name>              Scripts shared by every machine
   scripts/<machine>/<name>    A machine's own scripts, found before scripts/
   lib/                        Code, config and data scripts source ($DECREE_LIB)
-  env                         KEY=value for every script; the process environment wins
+  .env  .env.<name>           KEY=value for every script, or one machine's
+                              (env_file:); gitignored but .env.example
   migrations/  processed.md   Ordered, run-once messages and their ledger; commit both
   inbox/                      Queued messages, run in filename order
   cron/                       Message templates queued on a schedule

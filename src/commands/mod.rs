@@ -6,6 +6,7 @@ pub mod graph;
 pub mod init;
 pub mod process;
 pub mod prune;
+pub(crate) mod report;
 pub mod schema;
 pub mod skill;
 pub mod status;

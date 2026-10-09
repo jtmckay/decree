@@ -59,7 +59,7 @@
     },
     "input": {
       "type": "string",
-      "description": "The latest script output of the invoke's `output` state, as logged (stdout, and stderr lines with their `[stderr] ` prefix); empty when the invoke names no `output`."
+      "description": "The latest script output of the invoke's `output` state, as logged (stdout and stderr, interleaved as written); empty when the invoke names no `output`."
     },
     "message_body": {
       "type": "string",

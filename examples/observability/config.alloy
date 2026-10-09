@@ -74,10 +74,15 @@ loki.source.file "decree_script_output" {
 }
 
 loki.process "decree_script_output" {
-  // runs/<run_id>/<NNNN>-<state>-<script>.log; names cannot contain "-".
+  // runs/<run_id>/<NNNN>-<state>-<script>.log, or <NNNN>-<state>.log when the script is
+  // named as its state; names cannot contain "-".
   stage.regex {
     source     = "filename"
-    expression = "/runs/(?P<run_id>[^/]+)/(?P<n>\\d{4,})-(?P<state>[^-]+)-(?P<script>[^/]+)\\.log$"
+    expression = "/runs/(?P<run_id>[^/]+)/(?P<n>\\d{4,})-(?P<state>[^-/]+?)(?:-(?P<script>[^-/]+))?\\.log$"
+  }
+  stage.template {
+    source   = "script"
+    template = "{{ if .script }}{{ .script }}{{ else }}{{ .state }}{{ end }}"
   }
   stage.labels {
     values = { script = "" }

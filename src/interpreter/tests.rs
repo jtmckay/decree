@@ -871,7 +871,7 @@ fn check_compares_with_a_data_value_set_by_params() {
 
 #[test]
 fn check_output_matches_reads_the_named_states_output() {
-    // `exit_zero` prints `hello`; `stderr` writes `[stderr] to stderr` to its log.
+    // `exit_zero` prints `hello`; `stderr` writes `to stderr` to its log.
     for (script, cond, want) in [
         (
             "exit_zero",
@@ -886,7 +886,7 @@ fn check_output_matches_reads_the_named_states_output() {
         ),
         (
             "stderr",
-            "{ output: work, matches: '(?m)^\\[stderr\\] to stderr$' }",
+            "{ output: work, matches: '(?m)^to stderr$' }",
             "true",
         ),
     ] {

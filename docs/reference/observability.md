@@ -5,7 +5,7 @@
 - **Ship** `.decree/runs/*/events.jsonl` (events) and, optionally, `.decree/runs/*/*.log` (script output). `traces.jsonl` goes to a trace store instead ([Traces](#traces)).
 - **Timestamps.** Use the event's `ts` as the log timestamp, so back-filled and late-shipped events land at the right time.
 - **Labels** must stay low-cardinality: `machine`, `type`, and for script output `script`. `run_id`, `state` and `seq` are fields or structured metadata, never labels, because a label per run makes Loki slow. The one exception is `state` on `run_finished` lines, whose values are a machine's few final states, for [Metrics](#metrics).
-- **Script output files** carry their context in the path: `runs/<run_id>/<NNNN>-<state>-<script>.log`. State and script names cannot contain `-`, so the regex `/runs/(?P<run_id>[^/]+)/(?P<n>\d{4,})-(?P<state>[^-]+)-(?P<script>[^/]+)\.log$` is unambiguous.
+- **Script output files** carry their context in the path: `runs/<run_id>/<NNNN>-<state>-<script>.log`, or `runs/<run_id>/<NNNN>-<state>.log` when the script is named as its state. State and script names cannot contain `-`, so the regex `/runs/(?P<run_id>[^/]+)/(?P<n>\d{4,})-(?P<state>[^-/]+?)(?:-(?P<script>[^-/]+))?\.log$` is unambiguous; a missing `script` is the `state`.
 - **Retention.** Loki's retention is the history. `decree prune --older-than <age>` deletes finished run folders ([cli.md](cli.md)), and nothing else does, so the local `runs/` is a working copy: ship runs before pruning them, and prune with an age longer than the shipper's lag.
 - **Stability.** Field names and meanings in [events.jsonl](runs.md#eventsjsonl) are a public contract under `v: 1`. Dashboards may depend on them.
 

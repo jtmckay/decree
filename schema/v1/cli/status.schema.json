@@ -66,6 +66,19 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "nested": {
+          "type": "array",
+          "description": "Decree projects below this one (at most 4 folders down, not in hidden folders, node_modules, target, vendor or dist) that have active runs, in path order. Absent when none has.",
+          "items": {
+            "type": "object",
+            "required": ["path", "active"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "description": "The project's folder, relative to this project's root." },
+              "active": { "type": "array", "description": "Its active runs, as in `runs.active`.", "items": { "$ref": "#/$defs/row" } }
+            }
+          }
+        },
         "counts": {
           "type": "object",
           "description": "How many runs there are, in all and per status.",
