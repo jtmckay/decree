@@ -289,6 +289,17 @@ fn yaml_syntax_error_names_line() {
     assert!(err.starts_with("machines/bad.yml: line "), "{err}");
 }
 
+#[test]
+fn colon_in_a_plain_value_says_to_quote_it() {
+    let text = fixture("hello").replace("description:", "description: Note: this");
+    let err = load_err("hello", &text);
+    assert!(
+        err.starts_with("machines/hello.yml: line 3: mapping values are not allowed in this context: a value with `: ` in it must be quoted"),
+        "{err}"
+    );
+    assert!(!err.contains("column"), "{err}");
+}
+
 // Keys outside the SCXML subset (V19), with the docs/reference/machines.md messages.
 
 #[test]

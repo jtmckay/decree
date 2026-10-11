@@ -116,11 +116,11 @@ impl RunInput {
 
 /// Everything stepping a run needs beyond the run itself: the project's machines, and the
 /// settings each run's executor and its child runs use (docs/reference/runs.md, Sub-machines).
-pub struct Context<'a> {
+pub struct Context {
     /// The directory containing `.decree/`.
     pub project_root: PathBuf,
     /// Every machine, by name: the children a run may start.
-    pub machines: &'a BTreeMap<String, LoadedMachine>,
+    pub machines: Arc<BTreeMap<String, LoadedMachine>>,
     /// Set on SIGINT or SIGTERM; stops the running script (docs/reference/messages.md, Stopping).
     pub shutdown: Arc<AtomicBool>,
     /// The variables scripts get from the `.env` files (docs/reference/scripts.md,
@@ -195,7 +195,7 @@ impl Decision {
 
 /// Steps one run. Scripts run through `executor`, which owns the run's event log.
 pub struct Interpreter<'a> {
-    ctx: &'a Context<'a>,
+    ctx: &'a Context,
     machine: &'a LoadedMachine,
     executor: Executor,
     data: BTreeMap<String, cond::Value>,
@@ -210,7 +210,7 @@ pub struct Interpreter<'a> {
 
 impl<'a> Interpreter<'a> {
     pub fn new(
-        ctx: &'a Context<'a>,
+        ctx: &'a Context,
         machine: &'a LoadedMachine,
         executor: Executor,
         input: RunInput,
@@ -714,7 +714,7 @@ impl<'a> Interpreter<'a> {
     }
 }
 
-impl Context<'_> {
+impl Context {
     /// `.decree/runs/`.
     pub fn runs_dir(&self) -> PathBuf {
         self.project_root.join(DECREE_DIR).join(RUNS_DIR)
@@ -753,7 +753,7 @@ impl Context<'_> {
     }
 }
 
-impl Context<'_> {
+impl Context {
     /// The run at the top of run `run_id`'s chain, whose parent is `parent`: each run's
     /// `parent`, followed until a run names none. A parent whose folder is gone (pruned)
     /// ends the chain.

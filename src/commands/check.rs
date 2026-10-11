@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_norway::Value;
 
@@ -253,7 +254,7 @@ fn check(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
 /// Each machine `env_file` with a valid name (V14), to the machines that name it.
 fn machine_env_files(project: &Project) -> BTreeMap<&str, Vec<&str>> {
     let mut out: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (id, m) in &project.machines {
+    for (id, m) in project.machines.iter() {
         if let Some(file) = m
             .env_file
             .as_deref()
@@ -403,9 +404,11 @@ pub(crate) struct Project {
     /// Every machine file, including those that fail to load.
     pub(crate) machine_ids: BTreeSet<String>,
     /// The machines that loaded.
-    pub(crate) machines: BTreeMap<String, LoadedMachine>,
+    pub(crate) machines: Arc<BTreeMap<String, LoadedMachine>>,
     /// Every machine error, by machine id, each machine's errors in rule order.
     pub(crate) problems: Vec<CheckError>,
+    /// Every machine file's text, by machine id: what a reload compares.
+    pub(crate) sources: BTreeMap<String, String>,
 }
 
 impl Project {
@@ -418,20 +421,20 @@ impl Project {
         // Load every machine first: some rules look into the machines a state invokes.
         let mut problems = Vec::new();
         let mut machines = BTreeMap::new();
-        let mut texts = BTreeMap::new();
+        let mut sources = BTreeMap::new();
         let file = |id: &str| format!("{MACHINES_DIR}/{id}.yml");
         for (id, path) in paths {
             let text = std::fs::read_to_string(&path)?;
             match machine::load_machine_located(&id, &text) {
                 Ok(m) => {
                     machines.insert(id.clone(), m);
-                    texts.insert(id, text);
                 }
                 Err(e) => {
                     let error = CheckError::new(file(&id), e.at.as_deref(), &e.message);
-                    problems.push((id, error));
+                    problems.push((id.clone(), error));
                 }
             }
+            sources.insert(id, text);
         }
         let env = CheckEnv {
             decree_dir: &decree_dir,
@@ -439,7 +442,7 @@ impl Project {
             machines: &machines,
         };
         for (id, m) in &machines {
-            for p in m.validate(&texts[id], &env) {
+            for p in m.validate(&sources[id], &env) {
                 problems.push((
                     id.clone(),
                     CheckError::new(file(id), Some(&p.at), &p.message),
@@ -451,8 +454,9 @@ impl Project {
         Ok(Project {
             decree_dir,
             machine_ids,
-            machines,
+            machines: Arc::new(machines),
             problems,
+            sources,
         })
     }
 

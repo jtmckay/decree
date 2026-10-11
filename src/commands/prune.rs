@@ -103,7 +103,7 @@ pub fn run(
 
 /// What makes a run prunable: finished before `cutoff`, and none of the cases kept.
 struct Rule<'a> {
-    ctx: &'a Context<'a>,
+    ctx: &'a Context,
     processed: &'a BTreeSet<String>,
     cutoff: DateTime<Utc>,
 }

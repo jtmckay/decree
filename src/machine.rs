@@ -681,7 +681,10 @@ fn parse_machine_located(text: &str) -> Result<Machine, ParseError> {
     };
     let value: serde_norway::Value = match serde_norway::from_str(text) {
         Ok(value) => value,
-        Err(syntax) => return Err(at_line(&syntax, syntax.to_string())),
+        Err(syntax) => {
+            let message = crate::message::yaml_syntax_message(&syntax.to_string());
+            return Err(at_line(&syntax, message));
+        }
     };
     // Before parsing: an old shape may also parse as a new one (a bare `matches`).
     if let Some(found) = value

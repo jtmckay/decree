@@ -107,7 +107,7 @@ They are dotenv files, read as Docker Compose's `env_file` and systemd's `Enviro
 
   `HOST=192.168.1.30 decree daemon` moves both URLs of `.decree/.env`.
 - Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors. A later line wins over an earlier one with the same key.
-- `process` reads them once at start, `daemon` at start and again before each pass, so an edit applies without a restart. A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and a `daemon` that finds one later prints it and keeps the variables it read last. Commands that run no scripts read none of them, since decree reads no setting of its own from them ([No configuration file](README.md#no-configuration-file)).
+- `process` and `daemon` read them at start and again before each run, so an edit applies without a restart ([Edits while running](cli.md#edits-while-running)). A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and one that finds it later prints it once and keeps the variables it read last. Commands that run no scripts read none of them, since decree reads no setting of its own from them ([No configuration file](README.md#no-configuration-file)).
 - `decree check` warns when one of them exists and `.decree/.gitignore` has no `.env*` line.
 
 ### One script, several states
@@ -178,8 +178,8 @@ Before each attempt, decree creates `runs/<id>/.event` empty and sets `DECREE_EV
 
 1. It exits non-zero: the event is `error`. The file is not read.
 2. It exits 0 and the file holds a name (surrounding whitespace, a trailing newline included, is trimmed): that is the event.
-3. It exits 0 and the file is empty or missing: the event is `done`.
-4. A name from step 2 that is reserved ([Rules](machines.md#rules)), invalid, or that matches no transition of the state or its ancestors: the event becomes `error`, and the `transition` event records `"invalid_event": "<name>"`.
+3. It exits 0 and the file is empty or missing, or holds `done`: the event is `done`. A script need not write `done`; writing it is the same as writing nothing.
+4. A name from step 2 other than `done` that is reserved ([Rules](machines.md#rules)), invalid, or that matches no transition of the state or its ancestors: the event becomes `error`, and the `transition` event records `"invalid_event": "<name>"`.
 
 stdout and stderr are only the script's log; decree never parses them. A log can end with anything, a model's JSON reply or a test runner's summary, so an event read from it could be one the script never meant to raise. GitHub Actions retired `::set-output` on stdout for `$GITHUB_OUTPUT` for the same reason ([decisions.md](../decisions.md#d48-scripts-name-their-event-in-decree_event_file)).
 

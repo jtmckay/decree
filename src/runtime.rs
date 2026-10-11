@@ -377,6 +377,8 @@ impl Executor {
             InvokeEvent::ExitCode("error")
         } else {
             match execution.event.clone() {
+                // Naming `done` is the same as naming nothing.
+                Some(e) if e == "done" => InvokeEvent::ExitCode("done"),
                 Some(e) if is_reserved_event(&e) || !machine.handles(state, &e) => {
                     InvokeEvent::Invalid(e)
                 }
@@ -1150,6 +1152,13 @@ pub(crate) mod executor_tests {
             .run_invoke(&m, m.find("s").unwrap(), script_of(&m), 1)
             .unwrap();
         assert_eq!(out.event, InvokeEvent::Script("pass".to_string()));
+    }
+
+    #[test]
+    fn named_done_is_done() {
+        let p = Project::new(&["name_done"]);
+        let out = invoke(&p, "{ invoke: name_done, transitions: { done: done } }");
+        assert_eq!(out.event, InvokeEvent::ExitCode("done"));
     }
 
     #[test]

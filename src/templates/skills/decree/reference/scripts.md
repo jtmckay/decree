@@ -40,8 +40,8 @@ Write the event's name to `$DECREE_EVENT_FILE`, a fresh empty file for each atte
 
 1. Exit non-zero: `error`. The file is not read.
 2. Exit 0 and the file holds a name (whitespace trimmed): that event.
-3. Exit 0 and the file is empty: `done`.
-4. A name that is reserved or matches no transition of the state or its ancestors: `error`.
+3. Exit 0 and the file is empty, or holds `done`: `done`.
+4. Any other name that is reserved or matches no transition of the state or its ancestors: `error`.
 
 ```bash
 #!/usr/bin/env bash

@@ -185,7 +185,7 @@ pub fn mirror_state(path: &Path, state: &str) -> Result<(), InterpreterError> {
     Ok(message.write(path)?)
 }
 
-impl<'a> Context<'a> {
+impl Context {
     /// A run's status (docs/reference/messages.md, Run status), where a run left `waiting` for a child that
     /// has already finished is `pending` (docs/reference/runs.md, Sub-machines).
     pub fn status(&self, m: &LoadedMachine, events: &[Event], lock_alive: bool) -> RunStatus {
@@ -232,7 +232,7 @@ impl<'a> Context<'a> {
     }
 
     /// The machine a run's first event names, if it is loaded.
-    pub fn run_machine(&self, events: &[Event]) -> Option<&'a LoadedMachine> {
+    pub fn run_machine(&self, events: &[Event]) -> Option<&LoadedMachine> {
         first_text(events, "machine").and_then(|name| self.machines.get(name))
     }
 

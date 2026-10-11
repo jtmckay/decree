@@ -1,12 +1,13 @@
-//! `decree daemon [--interval <duration>]` (docs/reference/cli.md): validate, mark crashed runs
-//! `interrupted`, then loop: read `.decree/env` again, deliver replies and timeouts, continue `pending` runs, cron
-//! tick, drain the inbox, next migration, sleep. Every step is `process`'s own
+//! `decree daemon [--interval <duration>] [--retry [<id>] [--state <s>]]`
+//! (docs/reference/cli.md): validate, `--retry` as `process` does, mark crashed runs
+//! `interrupted`, then loop: read the machines and `.env` files again, deliver replies and
+//! timeouts, continue `pending` runs, cron tick, drain the inbox, next migration, sleep. Every step is `process`'s own
 //! (`commands::process::Pipeline`); there is no second pipeline. A failed or interrupted
 //! inbox run does not stop it; a failed, interrupted or waiting migration blocks later
 //! migrations only. On SIGINT or SIGTERM it interrupts the current run and exits 0.
 
 use crate::commands::check::Project;
-use crate::commands::process::{context, reporting, Pipeline, Stop};
+use crate::commands::process::{context, reporting, Pipeline, Retry, Stop};
 use crate::commands::report::{line, notice};
 use crate::cron::{self, CronTracker};
 use crate::error::DecreeError;
@@ -19,20 +20,28 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Run the daemon polling loop. Unless `quiet`, each run's output is printed as it goes
-/// (`commands::report`).
-pub fn run(project_root: &Path, interval: Duration, quiet: bool) -> Result<(), DecreeError> {
+/// Run the daemon polling loop, after `retry` if given. Unless `quiet`, each run's output is
+/// printed as it goes (`commands::report`).
+pub fn run(
+    project_root: &Path,
+    interval: Duration,
+    retry: Option<Retry>,
+    quiet: bool,
+) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
+    let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
     let mut pipeline = Pipeline::new(
         project_root,
-        &project,
+        project,
         Arc::clone(&shutdown),
         "decree daemon: ",
     )?;
+    if let Some(retry) = retry {
+        pipeline.retry(&retry)?;
+    }
     println!("decree daemon: polling every {}s", interval.as_secs());
-    let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
     reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
         poll(project_root, pipeline, &shutdown, interval)
     })
@@ -48,12 +57,10 @@ fn poll(
     let mut cron_tracker = CronTracker::new();
     // The last message a blocked migration printed, so each block is reported once.
     let mut blocked = None;
-    // The last `.env` error printed, likewise.
-    let mut env_error = None;
     let mut result = report(pipeline.recover());
     loop {
         if result.is_ok() {
-            reload_env(pipeline, &mut env_error);
+            pipeline.refresh();
             result = pass(project_root, pipeline, &mut cron_tracker, &mut blocked);
         }
         match result {
@@ -80,23 +87,6 @@ fn poll(
         }
         if shutdown.load(Ordering::Relaxed) {
             result = Err(Stop::Interrupted);
-        }
-    }
-}
-
-/// Read the `.env` files again before a pass. A malformed file is printed once per change, and
-/// scripts keep the variables last read until it is fixed.
-fn reload_env(pipeline: &mut Pipeline, env_error: &mut Option<String>) {
-    match pipeline.reload_env() {
-        Ok(()) => *env_error = None,
-        Err(e) => {
-            let message = e.to_string();
-            if env_error.as_ref() != Some(&message) {
-                notice(format!(
-                    "decree daemon: {message}; keeping the variables last read"
-                ));
-                *env_error = Some(message);
-            }
         }
     }
 }

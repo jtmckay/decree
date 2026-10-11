@@ -242,7 +242,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree skill [--ai AI]` | Refresh the decree skill in `.claude/skills/decree/` or `.github/skills/decree/` after an upgrade |
 | `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
 | `decree process --retry [ID] [--state S]` | First continue a failed or interrupted run: `ID`, or the migration blocking the queue |
-| `decree daemon [--interval D]` | The same passes plus cron, every `D` (default `2s`) |
+| `decree daemon [--interval D] [--retry [ID]]` | The same passes plus cron, every `D` (default `2s`), until stopped: what unattended work runs under, since `process` exits while a run waits for a person |
 | `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
 | `decree event ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
 | `decree status [ID]` | Runs by status and queued messages; one run's events |

@@ -78,7 +78,7 @@ impl Message {
         // YAML line `n` is file line `n + 1`: the opening fence is line 1.
         let yaml = yaml_lines.join("\n");
         let value: Value = serde_norway::from_str(&yaml).map_err(|e| {
-            let msg = strip_yaml_location(&e.to_string());
+            let msg = yaml_syntax_message(&e.to_string());
             let line = duplicate_key_line(&yaml_lines, &msg)
                 .or_else(|| e.location().map(|l| l.line() + 1))
                 .unwrap_or(1);
@@ -570,11 +570,20 @@ fn duplicate_key_line(yaml_lines: &[&str], msg: &str) -> Option<usize> {
 }
 
 /// serde_norway messages end with `at line N column M`, a line inside the YAML; the caller
-/// reports the file line instead.
-fn strip_yaml_location(msg: &str) -> String {
-    match msg.find(" at line ") {
-        Some(i) => msg[..i].to_string(),
-        None => msg.to_string(),
+/// reports the file line instead. A `: ` inside a plain value, the most common YAML slip in
+/// prose, gets how to write it.
+pub(crate) fn yaml_syntax_message(msg: &str) -> String {
+    let msg = match msg.find(" at line ") {
+        Some(i) => &msg[..i],
+        None => msg,
+    };
+    if msg.starts_with("mapping values are not allowed") {
+        format!(
+            "{msg}: a value with `: ` in it must be quoted (`description: \"Step one: build\"`) \
+             or written as a block (`description: >-`, the text indented on the lines below)"
+        )
+    } else {
+        msg.to_string()
     }
 }
 

@@ -81,7 +81,9 @@ in block style:
 For `model` and `person`, `question` is what is being decided, and the **options are the state's
 transitions** except `unsure` and `error`. Every option needs a `description`: the question and
 the descriptions are exactly what the model or person sees, so write them to stand alone. Write
-prose (`question`, `description`) in block style, one key per line.
+prose (`question`, `description`) in block style, one key per line. Prose containing `: ` breaks
+a plain YAML value: quote it (`description: "Step one: build"`) or use `description: >-` with the
+text indented below.
 
 A model sees only what it is given: the latest script output of the state named by `output`, and
 the message body. Without `output`, it gets no script output at all. A script decides what a model
@@ -127,12 +129,13 @@ literal or `{ data: <name> }`; `int` and `number` data compare numerically. For 
 
 ## Events and transitions
 
-- A script's event: `done`, `error`, or a name it writes to `$DECREE_EVENT_FILE`. A named event
-  that is reserved or matches no transition becomes `error`.
+- A script's event: `done`, `error`, or a name it writes to `$DECREE_EVENT_FILE`. Writing `done`
+  is the same as writing nothing. Any other named event that is reserved or matches no transition
+  becomes `error`.
 - Selecting a transition: the current state's `transitions`, then each ancestor's, innermost
   first. An `error` nobody handles goes to `failed`; any other unhandled event becomes `error`.
-- Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Scripts and options may not use `done`,
-  `error`, `unsure`, or names starting with `done.` or `error.`. A `check` produces `true` or
+- Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Scripts and options may not use
+  `error`, `unsure`, or names starting with `done.` or `error.`, and options may not be `done`. A `check` produces `true` or
   `false`; YAML reads `true:` and `false:` as booleans, and decree reads them as those events.
   `yes` and `no` are ordinary event names (decree reads YAML 1.2, so they stay strings).
 - A **compound state** loops among its children until it enters its own final child, which

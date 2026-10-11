@@ -1118,6 +1118,84 @@ fn daemon_reads_dotenv_again_on_each_pass() {
     assert_eq!(out, "one\ntwo\n");
 }
 
+/// `decree daemon --retry <id>` continues a failed run before it starts polling, as
+/// `process --retry` does.
+#[test]
+fn daemon_retry_continues_a_failed_run() {
+    let p = Project::init();
+    p.machine("flaky", FLAKY);
+    p.script("work", FLAKY_WORK);
+    let id = p.emit("flaky", "Fails, then works.\n");
+    p.decree(&["process"]).assert().code(1);
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+
+    let mut daemon = p.spawn(&["daemon", "--interval", "1s", "--retry", &id]);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while p.events(&id).last().unwrap()["state"] != "done" {
+        assert!(Instant::now() < deadline, "run {id} was never continued");
+        thread::sleep(Duration::from_millis(50));
+    }
+    // SAFETY: sends SIGTERM to the daemon.
+    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        wait_exit(&mut daemon, Duration::from_secs(15)).code(),
+        Some(0)
+    );
+}
+
+/// `decree daemon` reads the machines again before each run: an edit with errors keeps the
+/// machines last loaded, and a fixed one applies to the next run without a restart.
+#[test]
+fn daemon_reads_machines_again_before_each_run() {
+    let p = Project::init();
+    let hello = fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap();
+    p.machine("hello", &hello);
+    let record = |name: &str| {
+        format!("#!/usr/bin/env bash\necho {name} >> \"$DECREE_PROJECT_ROOT/out.txt\"\n")
+    };
+    p.script("greet", &record("greet"));
+    p.script("wave", &record("wave"));
+    let out = p.root().join("out.txt");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let wait = |lines: usize| loop {
+        let text = fs::read_to_string(&out).unwrap_or_default();
+        if text.lines().count() >= lines {
+            return text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{lines} run(s) never finished: {text:?}"
+        );
+        thread::sleep(Duration::from_millis(50));
+    };
+    // `emit` refuses a machine with errors, so each message is written to the inbox.
+    let queue = |name: &str| {
+        let file = p.decree_dir().join(format!("inbox/{name}.md"));
+        fs::write(file, "---\nmachine: hello\n---\nHello.\n").unwrap();
+    };
+    queue("1-first");
+    let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
+    wait(1);
+    // A `: ` in a plain value does not parse: the run uses the machine last loaded.
+    let broken = hello.replace("invoke: greet", "invoke: wave").replace(
+        "description: Run one script.",
+        "description: Note: run one script.",
+    );
+    p.machine("hello", &broken);
+    queue("2-second");
+    wait(2);
+    p.machine("hello", &hello.replace("invoke: greet", "invoke: wave"));
+    queue("3-third");
+    let text = wait(3);
+    // SAFETY: sends SIGTERM to the daemon.
+    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        wait_exit(&mut daemon, Duration::from_secs(15)).code(),
+        Some(0)
+    );
+    assert_eq!(text, "greet\ngreet\nwave\n");
+}
+
 /// AC: `decree status` in a folder above a project, or in a project above another, lists
 /// the nested project's active runs.
 #[test]

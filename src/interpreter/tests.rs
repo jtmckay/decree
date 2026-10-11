@@ -28,7 +28,7 @@ fn repo() -> PathBuf {
 struct Project {
     tmp: TempDir,
     name: String,
-    machines: BTreeMap<String, LoadedMachine>,
+    machines: Arc<BTreeMap<String, LoadedMachine>>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -99,7 +99,7 @@ impl Project {
         let project = Project {
             tmp,
             name: name.to_string(),
-            machines: loaded,
+            machines: Arc::new(loaded),
             shutdown: Arc::new(AtomicBool::new(false)),
         };
         fs::create_dir_all(project.run_dir()).unwrap();
@@ -113,10 +113,10 @@ impl Project {
         &self.machines[&self.name]
     }
 
-    fn ctx(&self) -> Context<'_> {
+    fn ctx(&self) -> Context {
         Context {
             project_root: self.root(),
-            machines: &self.machines,
+            machines: Arc::clone(&self.machines),
             shutdown: Arc::clone(&self.shutdown),
             env: Default::default(),
         }

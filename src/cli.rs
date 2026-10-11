@@ -131,11 +131,21 @@ pub enum Command {
         format: Format,
     },
 
-    /// Run the process loop repeatedly, plus cron, until stopped
+    /// Run the process loop repeatedly, plus cron, until stopped; waits for replies instead of exiting
     Daemon {
         /// Polling interval: a whole number and s, m, h or d (2s, 1m)
         #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]
         interval: std::time::Duration,
+
+        /// First continue an interrupted or finished run: ID, or the migration that blocks
+        /// the queue
+        #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
+        retry: Option<String>,
+
+        /// Atomic state the retried run continues in [default: the interrupted run's state,
+        /// or the state a finished run last left]
+        #[arg(long = "state", value_name = "STATE", requires = "retry")]
+        state: Option<String>,
 
         /// Print no run output, status line or run summaries: only what needs attention
         #[arg(long, short = 'q')]

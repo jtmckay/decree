@@ -16,8 +16,11 @@
 //! A queued message with `to:` is a reply: it is delivered to its waiting run instead,
 //! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
 //! `timeout` deadlines that have passed (docs/reference/messages.md, Replies).
+//!
+//! Before each run it reads the machines and `.env` files again (`Pipeline::refresh`), so an
+//! edit applies to the next run without a restart.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -49,6 +52,17 @@ pub struct Retry {
     pub state: Option<String>,
 }
 
+impl Retry {
+    /// From `--retry [<id>]` and `--state`: `--retry` alone names no run, the blocking
+    /// migration.
+    pub fn from_args(retry: Option<String>, state: Option<String>) -> Option<Retry> {
+        retry.map(|id| Retry {
+            id: Some(id).filter(|id| !id.is_empty()),
+            state,
+        })
+    }
+}
+
 /// Run `decree process [--dry-run | --retry [<id>] [--state <s>]] [--quiet]`. Unless
 /// `quiet`, each run's output is printed as it goes (`commands::report`).
 pub fn run(
@@ -64,11 +78,11 @@ pub fn run(
     }
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
-    let mut pipeline = Pipeline::new(project_root, &project, Arc::clone(&shutdown), "")?;
-    if let Some(Retry { id, state }) = retry {
-        retry_run(&pipeline.ctx, &project, id.as_deref(), state.as_deref())?;
+    let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
+    let mut pipeline = Pipeline::new(project_root, project, shutdown, "")?;
+    if let Some(retry) = retry {
+        pipeline.retry(&retry)?;
     }
-    let observer_ctx = context(project_root, &project, shutdown);
     let result = reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
         pipeline.recover().and_then(|()| pipeline.drain())
     });
@@ -86,11 +100,11 @@ pub fn run(
 
 /// Run `body` with a thread printing each run as it goes, unless `quiet`; returns once the
 /// thread has printed everything.
-pub(crate) fn reporting<'a, R>(
-    pipeline: &mut Pipeline<'a>,
+pub(crate) fn reporting<R>(
+    pipeline: &mut Pipeline,
     observer_ctx: &Context,
     quiet: bool,
-    body: impl FnOnce(&mut Pipeline<'a>) -> R,
+    body: impl FnOnce(&mut Pipeline) -> R,
 ) -> R {
     if quiet {
         return body(pipeline);
@@ -136,9 +150,9 @@ impl<E: Into<DecreeError>> From<E> for Stop {
 
 /// The steps `process` and `daemon` share (docs/reference/cli.md): one pipeline, so the daemon has
 /// no copy of its own. Each step runs to the end of one run before it returns.
-pub(crate) struct Pipeline<'a> {
-    ctx: Context<'a>,
-    project: &'a Project,
+pub(crate) struct Pipeline {
+    ctx: Context,
+    project: Project,
     /// Inbox files another process claimed first, or is claiming now.
     lost: HashSet<String>,
     /// Put before each failed run's report: `process` prints none, `daemon` its name.
@@ -147,14 +161,17 @@ pub(crate) struct Pipeline<'a> {
     failed: Vec<String>,
     /// Told when each run starts and stops, unless `--quiet`.
     pub(crate) report: Option<Reporter>,
+    /// The last machine or `.env` problem `refresh` printed, so each is printed once.
+    machine_error: Option<String>,
+    env_error: Option<String>,
 }
 
-impl<'a> Pipeline<'a> {
+impl Pipeline {
     /// Validate every machine and pending migration (docs/reference/messages.md, Migrations, rule 6), and
     /// set up the context runs are stepped in. Nothing runs if anything is invalid.
     pub(crate) fn new(
         project_root: &Path,
-        project: &'a Project,
+        project: Project,
         shutdown: Arc<AtomicBool>,
         prefix: &'static str,
     ) -> Result<Self, DecreeError> {
@@ -167,9 +184,9 @@ impl<'a> Pipeline<'a> {
                 project.problems.len()
             )));
         }
-        validate_migrations(project)?;
-        let mut ctx = context(project_root, project, shutdown);
-        ctx.env = check::load_env(project)?;
+        validate_migrations(&project)?;
+        let mut ctx = context(project_root, &project, shutdown);
+        ctx.env = check::load_env(&project)?;
         Ok(Pipeline {
             ctx,
             project,
@@ -177,14 +194,107 @@ impl<'a> Pipeline<'a> {
             prefix,
             failed: Vec::new(),
             report: None,
+            machine_error: None,
+            env_error: None,
         })
     }
 
-    /// Read the `.env` files again, so edits apply without a restart (each `daemon` pass).
-    /// On an error, scripts keep the variables last read.
-    pub(crate) fn reload_env(&mut self) -> Result<(), DecreeError> {
-        self.ctx.env = check::load_env(self.project)?;
-        Ok(())
+    /// `--retry`: make run `id`, or the migration that blocks the queue, `pending` again.
+    pub(crate) fn retry(&self, retry: &Retry) -> Result<(), DecreeError> {
+        retry_run(
+            &self.ctx,
+            &self.project,
+            retry.id.as_deref(),
+            retry.state.as_deref(),
+        )
+    }
+
+    /// Read the machines and the `.env` files again, so edits apply to the next run without
+    /// a restart. A machine with errors keeps every machine as last loaded, and a malformed
+    /// `.env` file the variables last read; each problem is printed once, until it changes.
+    /// A run already going keeps its machine until it stops.
+    pub(crate) fn refresh(&mut self) {
+        match self.reload_machines() {
+            Ok(changed) => {
+                self.machine_error = None;
+                if !changed.is_empty() {
+                    report::notice(format!(
+                        "{}reloaded machines: {}",
+                        self.prefix,
+                        changed.join(", ")
+                    ));
+                }
+            }
+            Err(message) => {
+                if self.machine_error.as_ref() != Some(&message) {
+                    report::notice(format!(
+                        "{message}\n{}runs keep the machines last loaded until this is fixed. \
+                         Run `decree check`.",
+                        self.prefix
+                    ));
+                    self.machine_error = Some(message);
+                }
+            }
+        }
+        match check::load_env(&self.project) {
+            Ok(env) => {
+                self.ctx.env = env;
+                self.env_error = None;
+            }
+            Err(e) => {
+                let message = e.to_string();
+                if self.env_error.as_ref() != Some(&message) {
+                    report::notice(format!(
+                        "{}{message}; keeping the variables last read",
+                        self.prefix
+                    ));
+                    self.env_error = Some(message);
+                }
+            }
+        }
+    }
+
+    /// Load the machines again and use them if they changed and have no errors. Returns the
+    /// machines added, changed or removed, or the errors.
+    fn reload_machines(&mut self) -> Result<Vec<String>, String> {
+        // Unchanged files need no new check, unless the last one failed: it may have been a
+        // script that is now there.
+        if self.machine_error.is_none() && self.project.sources == self.read_sources()? {
+            return Ok(Vec::new());
+        }
+        let project = Project::load(&self.ctx.project_root).map_err(|e| e.to_string())?;
+        if !project.problems.is_empty() {
+            let mut lines: Vec<String> = project.problems.iter().map(ToString::to_string).collect();
+            lines.push(format!("{} machine error(s)", project.problems.len()));
+            return Err(lines.join("\n"));
+        }
+        let (old, new) = (&self.project.sources, &project.sources);
+        let changed: BTreeSet<&String> = old
+            .keys()
+            .chain(new.keys())
+            .filter(|id| old.get(*id) != new.get(*id))
+            .collect();
+        let changed: Vec<String> = changed.into_iter().cloned().collect();
+        if !changed.is_empty() {
+            self.ctx.machines = Arc::clone(&project.machines);
+            self.project = project;
+        }
+        Ok(changed)
+    }
+
+    /// Every machine file's text, by machine id.
+    fn read_sources(&self) -> Result<BTreeMap<String, String>, String> {
+        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
+        let paths = crate::machine::machine_paths(&decree_dir).map_err(|e| e.to_string())?;
+        paths
+            .into_iter()
+            .map(|(id, path)| {
+                Ok((
+                    id,
+                    std::fs::read_to_string(&path).map_err(|e| e.to_string())?,
+                ))
+            })
+            .collect()
     }
 
     fn shutdown(&self) -> bool {
@@ -227,6 +337,7 @@ impl<'a> Pipeline<'a> {
     /// on; a failed migration stops it.
     pub(crate) fn drain(&mut self) -> Result<(), Stop> {
         loop {
+            self.refresh();
             self.deliver_timeouts()?;
             let pending = self.pending()?;
             self.continue_runs(&pending)?;
@@ -267,7 +378,7 @@ impl<'a> Pipeline<'a> {
         if self.shutdown() {
             return Err(Stop::Interrupted);
         }
-        let outcome = match reported(self.report.as_ref(), &self.ctx, self.project, id, || {
+        let outcome = match reported(self.report.as_ref(), &self.ctx, &self.project, id, || {
             continue_run(&self.ctx, id)
         }) {
             Ok(outcome) => outcome,
@@ -304,6 +415,7 @@ impl<'a> Pipeline<'a> {
         if self.shutdown() {
             return Err(Stop::Interrupted);
         }
+        self.refresh();
         let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let inbox = decree_dir.join(INBOX_DIR);
         let next = md_files(&inbox)?
@@ -335,8 +447,8 @@ impl<'a> Pipeline<'a> {
         };
         let id = claim.id.clone();
         let report = self.report.as_ref();
-        match reported(report, &self.ctx, self.project, &id, || {
-            run_claim(&self.ctx, self.project, claim, problem)
+        match reported(report, &self.ctx, &self.project, &id, || {
+            run_claim(&self.ctx, &self.project, claim, problem)
         })? {
             Outcome::Finished(state) if state == FAILED => {
                 self.fail(&id, Some(&file));
@@ -350,13 +462,14 @@ impl<'a> Pipeline<'a> {
     /// Start or continue the first pending migration (docs/reference/messages.md, Migrations). Returns
     /// whether it finished, so the next may start; `false` when there is none, or it
     /// waits.
-    pub(crate) fn next_migration(&self) -> Result<bool, Stop> {
+    pub(crate) fn next_migration(&mut self) -> Result<bool, Stop> {
         if self.shutdown() {
             return Err(Stop::Interrupted);
         }
+        self.refresh();
         match self.project.pending_migrations()?.into_iter().next() {
             Some(migration) => {
-                step_migration(&self.ctx, self.project, &migration, self.report.as_ref())
+                step_migration(&self.ctx, &self.project, &migration, self.report.as_ref())
             }
             None => Ok(false),
         }
@@ -392,14 +505,14 @@ fn queued(ctx: &Context, project: &Project, id: &str) -> usize {
 }
 
 /// The context runs of `project` are stepped, or their status derived, in.
-pub(crate) fn context<'a>(
+pub(crate) fn context(
     project_root: &Path,
-    project: &'a Project,
+    project: &Project,
     shutdown: Arc<AtomicBool>,
-) -> Context<'a> {
+) -> Context {
     Context {
         project_root: project_root.to_path_buf(),
-        machines: &project.machines,
+        machines: Arc::clone(&project.machines),
         shutdown,
         env: Default::default(),
     }

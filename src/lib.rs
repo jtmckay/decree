@@ -59,11 +59,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             format,
             quiet,
         } => {
-            // `--retry` alone names no run: the blocking migration.
-            let retry = retry.map(|id| commands::process::Retry {
-                id: Some(id).filter(|id| !id.is_empty()),
-                state,
-            });
+            let retry = commands::process::Retry::from_args(retry, state);
             commands::process::run(&root()?, dry_run, retry, format, quiet)
         }
         Command::Check { format } => commands::check::run(&root()?, format),
@@ -81,7 +77,15 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             note,
             format,
         } => commands::event::run(&root()?, &target, &event, note.as_deref(), format),
-        Command::Daemon { interval, quiet } => commands::daemon::run(&root()?, interval, quiet),
+        Command::Daemon {
+            interval,
+            retry,
+            state,
+            quiet,
+        } => {
+            let retry = commands::process::Retry::from_args(retry, state);
+            commands::daemon::run(&root()?, interval, retry, quiet)
+        }
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
         Command::Prune {
             older_than,

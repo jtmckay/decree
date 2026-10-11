@@ -104,7 +104,13 @@ appear only where a machine invokes `model` or `person`.
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run] [--quiet]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order, printing each run's output. `--quiet` for cron and CI. |
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
-| `decree daemon [--interval <duration>]` | The same, in a loop, with cron, every `2s` by default. |
+| `decree daemon [--interval <duration>] [--retry [<id>]]` | The same, in a loop, with cron, every `2s` by default. |
+
+`process` exits once nothing more can run, leaving `person` waits and `timeout`s for the next
+`process`; `daemon` keeps polling, fires cron and continues runs as replies arrive, so unattended
+work runs under `daemon`. Both read machines and `.env` files again before each run: an edit
+applies to the next run without a restart, and an edit that fails `decree check` is not used
+until fixed (the old machines keep running and the errors are printed).
 | `decree status [<id>] [--cron] [--format json]` | Runs by status, and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
