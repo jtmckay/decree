@@ -41,6 +41,10 @@ const ATTEMPT_VALUE_ENV: &str = "DECREE_ATTEMPT_VALUE";
 /// The whole `attempts` list, space-separated, set only when the invoke lists its attempts.
 const ATTEMPT_VALUES_ENV: &str = "DECREE_ATTEMPT_VALUES";
 
+/// The running decree, as Make's `MAKE` and Cargo's `CARGO`, so a script calls the decree
+/// that runs it whether or not that one is on `PATH`.
+const DECREE_ENV: &str = "DECREE";
+
 /// When a script runs: SCXML `<onentry>`, `<invoke>` or `<onexit>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -643,6 +647,8 @@ impl Executor {
         .into_iter()
         .map(|(name, value)| (format!("DECREE_{name}"), value))
         .collect();
+        let exe = std::env::current_exe().unwrap_or_else(|_| "decree".into());
+        vars.push((DECREE_ENV.to_string(), exe.into()));
         if let Some(value) = run.attempt_value {
             vars.push((ATTEMPT_VALUE_ENV.to_string(), value.into()));
         }
@@ -1393,6 +1399,14 @@ pub(crate) mod executor_tests {
         let root = p.root();
         let run_dir = p.run_dir();
         let expected = [
+            (
+                "DECREE",
+                std::env::current_exe()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            ),
             ("DECREE_PROJECT_ROOT", root.to_str().unwrap().to_string()),
             (
                 "DECREE_LIB",

@@ -114,6 +114,7 @@ reads none of them; the built-in `develop` machine's scripts follow this convent
 
 | Variable | Value |
 | --- | --- |
+| `DECREE` | The decree executable running the script; call it as `"${DECREE}"`, not `decree`, which may not be on `PATH`. |
 | `DECREE_PROJECT_ROOT` | Directory containing `.decree/`. |
 | `DECREE_LIB` | `.decree/lib/`: shared code, config and data. |
 | `DECREE_MESSAGE` | `runs/<id>/message.md` (the run's copy of the message). |

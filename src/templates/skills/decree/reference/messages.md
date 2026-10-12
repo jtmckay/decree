@@ -77,7 +77,7 @@ history in git.
   `depth` and `trigger: emit`, and refuses past `max_depth` (10):
 
   ```bash
-  decree emit --machine feature --param max_rounds=3 <<'EOF'
+  "${DECREE}" emit --machine feature --param max_rounds=3 <<'EOF'
   # Follow-up: split rate limiting per route
   Given ... When ... Then ...
   EOF

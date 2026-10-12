@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Prints every DECREE_ variable, sorted.
-env | grep "^DECREE_" | sort
+# Prints DECREE and every DECREE_ variable, sorted.
+env | grep -E "^DECREE(_|=)" | sort

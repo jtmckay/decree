@@ -7,7 +7,7 @@ touch "${emitted}"
 shopt -s nullglob
 for bug in "${DECREE_RUN_DIR}"/bugs/*.md; do
   grep -qxF "${bug}" "${emitted}" && continue
-  id=$(decree emit --machine develop < "${bug}")
+  id=$("${DECREE}" emit --machine develop < "${bug}")
   echo "${bug}" >> "${emitted}"
   echo "queued ${id}: $(head -n 1 "${bug}")"
 done

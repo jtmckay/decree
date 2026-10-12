@@ -44,6 +44,7 @@ A variable can come from four places. When two set the same name, the first in t
 
 | Variable | Value |
 | --- | --- |
+| `DECREE` | Absolute path of the decree executable running the script, as Make's `MAKE` and Cargo's `CARGO`. A script that calls decree (`"${DECREE}" emit`) gets the same decree whether or not it is on `PATH`. |
 | `DECREE_PROJECT_ROOT` | Absolute path of the directory containing `.decree/`. |
 | `DECREE_LIB` | Absolute path of `.decree/lib/`, where scripts find shared code, config and data ([Shared code](#shared-code)). Set whether or not the directory exists. |
 | `DECREE_MESSAGE` | Absolute path of `runs/<id>/message.md`. |
