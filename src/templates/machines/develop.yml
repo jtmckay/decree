@@ -1,28 +1,29 @@
 # Graph: ../graph/develop.md
 name: develop
 description: Implement a message with {ai_title} in small, logged steps, run the project's gate, have {ai_title} fix failures only if the gate fails, then have {ai_title} check the acceptance criteria.
+onentry: [clean_tree]              # the run starts from a clean git work tree
 initial: precheck
 states:
-  precheck:                        # fails fast if {ai} is not on PATH
+  precheck:                        # fails fast if lib/infra/requirements is not all there
     invoke: precheck
     transitions: { done: implement }
   implement:                       # logs each step in progress.md; writes STOP instead of guessing
-    invoke:
+    invoke:                        # an agent session can die partway: the next attempt continues from progress.md
       script: { name: implement, attempts: 3 }
     transitions: { done: gate, stop: failed }
   gate:                            # the project's checks (scripts/develop/gate.sh): pass or fail; error means they could not run
     invoke: gate
     transitions: { pass: verify, fail: fix }
   fix:                             # {ai_title} fixes what gate.log reports
-    invoke:
+    invoke:                        # as implement: the next attempt continues from progress.md
       script: { name: fix, attempts: 3 }
     transitions: { done: final_gate, stop: failed }
   final_gate:                      # the gate again; fail ends the run
     invoke: gate
     transitions: { pass: verify, fail: failed }
   verify:                          # {ai_title} checks the acceptance criteria and names pass or fail
-    invoke:
+    invoke:                        # a reply without a VERDICT line fails the attempt: ask again
       script: { name: verify, attempts: 3 }
     transitions: { pass: done, fail: failed, stop: failed }
-  done:   { final: true }
-  failed: { final: true }
+  done:   { final: true, onentry: [commit] }   # one commit per run; a migration's processed.md line too
+  failed: { final: true, onentry: [stash] }    # the run's changes go to a named git stash

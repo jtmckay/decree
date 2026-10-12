@@ -51,13 +51,9 @@ appear only where a machine invokes `model` or `person`.
   outcomes are observable (exit codes, file contents, output).
 - **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
 - **Before writing a machine, run `decree schema` and read
-  `.decree/schema/v1/machine.schema.json`**, and write against it (the folder is generated and
-  ignored by git). It is the JSON Schema of every machine key: types, required keys, each
-  `invoke` kind and condition, name patterns, with a description and examples for each.
-  Editors apply the same schema by path, so machines carry no schema line. The same folder
-  holds the schemas of `events.jsonl` lines (`events.schema.json`) and of a router's
-  `request.json` and `reply.json` (`request.schema.json`, `reply.schema.json`): run
-  `decree schema` and read them before writing a router or anything that reads a run.
+  `.decree/schema/v1/machine.schema.json`**, the JSON Schema of every machine key, and write
+  against it. Read `events.schema.json`, `request.schema.json` and `reply.schema.json` in the
+  same folder before writing a router or anything that reads a run.
 - **Scripts choose how, machines choose what runs next.** A script may decide *how* to do its
   one job from its params and environment: which workflow file, which model for this attempt,
   which flags. A choice of *which step runs next* is a transition, on `done` or an event the
@@ -78,7 +74,15 @@ appear only where a machine invokes `model` or `person`.
   `.decree/schema/v1/cli/<command>.schema.json`. Exit codes are the same as in text.
   `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
   `message`.
-- **Scripts must be safe to re-run**: `decree process --retry` re-runs a step that was interrupted.
+- **Scripts must be safe to re-run**, after an interruption or a failure halfway:
+  `decree process --retry` runs the step again. Check that the result works (`pip --version`
+  runs), not that a file exists.
+- **Declare the environment.** A command, package or tool the project needs is a line in
+  `.decree/lib/infra/requirements`, added by a message for the `infra` machine, never
+  installed by another machine's step. Nothing runs `sudo`: a step only a person can do prints
+  the exact command and fails, and the person runs it, then `decree process --retry`.
+- **Check a boundary with a script, not only a prompt.** When an agent must not change
+  something (QA never edits app code), a script after it checks, and fails the step if it did.
 - **Shared code, config and data go in `.decree/lib/`** (`$DECREE_LIB`); `scripts/` holds only
   what states invoke. Variables and secrets go in `.decree/.env` (every script) or a machine's
   `env_file: .env.<name>` (that machine's scripts only); both are gitignored, and
@@ -106,29 +110,59 @@ appear only where a machine invokes `model` or `person`.
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>] [--retry [<id>]]` | The same, in a loop, with cron, every `2s` by default. |
 
-`process` exits once nothing more can run, leaving `person` waits and `timeout`s for the next
-`process`; `daemon` keeps polling, fires cron and continues runs as replies arrive, so unattended
-work runs under `daemon`. Both read machines and `.env` files again before each run: an edit
-applies to the next run without a restart, and an edit that fails `decree check` is not used
-until fixed (the old machines keep running and the errors are printed).
 | `decree status [<id>] [--cron] [--format json]` | Runs by status, and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 
-## The built-in `develop`
+`process` exits once nothing more can run, leaving `person` waits and `timeout`s for the next
+`process`; `daemon` keeps polling, fires cron and continues runs as replies arrive, so unattended
+work runs under `daemon`. Both read machines and `.env` files again before each run: an edit
+applies to the next run without a restart, and an edit that fails `decree check` is not used
+until fixed (the old machines keep running and the errors are printed).
 
-`decree init` writes one working machine besides the router, `develop`: `precheck` →
+## The built-in machines
+
+`decree init` writes three working machines besides the router. Start from them before writing
+a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
+unless the git work tree is clean) and ends with `commit` (`done`'s `onentry`: the run's work
+as one commit, titled with the message's first heading), or, in `failed`, with `stash` (the
+run's changes in a git stash named after it, so the next run starts clean). Before queuing
+work for them, commit or stash any changes. To continue a failed run: `git stash pop`, answer
+any `STOP` in `plan.md` and delete it, then `decree process --retry <id>`. If later runs
+changed the same code, the pop conflicts: resolve it, or drop the stash and queue the message
+again. For divergent work, or to keep editing while runs go on, suggest a
+git worktree the user makes and runs decree in (`git worktree add ../app-exp -b exp`, then
+`decree process` there): each checkout has its own runs and inbox, and its branch its own
+`processed.md`. A new worktree has committed files only: copy `.decree/.env` in and run
+`.decree/lib/infra/run.sh apply` there first.
+
+`develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
 source `lib/ai.sh` (the `ai` function for the chosen `--ai`; add another backend there) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
-`plan.md`). The project fills in `scripts/develop/gate.sh` with its own checks; until then it
+`plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP`, pops the run's stash and
+retries. `precheck` runs
+`lib/infra/run.sh check`. The project fills in `scripts/develop/gate.sh` with its own checks; until then it
 runs nothing, says so and names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,
 then `final_gate`, whose `fail` ends the run); a non-zero exit means the checks could not run,
 such as a missing tool, and goes to `failed` without `fix`. `lib/ai.sh` runs the agent with
-`DECREE_EVENT_FILE=/dev/null`, so a gate the agent runs names no event for its caller. `verify`
+`DECREE_EVENT_FILE=/dev/null` and empties the caller's event file after it, so a gate the agent
+runs names no event for its caller. `verify`
 ends in `pass` or `fail` from the AI's `VERDICT:` line.
-Start from it before writing a new develop-style machine.
+
+`infra`: `declare` → `apply`. The AI edits `lib/infra/requirements` (`kind name version
+source`, one resource per line, in dependency order), adding a kind in `lib/infra/kinds/` only
+when none fits; `apply` runs `lib/infra/run.sh apply`, which installs what is missing and checks
+every line. The first `infra` migration builds the environment; later ones add to it.
+
+`qa`: `recon` → `attack` → `run` → `triage` → `report`. The AI writes chaos tests in
+`QA_DIR` (`tests/chaos`) against `lib/qa/invariants.md`, each naming a wrench from
+`lib/qa/wrenches.md`; triage marks each real bug's tests with the framework's strict
+expected-failure marker and writes one report per root cause, and `report` emits each as a
+`develop` message. A guard (`lib/qa/qa.sh`) fails any step whose AI changed a file outside
+`QA_DIR`. It does not start until `QA_RUN` in `lib/qa/qa.sh` names the suite's command; once
+qa finds bugs, the gate should run it too.
 
 ## Worked example
 
@@ -184,48 +218,18 @@ states:
   failed: { final: true }
 ```
 
-Real runs then fail at random in `implement`, and a re-run passes. The cheapest fix is
-`attempts`:
+Real runs then fail at random in `implement`, and a re-run passes: the cheapest fix is
+`attempts: 3` on its invoke. Later the local model often fails where Claude would not: give
+each attempt a value instead of adding a state, and say why.
 
 ```yaml
-# Graph: ../graph/develop.md
-name: develop
-description: Implement a message, then test it.
-initial: implement
-states:
-  implement:
-    invoke:                        # runs fail at random and a re-run passes: try 3 times
-      script: { name: implement, attempts: 3 }
-    transitions: { done: test }
-  test:
-    invoke: test
-    transitions: { done: done }
-  done:   { final: true }
-  failed: { final: true }
-```
-
-Later the local model often fails where Claude would not. Give each attempt a value instead
-of adding a state:
-
-```yaml
-# Graph: ../graph/develop.md
-name: develop
-description: Implement a message, then test it.
-initial: implement
-states:
   implement:
     invoke:                        # the local model fails often: try Claude third
       script: { name: implement, attempts: [local, local, claude] }
     transitions: { done: test }
-  test:
-    invoke: test
-    transitions: { done: done }
-  done:   { final: true }
-  failed: { final: true }
 ```
 
-The script picks the model from the attempt: a choice of *how*, not of what runs next.
-
+The script picks the model from the attempt, a choice of *how*, not of what runs next.
 `attempts` retries after `error` only; to have a stronger model answer a weaker one's `STOP`,
 transition to a child machine.
 

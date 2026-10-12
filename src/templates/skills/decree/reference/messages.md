@@ -71,7 +71,6 @@ history in git.
 - A failed inbox run does not stop `decree process`: it prints the run with
   `decree process --retry <id>` and goes on with the next file. When the inbox is empty it lists
   every run that failed in the pass and exits 1.
-
 - People may drop a file in directly. Programs write `.<name>.tmp`, then rename it to `<name>.md`;
   files starting with `.` are ignored, so nobody reads a partial file.
 - From a script, use `decree emit`, which does the temp-file-and-rename for you, sets `parent`,
@@ -118,7 +117,7 @@ writes:
 
 ```markdown
 ---
-id: 20261001T160301Z-9be210
+id: 20261001T160301.482113Z-9be210
 to: 02-upload-quota-per-plan.w15
 event: retry
 ---

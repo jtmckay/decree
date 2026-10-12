@@ -211,7 +211,7 @@ fn every_machine_template_validates() {
             (name, filled)
         })
         .collect();
-    assert_eq!(files.len(), 2);
+    assert_eq!(files.len(), 4);
     let found = machine_rejects(&files);
     assert!(found.is_empty(), "{found}");
 }
@@ -227,7 +227,7 @@ fn every_machine_of_a_fresh_init_validates_for_each_ai() {
             .assert()
             .success();
         let paths = files_in(&tmp.path().join(".decree/machines"), ".yml");
-        assert_eq!(paths.len(), 2, "{ai}");
+        assert_eq!(paths.len(), 4, "{ai}");
         for path in &paths {
             let text = fs::read_to_string(path).unwrap();
             assert!(text.starts_with("# Graph: "), "{ai}: {}", path.display());

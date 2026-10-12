@@ -66,13 +66,13 @@ fn test_init_creates_directory_structure() {
     }
     assert!(decree.join("graph/router.md").is_file());
     assert!(decree.join("graph/system.md").is_file());
-    // `lib/` holds its README and the AI helper `develop`'s scripts source.
+    // `lib/` holds its README, the AI helper the built-in scripts source, `infra/` and `qa/`.
     let mut lib: Vec<_> = fs::read_dir(decree.join("lib"))
         .unwrap()
         .map(|e| e.unwrap().file_name())
         .collect();
     lib.sort();
-    assert_eq!(lib, ["README.md", "ai.sh"]);
+    assert_eq!(lib, ["README.md", "ai.sh", "infra", "qa"]);
 }
 
 #[test]

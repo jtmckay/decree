@@ -21,7 +21,9 @@ const MESSAGE: &str =
 /// Records its flags and the prompt's first line in `calls`. With `CLAUDE_LIMIT` set,
 /// the first call prints it and exits 1; a prompt containing `CLAUDE_FAIL_ON` exits 1.
 /// With `CLAUDE_STOP` set, it writes that to the run's `STOP` file, as an agent that
-/// cannot go on would. With `CLAUDE_RUNS_GATE` set, it runs the gate, as `fix` asks. A prompt asking for a verdict is answered with `CLAUDE_REPLY`,
+/// cannot go on would. With `CLAUDE_DECLARE` set, it appends that line to
+/// `lib/infra/requirements`, as infra's `declare` asks. With `CLAUDE_DO` set, it runs that
+/// bash, with the prompt in `$prompt`, as an agent that edits files would. With `CLAUDE_RUNS_GATE` set, it runs the gate, as `fix` asks. A prompt asking for a verdict is answered with `CLAUDE_REPLY`,
 /// by default `VERDICT: pass`.
 const STUB_CLAUDE: &str = r#"#!/usr/bin/env bash
 dir=$(dirname "$0")
@@ -29,6 +31,12 @@ prompt=${!#}
 printf '%s | %s\n' "${*:1:$#-1}" "$(head -n 1 <<<"$prompt")" >> "$dir/calls"
 if [ -n "${CLAUDE_STOP:-}" ]; then
   echo "$CLAUDE_STOP" > "$DECREE_RUN_DIR/STOP"
+fi
+if [ -n "${CLAUDE_DO:-}" ]; then
+  eval "$CLAUDE_DO"
+fi
+if [ -n "${CLAUDE_DECLARE:-}" ]; then
+  echo "$CLAUDE_DECLARE" >> .decree/lib/infra/requirements
 fi
 if [ -n "${CLAUDE_RUNS_GATE:-}" ]; then
   .decree/scripts/develop/gate.sh
@@ -70,6 +78,14 @@ const STUB_DATE: &str = "#!/usr/bin/env bash\necho \"$STUB_NOW\"\n";
 /// Records how long it was asked to sleep, and returns at once.
 const STUB_SLEEP: &str = "#!/usr/bin/env bash\necho \"$1\" >> \"$(dirname \"$0\")/slept\"\n";
 
+/// Who commits, for `git` and for the `commit` script decree runs.
+const GIT_IDENTITY: [(&str, &str); 4] = [
+    ("GIT_AUTHOR_NAME", "t"),
+    ("GIT_AUTHOR_EMAIL", "t@t"),
+    ("GIT_COMMITTER_NAME", "t"),
+    ("GIT_COMMITTER_EMAIL", "t@t"),
+];
+
 struct Project {
     tmp: TempDir,
 }
@@ -86,7 +102,43 @@ impl Project {
         p.stub("claude", STUB_CLAUDE);
         p.stub("check", STUB_CHECK);
         p.edit_gate(UNCONFIGURED, "  check\n");
+        fs::write(p.root().join(".gitignore"), "bin/\n").unwrap();
+        p.git(&["init", "-q"]);
+        p.commit_all("init");
         p
+    }
+
+    /// `git` in the project, which must succeed: its output.
+    fn git(&self, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(self.root())
+            .envs(GIT_IDENTITY)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    /// Commit every change, as a person would before queuing work, if there is one.
+    fn commit_all(&self, title: &str) {
+        self.git(&["add", "-A"]);
+        if !self.git(&["status", "--porcelain"]).is_empty() {
+            self.git(&["commit", "-qm", title]);
+        }
+    }
+
+    /// The current branch's name.
+    fn branch(&self) -> String {
+        self.git(&["branch", "--show-current"]).trim().to_string()
+    }
+
+    /// The commit titles, newest first.
+    fn commits(&self) -> Vec<String> {
+        self.git(&["log", "--format=%s"])
+            .lines()
+            .map(String::from)
+            .collect()
     }
 
     /// Replaces `from` in the gate with `to`.
@@ -130,6 +182,7 @@ impl Project {
             .env_remove("DECREE_MACHINE")
             .env_remove("DECREE_STATE")
             .env_remove("DECREE_MESSAGE_ID")
+            .envs(GIT_IDENTITY)
             .args(args);
         cmd
     }
@@ -137,8 +190,14 @@ impl Project {
     /// `decree emit --machine develop` then `decree process`, with the stubs on
     /// `PATH` and `env` set: the run's id.
     fn run(&self, env: &[(&str, &str)]) -> String {
+        self.run_on("develop", env)
+    }
+
+    /// `run`, on `machine`, after committing what the test changed (as a person would).
+    fn run_on(&self, machine: &str, env: &[(&str, &str)]) -> String {
+        self.commit_all("test setup");
         let out = self
-            .decree(&["emit", "--machine", "develop"])
+            .decree(&["emit", "--machine", machine])
             .write_stdin(MESSAGE)
             .assert()
             .success()
@@ -175,6 +234,17 @@ impl Project {
         last["state"].as_str().unwrap().to_string()
     }
 
+    /// The output of the run's last script in `state`.
+    fn log(&self, id: &str, state: &str) -> String {
+        let events = self.events(id);
+        let event = events
+            .iter()
+            .rev()
+            .find(|e| e["type"] == "script" && e["state"] == state)
+            .unwrap();
+        fs::read_to_string(self.run_dir(id).join(event["log"].as_str().unwrap())).unwrap()
+    }
+
     /// The stub `claude`'s calls so far, one line each: flags, then the prompt's first line.
     fn calls(&self) -> Vec<String> {
         fs::read_to_string(self.bin().join("calls"))
@@ -205,10 +275,12 @@ fn files_under(dir: &Path) -> Vec<String> {
     out
 }
 
-/// AC: `decree init` writes `develop` and `router` only, and `lib/ai.sh`; no script defines
-/// `ai()`; everything passes `decree check` (with every backend `init` supports).
+/// AC: `decree init` writes `develop`, `infra`, `qa` and `router` only, `lib/ai.sh`, `lib/infra/`
+/// and `lib/qa/`;
+/// no script defines `ai()`; everything passes `decree check` (with every backend `init`
+/// supports).
 #[test]
-fn init_writes_develop_router_and_lib_ai_sh_and_they_pass_check() {
+fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
     for ai in ["claude", "opencode", "copilot"] {
         let p = Project {
             tmp: TempDir::new().unwrap(),
@@ -217,26 +289,45 @@ fn init_writes_develop_router_and_lib_ai_sh_and_they_pass_check() {
         let decree = p.root().join(".decree");
         assert_eq!(
             files_under(&decree.join("machines")),
-            ["develop.yml", "router.yml"],
+            ["develop.yml", "infra.yml", "qa.yml", "router.yml"],
             "{ai}"
         );
         assert_eq!(
             files_under(&decree.join("scripts")),
             [
+                "clean_tree.sh".to_string(),
+                "commit.sh".to_string(),
                 "develop/fix.sh".to_string(),
                 "develop/gate.sh".to_string(),
                 "develop/implement.sh".to_string(),
                 "develop/precheck.sh".to_string(),
                 "develop/verify.sh".to_string(),
                 "git_baseline.sh".to_string(),
+                "infra/apply.sh".to_string(),
+                "infra/declare.sh".to_string(),
+                "qa/attack.sh".to_string(),
+                "qa/recon.sh".to_string(),
+                "qa/report.sh".to_string(),
+                "qa/run.sh".to_string(),
+                "qa/triage.sh".to_string(),
                 "router/".to_string() + &format!("ask_{ai}.sh"),
                 "snapshot.sh".to_string(),
+                "stash.sh".to_string(),
             ],
             "{ai}"
         );
         assert_eq!(
             files_under(&decree.join("lib")),
-            ["README.md", "ai.sh"],
+            [
+                "README.md",
+                "ai.sh",
+                "infra/kinds/command.sh",
+                "infra/requirements",
+                "infra/run.sh",
+                "qa/invariants.md",
+                "qa/qa.sh",
+                "qa/wrenches.md"
+            ],
             "{ai}"
         );
         let lib = fs::read_to_string(decree.join("lib/ai.sh")).unwrap();
@@ -461,6 +552,16 @@ fn develop_hands_a_failed_gate_to_fix() {
             &["final_gate -fail-> failed"],
             "failed",
         ),
+        // The agent finds the step's own event file and writes to it, as one did in the beta:
+        // `ai` empties it after the call, so the step's event is still its own.
+        (
+            &[
+                ("GATE_FAIL_ONCE", "1"),
+                ("CLAUDE_DO", "echo pass > \"$DECREE_RUN_DIR/.event\""),
+            ],
+            &["final_gate -pass-> verify", "verify -pass-> done"],
+            "done",
+        ),
     ];
     for (env, last, want) in cases {
         let p = Project::init();
@@ -548,7 +649,7 @@ fn develop_stops_when_the_agent_writes_stop() {
         p.events(&id)
     );
     assert_eq!(p.calls().len(), 1, "no retry after a stop");
-    let log = fs::read_to_string(p.run_dir(&id).join("0002-implement.log")).unwrap();
+    let log = p.log(&id, "implement");
     assert!(log.contains("Which greeting?\n"), "{log}");
 
     // `decree process --retry` with STOP still there stops again, without asking the AI.
@@ -677,7 +778,7 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
         assert_ne!(next, first);
 
         // One implement attempt: the wait is inside the script, not a retry of the run.
-        let log = fs::read_to_string(p.run_dir(&id).join("0002-implement.log")).unwrap();
+        let log = p.log(&id, "implement");
         assert!(
             log.contains(&format!("=== claude session {first} ===\n")),
             "{log}"
@@ -716,4 +817,426 @@ fn other_failures_do_not_wait() {
     let sessions: Vec<&str> = calls.iter().map(|c| session(c).1).collect();
     assert!(calls.iter().all(|c| session(c).0 == "--session-id"));
     assert!(sessions[0] != sessions[1] && sessions[1] != sessions[2]);
+}
+
+/// infra: the agent declares a line, and apply checks every line, installing nothing that is
+/// already there.
+#[test]
+fn infra_declares_a_resource_then_applies_it() {
+    let p = Project::init();
+    let id = p.run_on("infra", &[("CLAUDE_DECLARE", "command   ls")]);
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(
+        path(&p, &id),
+        [
+            "null -claimed-> declare",
+            "declare -done-> apply",
+            "apply -done-> done",
+        ]
+    );
+    assert_eq!(
+        p.log(&id, "apply"),
+        "ok       command claude\nok       command git\nok       command ls\n"
+    );
+    let calls = p.calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        calls[0].contains("| You maintain this project's environment. Read "),
+        "{calls:?}"
+    );
+}
+
+/// A resource only a person can install fails infra's apply, naming it, and the declaration
+/// is stashed with the run's changes; once the person has taken it back and committed it,
+/// develop's precheck fails too until it is installed, before the agent runs.
+#[test]
+fn a_missing_resource_fails_infra_and_develop_precheck() {
+    let p = Project::init();
+    let id = p.run_on("infra", &[("CLAUDE_DECLARE", "command   not_a_tool_xyz")]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        p.log(&id, "apply"),
+        "ok       command claude\n\
+         ok       command git\n\
+         not_a_tool_xyz is not on PATH: install it, then continue the run\n\
+         FAILED   command not_a_tool_xyz\n"
+    );
+    // The declaration went to a stash with the rest of the failed run; the person takes it
+    // back and commits it.
+    assert!(p.log(&id, "failed").contains("`git stash pop`"));
+    p.git(&["stash", "pop", "-q"]);
+    let id = p.run(&[]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id),
+        ["null -claimed-> precheck", "precheck -error-> failed"]
+    );
+    assert_eq!(
+        p.log(&id, "precheck"),
+        "ok       command claude\nok       command git\nmissing  command not_a_tool_xyz\n"
+    );
+    assert_eq!(p.calls().len(), 1, "only infra's declare");
+}
+
+/// `CLAUDE_MODEL` picks the model for every call; without it, no `--model` is passed.
+#[test]
+fn claude_model_picks_the_model() {
+    let p = Project::init();
+    p.run(&[("CLAUDE_MODEL", "haiku")]);
+    p.run(&[]);
+    let calls = p.calls();
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    for call in &calls[..2] {
+        assert!(
+            call.starts_with("-p --permission-mode auto --model haiku --session-id "),
+            "{call}"
+        );
+    }
+    for call in &calls[2..] {
+        assert!(!call.contains("--model"), "{call}");
+    }
+}
+
+/// A chaos suite in shell for the qa tests: every `tests/chaos/*.sh` must pass, and every
+/// `*.xfail` must fail (a strict expected failure).
+const CHAOS_RUN: &str = "for t in tests/chaos/*.sh; do bash \"$t\" || exit 1; done; \
+                         for t in tests/chaos/*.xfail; do [ -e \"$t\" ] || continue; \
+                         ! bash \"$t\" || exit 1; done";
+
+/// The stub agent as qa's steps: recon writes surface.md; attack writes one passing and one
+/// failing test; triage marks the failing one expected to fail and writes one bug report.
+const QA_AGENT: &str = r#"
+case "$prompt" in
+  *"Write ${DECREE_RUN_DIR}/surface.md"*) echo "- input: I1" > "$DECREE_RUN_DIR/surface.md" ;;
+  *"make this project misbehave"*)
+    mkdir -p tests/chaos
+    echo 'true' > tests/chaos/ok.sh
+    echo 'echo "empty input crashes" >&2; false' > tests/chaos/empty.sh ;;
+  *"You are QA triage"*)
+    mv tests/chaos/empty.sh tests/chaos/empty.xfail
+    printf '# Empty input crashes\n\nTest: tests/chaos/empty.xfail\n' > "$DECREE_RUN_DIR/bugs/empty-input.md" ;;
+esac
+"#;
+
+impl Project {
+    /// `init`, then `QA_RUN` set to `CHAOS_RUN`, and an app file.
+    fn init_qa() -> Project {
+        let p = Project::init();
+        let qa = p.root().join(".decree/lib/qa/qa.sh");
+        let text = fs::read_to_string(&qa).unwrap();
+        let text = text.replacen("QA_RUN=\"\"\n", &format!("QA_RUN='{CHAOS_RUN}'\n"), 1);
+        fs::write(&qa, text).unwrap();
+        fs::write(p.root().join("app.txt"), "the app\n").unwrap();
+        p.commit_all("qa setup");
+        p
+    }
+
+    /// The ids of the runs on `machine`.
+    fn runs_on(&self, machine: &str) -> Vec<String> {
+        let mut ids: Vec<String> = fs::read_dir(self.root().join(".decree/runs"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|id| {
+                fs::read_to_string(self.run_dir(id).join("message.md"))
+                    .unwrap()
+                    .contains(&format!("\nmachine: {machine}\n"))
+            })
+            .collect();
+        ids.sort();
+        ids
+    }
+}
+
+/// qa end to end: its tests find a bug, triage marks it expected to fail, the chaos suite
+/// passes, and report hands the bug to develop, which the same `process` runs.
+#[test]
+fn qa_hands_each_bug_to_develop_as_a_failing_test() {
+    let p = Project::init_qa();
+    let id = p.run_on("qa", &[("CLAUDE_DO", QA_AGENT)]);
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(
+        path(&p, &id),
+        [
+            "null -claimed-> recon",
+            "recon -done-> attack",
+            "attack -done-> run",
+            "run -done-> triage",
+            "triage -done-> report",
+            "report -done-> done",
+        ]
+    );
+    let chaos = fs::read_to_string(p.run_dir(&id).join("chaos.log")).unwrap();
+    assert_eq!(chaos, "empty input crashes\n");
+    assert!(
+        p.log(&id, "report").starts_with("queued "),
+        "{}",
+        p.log(&id, "report")
+    );
+    let develop = p.runs_on("develop");
+    assert_eq!(develop.len(), 1, "{develop:?}");
+    let message = fs::read_to_string(p.run_dir(&develop[0]).join("message.md")).unwrap();
+    assert!(message.contains(&format!("parent: {id}\n")), "{message}");
+    assert!(
+        message.ends_with("# Empty input crashes\n\nTest: tests/chaos/empty.xfail\n"),
+        "{message}"
+    );
+    assert_eq!(p.outcome(&develop[0]), "done");
+}
+
+/// qa does not start, and asks no agent, until `QA_RUN` is set.
+#[test]
+fn qa_needs_its_chaos_suite_command_first() {
+    let p = Project::init();
+    let id = p.run_on("qa", &[]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id),
+        ["null -claimed-> recon", "recon -error-> failed"]
+    );
+    assert_eq!(
+        p.log(&id, "recon"),
+        "qa: no chaos suite command; set QA_RUN in .decree/lib/qa/qa.sh\n"
+    );
+    assert!(p.calls().is_empty());
+}
+
+/// An agent that changes a file outside the chaos tests fails its qa step, naming the file.
+#[test]
+fn qa_fails_a_step_whose_agent_changed_code() {
+    let p = Project::init_qa();
+    let id = p.run_on("qa", &[("CLAUDE_DO", "echo fixed >> app.txt")]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id),
+        ["null -claimed-> recon", "recon -error-> failed"]
+    );
+    assert!(
+        p.log(&id, "recon").ends_with(
+            "qa: the AI changed files outside tests/chaos; QA writes tests only:\napp.txt\n"
+        ),
+        "{}",
+        p.log(&id, "recon")
+    );
+}
+
+/// A failure the docs do not settle stops triage with the question, before report.
+#[test]
+fn qa_triage_stops_on_a_question() {
+    let p = Project::init_qa();
+    let agent = format!(
+        "{QA_AGENT}\ncase \"$prompt\" in *\"You are QA triage\"*) echo 'Is empty input allowed?' > \"$DECREE_RUN_DIR/STOP\" ;; esac"
+    );
+    let id = p.run_on("qa", &[("CLAUDE_DO", agent.as_str())]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(path(&p, &id).last().unwrap(), "triage -stop-> failed");
+    assert!(p.runs_on("develop").is_empty());
+}
+
+/// A `command` line with a version checks it in `--version`.
+#[test]
+fn a_command_line_checks_its_version() {
+    let p = Project::init();
+    let id = p.run_on(
+        "infra",
+        &[("CLAUDE_DECLARE", "command   bash   0.0.0-none")],
+    );
+    assert_eq!(p.outcome(&id), "failed");
+    assert!(
+        p.log(&id, "apply").ends_with(
+            "bash 0.0.0-none is not on PATH: install it, then continue the run\n\
+             FAILED   command bash 0.0.0-none\n"
+        ),
+        "{}",
+        p.log(&id, "apply")
+    );
+}
+
+/// A run starts from a clean work tree: uncommitted changes fail it before anything runs,
+/// naming them.
+#[test]
+fn a_dirty_tree_fails_the_run_before_the_agent() {
+    let p = Project::init();
+    fs::write(p.root().join("stray.txt"), "left over\n").unwrap();
+    let out = p
+        .decree(&["emit", "--machine", "develop"])
+        .write_stdin(MESSAGE)
+        .output()
+        .unwrap();
+    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    p.decree(&["process"])
+        .env("PATH", p.path())
+        .output()
+        .unwrap();
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id),
+        ["null -claimed-> precheck", "precheck -error-> failed"]
+    );
+    let events = p.events(&id);
+    let clean = events
+        .iter()
+        .find(|e| e["type"] == "script" && e["script"] == "clean_tree")
+        .unwrap();
+    let log = fs::read_to_string(p.run_dir(&id).join(clean["log"].as_str().unwrap())).unwrap();
+    assert_eq!(
+        log,
+        "clean_tree: uncommitted changes; commit or stash them, then run the message again:\n\
+         ?? stray.txt\n"
+    );
+    assert!(p.calls().is_empty());
+}
+
+/// Each machine's `done` commits the run's work, titled with the message's heading; a run that
+/// changed nothing commits nothing.
+#[test]
+fn done_commits_the_runs_work() {
+    let p = Project::init();
+    let id = p.run(&[(
+        "CLAUDE_DO",
+        "case \"$prompt\" in *senior*) echo hi > hello.txt ;; esac",
+    )]);
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(p.commits()[0], "Add a greeting");
+    assert_eq!(p.git(&["status", "--porcelain"]), "");
+    assert_eq!(
+        p.git(&["show", "--format=%b", "--stat", "HEAD"])
+            .lines()
+            .next()
+            .unwrap(),
+        format!("decree run {id} (develop)")
+    );
+    let before = p.commits().len();
+    let id = p.run(&[]);
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(p.commits().len(), before, "nothing to commit");
+
+    let id = p.run_on("infra", &[("CLAUDE_DECLARE", "command   ls")]);
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(
+        p.git(&["show", "--format=", "--name-only", "HEAD"]),
+        ".decree/lib/infra/requirements\n"
+    );
+}
+
+/// A failed run's changes go to a git stash named after it, so the next run starts clean; a
+/// retry after `git stash pop` continues with them, and `clean_tree` does not trip on them.
+#[test]
+fn a_failed_runs_changes_are_stashed_and_a_retry_takes_them_back() {
+    let p = Project::init();
+    let id = p.run(&[
+        (
+            "CLAUDE_DO",
+            "case \"$prompt\" in *senior*) echo hi > hello.txt ;; esac",
+        ),
+        ("CLAUDE_REPLY", "VERDICT: fail"),
+    ]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(p.git(&["status", "--porcelain"]), "", "stashed");
+    assert_eq!(
+        p.git(&["stash", "list", "--format=%s"]),
+        format!("On {}: decree {id}: Add a greeting\n", p.branch())
+    );
+    assert!(p.log(&id, "failed").contains(&format!(
+        "`git stash pop`, then `decree process --retry {id}`"
+    )));
+
+    // The next run is not held back by them.
+    let next = p.run(&[]);
+    assert_eq!(p.outcome(&next), "done");
+
+    p.git(&["stash", "pop", "-q"]);
+    p.decree(&["process", "--retry", &id, "--state", "verify"])
+        .env("PATH", p.path())
+        .assert()
+        .success();
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(p.commits()[0], "Add a greeting");
+    assert_eq!(p.git(&["show", "HEAD:hello.txt"]), "hi\n");
+    assert_eq!(p.git(&["status", "--porcelain"]), "");
+}
+
+/// A run that fails because the person's own changes are uncommitted leaves them alone.
+#[test]
+fn a_run_that_never_started_clean_stashes_nothing() {
+    let p = Project::init();
+    fs::write(p.root().join("mine.txt"), "my work\n").unwrap();
+    let out = p
+        .decree(&["emit", "--machine", "develop"])
+        .write_stdin(MESSAGE)
+        .output()
+        .unwrap();
+    let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    p.decree(&["process"])
+        .env("PATH", p.path())
+        .output()
+        .unwrap();
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(p.git(&["status", "--porcelain"]), "?? mine.txt\n");
+    assert_eq!(p.git(&["stash", "list"]), "");
+}
+
+/// The `release` kind in docs/reference/scripts.md, run by `lib/infra/run.sh apply` from a
+/// local archive: installed when the sha256 in its source matches, refused when it does not
+/// or when the source has none.
+#[test]
+fn the_documented_release_kind_checks_its_sha256() {
+    let p = Project::init();
+    let docs =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/scripts.md"))
+            .unwrap();
+    let start = docs.find("```bash\n# kinds/release.sh").unwrap() + "```bash\n".len();
+    let kind = &docs[start..start + docs[start..].find("```").unwrap()];
+    let infra = p.root().join(".decree/lib/infra");
+    fs::write(infra.join("kinds/release.sh"), kind).unwrap();
+
+    // An archive holding `mytool`, which prints its version.
+    let pkg = p.root().join("pkg");
+    fs::create_dir(&pkg).unwrap();
+    write_script(&pkg.join("mytool"), "#!/bin/sh\necho mytool 1.2.3\n");
+    let archive = p.root().join("mytool-1.2.3.tar.gz");
+    let sh = |cmd: &str| {
+        let out = std::process::Command::new("sh")
+            .args(["-c", cmd])
+            .current_dir(p.root())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{cmd}: {out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    sh("tar -czf mytool-1.2.3.tar.gz -C pkg mytool");
+    let sum = sh("sha256sum mytool-1.2.3.tar.gz");
+    let sum = sum.split_whitespace().next().unwrap();
+    let url = format!("file://{}", archive.display()).replace("1.2.3", "{version}");
+    let requirements = fs::read_to_string(infra.join("requirements")).unwrap();
+    let apply = |source: &str| {
+        fs::write(
+            infra.join("requirements"),
+            format!("{requirements}release   mytool   1.2.3   {source}\n"),
+        )
+        .unwrap();
+        let _ = fs::remove_dir_all(p.root().join(".tools"));
+        let out = std::process::Command::new(infra.join("run.sh"))
+            .arg("apply")
+            .current_dir(p.root())
+            .env("PATH", p.path())
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+
+    let (ok, out) = apply(&format!("{url}#sha256={sum}"));
+    assert!(ok, "{out}");
+    assert!(out.ends_with("changed  release mytool 1.2.3\n"), "{out}");
+
+    let (ok, out) = apply(&format!("{url}#sha256={}", "0".repeat(64)));
+    assert!(!ok, "{out}");
+    assert!(out.ends_with("FAILED   release mytool 1.2.3\n"), "{out}");
+    assert!(!p.root().join(".tools/bin/mytool").exists());
+
+    let (ok, out) = apply(&url);
+    assert!(!ok, "{out}");
+    assert!(out.contains("mytool: no #sha256= in its source\n"), "{out}");
 }

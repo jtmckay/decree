@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Fail fast if the AI CLI develop needs is missing.
+# Fail fast if the environment lib/infra/requirements declares is not all there, such as
+# {ai} or git missing from PATH. An infra message adds what is missing; develop does not.
 set -euo pipefail
-for tool in {ai}; do
-  command -v "${tool}" >/dev/null || { echo "${tool} not found" >&2; exit 1; }
-done
-echo "tools ok"
+"${DECREE_LIB}/infra/run.sh" check

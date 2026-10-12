@@ -1223,8 +1223,8 @@ fn the_environment_table_matches_what_decree_sets() {
 }
 
 /// The skill starts with the simplest machine: it is the first rule, the old rule that put
-/// every decision in a state is gone, and the worked example's first `develop` machine is
-/// script states in a straight line, ending in `done`.
+/// every decision in a state is gone, and the worked example's `develop` machine is script
+/// states in a straight line, ending in `done`; what it grows into is shown as a fragment.
 #[test]
 fn the_skill_writes_the_simplest_machine_first() {
     let skill = read("src/templates/skills/decree/SKILL.md");
@@ -1247,7 +1247,11 @@ fn the_skill_writes_the_simplest_machine_first() {
         })
         .filter(|m: &serde_norway::Value| m["name"].as_str() == Some("develop"))
         .collect();
-    assert_eq!(develops.len(), 3, "the worked example grows in three steps");
+    assert_eq!(
+        develops.len(),
+        1,
+        "the worked example's growth is a fragment"
+    );
     let first = &develops[0];
     let states = first["states"].as_mapping().unwrap();
     let mut at = first["initial"].as_str().unwrap().to_string();
@@ -1269,7 +1273,8 @@ fn the_skill_writes_the_simplest_machine_first() {
 
 /// Rules learned running decree 0.5 (migration 97): shared files in `lib/`, variables in the
 /// gitignored `.env` files (D57),
-/// run folders kept, and waiting prep invoked with a timeout.
+/// run folders kept, and waiting prep invoked with a timeout; and from the beta: a declared
+/// environment without `sudo` (D61), boundaries checked by a script, re-runs after a failure.
 #[test]
 fn the_skill_has_the_lib_env_runs_and_timeout_rules() {
     let skill = fs::read_to_string(repo().join("src/templates/skills/decree/SKILL.md")).unwrap();
@@ -1279,6 +1284,10 @@ fn the_skill_has_the_lib_env_runs_and_timeout_rules() {
         "Variables and secrets go in `.decree/.env` (every script) or a machine's `env_file: .env.<name>` (that machine's scripts only); both are gitignored,",
         "Never delete run folders to clean up**; they are the record. Use `decree prune --older-than <age>`.",
         "A step that waits for a shared resource is an invoked state with a `timeout`**",
+        "Declare the environment.** A command, package or tool the project needs is a line in `.decree/lib/infra/requirements`,",
+        "Nothing runs `sudo`: a step only a person can do prints the exact command and fails,",
+        "Check a boundary with a script, not only a prompt.**",
+        "Check that the result works (`pip --version` runs), not that a file exists.",
     ] {
         assert!(skill.contains(rule), "the skill lacks: {rule}");
     }

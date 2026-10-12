@@ -10,6 +10,10 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Added
 
+- `develop`, `infra` and `qa` make one commit per run: the shared `clean_tree` script (root `onentry`) fails a run that would start from uncommitted changes, `commit` (`done`'s `onentry`) commits the run's work, titled with the message's first heading, and `stash` (`failed`'s `onentry`) puts a failed run's changes in a git stash named after it, so the runs queued behind it start clean. `lib/infra/requirements` declares `git` ([D63](docs/decisions.md#d63-one-commit-per-run-from-a-clean-tree)).
+- The built-in `qa` machine: recon, attack, run, triage, report. The AI writes chaos tests against `lib/qa/invariants.md` with the wrenches in `lib/qa/wrenches.md`, triage marks real bugs expected to fail with one report per root cause, and each report becomes a `develop` message. A guard fails any step whose AI changed a file outside the chaos tests ([D62](docs/decisions.md#d62-qa-finds-bugs-and-never-fixes-them)).
+- The built-in `infra` machine and `lib/infra/`, the declared environment: `requirements` lists what the project needs, one resource per line, `kinds/<kind>.sh` checks and installs each kind, and `run.sh check|apply` walks them as Ansible applies a play. `infra` has the AI edit the requirements, then applies them; nothing uses `sudo`, a step only a person can do names its command and fails, and a kind that downloads checks the sha256 in its source (`<url>#sha256=<hex>`) ([D61](docs/decisions.md#d61-the-environment-is-declared)).
+- `CLAUDE_MODEL` in `lib/ai.sh` for Claude: when set (`haiku`, `sonnet`, a full model id), every call passes `--model`.
 - `decree daemon --retry [<id>] [--state <s>]` continues a failed or interrupted run before the daemon starts polling, as `decree process --retry` does ([D59](docs/decisions.md#d59-machines-are-read-again-before-each-run)).
 - `decree process`, bare `decree` and `decree daemon` print each run as it goes: a `▶ <id> · <machine>` header, the script output as `decree tail` shows it, and a line as the run stops (`✓ <id> done in 7m 31s`, `✗`, `⏸`, `■`). On a terminal a status line stays below it, `▶ <id> · <machine> · <state> · 3m 12s · 4/31`. `--quiet` prints only notices, as before, for cron and CI ([D58](docs/decisions.md#d58-process-shows-its-runs-and-logs-do-not-mark-stderr)).
 - `decree tail` without an id keeps following: as a run ends it moves to the next, printing `▶ <id> · <machine>`, until stopped. `decree tail <id>` still follows one run.
@@ -36,6 +40,8 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- `develop`'s `precheck` runs `lib/infra/run.sh check` instead of looking for the AI's command, which `lib/infra/requirements` lists ([D61](docs/decisions.md#d61-the-environment-is-declared)).
+- A person answers a `STOP` in the run's `plan.md`, which the next step follows.
 - `process` and `daemon` read the machines and `.env` files again before each run, so an edit applies to the next run without a restart; they loaded the machines once at start. A machine edit that fails `decree check` is not used: the machines last loaded keep running, and the errors are printed once ([D59](docs/decisions.md#d59-machines-are-read-again-before-each-run)).
 - A script that writes `done` to `$DECREE_EVENT_FILE` gets `done`, the same as writing nothing; it got `error`, as `done` was reserved. `error`, `unsure`, `done.*` and `error.*` stay reserved ([D60](docs/decisions.md#d60-a-script-may-name-done)).
 - Docs: [`process` or `daemon`](docs/reference/cli.md#process-or-daemon) says which to run: `process` is one pass that exits while a run waits for a person or a `timeout`, `daemon` is for unattended work. The reference and the skill say how to write prose with `: ` in a machine.
@@ -72,6 +78,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Fixed
 
+- `lib/ai.sh` empties the calling step's event file after the agent returns. An agent in a beta run found the run's `.event` file and ran the gate into it, so `fix` ended in the gate's `pass`, which it has no transition for.
 - A `: ` inside a plain YAML value (`description: Step one: build`) is reported as ``line 3: mapping values are not allowed in this context: a value with `: ` in it must be quoted (…) or written as a block (…)``, with the line once; it gave serde's message with the position twice.
 - Messages queued in the same second run in the order they were queued. An id is now `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`, the UTC time to the microsecond, and one process never makes an id with an earlier time than its last; ids were to the second, with a hex suffix that ordered same-second messages at random. `message.schema.json` describes the new form ([D56](docs/decisions.md#d56-ids-to-the-microsecond-in-the-order-they-were-made)). Found by a script that queued image jobs, then speech jobs, so the GPU switches models once.
 - `decree event` exits 1 when a reply to the same wait is already queued in `inbox/`, naming that file. It accepted the second reply, which then became a failed `invalid_message` run on delivery, so a caller such as an HTTP front door was told it succeeded. Found by decree-go-rest's approval endpoint.

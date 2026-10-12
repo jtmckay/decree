@@ -22,6 +22,18 @@ Code that scripts share but decree never runs (bash functions to source, config,
 workflow files) goes in `.decree/lib/`, found through `$DECREE_LIB`: `. "$DECREE_LIB/ai.sh"`.
 decree never resolves a script from `lib/`.
 
+`lib/infra/` is the project's declared environment. `requirements` lists one resource per line
+(`kind name version source`), in dependency order; `kinds/<kind>.sh` defines `check` and
+`install` for a kind, each called with the line's name, version and source; `run.sh check`
+reports each line `ok` or `missing`, and `run.sh apply` installs what is missing and checks it
+again. A kind installs into the project (a venv, `node_modules`, `.tools/bin`), never with
+`sudo`; a step only a person can do prints the exact command and returns 1. A kind that
+downloads checks the file against the sha256 in its line's source, `<url>#sha256=<hex>`, taken
+from what the project publishes (`SHA256SUMS`, the release page), never from hashing the
+download itself. `decree init` writes
+the `command` kind (on `PATH`, at the line's version if it has one, from `--version`; or a
+person installs it).
+
 ## How a script runs
 
 - Directly (no shell wrapper), from the project root, with stdin `/dev/null`, in its own process
@@ -30,7 +42,9 @@ decree never resolves a script from `lib/`.
   (`NNNN-<state>.log` when the script is named as its state). What an invoke prints is what a later `matches` check or model reads. Output
   is only a log: decree never reads an event from it.
 - On stop or timeout, decree sends SIGTERM to the group, then SIGKILL after 10 s.
-- Scripts must be safe to re-run: an interrupted step runs again after `decree process --retry`.
+- Scripts must be safe to re-run: an interrupted or failed step runs again after
+  `decree process --retry`. Check that a result works, not that its file exists: a step that
+  failed halfway may have left the file.
 
 ## Reporting an event (invoke only)
 
@@ -89,11 +103,12 @@ reads none of them; the built-in `develop` machine's scripts follow this convent
 - `progress.md`: the step log, one line per step, what is done and what is next. A retry
   reads it and continues.
 - `STOP`: a question instead of a guess. A script that finds it prints it and writes `stop` to
-  `$DECREE_EVENT_FILE`; it keeps stopping retries until a person answers and deletes it.
+  `$DECREE_EVENT_FILE`; it keeps stopping retries until a person answers in `plan.md`, deletes
+  it and runs `decree process --retry`.
 - `gate.log`: the output of the project's checks (`scripts/develop/gate.sh`), for the step that
   fixes them. The gate names `pass` or `fail`; a non-zero exit (`error`) means the checks could
   not run, such as a missing tool, and its message is here.
-- `plan.md`: an optional plan a step writes for later ones.
+- `plan.md`: a plan for later steps, and a person's answer to a `STOP`. develop's AI steps read it.
 
 ## Environment
 
@@ -159,5 +174,6 @@ done
 ## Long-running services
 
 Model servers and similar services are not scripts; run them under systemd or similar. A state
-that needs one starts it in an `onentry` script, so the dependency shows in the machine and its
-graph.
+that needs one starts it in a quick `onentry` script (`systemctl --user start comfyui`), so the
+dependency shows in the machine and its graph. Waiting until it is ready is an invoked state
+with a `timeout`, since `onentry` has none.

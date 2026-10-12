@@ -7,11 +7,13 @@
 # CLAUDE_PERMISSION_MODE is passed to every call, so the run does not inherit your
 # interactive default (in `plan` mode Claude can only plan, and changes nothing). `auto`
 # approves what Claude's classifier judges safe; `acceptEdits` approves only file edits.
-# Claude names no event (it writes STOP instead), so a script it runs, such as
-# the gate, cannot name the caller's.
+# Claude names no event (it writes STOP instead): a script it runs, such as the
+# gate, gets DECREE_EVENT_FILE=/dev/null, and the caller's event file is emptied
+# after the call, in case Claude found its path anyway.
 CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-auto}"
+# CLAUDE_MODEL, if set (haiku, sonnet, a full model id), picks the model for every call.
 ai() {
-  local prompt=$1 session out status
+  local prompt=$1 session out status caller_event=${DECREE_EVENT_FILE:-}
   local -x DECREE_EVENT_FILE=/dev/null
   session=$(new_session_id)
   echo "=== claude session ${session} ===" >&2
@@ -21,13 +23,14 @@ ai() {
   while true; do
     out=$(mktemp)
     # stdout to stdout and stderr to stderr, both also kept in $out
-    if { claude -p --permission-mode "${CLAUDE_PERMISSION_MODE}" "${session_flag[@]}" "${prompt}" 2>&1 1>&3 3>&- | tee -a "${out}" >&2; } 3>&1 | tee -a "${out}"; then
+    if { claude -p --permission-mode "${CLAUDE_PERMISSION_MODE}" ${CLAUDE_MODEL:+--model "${CLAUDE_MODEL}"} "${session_flag[@]}" "${prompt}" 2>&1 1>&3 3>&- | tee -a "${out}" >&2; } 3>&1 | tee -a "${out}"; then
       status=0
     else
       status=$?
     fi
     if [ "${status}" -eq 0 ] || ! usage_limit "${out}"; then
       rm -f "${out}"
+      [ -z "${caller_event}" ] || : > "${caller_event}"
       return "${status}"
     fi
     wait_for_reset "${out}"

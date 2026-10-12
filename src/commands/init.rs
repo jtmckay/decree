@@ -69,7 +69,7 @@ struct BuiltinMachine {
     scripts: &'static [(&'static str, &'static str)],
 }
 
-/// `develop`, the one built-in machine besides the router.
+/// `develop`: implement a message, gate it, verify it.
 const DEVELOP: BuiltinMachine = BuiltinMachine {
     name: "develop",
     yml: include_str!("../templates/machines/develop.yml"),
@@ -91,11 +91,81 @@ const DEVELOP: BuiltinMachine = BuiltinMachine {
     ],
 };
 
+/// `infra`: declare what the environment needs in `lib/infra/requirements`, then apply it.
+const INFRA: BuiltinMachine = BuiltinMachine {
+    name: "infra",
+    yml: include_str!("../templates/machines/infra.yml"),
+    scripts: &[
+        (
+            "declare",
+            include_str!("../templates/scripts/infra/declare.sh"),
+        ),
+        ("apply", include_str!("../templates/scripts/infra/apply.sh")),
+    ],
+};
+
+/// `qa`: attack the project with chaos tests, and hand each real bug to `develop`.
+const QA: BuiltinMachine = BuiltinMachine {
+    name: "qa",
+    yml: include_str!("../templates/machines/qa.yml"),
+    scripts: &[
+        ("recon", include_str!("../templates/scripts/qa/recon.sh")),
+        ("attack", include_str!("../templates/scripts/qa/attack.sh")),
+        ("run", include_str!("../templates/scripts/qa/run.sh")),
+        ("triage", include_str!("../templates/scripts/qa/triage.sh")),
+        ("report", include_str!("../templates/scripts/qa/report.sh")),
+    ],
+};
+
+/// The built-in machines besides the router.
+const BUILTIN_MACHINES: [&BuiltinMachine; 3] = [&DEVELOP, &INFRA, &QA];
+
+/// The built-in machines' files in `lib/`, besides `ai.sh`: path, template, and whether it is
+/// executable. `infra/` is the declared environment, which `infra` changes and `develop`'s
+/// `precheck` checks: the declaration, the loop that checks or applies it, and the one kind
+/// decree ships. `qa/` is qa's settings and guard, and the invariants and wrenches it reads.
+const LIB_FILES: &[(&str, &str, bool)] = &[
+    (
+        "infra/requirements",
+        include_str!("../templates/infra/requirements"),
+        false,
+    ),
+    (
+        "infra/run.sh",
+        include_str!("../templates/infra/run.sh"),
+        true,
+    ),
+    (
+        "infra/kinds/command.sh",
+        include_str!("../templates/infra/kinds/command.sh"),
+        false,
+    ),
+    ("qa/qa.sh", include_str!("../templates/qa/qa.sh"), false),
+    (
+        "qa/invariants.md",
+        include_str!("../templates/qa/invariants.md"),
+        false,
+    ),
+    (
+        "qa/wrenches.md",
+        include_str!("../templates/qa/wrenches.md"),
+        false,
+    ),
+];
+
 /// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution;
-/// docs/decisions.md, D15). `git_baseline` is a root
-/// `onentry` that records `HEAD` once; `snapshot` is a working state's `onentry` that
-/// stashes a checkpoint on each visit. No built-in machine uses them; add them where wanted.
+/// docs/decisions.md, D15). Every built-in machine starts with `clean_tree` (a root `onentry`:
+/// a clean git work tree) and ends with `commit` (`done`'s `onentry`: one commit per run) or
+/// `stash` (`failed`'s `onentry`: the run's changes in a named git stash).
+/// `git_baseline` is a root `onentry` that records `HEAD` once; `snapshot` is a working
+/// state's `onentry` that stashes a checkpoint on each visit; no built-in machine uses them.
 const SHARED_SCRIPTS: &[(&str, &str)] = &[
+    (
+        "clean_tree",
+        include_str!("../templates/scripts/clean_tree.sh"),
+    ),
+    ("commit", include_str!("../templates/scripts/commit.sh")),
+    ("stash", include_str!("../templates/scripts/stash.sh")),
     (
         "git_baseline",
         include_str!("../templates/scripts/git_baseline.sh"),
@@ -238,19 +308,40 @@ fn write_script(path: &Path, content: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Write the `develop` machine and its executable scripts (`scripts/develop/<name>.sh`)
+/// Write a built-in machine and its executable scripts (`scripts/<machine>/<name>.sh`)
 /// under `decree_dir`, for `backend`.
-fn write_develop(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
+fn write_machine(
+    decree_dir: &Path,
+    machine: &BuiltinMachine,
+    backend: Backend,
+) -> Result<(), DecreeError> {
     std::fs::write(
         decree_dir
             .join(MACHINES_DIR)
-            .join(format!("{}.yml", DEVELOP.name)),
-        backend.fill(DEVELOP.yml),
+            .join(format!("{}.yml", machine.name)),
+        backend.fill(machine.yml),
     )?;
-    let dir = decree_dir.join(SCRIPTS_DIR).join(DEVELOP.name);
+    let dir = decree_dir.join(SCRIPTS_DIR).join(machine.name);
     std::fs::create_dir_all(&dir)?;
-    for (name, script) in DEVELOP.scripts {
+    for (name, script) in machine.scripts {
         write_script(&dir.join(format!("{name}.sh")), &backend.fill(script))?;
+    }
+    Ok(())
+}
+
+/// Write `LIB_FILES` under `decree_dir`'s `lib/`, for `backend`.
+fn write_lib_files(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
+    let dir = decree_dir.join(layout::LIB_DIR);
+    for (name, template, executable) in LIB_FILES {
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if *executable {
+            write_script(&path, &backend.fill(template))?;
+        } else {
+            std::fs::write(&path, backend.fill(template))?;
+        }
     }
     Ok(())
 }
@@ -311,8 +402,9 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 }
 
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
-/// `processed.md`, the empty queues, `lib/` with its `README.md` and `ai.sh`, the router machine with
-/// its script, the `develop` machine with its scripts, and the shared scripts.
+/// `processed.md`, the empty queues, `lib/` with its `README.md`, `ai.sh`, `infra/` and `qa/`, the
+/// router machine with its script, the built-in machines with their scripts, and the shared
+/// scripts.
 /// `graph/` is written by `decree graph`; `schema/` only by `decree schema`, on request.
 fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
     for dir in [
@@ -336,8 +428,11 @@ fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> 
         backend.lib_ai_sh(),
     )?;
     std::fs::write(decree_dir.join(layout::PROCESSED_FILE), "")?;
+    write_lib_files(decree_dir, backend)?;
     write_router(decree_dir, backend)?;
-    write_develop(decree_dir, backend)?;
+    for machine in BUILTIN_MACHINES {
+        write_machine(decree_dir, machine, backend)?;
+    }
     write_shared_scripts(decree_dir)
 }
 
@@ -452,40 +547,79 @@ mod tests {
         }
     }
 
-    /// `develop` is written with every script executable and every placeholder filled; the
-    /// scripts that ask the AI source `lib/ai.sh` and define no `ai` function.
+    /// Each built-in machine is written with every script executable and every placeholder
+    /// filled; the scripts that ask the AI source `lib/ai.sh` and define no `ai` function.
     #[test]
-    fn test_write_develop_writes_the_machine_and_executable_scripts() {
+    fn test_write_machine_writes_the_machine_and_executable_scripts() {
         use std::os::unix::fs::PermissionsExt;
         for ai in [AiBackend::Claude, AiBackend::Opencode, AiBackend::Copilot] {
             let b = backend_entry(ai);
+            for machine in BUILTIN_MACHINES {
+                let dir = tempfile::TempDir::new().unwrap();
+                std::fs::create_dir_all(dir.path().join(MACHINES_DIR)).unwrap();
+                write_machine(dir.path(), machine, b).unwrap();
+                let yml = std::fs::read_to_string(
+                    dir.path().join(format!("machines/{}.yml", machine.name)),
+                )
+                .unwrap();
+                assert!(yml.contains(&format!("name: {}\n", machine.name)));
+                assert!(yml.contains(b.title), "{}", b.name);
+                assert!(!yml.contains("{ai"), "{yml}");
+                for (name, _) in machine.scripts {
+                    let path = dir
+                        .path()
+                        .join(format!("scripts/{}/{name}.sh", machine.name));
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    assert!(!text.contains("{ai"), "{}: {text}", path.display());
+                    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+                    assert_eq!(mode & 0o777, 0o755, "{}", path.display());
+                    assert!(!text.contains("ai() {"), "{}", path.display());
+                    let calls_ai = text.contains("\nai \"${prompt}\"");
+                    assert_eq!(
+                        text.contains(". \"${DECREE_LIB}/ai.sh\"\n"),
+                        calls_ai,
+                        "{}",
+                        path.display()
+                    );
+                    assert_eq!(
+                        calls_ai,
+                        [
+                            "implement",
+                            "fix",
+                            "verify",
+                            "declare",
+                            "recon",
+                            "attack",
+                            "triage"
+                        ]
+                        .contains(name),
+                        "{}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    /// `lib/infra/` declares the backend's CLI, and only `infra/run.sh` is executable.
+    #[test]
+    fn test_write_lib_files_declares_the_ai_cli() {
+        use std::os::unix::fs::PermissionsExt;
+        for b in AI_BACKENDS {
             let dir = tempfile::TempDir::new().unwrap();
-            std::fs::create_dir_all(dir.path().join(MACHINES_DIR)).unwrap();
-            write_develop(dir.path(), b).unwrap();
-            let yml = std::fs::read_to_string(dir.path().join("machines/develop.yml")).unwrap();
-            assert!(yml.contains("name: develop\n"));
-            assert!(yml.contains(b.title), "{}", b.name);
-            assert!(!yml.contains("{ai"), "{yml}");
-            for (name, _) in DEVELOP.scripts {
-                let path = dir.path().join(format!("scripts/develop/{name}.sh"));
-                let text = std::fs::read_to_string(&path).unwrap();
-                assert!(!text.contains("{ai"), "{}: {text}", path.display());
-                let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-                assert_eq!(mode & 0o777, 0o755, "{}", path.display());
-                assert!(!text.contains("ai() {"), "{}", path.display());
-                let calls_ai = text.contains("\nai \"${prompt}\"");
-                assert_eq!(
-                    text.contains(". \"${DECREE_LIB}/ai.sh\"\n"),
-                    calls_ai,
-                    "{}",
-                    path.display()
-                );
-                assert_eq!(
-                    calls_ai,
-                    ["implement", "fix", "verify"].contains(name),
-                    "{}",
-                    path.display()
-                );
+            write_lib_files(dir.path(), b).unwrap();
+            let lib = dir.path().join("lib");
+            let requirements = std::fs::read_to_string(lib.join("infra/requirements")).unwrap();
+            assert!(
+                requirements.ends_with(&format!("\ncommand   {}\ncommand   git\n", b.name)),
+                "{requirements}"
+            );
+            for (name, _, executable) in LIB_FILES {
+                let mode = std::fs::metadata(lib.join(name))
+                    .unwrap()
+                    .permissions()
+                    .mode();
+                assert_eq!(mode & 0o111 != 0, *executable, "{name}");
             }
         }
     }
@@ -508,12 +642,16 @@ mod tests {
                 b.name
             );
             if b.name != "claude" {
-                assert!(text.contains(&format!("  {} \"$1\"\n", b.invoke)), "{text}");
+                assert!(
+                    text.contains(&format!("  {} \"$1\" || status=$?\n", b.invoke)),
+                    "{text}"
+                );
             }
         }
     }
 
-    /// `git_baseline` and `snapshot` are the `feature` fixture's, byte for byte, and executable.
+    /// The shared scripts are executable, and `git_baseline` and `snapshot` are the `feature`
+    /// fixture's, byte for byte.
     #[test]
     fn test_write_shared_scripts_writes_the_examples_git_scripts() {
         use std::os::unix::fs::PermissionsExt;
@@ -524,11 +662,22 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        assert_eq!(names, ["git_baseline.sh", "snapshot.sh"]);
+        assert_eq!(
+            names,
+            [
+                "clean_tree.sh",
+                "commit.sh",
+                "git_baseline.sh",
+                "snapshot.sh",
+                "stash.sh"
+            ]
+        );
         for name in names {
             let path = dir.path().join(SCRIPTS_DIR).join(&name);
             let text = std::fs::read_to_string(&path).unwrap();
-            assert_eq!(text, feature_fixture(&format!("scripts/{name}")), "{name}");
+            if ["git_baseline.sh", "snapshot.sh"].contains(&name.as_str()) {
+                assert_eq!(text, feature_fixture(&format!("scripts/{name}")), "{name}");
+            }
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o755, "{name}");
         }

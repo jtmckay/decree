@@ -2,7 +2,7 @@
 # develop's implement: {ai_title} implements the message in small steps, noting
 # each in progress.md, so a retry continues where the last attempt stopped. If
 # the message is unclear, it writes the question to STOP instead of guessing;
-# the run fails until a person answers it, deletes STOP and runs
+# the run fails until a person answers it in plan.md, deletes STOP and runs
 # `decree process --retry`.
 set -euo pipefail
 . "${DECREE_LIB}/ai.sh"

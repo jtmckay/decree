@@ -7,6 +7,7 @@ set -euo pipefail
 . "${DECREE_LIB}/ai.sh"
 
 progress="${DECREE_RUN_DIR}/progress.md"
+plan="${DECREE_RUN_DIR}/plan.md"
 stop="${DECREE_RUN_DIR}/STOP"
 stopped() {
   [ -f "${stop}" ] || return 1
@@ -17,8 +18,9 @@ stopped && exit 0
 
 prompt="Read ${DECREE_MESSAGE}. Verify that all requirements and
 acceptance criteria are met; ${progress} notes what was done. Run the tests,
-and report what passes and what fails. Change no code. If a criterion needs a
-decision the message does not make, write the question to ${stop} and stop.
+and report what passes and what fails. Change no code. If ${plan} exists, it
+holds decisions made since the message. If a criterion needs a decision the
+message does not make, write the question to ${stop} and stop.
 End your reply with one line: VERDICT: pass if everything passes, else
 VERDICT: fail."
 echo "=== AI prompt (verification) ==="

@@ -135,7 +135,48 @@ ai "Summarize $DECREE_MESSAGE" > summary.md
 workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD']}.json"
 ```
 
-`decree init` creates it with a one-line `README.md` and `ai.sh`, the `ai` function the built-in `develop` machine's scripts source.
+`decree init` creates it with a one-line `README.md`, `ai.sh`, the `ai` function the built-in machines' scripts source, and `infra/`, the project's [declared environment](#declared-environment).
+
+## Declared environment
+
+What the project's environment needs (commands, packages, tools) is declared, not scripted, as Ansible declares state: `.decree/lib/infra/requirements` lists one resource per line, in order, and `lib/infra/kinds/<kind>.sh` says how to check and install that kind.
+
+```text
+# kind    name         version   source
+command   claude
+command   python3
+system    python3-venv
+pip       hypothesis   6.112.0
+```
+
+`lib/infra/run.sh check` reports each line `ok` or `missing` and changes nothing; `run.sh apply` installs what is missing, checks it again (`changed`) and stops at the first line that fails, naming it. A kind is a file with two bash functions, `check` and `install`, each called with the line's name, version and source. `decree init` writes one kind, `command` (on `PATH`, at the version if the line gives one, from `<name> --version`; `install` names it for a person and fails), and a requirements file with the AI backend's command. A project adds kinds as it needs them (`pip` into a project venv, `release` for a pinned binary into `.tools/bin`).
+
+A kind installs into the project, never with `sudo`. A step only a person can do, such as a system package, prints the exact command and returns 1; the person runs it, then `decree process --retry`. The built-in `infra` machine changes the environment ([D61](../decisions.md#d61-the-environment-is-declared)): `declare`, where the AI edits only the requirements (and adds a kind only if none fits), then `apply`. The built-in `develop` machine's `precheck` runs `run.sh check`, so a run stops before the AI starts when the environment is short. A fresh checkout or CI runs `.decree/lib/infra/run.sh apply` directly.
+
+A kind that downloads must check what it downloaded: its line's source carries the file's SHA-256 in the URL's fragment, `<url>#sha256=<hex>`, as pip's hash-checking and PyPI's simple index do, and `install` fails on a mismatch. The hash comes from what the project publishes (a `SHA256SUMS` file, the release page), never from downloading the file and hashing it, which proves only that the download matches itself. `infra`'s `declare` prompt says so. A `release` kind, for a pinned binary from a release archive:
+
+```bash
+# kinds/release.sh: a pinned binary from a release archive, into .tools/bin. source is
+# <url>#sha256=<hex>, with {version} where the version goes in the URL.
+check() { [ -x ".tools/bin/$1" ] && ".tools/bin/$1" --version 2>&1 | grep -qF "$2"; }
+install() {
+  local url=${3%%#sha256=*} sum=${3##*#sha256=} dir status=0
+  [ "${sum}" != "$3" ] || { echo "$1: no #sha256= in its source" >&2; return 1; }
+  dir=$(mktemp -d)
+  curl -fsSL "${url//\{version\}/$2}" -o "${dir}/archive" &&
+    echo "${sum}  ${dir}/archive" | sha256sum --check --quiet &&
+    tar -xf "${dir}/archive" -C "${dir}" &&
+    mkdir -p .tools/bin &&
+    command install -m 755 "$(find "${dir}" -type f -name "$1" | head -n 1)" ".tools/bin/$1" ||
+    status=1
+  rm -rf "${dir}"
+  return "${status}"
+}
+```
+
+```text
+release   shellcheck   0.10.0   https://github.com/koalaman/shellcheck/releases/download/v{version}/shellcheck-v{version}.linux.x86_64.tar.xz#sha256=6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
+```
 
 ## Store
 
@@ -158,9 +199,9 @@ Scripts that hand work to one another, or to a person, do it through files in `D
 | File | Written by | Meaning |
 | --- | --- | --- |
 | `progress.md` | The AI, one line per step | The step log: what is done and what is next. A retry reads it and continues where the last attempt stopped. |
-| `STOP` | The AI, instead of guessing | A question the message does not answer. A script that finds it prints it and names the event `stop`, before asking the AI and after; it stops every later attempt and retry until a person answers, deletes it and runs `decree process --retry`. |
+| `STOP` | The AI, instead of guessing | A question the message does not answer. A script that finds it prints it and names the event `stop`, before asking the AI and after; it stops every later attempt and retry until a person answers in `plan.md`, deletes it and runs `decree process --retry`. |
 | `gate.log` | The `gate` script | The output of the project's own checks, which the step that fixes them reads. The gate names `pass` or `fail` from the checks; a missing tool, or anything else that stops them from running, is a non-zero exit (`error`) with its message here. |
-| `plan.md` | Any step, optionally | A plan a step writes for later ones to follow. |
+| `plan.md` | Any step, or a person | A plan for later steps to follow, and a person's answer to a `STOP`. |
 
 ## Events from an invoke
 

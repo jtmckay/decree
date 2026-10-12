@@ -11,12 +11,11 @@ The first line links the machine to its graph:
 # Graph: ../graph/<name>.md
 ```
 
-**Before writing a machine, run `decree schema` and read `.decree/schema/v1/machine.schema.json`.**
-The folder is generated and ignored by git. The schema is the precise
-contract for every key below: types, required keys, each `invoke` kind and condition, name
-patterns and ranges, with a description and examples for each key. Write against it, then run
-`decree check`, which also checks what a schema cannot: that names resolve, targets exist and
-every state is reachable. Editors apply the same schema by path; machines carry no schema line.
+**Before writing a machine, run `decree schema` and read `.decree/schema/v1/machine.schema.json`**
+(generated, ignored by git): the precise contract for every key below, with a description and
+examples for each. Write against it, then run `decree check`, which also checks what a schema
+cannot: that names resolve, targets exist and every state is reachable. Editors apply the same
+schema by path; machines carry no schema line.
 
 ## Keys
 
@@ -40,11 +39,6 @@ every state is reachable. Editors apply the same schema by path; machines carry 
 Inside a state, write keys in this order: `description`, `invoke`, `onentry`, `onexit`,
 `transitions`, `emits`, then `initial` and `states` for a compound state. Don't write defaults
 (no `attempts: 1`).
-
-**Start simple.** Write the most naive machine that does the job: one state per script, in a
-straight line, ending in `done`. Add decisions, loops, `data`, `attempts`, `timeout`, child
-machines or `emits` only when someone asks for them or a run has shown they are needed, and
-say why in the state's comment.
 
 Every machine has a root-level final state named `failed`.
 
@@ -109,8 +103,8 @@ decoder (Ollama's `format`) is handed `reply_schema` unchanged. An untyped route
 model or coding agent (`claude -p`, Copilot, OpenCode) for free text, and its script must find
 and check the JSON; its confidence is self-reported. Use a typed router for routing decisions
 (cheap, frequent, bounded: which model, which path), and an untyped model for the work itself
-and for judgments that need reasoning over a lot of context. `docs/routers.md` in the decree
-repository shows both.
+and for judgments that need reasoning over a lot of context. [docs/routers.md](https://github.com/jtmckay/decree/blob/main/docs/routers.md)
+shows both.
 
 ### Conditions
 

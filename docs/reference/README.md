@@ -94,7 +94,7 @@ Each building block has its own directory in `.decree/`:
   schema/v1/*.schema.json             # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)
   scripts/<name>                    # executables shared by every machine; optional extension: verify.sh (scripts.md)
   scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
-  lib/                              # code that scripts source, config and data: $DECREE_LIB; decree never runs anything in it (scripts.md, Shared code); `decree init` writes `ai.sh`
+  lib/                              # code that scripts source, config and data: $DECREE_LIB; decree never runs anything in it (scripts.md, Shared code); `decree init` writes `ai.sh`, `infra/` (scripts.md, Declared environment) and `qa/`
   .env                              # optional, never committed: KEY=value variables every script gets, secrets included (scripts.md, .env files)
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
