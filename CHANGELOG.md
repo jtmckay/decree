@@ -75,6 +75,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Removed
 
+- `decree init` no longer writes `git_baseline` and `snapshot`. No built-in machine used them, `clean_tree` already records the commit a run started from, and `snapshot`'s stashes were easy to confuse with a failed run's work. Projects keep the copies they have.
 - The Docker image (`Dockerfile`, `.dockerignore`, its GHCR workflow) and `examples/docker/`: the image did not carry the tools machines need (it had no Rust toolchain), and projects that want decree in a container can build their own.
 - Everything 0.4: the upgrade script and its fixtures, the `config.yml` error, and the `routine:` alias for `machine:` (migration 73, [D46](docs/decisions.md#d46-no-04-compatibility-and-examples-by-topic)).
 - The statement of work at the repository root: decree 0.4's pitch, written around routines and `config.yml` (migration 86).

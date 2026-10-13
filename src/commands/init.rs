@@ -158,8 +158,6 @@ const LIB_FILES: &[(&str, &str, bool)] = &[
 /// a clean git work tree) and ends with `commit` (`done`'s `onentry`: one commit per run) or
 /// `keep` (`failed`'s `onentry`: the run's changes stay in the tree, and `.decree/HOLD` stops
 /// the queue until the run is retried).
-/// `git_baseline` is a root `onentry` that records `HEAD` once; `snapshot` is a working
-/// state's `onentry` that stashes a checkpoint on each visit; no built-in machine uses them.
 const SHARED_SCRIPTS: &[(&str, &str)] = &[
     (
         "clean_tree",
@@ -167,11 +165,6 @@ const SHARED_SCRIPTS: &[(&str, &str)] = &[
     ),
     ("commit", include_str!("../templates/scripts/commit.sh")),
     ("keep", include_str!("../templates/scripts/keep.sh")),
-    (
-        "git_baseline",
-        include_str!("../templates/scripts/git_baseline.sh"),
-    ),
-    ("snapshot", include_str!("../templates/scripts/snapshot.sh")),
 ];
 
 /// The top of `lib/ai.sh`: how scripts use it, and how to add another backend.
@@ -651,10 +644,9 @@ mod tests {
         }
     }
 
-    /// The shared scripts are executable, and `git_baseline` and `snapshot` are the `feature`
-    /// fixture's, byte for byte.
+    /// The shared scripts are the three git scripts, executable.
     #[test]
-    fn test_write_shared_scripts_writes_the_examples_git_scripts() {
+    fn test_write_shared_scripts_writes_the_git_scripts() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::TempDir::new().unwrap();
         write_shared_scripts(dir.path()).unwrap();
@@ -663,22 +655,9 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        assert_eq!(
-            names,
-            [
-                "clean_tree.sh",
-                "commit.sh",
-                "git_baseline.sh",
-                "keep.sh",
-                "snapshot.sh"
-            ]
-        );
+        assert_eq!(names, ["clean_tree.sh", "commit.sh", "keep.sh"]);
         for name in names {
             let path = dir.path().join(SCRIPTS_DIR).join(&name);
-            let text = std::fs::read_to_string(&path).unwrap();
-            if ["git_baseline.sh", "snapshot.sh"].contains(&name.as_str()) {
-                assert_eq!(text, feature_fixture(&format!("scripts/{name}")), "{name}");
-            }
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o755, "{name}");
         }

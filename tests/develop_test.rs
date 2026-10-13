@@ -333,7 +333,6 @@ fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
                 "develop/implement.sh".to_string(),
                 "develop/precheck.sh".to_string(),
                 "develop/verify.sh".to_string(),
-                "git_baseline.sh".to_string(),
                 "infra/apply.sh".to_string(),
                 "infra/declare.sh".to_string(),
                 "keep.sh".to_string(),
@@ -343,7 +342,6 @@ fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
                 "qa/run.sh".to_string(),
                 "qa/triage.sh".to_string(),
                 "router/".to_string() + &format!("ask_{ai}.sh"),
-                "snapshot.sh".to_string(),
             ],
             "{ai}"
         );

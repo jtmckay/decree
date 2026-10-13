@@ -14,8 +14,8 @@ the first directory holding a match wins:
 There is no other search path. To share a script across projects, symlink it into `scripts/`.
 
 A match is a file named `X` or `X.<ext>` (`verify.sh`), executable, and the only match in its
-directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commit`, `notify`,
-`snapshot`) once in `scripts/`; put a machine's own version in `scripts/<machine>/`.
+directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commit`, `keep`,
+`notify`) once in `scripts/`; put a machine's own version in `scripts/<machine>/`.
 `chmod +x` new scripts; `decree check` fails otherwise.
 
 Code that scripts share but decree never runs (bash functions to source, config, data such as

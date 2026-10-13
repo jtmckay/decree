@@ -901,7 +901,7 @@ fn machine_prune_and_daemon_take_the_same_durations() {
     let machine = |timeout: &str| {
         format!(
             "name: t\ndescription: A script with a time limit.\ninitial: work\nstates:\n  \
-             work:\n    invoke: {{ script: {{ name: git_baseline, timeout: '{timeout}' }} }}\n    \
+             work:\n    invoke: {{ script: {{ name: keep, timeout: '{timeout}' }} }}\n    \
              transitions: {{ done: done }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
         )
     };

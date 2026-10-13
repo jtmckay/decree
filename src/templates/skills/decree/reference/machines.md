@@ -197,7 +197,7 @@ name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.
 data:
   max_rounds: { type: int, default: 2 }
-onentry: [git_baseline]            # root onentry: once, when the run starts
+onentry: [clean_tree]              # root onentry: when the run starts, and again on a retry
 onexit: [notify]                   # root onexit: once, after a root final state is entered
 initial: precheck
 states:
@@ -211,7 +211,6 @@ states:
       implement:
         invoke:                    # attempts: re-run a crashing script in place
           script: { name: implement, attempts: 2 }
-        onentry: [snapshot]
         onexit: [collect_logs]
         transitions: { done: verify }
       verify:                      # script: names pass or fail

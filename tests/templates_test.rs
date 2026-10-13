@@ -18,16 +18,12 @@ const ROUTER: &[Pair] = &[
     ("machines/router.yml", "router/router.yml"),
     ("scripts/router/ask_claude.sh", "router/ask.sh"),
 ];
-const GIT_SCRIPTS: &[Pair] = &[
-    ("scripts/git_baseline.sh", "scripts/git_baseline.sh"),
-    ("scripts/snapshot.sh", "scripts/snapshot.sh"),
-];
 
 /// Each project (relative to the repository) and the pairs it holds: the `feature` fixture and
 /// the escalation ladder, whose recorded runs `replay_test.rs` replays. `examples/project` has
 /// no file `init` writes.
 const EXAMPLES: &[(&str, &[&[Pair]])] = &[
-    ("tests/fixtures/feature", &[GIT_SCRIPTS, ROUTER]),
+    ("tests/fixtures/feature", &[ROUTER]),
     ("tests/fixtures/escalation", &[ROUTER]),
 ];
 
@@ -103,7 +99,7 @@ fn example_files_match_the_templates_init_writes() {
 fn one_byte_change_in_an_example_file_names_the_pair() {
     let tmp = init_claude();
     let example = TempDir::new().unwrap();
-    for (path, _) in GIT_SCRIPTS {
+    for (path, _) in ROUTER {
         let to = example.path().join(path);
         fs::create_dir_all(to.parent().unwrap()).unwrap();
         fs::copy(
@@ -112,21 +108,21 @@ fn one_byte_change_in_an_example_file_names_the_pair() {
         )
         .unwrap();
     }
-    let snapshot = example.path().join("scripts/snapshot.sh");
-    let mut bytes = fs::read(&snapshot).unwrap();
+    let ask = example.path().join("scripts/router/ask_claude.sh");
+    let mut bytes = fs::read(&ask).unwrap();
     *bytes.last_mut().unwrap() ^= 1;
-    fs::write(&snapshot, bytes).unwrap();
+    fs::write(&ask, bytes).unwrap();
 
     let found = mismatches(
         "tests/fixtures/feature/.decree",
         example.path(),
-        GIT_SCRIPTS,
+        ROUTER,
         &repo().join("src/templates"),
         &tmp.path().join(".decree"),
     );
     assert_eq!(
         found,
-        ["tests/fixtures/feature/.decree/scripts/snapshot.sh <-> src/templates/scripts/snapshot.sh: differs"]
+        ["tests/fixtures/feature/.decree/scripts/router/ask_claude.sh <-> src/templates/router/ask.sh: differs"]
     );
 }
 
