@@ -2,7 +2,7 @@
 # develop_by_size's implement: one attempt. $DECREE_ATTEMPT_VALUE names the
 # tool, then the tests run: an attempt succeeds when the change passes them, so
 # a failing attempt exits non-zero and decree runs the next value. Both go through
-# lib/ai.sh's `ai`, with DECREE_AI naming the backend.
+# lib/ai.sh's `ai`, with AI_CLI naming the backend.
 #   local   a model served by Ollama, through OpenCode (`opencode run -m
 #           ollama/<model>`, https://opencode.ai/docs/cli/); the `ollama`
 #           provider and this model must be in opencode.json, as the example's
@@ -32,7 +32,7 @@ change only what it asks for, and keep the tests passing.
 Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== opencode, ollama/${OLLAMA_MODEL} ==="
     echo "${prompt}"
-    DECREE_AI=opencode OPENCODE_MODEL="ollama/${OLLAMA_MODEL}" ai "${prompt}"
+    AI_CLI=opencode OPENCODE_MODEL="ollama/${OLLAMA_MODEL}" ai "${prompt}"
     ;;
   claude)
     prompt="Read ${DECREE_MESSAGE} and implement all requirements with proper error
@@ -46,7 +46,7 @@ Logs of earlier attempts, a local model's included, are in ${DECREE_RUN_DIR}.
 Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== claude ==="
     echo "${prompt}"
-    DECREE_AI=claude ai "${prompt}"
+    AI_CLI=claude ai "${prompt}"
     stopped && exit 0
     ;;
   *)

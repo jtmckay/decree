@@ -45,10 +45,9 @@ pub fn is_key(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Whether `key` belongs to decree: `DECREE_*` but the settings a script inherits
-/// (`DECREE_AI`), `TRACEPARENT` or `TRACESTATE`.
+/// Whether `key` belongs to decree: `DECREE_*`, `TRACEPARENT` or `TRACESTATE`.
 pub fn is_reserved(key: &str) -> bool {
-    (key.starts_with("DECREE_") && !crate::runtime::INHERITED_ENV.contains(&key))
+    key.starts_with("DECREE_")
         || key == crate::trace::TRACEPARENT_ENV
         || key == crate::trace::TRACESTATE_ENV
 }
@@ -59,7 +58,7 @@ pub fn key_error(key: &str) -> Option<String> {
         Some(format!("key `{key}` does not match `{KEY_PATTERN}`"))
     } else if is_reserved(key) {
         Some(format!(
-            "key `{key}` is reserved: `DECREE_*` (but `DECREE_AI`), `TRACEPARENT` and `TRACESTATE` belong to decree"
+            "key `{key}` is reserved: `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree"
         ))
     } else {
         None
@@ -600,8 +599,8 @@ mod tests {
     #[test]
     fn reserved_keys_are_errors() {
         assert!(
-            parse("DECREE_AI=opencode\n").is_ok(),
-            "a setting scripts inherit"
+            parse("DECREE_AI=opencode\n").is_err(),
+            "no DECREE_* key, not even a setting: lib/ai.sh reads AI_CLI"
         );
         let errors = parse("DECREE_X=1\nTRACEPARENT=x\nTRACESTATE=y\nDECREEX=ok\n").unwrap_err();
         let lines: Vec<usize> = errors.iter().map(|(n, _)| *n).collect();

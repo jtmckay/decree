@@ -2,11 +2,11 @@
 # then `ai "<prompt>"` asks the AI and prints its reply.
 #
 # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls
-# the one DECREE_AI names (in .decree/.env, or the shell decree runs in); unset, the
-# one a machine's data entry `agent` names (DECREE_DATA_AGENT), so a child machine
-# invoked with `params: { agent: claude }` works with Claude; else {ai}, which
+# the one AI_CLI names (in .decree/.env, or the shell decree runs in); unset, the
+# one a machine's data entry `ai_cli` names (DECREE_DATA_AI_CLI), so a child machine
+# invoked with `params: { ai_cli: claude }` works with Claude; else {ai}, which
 # `decree init --ai` chose. To use another
-# backend, add an ai_<name> function and set DECREE_AI=<name>.
+# backend, add an ai_<name> function and set AI_CLI=<name>.
 #
 # The agent names no event (it writes STOP instead): a script it runs, such as the
 # gate, gets DECREE_EVENT_FILE=/dev/null, and the caller's event file is emptied
@@ -16,21 +16,21 @@
 # an attempt.
 #
 # Every call adds a line to .decree/ai-use.md (git ignores it): when, which run and
-# state, which agent and model, the run's attempt and the step's, how long it took
+# state, which CLI and model, the run's attempt and the step's, how long it took
 # and its exit code.
 AI_DEFAULT={ai}
 
 ai() {
-  local agent=${DECREE_AI:-${DECREE_DATA_AGENT:-${AI_DEFAULT}}}
-  if ! declare -F "ai_${agent}" >/dev/null; then
-    echo "ai: no ai_${agent} function in lib/ai.sh (DECREE_AI=${agent})" >&2
+  local cli=${AI_CLI:-${DECREE_DATA_AI_CLI:-${AI_DEFAULT}}}
+  if ! declare -F "ai_${cli}" >/dev/null; then
+    echo "ai: no ai_${cli} function in lib/ai.sh (AI_CLI=${cli})" >&2
     return 2
   fi
   local caller_event=${DECREE_EVENT_FILE:-} status=0 start=${SECONDS}
   local -x DECREE_EVENT_FILE=/dev/null
-  "ai_${agent}" "$1" || status=$?
+  "ai_${cli}" "$1" || status=$?
   [ -z "${caller_event}" ] || : > "${caller_event}"
-  ai_log "${agent}" "$((SECONDS - start))" "${status}" || true
+  ai_log "${cli}" "$((SECONDS - start))" "${status}" || true
   [ ! -f "${DECREE_ROOT_RUN_DIR:-${DECREE_RUN_DIR:-.}}/STOP" ] || status=0
   return "${status}"
 }
@@ -46,7 +46,7 @@ ai_log() {
     *) model=default ;;
   esac
   if [ ! -s "${log}" ]; then
-    printf '| time | run | state | agent | model | run attempt | attempt | seconds | exit |\n' > "${log}"
+    printf '| time | run | state | cli | model | run attempt | attempt | seconds | exit |\n' > "${log}"
     printf '| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n' >> "${log}"
   fi
   printf '| %s | %s | %s/%s | %s | %s | %s | %s | %s | %s |\n' \

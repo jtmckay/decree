@@ -30,7 +30,7 @@ examples/project/.decree/
     develop/test.sh
     deploy/build.sh  deploy/ship.sh
     ask_person.sh             tells a person the options of a person state
-  lib/ai.sh                 `ai`, as `decree init --ai claude` writes it; DECREE_AI picks the backend
+  lib/ai.sh                 `ai`, as `decree init --ai claude` writes it; AI_CLI picks the backend
   migrations/  processed.md MESSAGES: ordered, run once; processed.md lists 01 as run
   inbox/                    MESSAGES: FIFO queue; here, a person's reply
   cron/nightly-audit.md     a message template that drops into inbox/ every night

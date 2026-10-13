@@ -929,7 +929,7 @@ fn a_reset_past_ai_limit_wait_stops_the_run() {
     );
 }
 
-/// `ai` calls the backend DECREE_AI names, else the one a data entry `agent` names, else
+/// `ai` calls the backend AI_CLI names, else the one a data entry `ai_cli` names, else
 /// the one `init` chose; an unknown one fails the call. Every call is a line in
 /// .decree/ai-use.md.
 #[test]
@@ -939,7 +939,7 @@ fn ai_picks_the_backend_and_logs_every_call() {
         "opencode",
         "#!/usr/bin/env bash\necho \"$*\" | head -c 40 >> \"$(dirname \"$0\")/opencode_calls\"\necho >> \"$(dirname \"$0\")/opencode_calls\"\necho 'VERDICT: pass'\n",
     );
-    let id = p.run(&[("DECREE_AI", "opencode"), ("OPENCODE_MODEL", "llama.cpp/q")]);
+    let id = p.run(&[("AI_CLI", "opencode"), ("OPENCODE_MODEL", "llama.cpp/q")]);
     assert_eq!(p.outcome(&id), "done");
     assert!(p.calls().is_empty(), "{:?}", p.calls());
     let calls = fs::read_to_string(p.bin().join("opencode_calls")).unwrap();
@@ -953,7 +953,7 @@ fn ai_picks_the_backend_and_logs_every_call() {
     let lines: Vec<&str> = log.lines().collect();
     assert_eq!(
         lines[0],
-        "| time | run | state | agent | model | run attempt | attempt | seconds | exit |"
+        "| time | run | state | cli | model | run attempt | attempt | seconds | exit |"
     );
     assert_eq!(lines.len(), 4, "{log}");
     let row: Vec<&str> = lines[2].split(" | ").collect();
@@ -972,11 +972,11 @@ fn ai_picks_the_backend_and_logs_every_call() {
     );
     assert_eq!(row[8], "0 |", "{log}");
 
-    let id = p.run(&[("DECREE_AI", "nobody")]);
+    let id = p.run(&[("AI_CLI", "nobody")]);
     assert_eq!(p.outcome(&id), "failed");
     assert!(
         p.log(&id, "implement")
-            .contains("ai: no ai_nobody function in lib/ai.sh (DECREE_AI=nobody)"),
+            .contains("ai: no ai_nobody function in lib/ai.sh (AI_CLI=nobody)"),
         "{}",
         p.log(&id, "implement")
     );
@@ -1003,7 +1003,7 @@ fi
 echo 'VERDICT: pass'
 "#,
     );
-    let id = p.run(&[("DECREE_AI", "opencode")]);
+    let id = p.run(&[("AI_CLI", "opencode")]);
     assert_eq!(p.outcome(&id), "done");
     let calls = fs::read_to_string(p.bin().join("opencode_calls")).unwrap();
     let calls: Vec<&str> = calls.lines().collect();
@@ -1451,7 +1451,7 @@ fn a_project_in_a_subfolder_leaves_the_rest_of_the_repository_alone() {
 
 /// docs/escalation.md, installed as it says in a project `init` wrote: it passes
 /// `decree check`, and a run whose verify fails spends `max_gap_rounds` rounds with the
-/// default agent (OpenCode, through `gaps`' data entry `agent`), then one with Claude, which
+/// default agent (OpenCode, through `gaps`' data entry `ai_cli`), then one with Claude, which
 /// closes the gaps.
 #[test]
 fn the_documented_escalation_ladder_runs_rounds_then_claude() {
@@ -1517,9 +1517,9 @@ fn the_documented_escalation_ladder_runs_rounds_then_claude() {
     );
     let progress = fs::read_to_string(p.run_dir(&id).join("progress.md")).unwrap();
     for heading in [
-        "## Gaps, round 1 (agent: opencode)",
-        "## Gaps, round 2 (agent: opencode)",
-        "## Gaps, round 3 (agent: claude)",
+        "## Gaps, round 1 (ai_cli: opencode)",
+        "## Gaps, round 2 (ai_cli: opencode)",
+        "## Gaps, round 3 (ai_cli: claude)",
     ] {
         assert!(progress.contains(heading), "{progress}");
     }

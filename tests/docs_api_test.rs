@@ -1162,17 +1162,6 @@ fn runtime_environment() -> BTreeSet<String> {
             .unwrap_or_else(|| panic!("const {} not found", &c[1]));
         vars.insert(value[1].to_string());
     }
-    // Passed through from decree's environment rather than set.
-    let inherited = Regex::new(r#"const INHERITED_ENV: &\[&str\] = &\[([^\]]*)\];"#).unwrap();
-    let list = inherited
-        .captures(&runtime)
-        .expect("INHERITED_ENV in runtime.rs");
-    for name in Regex::new(r#""([A-Z_]+)""#)
-        .unwrap()
-        .captures_iter(&list[1])
-    {
-        vars.insert(name[1].to_string());
-    }
     assert!(vars.len() > 20, "{vars:?}");
     vars
 }

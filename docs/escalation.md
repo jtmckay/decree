@@ -7,15 +7,15 @@ It is more machinery than the simplest machine, which is where a project should 
 ## How it works
 
 ```text
-… final_gate ─fail→ gate_gaps ─→ rounds_left ─true→ fill_gaps (gaps, agent: default) ─unfilled→ rounds_left
-     verify ─fail────────────────↗           └false→ claude_round (gaps, agent: claude) ─unfilled→ ask_human
+… final_gate ─fail→ gate_gaps ─→ rounds_left ─true→ fill_gaps (gaps, ai_cli: default) ─unfilled→ rounds_left
+     verify ─fail────────────────↗           └false→ claude_round (gaps, ai_cli: claude) ─unfilled→ ask_human
                                                      filled → done                         accept → done · retry → claude_round · fail → failed
 ```
 
 - `verify` writes `gaps.md` when it fails ([Run-directory files](reference/scripts.md#run-directory-files)), and `gate_gaps` writes it from `gate.log` when the gate still fails after `fix`. `gaps.md` is what each round works on.
 - `rounds_left` is a `check` on `visits`: `fill_gaps` runs `max_gap_rounds` times. A `decree process --retry` counts visits again from the retry, so a retried run gets every round again ([Visits](reference/runs.md#step-loop)).
 - Each round is a child run of the `gaps` machine: fill, gate, fix, final gate, verify. Its steps are `develop`'s own scripts, through symlinks. They keep their files (`progress.md`, `gaps.md`, `gate.log`, `plan.md`, `STOP`) in the root run's folder, `$DECREE_ROOT_RUN_DIR`, so every round reads and adds to the same notes as `develop`.
-- `gaps`' data entry `agent` picks the backend: `lib/ai.sh`'s `ai` calls the one it names ([The AI helper](reference/scripts.md#the-ai-helper)). `fill_gaps` uses the default; `claude_round` passes `params: { agent: claude }`. Every call is a line in `.decree/ai-use.md`, so you can see what each round cost.
+- `gaps`' data entry `ai_cli` picks the backend: `lib/ai.sh`'s `ai` calls the one it names ([The AI helper](reference/scripts.md#the-ai-helper)). `fill_gaps` uses the default; `claude_round` passes `params: { ai_cli: claude }`. Every call is a line in `.decree/ai-use.md`, so you can see what each round cost.
 - `ask_human` is a `person` state: the run waits for `decree event <wait id> accept|retry|fail`. After 30 days with no answer its event is `error`, which, like a round that ends in `failed`, goes to `failed`.
 
 ## The files
@@ -67,7 +67,7 @@ states:
     transitions: { filled: done, unfilled: rounds_left }
   claude_round:                    # one round with Claude
     invoke:
-      machine: { name: gaps, params: { agent: claude } }
+      machine: { name: gaps, params: { ai_cli: claude } }
     transitions: { filled: done, unfilled: ask_human }
   ask_human:                       # every round is spent: a person decides
     invoke:
@@ -83,14 +83,14 @@ states:
   failed: { final: true, onentry: [keep] }     # the run's changes stay in the tree; HOLD stops the queue
 ```
 
-`.decree/machines/gaps.yml`, one round. Set `agent`'s default to the backend your cheap rounds use:
+`.decree/machines/gaps.yml`, one round. Set `ai_cli`'s default to the backend your cheap rounds use:
 
 ```yaml
 # Graph: ../graph/gaps.md
 name: gaps
-description: One round on gaps.md, by the agent `agent` names; ends filled if verify passes.
+description: One round on gaps.md, by the CLI `ai_cli` names; ends filled if verify passes.
 data:
-  agent: { type: string, default: opencode, enum: [opencode, claude, copilot] }
+  ai_cli: { type: string, default: opencode, enum: [opencode, claude, copilot] }
 initial: fill
 states:
   fill:                            # closes each gap in gaps.md, test first
@@ -147,7 +147,7 @@ stopped() {
 stopped && exit 0
 if [ "${DECREE_ATTEMPT}" = 1 ]; then
   round=$(($(grep -c '^## Gaps, round' "${progress}" 2>/dev/null || true) + 1))
-  printf '\n## Gaps, round %s (agent: %s)\n' "${round}" "${DECREE_DATA_AGENT}" >> "${progress}"
+  printf '\n## Gaps, round %s (ai_cli: %s)\n' "${round}" "${DECREE_DATA_AI_CLI}" >> "${progress}"
 fi
 
 prompt="You are a senior engineer. ${gaps} lists what is still missing in the work on
@@ -156,7 +156,7 @@ write or fix the test that shows it, then the code. Append a line to ${progress}
 gap you close. If ${plan} exists, follow it. If a gap needs a decision the message does
 not make, write the question to ${stop} and stop.
 Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
-echo "=== AI prompt (gaps, agent: ${DECREE_DATA_AGENT}) ==="
+echo "=== AI prompt (gaps, ai_cli: ${DECREE_DATA_AI_CLI}) ==="
 echo "${prompt}"
 ai "${prompt}"
 stopped || true
@@ -203,6 +203,6 @@ Then `chmod +x .decree/scripts/gaps/fill.sh .decree/scripts/develop/gate_gaps.sh
 ## Tuning it
 
 - **More or fewer cheap rounds**: `max_gap_rounds`, per message with `params: { max_gap_rounds: 3 }`.
-- **A different cheap agent**: `gaps`' `agent` default. With OpenCode, set `OPENCODE_MODEL` in `.decree/.env` (for example `llama.cpp/qwen3`), and let `decree init --permissions` write `"external_directory": "deny"` into `opencode.json`.
+- **A different cheap agent**: `gaps`' `ai_cli` default. With OpenCode, set `OPENCODE_MODEL` in `.decree/.env` (for example `llama.cpp/qwen3`), and let `decree init --permissions` write `"external_directory": "deny"` into `opencode.json`.
 - **Claude's model for its round**: `CLAUDE_MODEL`. A round that meets Claude's usage limit waits for the reset, up to `AI_LIMIT_WAIT`, without using its attempts.
 - **No person**: point `claude_round`'s `unfilled` at `failed`. The run keeps its changes and holds the queue, as any failed run does.

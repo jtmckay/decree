@@ -41,11 +41,6 @@ const ATTEMPT_VALUE_ENV: &str = "DECREE_ATTEMPT_VALUE";
 /// The whole `attempts` list, space-separated, set only when the invoke lists its attempts.
 const ATTEMPT_VALUES_ENV: &str = "DECREE_ATTEMPT_VALUES";
 
-/// `DECREE_*` variables a script inherits from decree's environment, unlike every other
-/// (docs/reference/scripts.md, Environment): settings for the scripts, not a run's values.
-/// `DECREE_AI` names the backend `lib/ai.sh` calls.
-pub(crate) const INHERITED_ENV: &[&str] = &["DECREE_AI"];
-
 /// The running decree, as Make's `MAKE` and Cargo's `CARGO`, so a script calls the decree
 /// that runs it whether or not that one is on `PATH`.
 const DECREE_ENV: &str = "DECREE";
@@ -481,11 +476,9 @@ impl Executor {
             .process_group(0);
         // A decree started inside another decree run (a test suite run by a gate script, say)
         // must not hand the outer run's variables to its scripts: it sets every `DECREE_*`
-        // variable a script gets (docs/reference/scripts.md, Environment) itself, but the
-        // settings in `INHERITED_ENV`.
+        // variable a script gets (docs/reference/scripts.md, Environment) itself.
         for (name, _) in std::env::vars_os() {
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with("DECREE_") && !INHERITED_ENV.contains(&name_str.as_ref()) {
+            if name.to_string_lossy().starts_with("DECREE_") {
                 cmd.env_remove(&name);
             }
         }
