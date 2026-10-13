@@ -17,7 +17,9 @@ The run's current state is always an atomic state, `S`.
 
 **Final-state `onentry` failure.** If an `onentry` script of a final state other than `failed` exits non-zero, append a `transition` event with event `error` and `to: failed`, mirror `state: failed`, remove the ledger line if one was written, run `failed`'s `onentry`, then root `onexit`. A failing `onentry` script on `failed` itself is only logged.
 
-**Visits.** `visits.<state>` counts the `transition` events whose `to` is that state, excluding `source: "attempt"`. The claim event counts, and so does a `retry` event (it re-enters the state). Only atomic states have visits.
+**Visits.** `visits.<state>` counts the `transition` events whose `to` is that state, excluding `source: "attempt"`, since the run's last `retry` event. The claim event counts, and so does a `retry` event (it re-enters the state), which starts the count again: a retried run gets every round of a `check` on `visits` again, so a person's retry is not spent on rounds the run already used. Only atomic states have visits.
+
+**Run attempts.** A run's first attempt starts at its claim; each `decree process --retry` starts the next, and its `retry` event records the number as `run_attempt` (2, 3, …). Scripts get it as `DECREE_RUN_ATTEMPT`. It is GitHub Actions' `run_attempt`, which numbers a workflow run's re-runs. It is not `DECREE_ATTEMPT`, the attempt of one invoke inside a visit ([Invoke](machines.md#invoke-the-states-function)).
 
 ## Check
 
@@ -163,6 +165,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
 | `file` | string | A claim from the inbox or migrations | Original inbox or migration filename. Absent for a child run, which has none. |
 | `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
+| `run_attempt` | integer | `retry` | The run attempt this retry starts: 2 for the first retry ([Step loop](#step-loop), Run attempts). |
 | `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree process --retry` starts a new run span, linked to the previous one. |
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
 

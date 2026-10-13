@@ -100,6 +100,11 @@
           "type": ["integer", "null"],
           "description": "The invoke's exit code. `null` if there was no invoke."
         },
+        "run_attempt": {
+          "type": "integer",
+          "minimum": 2,
+          "description": "On a `retry` event: the run attempt it starts, 2 for the first retry. Visits count again from it."
+        },
         "attempt_value": {
           "type": "string",
           "description": "On a `source: \"attempt\"` transition whose state's `attempts` is a list: the value of the attempt about to run, its `DECREE_ATTEMPT_VALUE`."

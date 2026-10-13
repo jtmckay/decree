@@ -121,7 +121,8 @@ reads none of them; the built-in `develop` machine's scripts follow this convent
 | `DECREE_MESSAGE_ID` | The message `id`. |
 | `DECREE_MACHINE`, `DECREE_STATE` | Machine and state (`_root` for root `onentry`/`onexit`). |
 | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
-| `DECREE_VISITS` | Times this state has been entered, including now. |
+| `DECREE_VISITS` | Times this state has been entered, including now, since the run's last retry. |
+| `DECREE_RUN_ATTEMPT` | The run's attempt: 1, then one more per `decree process --retry`. |
 | `DECREE_RUN_DIR` | `runs/<id>/`. |
 | `DECREE_STORE` | `.decree/store/<machine>/`: what this machine keeps between runs; created before the script runs. |
 | `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS`, `DECREE_FINAL_ATTEMPT` | Attempt number, the limit, and `true` on the last one. |

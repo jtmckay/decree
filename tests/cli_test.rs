@@ -378,6 +378,55 @@ fn process_retry_resumes_a_failed_run_at_the_retried_state() {
     );
 }
 
+/// Two rounds of work, then a run that fails; each round logs its run attempt and visit.
+const ROUNDS: &str = "\
+name: rounds
+description: Work for max_rounds rounds, then fail.
+data:
+  max_rounds: { type: int, default: 2 }
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: more }
+  more:
+    invoke:
+      check: { visits: work, less_than: { data: max_rounds } }
+    transitions: { 'true': work, 'false': failed }
+  failed: { final: true }
+";
+
+/// AC: each `decree process --retry` is the run's next attempt: its `retry` event names
+/// `run_attempt`, scripts get `DECREE_RUN_ATTEMPT`, and `visits` count from the retry, so a
+/// run that used its rounds gets them all again.
+#[test]
+fn a_retry_is_the_next_run_attempt_with_fresh_visits() {
+    let p = Project::init();
+    p.machine("rounds", ROUNDS);
+    p.script(
+        "work",
+        "#!/usr/bin/env bash\necho \"$DECREE_RUN_ATTEMPT $DECREE_VISITS\" >> rounds.log\n",
+    );
+    let id = p.emit("rounds", "Work.\n");
+    let out = p.decree(&["process"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    p.decree(&["process", "--retry", &id, "--state", "work"])
+        .assert()
+        .code(1);
+    assert_eq!(
+        fs::read_to_string(p.root().join("rounds.log")).unwrap(),
+        "1 1\n1 2\n2 1\n2 2\n"
+    );
+    let events = p.events(&id);
+    let retries: Vec<_> = events.iter().filter(|e| e["source"] == "retry").collect();
+    assert_eq!(retries.len(), 1);
+    assert_eq!(retries[0]["run_attempt"], 2);
+    assert!(events
+        .iter()
+        .filter(|e| e["source"] == "claim")
+        .all(|e| e.get("run_attempt").is_none()));
+}
+
 /// AC: `--retry` with nothing to retry exits 1 and says so; `--retry` with `--dry-run`,
 /// `--state` without `--retry`, and the removed `retry` command are usage errors (exit 2).
 #[test]

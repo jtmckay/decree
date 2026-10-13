@@ -152,6 +152,8 @@ pub struct RunInfo {
     /// `DECREE_ROOT_RUN_DIR`: the folder of the run at the top of the chain, the run with
     /// no parent; `run_dir` itself in a top-level run.
     pub root_run_dir: PathBuf,
+    /// `DECREE_RUN_ATTEMPT`: 1, plus one for each `decree process --retry` of the run.
+    pub run_attempt: u32,
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
     /// where the reply must go (docs/reference/runs.md, Model).
     pub router: Option<RouterFiles>,
@@ -614,6 +616,7 @@ impl Executor {
             ("STATE", run.state.into()),
             ("PHASE", run.phase.as_str().into()),
             ("VISITS", run.visits.to_string().into()),
+            ("RUN_ATTEMPT", info.run_attempt.to_string().into()),
             ("RUN_DIR", info.run_dir.as_os_str().into()),
             (
                 "STORE",
@@ -919,6 +922,7 @@ pub(crate) mod executor_tests {
                 parent: None,
                 parent_run_dir: None,
                 root_run_dir: self.run_dir(),
+                run_attempt: 1,
                 router: None,
                 env: Vec::new(),
             }
@@ -1366,6 +1370,7 @@ pub(crate) mod executor_tests {
         let parent_dir = p.root().join(".decree/runs/20261001T120000Z-0b12aa");
         info.parent_run_dir = Some(parent_dir.clone());
         info.root_run_dir = parent_dir.clone();
+        info.run_attempt = 2;
         let (request, reply) = (
             p.run_dir().join("request.json"),
             p.run_dir().join("reply.json"),
@@ -1421,6 +1426,7 @@ pub(crate) mod executor_tests {
             ("DECREE_STATE", "review".to_string()),
             ("DECREE_PHASE", "invoke".to_string()),
             ("DECREE_VISITS", "2".to_string()),
+            ("DECREE_RUN_ATTEMPT", "2".to_string()),
             ("DECREE_RUN_DIR", run_dir.to_str().unwrap().to_string()),
             (
                 "DECREE_STORE",

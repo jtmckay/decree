@@ -31,7 +31,8 @@ use serde_json::{json, Value};
 
 use crate::cond::{self, CondError};
 use crate::events::{
-    claim_event, current_state, is_transition, read_events, text, visits, Event, EVENTS_FILE,
+    claim_event, current_state, is_transition, read_events, run_attempt, text, visits, Event,
+    EVENTS_FILE,
 };
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
@@ -736,8 +737,15 @@ impl Context {
             request: run_dir.join(REQUEST_FILE),
             reply: run_dir.join(REPLY_FILE),
         });
+        let events_file = run_dir.join(EVENTS_FILE);
+        let run_attempt = if events_file.is_file() {
+            run_attempt(&read_events(&run_dir).map_err(io_err(&events_file))?)
+        } else {
+            1
+        };
         let info = RunInfo {
             project_root: self.project_root.clone(),
+            run_attempt,
             run_dir,
             run_id: run_id.to_string(),
             machine: m.id.clone(),

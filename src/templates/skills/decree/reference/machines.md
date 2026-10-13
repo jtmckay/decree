@@ -114,7 +114,7 @@ Typed objects: exactly one subject, exactly one operator.
 | --- | --- | --- |
 | `output: <state>` | That state's latest script output, as logged. The state must invoke a script. | `matches` |
 | `data: <name>` | A `data` value. | `<op>`; `matches` for string data |
-| `visits: <state>` | Times that atomic state was entered in this run. | `<op>` |
+| `visits: <state>` | Times that atomic state was entered in this run, since its last retry. | `<op>` |
 | `confidence: <state>` | Confidence of that `model` state's latest decision, 0 to 1. | `<op>` |
 
 `<op>`: `equals`, `not_equals`, `less_than`, `at_most`, `more_than`, `at_least`. `<value>` is a

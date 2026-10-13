@@ -784,7 +784,7 @@ fn visits_count_claim_and_retry_but_not_attempts() {
         json!({"type": "transition", "from": "a", "to": "a", "source": "attempt"}),
         json!({"type": "script", "state": "a"}),
         json!({"type": "transition", "from": "a", "to": "b", "source": "exit_code"}),
-        json!({"type": "transition", "from": "b", "to": "b", "source": "retry"}),
+        json!({"type": "transition", "from": "b", "to": "b", "source": "exit_code"}),
     ]
     .into_iter()
     .map(|v| v.as_object().unwrap().clone())
@@ -793,6 +793,25 @@ fn visits_count_claim_and_retry_but_not_attempts() {
     assert_eq!(v["a"], 1);
     assert_eq!(v["b"], 2);
     assert_eq!(current_state(&events), Some("b"));
+    assert_eq!(run_attempt(&events), 1);
+}
+
+/// A retry starts the run's next attempt and counts visits again from itself.
+#[test]
+fn a_retry_starts_the_next_run_attempt_and_counts_visits_again() {
+    let events: Vec<Map<String, Value>> = [
+        json!({"type": "transition", "from": null, "to": "a", "source": "claim"}),
+        json!({"type": "transition", "from": "a", "to": "b", "source": "exit_code"}),
+        json!({"type": "transition", "from": "b", "to": "b", "source": "exit_code"}),
+        json!({"type": "transition", "from": "b", "to": "b", "source": "retry", "run_attempt": 2}),
+    ]
+    .into_iter()
+    .map(|v| v.as_object().unwrap().clone())
+    .collect();
+    let v = visits(&events);
+    assert_eq!(v.get("a"), None);
+    assert_eq!(v["b"], 1);
+    assert_eq!(run_attempt(&events), 2);
 }
 
 // ---------------------------------------------------------------

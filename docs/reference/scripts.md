@@ -52,7 +52,8 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_MACHINE` | Machine name. |
 | `DECREE_STATE` | State the script runs for, or `_root`. |
 | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
-| `DECREE_VISITS` | `visits.<state>` for this state, including the current visit. `0` for `_root`. |
+| `DECREE_VISITS` | `visits.<state>` for this state, including the current visit, since the run's last retry. `0` for `_root`. |
+| `DECREE_RUN_ATTEMPT` | The run's attempt: `1`, then one more for each `decree process --retry` ([Run attempts](runs.md#step-loop)). |
 | `DECREE_RUN_DIR` | Absolute path of `runs/<id>/`. |
 | `DECREE_STORE` | Absolute path of `.decree/store/<machine>/`, what this machine keeps between runs ([Store](#store)); a child machine's scripts get the child's. decree creates it before the script runs. |
 | `DECREE_ATTEMPT` | Attempt number of the invoke in this visit, from 1. `1` for `onentry` and `onexit` scripts. |

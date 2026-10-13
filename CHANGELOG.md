@@ -10,6 +10,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Added
 
+- Run attempts: each `decree process --retry` starts the run's next attempt, recorded as `run_attempt` on its `retry` event and given to scripts as `DECREE_RUN_ATTEMPT` ([D64](docs/decisions.md#d64-a-retry-is-the-runs-next-attempt-with-fresh-visits)).
 - `DECREE` in every script's environment: the path of the decree executable running it, as Make's `MAKE` and Cargo's `CARGO`. `qa`'s `report` calls `"${DECREE}" emit`, so it no longer needs decree on `PATH`.
 - `develop`, `infra` and `qa` make one commit per run: the shared `clean_tree` script (root `onentry`) fails a run that would start from uncommitted changes, `commit` (`done`'s `onentry`) commits the run's work, titled with the message's first heading, and `stash` (`failed`'s `onentry`) puts a failed run's changes in a git stash named after it, so the runs queued behind it start clean. `lib/infra/requirements` declares `git` ([D63](docs/decisions.md#d63-one-commit-per-run-from-a-clean-tree)).
 - The built-in `qa` machine: recon, attack, run, triage, report. The AI writes chaos tests against `lib/qa/invariants.md` with the wrenches in `lib/qa/wrenches.md`, triage marks real bugs expected to fail with one report per root cause, and each report becomes a `develop` message. A guard fails any step whose AI changed a file outside the chaos tests ([D62](docs/decisions.md#d62-qa-finds-bugs-and-never-fixes-them)).
@@ -41,6 +42,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- `visits` count from a run's last retry, so a retried run gets all the rounds of a `check` on `visits` again ([D64](docs/decisions.md#d64-a-retry-is-the-runs-next-attempt-with-fresh-visits)).
 - `develop`'s `precheck` runs `lib/infra/run.sh check` instead of looking for the AI's command, which `lib/infra/requirements` lists ([D61](docs/decisions.md#d61-the-environment-is-declared)).
 - A person answers a `STOP` in the run's `plan.md`, which the next step follows.
 - `process` and `daemon` read the machines and `.env` files again before each run, so an edit applies to the next run without a restart; they loaded the machines once at start. A machine edit that fails `decree check` is not used: the machines last loaded keep running, and the errors are printed once ([D59](docs/decisions.md#d59-machines-are-read-again-before-each-run)).

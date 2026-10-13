@@ -33,7 +33,7 @@ use crate::commands::print_json;
 use crate::commands::report::{self, Reporter};
 use crate::error::DecreeError;
 use crate::events::{
-    current_state, first_text, is_transition, is_type, strings, text, Event, EventLog,
+    current_state, first_text, is_transition, is_type, run_attempt, strings, text, Event, EventLog,
 };
 use crate::interpreter::child::continue_run;
 use crate::interpreter::recover::{self, mirror_state, RunStatus};
@@ -828,6 +828,7 @@ fn retry_run(
             "to": target,
             "source": "retry",
             "exit_code": null,
+            "run_attempt": run_attempt(&events) + 1,
         }),
     )?;
     mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;

@@ -208,7 +208,7 @@ A state with no `invoke` and a `done` transition passes straight through (SCXML'
 | --- | --- | --- |
 | `output: <state>` | That state's latest script output, as logged (Output, above). The state must have a script invoke. | `matches` |
 | `data: <name>` | A `data` value. `int` and `number` data compare numerically, with an int, a float (`number` data only) or each other. | `equals`, `not_equals`, `less_than`, `at_most`, `more_than`, `at_least`; `matches` for `string` data |
-| `visits: <state>` | How many times that atomic state was entered in this run. | the comparison operators |
+| `visits: <state>` | How many times that atomic state was entered in this run, since its last retry ([Visits](runs.md#step-loop)). | the comparison operators |
 | `confidence: <state>` | The latest `model` decision's confidence in that state, 0 to 1 (0 if the router reported none). | the comparison operators |
 
 For example `{ output: read_text, matches: '(?i)invoice' }`, `{ data: file, matches: '\.pdf$' }`, `{ visits: implement, less_than: { data: max_rounds } }` or `{ confidence: big_model, at_least: 0.4 }`. The comparison operators are `equals`, `not_equals`, `less_than`, `at_most`, `more_than` and `at_least`; `matches` is only an operator. `<value>` is a literal or `{ data: <name> }`. Regular expressions use the `regex` crate's syntax and match anywhere unless anchored. There is no `and`/`or`: to test two things, use two `check` states in a row.
@@ -290,7 +290,7 @@ Where SCXML leaves a choice to the platform, decree's choice is in this referenc
 - **Events.** Script events are described in [Events from an invoke](scripts.md#events-from-an-invoke). Decision events are listed in the Invoke table. `done.state.<id>` is raised by decree. Event names match `^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`. Events a script names and `model` or `person` options may not be `error`, `unsure`, or start with `done.` or `error.`, nor may an option be `done`; a script that names `done` gets `done`, as if it named nothing; `true`, `false`, `yes` and `no` are ordinary event names.
 - **Selecting a transition.** For an event, check the current atomic state's `transitions`, then its parent's, up to the root, and take the first match (Event matching, above). Within one state, no transition's event may extend another's (`done` beside `done.state.work`): SCXML would pick by document order, which a YAML map does not keep (V21).
 - **Unhandled events.** If `error` matches nothing, the target is the root-level final state `failed`. Every machine must have it. (Like a Step Functions `Catch` on `States.ALL`.) Any other event that matches nothing becomes `error`.
-- **`visits.<state>`** is how many times that state has been entered in this run, derived from `events.jsonl` ([Step loop](runs.md#step-loop), Visits).
+- **`visits.<state>`** is how many times that state has been entered in this run since its last `decree process --retry`, derived from `events.jsonl` ([Step loop](runs.md#step-loop), Visits).
 - **Exit and entry order** is SCXML's. The transition domain is the deepest compound state (or the root) that is a proper ancestor of both the source and the declared target; for a `type: internal` transition from a compound state to one of its descendants, it is the source itself. Exiting runs `onexit` from the innermost active state outward, stopping below the domain. Entering runs `onentry` from the outermost new state inward, then follows `initial` down to an atomic state. A self-transition therefore exits and re-enters its state.
 
 

@@ -389,17 +389,28 @@ pub fn strings<'e>(event: &'e Event, key: &str) -> Vec<&'e str> {
         .collect()
 }
 
+/// The run's attempt (docs/reference/runs.md, Run attempts): 1, plus one for each `retry`
+/// event.
+pub fn run_attempt(events: &[Event]) -> u32 {
+    1 + events
+        .iter()
+        .filter(|e| is_transition(e) && text(e, "source") == Some("retry"))
+        .count() as u32
+}
+
 pub fn is_transition(event: &Event) -> bool {
     is_type(event, "transition")
 }
 
 /// `visits.<state>` (docs/reference/runs.md, Visits): the `transition` events whose `to` is that state,
-/// except `source: "attempt"`.
+/// except `source: "attempt"`, since the run's last `retry` event (which counts).
 pub fn visits(events: &[Event]) -> BTreeMap<String, u32> {
     let mut visits = BTreeMap::new();
     for event in events.iter().filter(|e| is_transition(e)) {
-        if text(event, "source") == Some("attempt") {
-            continue;
+        match text(event, "source") {
+            Some("attempt") => continue,
+            Some("retry") => visits.clear(),
+            _ => {}
         }
         if let Some(to) = text(event, "to") {
             *visits.entry(to.to_string()).or_insert(0) += 1;
