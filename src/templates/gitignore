@@ -5,3 +5,5 @@ schema/
 .env*
 !.env.example
 HOLD
+process.log
+cache/

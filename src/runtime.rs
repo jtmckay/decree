@@ -131,7 +131,7 @@ pub fn data_env(
 }
 
 /// Each script log is capped at 2 MiB (docs/reference/scripts.md, Execution).
-const MAX_LOG_SIZE: u64 = 2_097_152;
+pub(crate) const MAX_LOG_SIZE: u64 = 2_097_152;
 
 /// The run an `Executor` runs scripts for.
 #[derive(Debug, Clone)]
@@ -826,7 +826,7 @@ fn stop_group(child: &mut Child, grace: Duration) -> io::Result<ExitStatus> {
 
 /// Keep only the last `max_size` bytes of the log at `path`, behind a marker line
 /// (docs/reference/scripts.md, Execution, Logs).
-fn truncate_log_if_needed(path: &Path, max_size: u64) -> io::Result<()> {
+pub(crate) fn truncate_log_if_needed(path: &Path, max_size: u64) -> io::Result<()> {
     let metadata = fs::metadata(path)?;
     if metadata.len() <= max_size {
         return Ok(());

@@ -1,8 +1,10 @@
 //! What `decree process`, `daemon` and `tail` print as runs go (docs/reference/cli.md,
 //! Output): script output and lines on stdout, notices on stderr, and, on a terminal, one
 //! status line kept below them. Every write clears the status line, prints, and draws it
-//! again, so nothing is printed over it.
+//! again, so nothing is printed over it. `process` and `daemon` also append everything but
+//! the status line to `.decree/process.log`, even when `--quiet` prints none of the runs.
 
+use std::fs::File;
 use std::io::{self, IsTerminal, Write};
 
 /// Clear the current terminal line and return to its start.
@@ -16,6 +18,10 @@ pub struct Console {
     drawn: bool,
     /// Script output after its last newline, held back while the status line is drawn.
     partial: Vec<u8>,
+    /// `.decree/process.log`, which gets everything but the status line.
+    log: Option<File>,
+    /// `--quiet`: the runs' output and their lines go to the log only.
+    quiet: bool,
 }
 
 impl Console {
@@ -26,7 +32,40 @@ impl Console {
             status: None,
             drawn: false,
             partial: Vec::new(),
+            log: None,
+            quiet: false,
         }
+    }
+
+    /// A console for `process` and `daemon`: everything also goes to `log`, and with `quiet`
+    /// the runs' output only there.
+    pub fn logged(log: Option<File>, quiet: bool) -> Console {
+        Console {
+            tty: !quiet && io::stdout().is_terminal(),
+            log,
+            quiet,
+            ..Console::new()
+        }
+    }
+
+    /// Append to the log, if there is one. A log that cannot be written is dropped, so the
+    /// runs and the terminal go on.
+    fn log(&mut self, bytes: &[u8]) {
+        if let Some(log) = &mut self.log {
+            if log.write_all(bytes).is_err() {
+                self.log = None;
+            }
+        }
+    }
+
+    /// A line about a run (its header, how it stopped): printed as `line` does, or only
+    /// logged under `--quiet`.
+    pub fn run_line(&mut self, text: &str) -> io::Result<()> {
+        if self.quiet {
+            self.log(format!("{text}\n").as_bytes());
+            return Ok(());
+        }
+        self.line(text)
     }
 
     /// Show `line` as the status line, or none. Nothing is drawn unless stdout is a terminal.
@@ -46,6 +85,10 @@ impl Console {
     /// Print script output. Under a status line only whole lines are printed; the rest
     /// waits for its newline or `end_line`.
     pub fn write_out(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.log(bytes);
+        if self.quiet {
+            return Ok(());
+        }
         let mut out = io::stdout().lock();
         if self.status.is_none() {
             out.write_all(bytes)?;
@@ -76,6 +119,7 @@ impl Console {
 
     /// Print one line on stdout.
     pub fn line(&mut self, text: &str) -> io::Result<()> {
+        self.log(format!("{text}\n").as_bytes());
         self.end_line()?;
         let mut out = io::stdout().lock();
         self.clear(&mut out)?;
@@ -85,6 +129,7 @@ impl Console {
 
     /// Print one line on stderr.
     pub fn notice(&mut self, text: &str) -> io::Result<()> {
+        self.log(format!("{text}\n").as_bytes());
         self.end_line()?;
         let mut out = io::stdout().lock();
         self.clear(&mut out)?;

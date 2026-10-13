@@ -10,6 +10,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Added
 
+- `.decree/process.log`: `process` and `daemon` append what they print, without the status line, with `--quiet` too, kept to its last 2 MiB. `.decree/cache/` is for project-wide files no machine owns, such as a test tool's browsers; git ignores it and `decree check` does not warn about it.
 - `.decree/HOLD`: while it exists, `process` and `daemon` start and continue no runs; `--retry` of the run on its first line removes it ([D65](docs/decisions.md#d65-a-failed-run-keeps-its-changes-and-holds-the-queue)).
 - Run attempts: each `decree process --retry` starts the run's next attempt, recorded as `run_attempt` on its `retry` event and given to scripts as `DECREE_RUN_ATTEMPT` ([D64](docs/decisions.md#d64-a-retry-is-the-runs-next-attempt-with-fresh-visits)).
 - `DECREE` in every script's environment: the path of the decree executable running it, as Make's `MAKE` and Cargo's `CARGO`. `qa`'s `report` calls `"${DECREE}" emit`, so it no longer needs decree on `PATH`.

@@ -15,6 +15,10 @@ pub const GITIGNORE_FILE: &str = ".gitignore";
 /// (docs/reference/cli.md, Hold).
 pub const HOLD_FILE: &str = "HOLD";
 
+/// `.decree/process.log`: what `process` and `daemon` print as runs go, kept even with
+/// `--quiet`, its last 2 MiB (docs/reference/cli.md, Output).
+pub const PROCESS_LOG_FILE: &str = "process.log";
+
 /// Code that scripts source, config and data; decree never runs anything in it
 /// (docs/reference/scripts.md, Shared code).
 pub const LIB_DIR: &str = "lib";

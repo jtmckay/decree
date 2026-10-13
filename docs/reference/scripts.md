@@ -192,7 +192,7 @@ touch "$seen"
 printf '%s\t%s\n' "$link" "$(date +%F)" >> "$seen"
 ```
 
-`decree check` warns, without failing, about a file or folder in `store/<machine>/` that the machine's `store:` does not declare, and about a folder in `store/` with no machine. That is all decree can check: a script that writes outside its store, or into another machine's, is not detectable.
+`decree check` warns, without failing, about a file or folder in `store/<machine>/` that the machine's `store:` does not declare, and about a folder in `store/` with no machine. Files that no machine owns go elsewhere: project-wide files such as a test tool's downloaded browsers in `.decree/cache/`, which git ignores and `decree check` never looks at, and what `process` prints in `.decree/process.log`, which decree writes itself ([Output](cli.md#output)). That is all decree can check: a script that writes outside its store, or into another machine's, is not detectable.
 
 ## Run-directory files
 

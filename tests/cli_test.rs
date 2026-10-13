@@ -522,9 +522,29 @@ fn process_streams_each_run_and_a_line_as_it_stops() {
     );
     assert!(!out.contains('\r'), "a status line off a terminal: {out:?}");
 
-    p.emit("quick", "Again.\n");
+    // .decree/process.log holds the same lines, without a status line, and goes on under
+    // --quiet, which prints none of the run.
+    let log_path = p.decree_dir().join("process.log");
+    assert_eq!(fs::read_to_string(&log_path).unwrap(), head, "{out}");
+    let third = p.emit("quick", "Again.\n");
     let quiet = p.stdout(&["process", "--quiet"], 0);
     assert!(!quiet.contains("said") && !quiet.contains('✓'), "{quiet}");
+    let log = fs::read_to_string(&log_path).unwrap();
+    let tail = log.strip_prefix(head).unwrap();
+    assert!(
+        tail.starts_with(&format!("▶ {third} · quick\n== 0001 work/say ==\n")),
+        "{log}"
+    );
+    assert!(tail.contains(&format!("✓ {third} done in ")), "{log}");
+    // Neither the log nor .decree/cache/ draws a warning from `decree check`.
+    fs::create_dir_all(p.decree_dir().join("cache/playwright")).unwrap();
+    p.decree(&["graph"]).assert().success();
+    let out = p.decree(&["check"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("warning"),
+        "{out:?}"
+    );
 }
 
 /// AC: a run that reaches a `person` state. `decree process` prints the wait id,

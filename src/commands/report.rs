@@ -4,7 +4,8 @@
 //! one line as each run stops (`✓ <id> done in 7m 31s`). The pipeline tells a thread when
 //! each run starts and stops, and the thread follows the run's files, so every run is
 //! printed whole and in order, however short. Notices go through the same thread, so they
-//! land after the output of the run they are about.
+//! land after the output of the run they are about. All of it but the status line also goes
+//! to `.decree/process.log`, with `--quiet` too.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -134,8 +135,21 @@ struct Current {
 
 /// The thread: print what `rx` announces until the pipeline drops its end. Output errors
 /// (a closed terminal) are ignored: the runs go on either way.
-pub(crate) fn observe(ctx: &Context, rx: Receiver<Note>) {
-    let mut console = Console::new();
+pub(crate) fn observe(ctx: &Context, rx: Receiver<Note>, quiet: bool) {
+    let log_path = ctx
+        .project_root
+        .join(crate::layout::DECREE_DIR)
+        .join(crate::layout::PROCESS_LOG_FILE);
+    let trim = || {
+        let _ = crate::runtime::truncate_log_if_needed(&log_path, crate::runtime::MAX_LOG_SIZE);
+    };
+    trim();
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .ok();
+    let mut console = Console::logged(log, quiet);
     let mut current: Option<Current> = None;
     loop {
         let note = match rx.recv_timeout(POLL) {
@@ -169,6 +183,7 @@ pub(crate) fn observe(ctx: &Context, rx: Receiver<Note>) {
             Some(Note::End { id, outcome }) => {
                 if let Some(run) = current.take_if(|run| run.follower.root() == id) {
                     finish(ctx, &mut console, run, outcome.as_ref());
+                    trim();
                 }
             }
             Some(Note::Line(text)) => {
@@ -199,7 +214,7 @@ fn print_header(ctx: &Context, console: &mut Console, run: &mut Current, now: bo
         .and_then(|(machine, _)| machine);
     if machine.is_some() || now {
         let id = run.follower.root();
-        let _ = console.line(&format!("▶ {id} · {}", machine.as_deref().unwrap_or("?")));
+        let _ = console.run_line(&format!("▶ {id} · {}", machine.as_deref().unwrap_or("?")));
         run.header = true;
     }
 }
@@ -235,5 +250,5 @@ fn finish(ctx: &Context, console: &mut Console, mut run: Current, outcome: Optio
         Some(Outcome::Interrupted(state)) => format!("■ {id} interrupted in {state} after {took}"),
         None => return,
     };
-    let _ = console.line(&line);
+    let _ = console.run_line(&line);
 }

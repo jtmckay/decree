@@ -98,21 +98,18 @@ pub fn run(
     }
 }
 
-/// Run `body` with a thread printing each run as it goes, unless `quiet`; returns once the
-/// thread has printed everything.
+/// Run `body` with a thread printing each run as it goes (to `.decree/process.log` only, if
+/// `quiet`); returns once the thread has printed everything.
 pub(crate) fn reporting<R>(
     pipeline: &mut Pipeline,
     observer_ctx: &Context,
     quiet: bool,
     body: impl FnOnce(&mut Pipeline) -> R,
 ) -> R {
-    if quiet {
-        return body(pipeline);
-    }
     std::thread::scope(|s| {
         let (reporter, rx) = Reporter::new();
         pipeline.report = Some(reporter);
-        let observer = s.spawn(move || report::observe(observer_ctx, rx));
+        let observer = s.spawn(move || report::observe(observer_ctx, rx, quiet));
         let result = body(pipeline);
         // Dropping the reporter closes the channel: the thread prints the rest and ends.
         pipeline.report = None;

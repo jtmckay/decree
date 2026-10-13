@@ -76,7 +76,7 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  .gitignore                        # contains: inbox/, runs/ and store/
+  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, HOLD, process.log and cache/
   migrations/                       # ordered run-once messages, committed, never edited (messages.md)
   processed.md                      # committed ledger: one migration filename per line
   inbox/                            # queued messages: *.md; files starting with "." are ignored
@@ -99,9 +99,12 @@ Each building block has its own directory in `.decree/`:
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
   store/<machine name>/             # what the machine keeps between runs: $DECREE_STORE, declared under `store:`; never deleted by decree (scripts.md, Store)
+  cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree never reads or checks it (scripts.md, Store)
+  process.log                       # what `process` and `daemon` print as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
+  HOLD                              # while it exists, no run starts or continues (cli.md, Hold)
 ```
 
-`migrations/` and `processed.md` are committed to git; `inbox/`, `runs/`, `store/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
+`migrations/` and `processed.md` are committed to git; `inbox/`, `runs/`, `store/`, `cache/`, `process.log`, `HOLD` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
 
 ### No configuration file
 
