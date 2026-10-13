@@ -38,7 +38,8 @@ from chaos.log), then '## Acceptance Criteria': Given those tests, When the chao
 runs (${QA_RUN}), Then they pass with their expected-failure marker removed and their
 assertions unchanged.
 Write one line per test to ${DECREE_RUN_DIR}/triage.md: test, verdict, root cause, why.
-Change only files in ${QA_DIR}/ and ${DECREE_RUN_DIR}/. Do not run the tests."
+Change only files in ${QA_DIR}/ and ${DECREE_RUN_DIR}/. Do not run the tests.
+Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
 echo "=== AI prompt (triage) ==="
 echo "${prompt}"
 ai "${prompt}"

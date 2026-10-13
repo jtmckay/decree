@@ -30,7 +30,8 @@ file, the release page), never by downloading the file and hashing it yourself.
 Change nothing else. Do not run anything that installs; the next step does. You may
 look at this host read-only to find what a line relies on, and declare that too.
 If ${plan} exists, follow it. If the message needs a choice it does not make, do not
-guess: write the question to ${stop} and stop."
+guess: write the question to ${stop} and stop.
+Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
 echo "=== AI prompt (declare) ==="
 echo "${prompt}"
 ai "${prompt}"

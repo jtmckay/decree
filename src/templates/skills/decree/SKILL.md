@@ -77,6 +77,23 @@ appear only where a machine invokes `model` or `person`.
 - **Scripts must be safe to re-run**, after an interruption or a failure halfway:
   `decree process --retry` runs the step again. Check that the result works (`pip --version`
   runs), not that a file exists.
+- **Keep a step's previous output until it has a new one.** A script that rewrites a file
+  the next attempt or round reads (`gaps.md`, a report) sets the old one aside and puts it
+  back if the attempt dies, so a crashed attempt never leaves the retry with nothing:
+
+  ```bash
+  [ ! -f "${out}" ] || mv "${out}" "${out}.last"
+  trap '[ -s "${out}" ] || [ ! -f "${out}.last" ] || mv "${out}.last" "${out}"' EXIT
+  ai "${prompt}"            # writes ${out}
+  rm -f "${out}.last"
+  ```
+
+- **Call AI only through `ai`** from `lib/ai.sh`, never `claude` or `opencode` directly: it
+  waits out Claude's usage limit, nudges OpenCode back after a rejected write, logs every call
+  in `.decree/ai-use.md` and keeps the agent from naming an event. Pick the backend with
+  `AI_BACKEND` or a data entry `agent`. Every prompt says where scratch files go
+  (`$DECREE_RUN_DIR`): OpenCode's `external_directory` permission covers its file tools, not
+  its shell, so it is no sandbox.
 - **Declare the environment.** A command, package or tool the project needs is a line in
   `.decree/lib/infra/requirements`, added by a message for the `infra` machine, never
   installed by another machine's step. Nothing runs `sudo`: a step only a person can do prints

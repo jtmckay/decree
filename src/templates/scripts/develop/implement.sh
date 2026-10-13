@@ -25,7 +25,8 @@ and what is next. If ${progress} exists, an earlier attempt was cut short:
 check the code against it and continue from there. If ${plan} exists, follow it.
 If the message is ambiguous or conflicts with the code, do not guess: write
 the question to ${stop} and stop.
-Logs of earlier attempts (if any) are in ${DECREE_RUN_DIR}."
+Logs of earlier attempts (if any) are in ${DECREE_RUN_DIR}.
+Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
 echo "=== AI prompt (implementation) ==="
 echo "${prompt}"
 ai "${prompt}"

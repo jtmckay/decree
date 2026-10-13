@@ -21,6 +21,7 @@ acceptance criteria are met; ${progress} notes what was done. Run the tests,
 and report what passes and what fails. Change no code. If ${plan} exists, it
 holds decisions made since the message. If a criterion needs a decision the
 message does not make, write the question to ${stop} and stop.
+Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp).
 End your reply with one line: VERDICT: pass if everything passes, else
 VERDICT: fail."
 echo "=== AI prompt (verification) ==="
