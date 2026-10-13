@@ -1,11 +1,12 @@
 # The AI helper the built-in machines' scripts source: `. "$DECREE_LIB/ai.sh"`,
 # then `ai "<prompt>"` asks the AI and prints its reply.
 #
-# Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls
-# the one AI_CLI names (in .decree/.env, or the shell decree runs in); unset, the
-# one a machine's data entry `ai_cli` names (DECREE_DATA_AI_CLI), so a child machine
-# invoked with `params: { ai_cli: claude }` works with Claude; else {ai}, which
-# `decree init --ai` chose. To use another
+# Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
+# most specific first: the one the run's data entry `ai_cli` names
+# (DECREE_DATA_AI_CLI: a message's or a parent's `params`, else the machine's
+# default), so a child machine invoked with `params: { ai_cli: claude }` works with
+# Claude whatever the project's setting; else the one AI_CLI names (in .decree/.env,
+# or the shell decree runs in); else {ai}, which `decree init --ai` chose. To use another
 # backend, add an ai_<name> function and set AI_CLI=<name>.
 #
 # The agent names no event (it writes STOP instead): a script it runs, such as the
@@ -21,7 +22,7 @@
 AI_DEFAULT={ai}
 
 ai() {
-  local cli=${AI_CLI:-${DECREE_DATA_AI_CLI:-${AI_DEFAULT}}}
+  local cli=${DECREE_DATA_AI_CLI:-${AI_CLI:-${AI_DEFAULT}}}
   if ! declare -F "ai_${cli}" >/dev/null; then
     echo "ai: no ai_${cli} function in lib/ai.sh (AI_CLI=${cli})" >&2
     return 2

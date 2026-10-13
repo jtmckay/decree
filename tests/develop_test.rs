@@ -982,6 +982,48 @@ fn ai_picks_the_backend_and_logs_every_call() {
     );
 }
 
+/// A run's data entry `ai_cli` wins over the project's `AI_CLI`: with `AI_CLI=opencode` set
+/// (as in `.decree/.env`), a child invoked with `params: { ai_cli: claude }` asks Claude, and a
+/// machine without the entry follows `AI_CLI`.
+#[test]
+fn a_runs_ai_cli_wins_over_the_projects() {
+    let p = Project::init();
+    let decree = p.root().join(".decree");
+    fs::write(
+        decree.join("machines/ask.yml"),
+        "name: ask\ndescription: Ask once with the CLI ai_cli names.\n\
+         data:\n  ai_cli: { type: string, default: opencode }\n\
+         initial: say\nstates:\n  say: { invoke: say, transitions: { done: done } }\n  \
+         done: { final: true }\n  failed: { final: true }\n",
+    )
+    .unwrap();
+    fs::write(
+        decree.join("machines/both.yml"),
+        "name: both\ndescription: Ask with the project's CLI, then a child with Claude.\n\
+         initial: own\nstates:\n  own: { invoke: say, transitions: { done: child } }\n  \
+         child:\n    invoke:\n      machine: { name: ask, params: { ai_cli: claude } }\n    \
+         transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
+    )
+    .unwrap();
+    write_script(
+        &decree.join("scripts/say.sh"),
+        "#!/usr/bin/env bash\nset -euo pipefail\n. \"$DECREE_LIB/ai.sh\"\nai \"Say hi from $DECREE_MACHINE.\"\n",
+    );
+    p.stub(
+        "opencode",
+        "#!/usr/bin/env bash\necho \"${!#}\" >> \"$(dirname \"$0\")/opencode_calls\"\n",
+    );
+    let id = p.run_on("both", &[("AI_CLI", "opencode")]);
+    assert_eq!(p.outcome(&id), "done", "{:?}", path(&p, &id));
+    assert_eq!(
+        fs::read_to_string(p.bin().join("opencode_calls")).unwrap(),
+        "Say hi from both.\n"
+    );
+    let calls = p.calls();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].ends_with("| Say hi from ask."), "{calls:?}");
+}
+
 /// OpenCode's default `external_directory: ask` ends the session when it rejects a write
 /// outside the project; `ai` continues the session, up to AI_NUDGES times, saying where
 /// scratch files go.

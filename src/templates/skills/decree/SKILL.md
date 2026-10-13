@@ -93,8 +93,9 @@ appear only where a machine invokes `model` or `person`.
 
 - **Call AI only through `ai`** from `lib/ai.sh`, never `claude` or `opencode` directly: it
   waits out Claude's usage limit, nudges OpenCode back after a rejected write, logs every call
-  in `.decree/ai-use.md` and keeps the agent from naming an event. Pick the backend with
-  `AI_CLI` or a data entry `ai_cli`. Every prompt says where scratch files go
+  in `.decree/ai-use.md` and keeps the agent from naming an event. Pick the backend with a
+  data entry `ai_cli` (a message's or a parent's `params` set it per run), which wins over
+  the project's `AI_CLI`. Every prompt says where scratch files go
   (`$DECREE_RUN_DIR`): OpenCode's `external_directory` permission covers its file tools, not
   its shell, so it is no sandbox.
 - **Declare the environment.** A command, package or tool the project needs is a line in
@@ -162,8 +163,8 @@ git worktree the user makes and runs decree in (`git worktree add ../app-exp -b 
 
 `develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
-source `lib/ai.sh` (`ai`, which calls `ai_<backend>`: `AI_CLI`, else a data entry
-`ai_cli`, else the `--ai` init chose) and
+source `lib/ai.sh` (`ai`, which calls `ai_<backend>`: a data entry `ai_cli`, else
+`AI_CLI`, else the `--ai` init chose) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and
 retries. `precheck` runs
