@@ -13,7 +13,7 @@ decree runs durable state-machine workflows from plain files: every run is an ap
 | [observability.md](observability.md) | Shipping `events.jsonl` and script logs to Loki; traces: W3C Trace Context, `TRACEPARENT` and `traces.jsonl` for the OpenTelemetry Collector |
 | [standards.md](standards.md) | The standards and prior art decree draws from, and where it deviates |
 
-Related guides: [routers](../routers.md) (router machines for other models) and [services](../services.md) (long-running services next to decree). What changed between releases is in the [changelog](../../CHANGELOG.md); the files below are versioned as [Versioning](#versioning) says.
+Related guides: [routers](../routers.md) (router machines for other models), [services](../services.md) (long-running services next to decree) and an [escalation ladder](../escalation.md) for `develop` (rounds with a cheap agent, then Claude, then a person). What changed between releases is in the [changelog](../../CHANGELOG.md); the files below are versioned as [Versioning](#versioning) says.
 
 ## Terms
 

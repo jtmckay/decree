@@ -391,6 +391,7 @@ fn gate_alone(p: &Project) -> (Option<i32>, String, String, String, String) {
         .current_dir(p.root())
         .env("PATH", p.path())
         .env("DECREE_RUN_DIR", &run_dir)
+        .env("DECREE_ROOT_RUN_DIR", &run_dir)
         .env("DECREE_EVENT_FILE", &event_file)
         .output()
         .unwrap();
@@ -479,6 +480,7 @@ fn verify_alone(reply: &str) -> (Option<i32>, String) {
         .env("PATH", p.path())
         .env("DECREE_LIB", p.root().join(".decree/lib"))
         .env("DECREE_RUN_DIR", &run_dir)
+        .env("DECREE_ROOT_RUN_DIR", &run_dir)
         .env("DECREE_MESSAGE", run_dir.join("message.md"))
         .env("DECREE_EVENT_FILE", &event_file)
         .env("DECREE_STATE", "verify")
@@ -507,6 +509,59 @@ fn verify_writes_the_last_verdict_or_fails_without_one() {
     ] {
         let (code, event) = verify_alone(reply);
         assert_eq!((code, event.as_str()), want, "{reply:?}");
+    }
+}
+
+/// `verify` keeps gaps.md: a `fail` writes the new one, a `pass` removes it, and an attempt
+/// that ends without a verdict puts the last one back.
+#[test]
+fn verify_leaves_gaps_on_fail_and_keeps_the_last_through_a_dead_attempt() {
+    let write_gaps = "echo \"- the greeting is missing\" > \"$DECREE_ROOT_RUN_DIR/gaps.md\"";
+    for (before, reply, agent, after) in [
+        (
+            None,
+            "VERDICT: fail",
+            write_gaps,
+            Some("- the greeting is missing\n"),
+        ),
+        (
+            Some("- old gap\n"),
+            "VERDICT: fail",
+            write_gaps,
+            Some("- the greeting is missing\n"),
+        ),
+        (Some("- old gap\n"), "VERDICT: pass", "true", None),
+        (Some("- old gap\n"), "", "true", Some("- old gap\n")),
+    ] {
+        let p = Project::init();
+        let run_dir = p.root().join("run");
+        fs::create_dir(&run_dir).unwrap();
+        fs::write(run_dir.join("message.md"), MESSAGE).unwrap();
+        let gaps = run_dir.join("gaps.md");
+        if let Some(text) = before {
+            fs::write(&gaps, text).unwrap();
+        }
+        let event_file = run_dir.join("event");
+        fs::write(&event_file, "").unwrap();
+        let out = std::process::Command::new(p.script("verify"))
+            .current_dir(p.root())
+            .env("PATH", p.path())
+            .env("DECREE_LIB", p.root().join(".decree/lib"))
+            .env("DECREE_RUN_DIR", &run_dir)
+            .env("DECREE_ROOT_RUN_DIR", &run_dir)
+            .env("DECREE_MESSAGE", run_dir.join("message.md"))
+            .env("DECREE_EVENT_FILE", &event_file)
+            .env("DECREE_STATE", "verify")
+            .env("CLAUDE_REPLY", reply)
+            .env("CLAUDE_DO", agent)
+            .output()
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(&gaps).ok().as_deref(),
+            after,
+            "{before:?} {reply:?}: {out:?}"
+        );
+        assert!(!run_dir.join("gaps.md.last").exists());
     }
 }
 
@@ -1395,6 +1450,89 @@ fn a_project_in_a_subfolder_leaves_the_rest_of_the_repository_alone() {
         p.git(&["status", "--porcelain"]),
         "A  other/staged.txt\n?? other/loose.txt\n"
     );
+}
+
+/// docs/escalation.md, installed as it says in a project `init` wrote: it passes
+/// `decree check`, and a run whose verify fails spends `max_gap_rounds` rounds with the
+/// default agent (OpenCode, through `gaps`' data entry `agent`), then one with Claude, which
+/// closes the gaps.
+#[test]
+fn the_documented_escalation_ladder_runs_rounds_then_claude() {
+    let p = Project::init();
+    let docs = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/escalation.md"))
+        .unwrap();
+    let file = regex::Regex::new(r"(?s)`(\.decree/[^`]+)`[^\n]*\n\n```\w*\n(.*?)```\n").unwrap();
+    let mut written = Vec::new();
+    for c in file.captures_iter(&docs) {
+        let path = p.root().join(&c[1]);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if c[1].ends_with(".sh") {
+            write_script(&path, &c[2]);
+        } else {
+            fs::write(&path, &c[2]).unwrap();
+        }
+        written.push(c[1].to_string());
+    }
+    assert_eq!(written.len(), 5, "{written:?}");
+    let start = docs.find("```bash\nmkdir -p .decree/scripts/gaps").unwrap() + "```bash\n".len();
+    let links = &docs[start..start + docs[start..].find("```").unwrap()];
+    let out = std::process::Command::new("bash")
+        .args(["-c", links])
+        .current_dir(p.root())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    p.decree(&["graph"]).assert().success();
+    let out = p.decree(&["check"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+
+    // OpenCode always finds gaps; Claude's develop verify fails once, its round passes.
+    p.stub(
+        "opencode",
+        "#!/usr/bin/env bash\necho \"${!#}\" | head -n 1 >> \"$(dirname \"$0\")/opencode_calls\"\necho 'VERDICT: fail'\n",
+    );
+    let verdicts = "case \"$prompt\" in *VERDICT*) \
+        n=$(cat \"$dir/verifies\" 2>/dev/null || echo 0); echo $((n + 1)) > \"$dir/verifies\"; \
+        if [ \"$n\" = 0 ]; then echo '- the greeting is missing' > \"$DECREE_ROOT_RUN_DIR/gaps.md\"; \
+        echo 'VERDICT: fail'; else echo 'VERDICT: pass'; fi ;; esac";
+    let id = p.run(&[("CLAUDE_DO", verdicts), ("CLAUDE_REPLY", "")]);
+    assert_eq!(p.outcome(&id), "done", "{:?}", path(&p, &id));
+    assert_eq!(
+        path(&p, &id)[4..],
+        [
+            "verify -fail-> rounds_left",
+            "rounds_left -true-> fill_gaps",
+            "fill_gaps -unfilled-> rounds_left",
+            "rounds_left -true-> fill_gaps",
+            "fill_gaps -unfilled-> rounds_left",
+            "rounds_left -false-> claude_round",
+            "claude_round -filled-> done",
+        ]
+    );
+    let opencode = fs::read_to_string(p.bin().join("opencode_calls")).unwrap();
+    assert_eq!(
+        opencode
+            .lines()
+            .filter(|l| l.starts_with("You are a senior engineer."))
+            .count(),
+        2,
+        "one fill per cheap round: {opencode}"
+    );
+    let progress = fs::read_to_string(p.run_dir(&id).join("progress.md")).unwrap();
+    for heading in [
+        "## Gaps, round 1 (agent: opencode)",
+        "## Gaps, round 2 (agent: opencode)",
+        "## Gaps, round 3 (agent: claude)",
+    ] {
+        assert!(progress.contains(heading), "{progress}");
+    }
+    assert!(
+        !p.run_dir(&id).join("gaps.md").exists(),
+        "a pass removes it"
+    );
+    let log = fs::read_to_string(p.root().join(".decree/ai-use.md")).unwrap();
+    assert!(log.contains("| gaps/fill | opencode |"), "{log}");
+    assert!(log.contains("| gaps/fill | claude |"), "{log}");
 }
 
 /// The `release` kind in docs/reference/scripts.md, run by `lib/infra/run.sh apply` from a

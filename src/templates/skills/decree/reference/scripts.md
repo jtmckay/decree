@@ -97,8 +97,10 @@ EOF
 
 ## Run-directory files
 
-Scripts hand work to one another, and to a person, through files in `$DECREE_RUN_DIR`. decree
-reads none of them; the built-in `develop` machine's scripts follow this convention:
+Scripts hand work to one another, and to a person, through files in `$DECREE_ROOT_RUN_DIR`
+(the run's own folder, or in a child run the top run's, so a child machine whose steps are
+develop's scripts shares them). decree reads none of them; the built-in `develop` machine's
+scripts follow this convention:
 
 - `progress.md`: the step log, one line per step, what is done and what is next. A retry
   reads it and continues.
@@ -109,6 +111,8 @@ reads none of them; the built-in `develop` machine's scripts follow this convent
   fixes them. The gate names `pass` or `fail`; a non-zero exit (`error`) means the checks could
   not run, such as a missing tool, and its message is here.
 - `plan.md`: a plan for later steps, and a person's answer to a `STOP`. develop's AI steps read it.
+- `gaps.md`: what `verify` found missing on `fail`; a retry's `implement` closes each first.
+  `verify` keeps the last one if an attempt dies.
 
 ## Environment
 

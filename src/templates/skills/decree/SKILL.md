@@ -44,6 +44,9 @@ appear only where a machine invokes `model` or `person`.
     on an event the script names; a `check`; a `model` or `person` decision; a child machine.
   - Asked to design a machine, show the simple version, and list possible additions in prose
     as options, not in the YAML.
+  - When `develop` runs show that a failed verify is worth more rounds, decree's
+    [escalation ladder](https://github.com/jtmckay/decree/blob/main/docs/escalation.md)
+    recipe adds them: rounds with a cheap agent, one with Claude, then a person.
 - **Never edit a migration.** Files in `.decree/migrations/` are immutable; the ones listed in
   `.decree/processed.md` have run. To change something, write a new migration with the next
   number.

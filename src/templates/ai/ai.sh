@@ -11,8 +11,9 @@
 # The agent names no event (it writes STOP instead): a script it runs, such as the
 # gate, gets DECREE_EVENT_FILE=/dev/null, and the caller's event file is emptied
 # after the call, in case the agent found its path anyway. A call that leaves a STOP
-# file returns 0 whatever the backend's exit code, so the caller's STOP check names
-# `stop` instead of failing an attempt.
+# file in the root run's folder ($DECREE_ROOT_RUN_DIR) returns 0 whatever the
+# backend's exit code, so the caller's STOP check names `stop` instead of failing
+# an attempt.
 #
 # Every call adds a line to .decree/ai-use.md (git ignores it): when, which run and
 # state, which agent and model, the run's attempt and the step's, how long it took
@@ -30,7 +31,7 @@ ai() {
   "ai_${agent}" "$1" || status=$?
   [ -z "${caller_event}" ] || : > "${caller_event}"
   ai_log "${agent}" "$((SECONDS - start))" "${status}" || true
-  [ ! -f "${DECREE_RUN_DIR:-.}/STOP" ] || status=0
+  [ ! -f "${DECREE_ROOT_RUN_DIR:-${DECREE_RUN_DIR:-.}}/STOP" ] || status=0
   return "${status}"
 }
 
@@ -99,7 +100,7 @@ ai_claude() {
         echo "Claude's usage limit is reached and resets $(reset_note "${wait}" "")."
         echo "That is more than AI_LIMIT_WAIT (${AI_LIMIT_WAIT}) away, so the run stopped instead of waiting."
         echo "After the reset, delete this file and run \`decree process --retry ${DECREE_MESSAGE_ID:-<id>}\`."
-      } > "${DECREE_RUN_DIR}/STOP"
+      } > "${DECREE_ROOT_RUN_DIR:-${DECREE_RUN_DIR}}/STOP"
       return 1
     fi
     reset_note "${wait}" "Usage limit reached." >&2

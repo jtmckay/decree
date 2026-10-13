@@ -10,6 +10,8 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Added
 
+- [docs/escalation.md](docs/escalation.md): an escalation ladder for `develop`, a recipe from a beta project: rounds on what `verify` found missing with a cheap agent, one with Claude, then a person. A test installs it from the page and runs it.
+- `verify` writes `gaps.md` on `fail`, keeping the last one if an attempt dies, and a retry's `implement` closes each gap first.
 - `.decree/process.log`: `process` and `daemon` append what they print, without the status line, with `--quiet` too, kept to its last 2 MiB. `.decree/cache/` is for project-wide files no machine owns, such as a test tool's browsers; git ignores it and `decree check` does not warn about it.
 - `.decree/HOLD`: while it exists, `process` and `daemon` start and continue no runs; `--retry` of the run on its first line removes it ([D65](docs/decisions.md#d65-a-failed-run-keeps-its-changes-and-holds-the-queue)).
 - Run attempts: each `decree process --retry` starts the run's next attempt, recorded as `run_attempt` on its `retry` event and given to scripts as `DECREE_RUN_ATTEMPT` ([D64](docs/decisions.md#d64-a-retry-is-the-runs-next-attempt-with-fresh-visits)).
@@ -44,6 +46,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- `develop`'s scripts keep `progress.md`, `plan.md`, `gaps.md`, `gate.log` and `STOP` in the root run's folder (`DECREE_ROOT_RUN_DIR`, the run's own in a top-level run), so a child machine whose steps are develop's scripts shares them.
 - Every built-in prompt says scratch files go in the run folder, never outside the project. The skill adds two rules: call AI only through `ai`, and keep a step's previous output until it has a new one.
 - `lib/ai.sh` holds every backend (`ai_claude`, `ai_opencode`, `ai_copilot`); `ai` calls the one `AI_BACKEND` names, else a data entry `agent`, else the one `init` chose. Every call is logged to `.decree/ai-use.md`, and a call that leaves `STOP` returns 0. Claude's usage-limit wait is capped by `AI_LIMIT_WAIT` (default `6h`), past which it writes `STOP`; OpenCode takes `OPENCODE_MODEL` and is nudged back, up to `AI_NUDGES` times, when a rejected write ends its session ([D66](docs/decisions.md#d66-one-ai-helper-with-every-backend-a-capped-limit-wait-and-a-nudge)).
 - `decree init --permissions` writes OpenCode's `"external_directory": "deny"` and `"share": "manual"` (`autoshare` is deprecated).

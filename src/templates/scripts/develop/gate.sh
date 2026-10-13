@@ -5,7 +5,7 @@
 # Replace the echo with your project's checks, such as one of the commented
 # lines, and uncomment the `command -v` line for its tool.
 set -euo pipefail
-log="${DECREE_RUN_DIR}/gate.log"
+log="${DECREE_ROOT_RUN_DIR}/gate.log"
 
 # A tool the checks need is not on PATH: they cannot run.
 missing() {
