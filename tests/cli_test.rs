@@ -1192,6 +1192,36 @@ fn daemon_retry_continues_a_failed_run() {
     );
 }
 
+/// `.decree/HOLD` pauses `decree daemon`: nothing is claimed while it exists, and the queue
+/// goes on once it is deleted, without a restart.
+#[test]
+fn daemon_runs_nothing_while_hold_exists() {
+    let p = Project::init();
+    p.machine("flaky", FLAKY);
+    p.script("work", FLAKY_WORK);
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+    fs::write(p.decree_dir().join("HOLD"), "paused by hand\n").unwrap();
+    let id = p.emit("flaky", "Works.\n");
+
+    let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
+    thread::sleep(Duration::from_millis(1500));
+    assert!(!p.run_dir(&id).exists(), "claimed while held");
+    fs::remove_file(p.decree_dir().join("HOLD")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !p.run_dir(&id).join("events.jsonl").exists()
+        || p.events(&id).last().unwrap()["state"] != "done"
+    {
+        assert!(Instant::now() < deadline, "run {id} never ran");
+        thread::sleep(Duration::from_millis(50));
+    }
+    // SAFETY: sends SIGTERM to the daemon.
+    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        wait_exit(&mut daemon, Duration::from_secs(15)).code(),
+        Some(0)
+    );
+}
+
 /// `decree daemon` reads the machines again before each run: an edit with errors keeps the
 /// machines last loaded, and a fixed one applies to the next run without a restart.
 #[test]

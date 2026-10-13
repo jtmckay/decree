@@ -144,11 +144,6 @@ impl Project {
         }
     }
 
-    /// The current branch's name.
-    fn branch(&self) -> String {
-        self.git(&["branch", "--show-current"]).trim().to_string()
-    }
-
     /// The commit titles, newest first.
     fn commits(&self) -> Vec<String> {
         self.git(&["log", "--format=%s"])
@@ -218,6 +213,19 @@ impl Project {
     /// `run`, leaving uncommitted changes where they are.
     fn run_on_dirty(&self, env: &[(&str, &str)]) -> String {
         self.emit_and_process("develop", env)
+    }
+
+    /// `decree emit --machine develop`, nothing processed: the message's id.
+    fn emit_only(&self) -> String {
+        let out = self
+            .decree(&["emit", "--machine", "develop"])
+            .write_stdin(MESSAGE)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap().trim().to_string()
     }
 
     fn emit_and_process(&self, machine: &str, env: &[(&str, &str)]) -> String {
@@ -328,6 +336,7 @@ fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
                 "git_baseline.sh".to_string(),
                 "infra/apply.sh".to_string(),
                 "infra/declare.sh".to_string(),
+                "keep.sh".to_string(),
                 "qa/attack.sh".to_string(),
                 "qa/recon.sh".to_string(),
                 "qa/report.sh".to_string(),
@@ -335,7 +344,6 @@ fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
                 "qa/triage.sh".to_string(),
                 "router/".to_string() + &format!("ask_{ai}.sh"),
                 "snapshot.sh".to_string(),
-                "stash.sh".to_string(),
             ],
             "{ai}"
         );
@@ -882,10 +890,12 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
          not_a_tool_xyz is not on PATH: install it, then continue the run\n\
          FAILED   command not_a_tool_xyz\n"
     );
-    // The declaration went to a stash with the rest of the failed run; the person takes it
-    // back and commits it.
-    assert!(p.log(&id, "failed").contains("`git stash pop`"));
-    p.git(&["stash", "pop", "-q"]);
+    // The declaration stays in the tree with the rest of the failed run, and HOLD stops the
+    // queue; the person commits it and releases the hold.
+    assert!(p
+        .log(&id, "failed")
+        .contains(&format!("`decree process --retry {id}`")));
+    fs::remove_file(p.root().join(".decree/HOLD")).unwrap();
     let id = p.run(&[]);
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(
@@ -1102,7 +1112,9 @@ fn a_dirty_tree_fails_the_run_before_the_agent() {
     assert_eq!(
         log,
         "clean_tree: uncommitted changes; commit or stash them, then run the message again:\n\
-         ?? stray.txt\n"
+         ?? stray.txt\n\
+         if a failed run left them, `decree status` names it; continue it with \
+         `decree process --retry <id>`\n"
     );
     assert!(p.calls().is_empty());
 }
@@ -1139,10 +1151,10 @@ fn done_commits_the_runs_work() {
     );
 }
 
-/// A failed run's changes go to a git stash named after it, so the next run starts clean; a
-/// retry after `git stash pop` continues with them, and `clean_tree` does not trip on them.
+/// A failed run keeps its changes in the work tree and holds the queue with `.decree/HOLD`:
+/// the next run waits, and a retry continues on the kept changes and releases the hold.
 #[test]
-fn a_failed_runs_changes_are_stashed_and_a_retry_takes_them_back() {
+fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     let p = Project::init();
     let id = p.run(&[
         (
@@ -1152,33 +1164,55 @@ fn a_failed_runs_changes_are_stashed_and_a_retry_takes_them_back() {
         ("CLAUDE_REPLY", "VERDICT: fail"),
     ]);
     assert_eq!(p.outcome(&id), "failed");
-    assert_eq!(p.git(&["status", "--porcelain"]), "", "stashed");
-    assert_eq!(
-        p.git(&["stash", "list", "--format=%s"]),
-        format!("On {}: decree {id}: Add a greeting\n", p.branch())
+    assert_eq!(p.git(&["status", "--porcelain"]), "?? hello.txt\n", "kept");
+    assert_eq!(p.git(&["stash", "list"]), "");
+    let hold = fs::read_to_string(p.root().join(".decree/HOLD")).unwrap();
+    assert!(
+        hold.starts_with(&format!("{id}\nrun {id} (Add a greeting) failed")),
+        "{hold}"
     );
-    assert!(p.log(&id, "failed").contains(&format!(
-        "`git stash pop`, then `decree process --retry {id}`"
-    )));
+    assert!(p
+        .log(&id, "failed")
+        .contains(&format!("`decree process --retry {id}`")));
 
-    // The next run is not held back by them.
-    let next = p.run(&[]);
-    assert_eq!(p.outcome(&next), "done");
-
-    p.git(&["stash", "pop", "-q"]);
-    p.decree(&["process", "--retry", &id, "--state", "verify"])
+    // The next run waits: process says why and exits 1.
+    let next = p.emit_only();
+    let out = p
+        .decree(&["process"])
         .env("PATH", p.path())
-        .assert()
-        .success();
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("nothing runs while .decree/HOLD exists"),
+        "{err}"
+    );
+    assert!(
+        err.contains(&format!("run {id} (Add a greeting) failed")),
+        "{err}"
+    );
+    assert!(!p.run_dir(&next).exists(), "not claimed");
+
+    // A retry continues on the kept changes, releases the hold, and the queue goes on.
+    let out = p
+        .decree(&["process", "--retry", &id, "--state", "verify"])
+        .env("PATH", p.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("removed .decree/HOLD"));
+    assert!(!p.root().join(".decree/HOLD").exists());
     assert_eq!(p.outcome(&id), "done");
     assert_eq!(p.commits()[0], "Add a greeting");
     assert_eq!(p.git(&["show", "HEAD:hello.txt"]), "hi\n");
+    assert_eq!(p.outcome(&next), "done");
     assert_eq!(p.git(&["status", "--porcelain"]), "");
 }
 
 /// A run that fails because the person's own changes are uncommitted leaves them alone.
 #[test]
-fn a_run_that_never_started_clean_stashes_nothing() {
+fn a_run_that_never_started_clean_keeps_and_holds_nothing() {
     let p = Project::init();
     fs::write(p.root().join("mine.txt"), "my work\n").unwrap();
     let out = p
@@ -1193,7 +1227,7 @@ fn a_run_that_never_started_clean_stashes_nothing() {
         .unwrap();
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(p.git(&["status", "--porcelain"]), "?? mine.txt\n");
-    assert_eq!(p.git(&["stash", "list"]), "");
+    assert!(!p.root().join(".decree/HOLD").exists());
 }
 
 /// A project in a subfolder of a larger repository touches only its own folder: changes in a

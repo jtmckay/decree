@@ -10,6 +10,11 @@ pub const MIGRATIONS_DIR: &str = "migrations";
 pub const PROCESSED_FILE: &str = "processed.md";
 pub const GITIGNORE_FILE: &str = ".gitignore";
 
+/// `.decree/HOLD`: while it exists, `process` and `daemon` start and continue no runs. Its
+/// first line names the run that wrote it, whose `--retry` removes it
+/// (docs/reference/cli.md, Hold).
+pub const HOLD_FILE: &str = "HOLD";
+
 /// Code that scripts source, config and data; decree never runs anything in it
 /// (docs/reference/scripts.md, Shared code).
 pub const LIB_DIR: &str = "lib";

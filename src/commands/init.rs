@@ -156,7 +156,8 @@ const LIB_FILES: &[(&str, &str, bool)] = &[
 /// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution;
 /// docs/decisions.md, D15). Every built-in machine starts with `clean_tree` (a root `onentry`:
 /// a clean git work tree) and ends with `commit` (`done`'s `onentry`: one commit per run) or
-/// `stash` (`failed`'s `onentry`: the run's changes in a named git stash).
+/// `keep` (`failed`'s `onentry`: the run's changes stay in the tree, and `.decree/HOLD` stops
+/// the queue until the run is retried).
 /// `git_baseline` is a root `onentry` that records `HEAD` once; `snapshot` is a working
 /// state's `onentry` that stashes a checkpoint on each visit; no built-in machine uses them.
 const SHARED_SCRIPTS: &[(&str, &str)] = &[
@@ -165,7 +166,7 @@ const SHARED_SCRIPTS: &[(&str, &str)] = &[
         include_str!("../templates/scripts/clean_tree.sh"),
     ),
     ("commit", include_str!("../templates/scripts/commit.sh")),
-    ("stash", include_str!("../templates/scripts/stash.sh")),
+    ("keep", include_str!("../templates/scripts/keep.sh")),
     (
         "git_baseline",
         include_str!("../templates/scripts/git_baseline.sh"),
@@ -668,8 +669,8 @@ mod tests {
                 "clean_tree.sh",
                 "commit.sh",
                 "git_baseline.sh",
-                "snapshot.sh",
-                "stash.sh"
+                "keep.sh",
+                "snapshot.sh"
             ]
         );
         for name in names {

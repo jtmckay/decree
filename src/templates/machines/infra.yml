@@ -11,4 +11,4 @@ states:
     invoke: apply
     transitions: { done: done }
   done:   { final: true, onentry: [commit] }   # one commit per run; a migration's processed.md line too
-  failed: { final: true, onentry: [stash] }    # the run's changes go to a named git stash
+  failed: { final: true, onentry: [keep] }     # the run's changes stay in the tree; HOLD stops the queue

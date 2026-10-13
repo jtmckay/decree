@@ -126,12 +126,13 @@ until fixed (the old machines keep running and the errors are printed).
 `decree init` writes three working machines besides the router. Start from them before writing
 a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
 unless the git work tree is clean) and ends with `commit` (`done`'s `onentry`: the run's work
-as one commit, titled with the message's first heading), or, in `failed`, with `stash` (the
-run's changes in a git stash named after it, so the next run starts clean). Before queuing
-work for them, commit or stash any changes. To continue a failed run: `git stash pop`, answer
-any `STOP` in `plan.md` and delete it, then `decree process --retry <id>`. If later runs
-changed the same code, the pop conflicts: resolve it, or drop the stash and queue the message
-again. For divergent work, or to keep editing while runs go on, suggest a
+as one commit, titled with the message's first heading), or, in `failed`, with `keep` (the
+run's changes stay in the work tree, and `.decree/HOLD` stops every other run until the run is
+retried). All three touch only the project folder. Before queuing work for them, commit or
+stash any changes. To continue a failed run: answer any `STOP` in `plan.md` and delete it, then
+`decree process --retry <id>`, which builds on the kept changes and removes `HOLD`. To drop
+the run instead: stash or discard its changes and delete `.decree/HOLD`. For divergent work,
+or to keep editing while runs go on, suggest a
 git worktree the user makes and runs decree in (`git worktree add ../app-exp -b exp`, then
 `decree process` there): each checkout has its own runs and inbox, and its branch its own
 `processed.md`. A new worktree has committed files only: copy `.decree/.env` in and run
@@ -141,7 +142,7 @@ git worktree the user makes and runs decree in (`git worktree add ../app-exp -b 
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
 source `lib/ai.sh` (the `ai` function for the chosen `--ai`; add another backend there) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
-`plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP`, pops the run's stash and
+`plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and
 retries. `precheck` runs
 `lib/infra/run.sh check`. The project fills in `scripts/develop/gate.sh` with its own checks; until then it
 runs nothing, says so and names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,

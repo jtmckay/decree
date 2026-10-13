@@ -4,3 +4,4 @@ store/
 schema/
 .env*
 !.env.example
+HOLD

@@ -55,8 +55,10 @@ fn poll(
     interval: Duration,
 ) -> Result<(), DecreeError> {
     let mut cron_tracker = CronTracker::new();
-    // The last message a blocked migration printed, so each block is reported once.
+    // The last message a blocked migration printed, so each block is reported once; the
+    // same for `.decree/HOLD`.
     let mut blocked = None;
+    let mut held = None;
     let mut result = report(pipeline.recover());
     loop {
         if result.is_ok() {
@@ -68,8 +70,15 @@ fn poll(
                 line("decree daemon: shutting down (signal received)".to_string());
                 return Ok(());
             }
+            Err(Stop::Held(message)) => {
+                if held.as_ref() != Some(&message) {
+                    notice(format!("decree daemon: {message}"));
+                    held = Some(message);
+                }
+                result = Ok(());
+            }
             Err(stop) => return Err(stop.into_error()),
-            Ok(()) => {}
+            Ok(()) => held = None,
         }
         // The pipeline printed each failed run as it ended; the daemon keeps no list of them.
         pipeline.take_failed();

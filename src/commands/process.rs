@@ -128,6 +128,8 @@ pub(crate) enum Stop {
     Blocked(String),
     /// SIGINT or SIGTERM: the current run is `interrupted`.
     Interrupted,
+    /// `.decree/HOLD` exists: nothing runs until it is gone. Holds what to print.
+    Held(String),
     /// Anything else: an I/O error, or a run that cannot be stepped.
     Error(DecreeError),
 }
@@ -135,7 +137,7 @@ pub(crate) enum Stop {
 impl Stop {
     pub(crate) fn into_error(self) -> DecreeError {
         match self {
-            Stop::Blocked(message) => DecreeError::Other(message),
+            Stop::Blocked(message) | Stop::Held(message) => DecreeError::Other(message),
             Stop::Interrupted => DecreeError::Interrupted,
             Stop::Error(e) => e,
         }
@@ -301,6 +303,17 @@ impl Pipeline {
         self.ctx.shutdown.load(Ordering::Relaxed)
     }
 
+    /// Stop for a signal, or for `.decree/HOLD`, before a run starts or continues.
+    fn may_run(&self) -> Result<(), Stop> {
+        if self.shutdown() {
+            return Err(Stop::Interrupted);
+        }
+        match held(&self.ctx.project_root) {
+            Some(message) => Err(Stop::Held(message)),
+            None => Ok(()),
+        }
+    }
+
     /// Report run `id`, not a migration, that ended in `failed`, with its `--retry` command.
     /// Inbox messages are independent, so the pass goes on (docs/reference/messages.md, Lifecycle).
     fn fail(&mut self, id: &str, file: Option<&str>) {
@@ -375,9 +388,7 @@ impl Pipeline {
     /// Continue `pending` run `id`. A run another process holds now is skipped. A migration
     /// that ends in `failed` blocks the queue; any other run is reported and the pass goes on.
     pub(crate) fn continue_one(&mut self, id: &str) -> Result<(), Stop> {
-        if self.shutdown() {
-            return Err(Stop::Interrupted);
-        }
+        self.may_run()?;
         let outcome = match reported(self.report.as_ref(), &self.ctx, &self.project, id, || {
             continue_run(&self.ctx, id)
         }) {
@@ -404,6 +415,7 @@ impl Pipeline {
 
     /// Deliver every `timeout` deadline that has passed, and continue those runs.
     pub(crate) fn deliver_timeouts(&mut self) -> Result<(), Stop> {
+        self.may_run()?;
         let timed_out = reply::deliver_timeouts(&self.ctx, chrono::Utc::now())?;
         self.continue_runs(&timed_out)
     }
@@ -412,9 +424,7 @@ impl Pipeline {
     /// run, or claim a message and run it (docs/reference/messages.md, Lifecycle). Returns `false` when the
     /// inbox is empty.
     pub(crate) fn next_inbox(&mut self) -> Result<bool, Stop> {
-        if self.shutdown() {
-            return Err(Stop::Interrupted);
-        }
+        self.may_run()?;
         self.refresh();
         let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let inbox = decree_dir.join(INBOX_DIR);
@@ -463,9 +473,7 @@ impl Pipeline {
     /// whether it finished, so the next may start; `false` when there is none, or it
     /// waits.
     pub(crate) fn next_migration(&mut self) -> Result<bool, Stop> {
-        if self.shutdown() {
-            return Err(Stop::Interrupted);
-        }
+        self.may_run()?;
         self.refresh();
         match self.project.pending_migrations()?.into_iter().next() {
             Some(migration) => {
@@ -833,6 +841,33 @@ fn retry_run(
     )?;
     mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
     println!("run {id} continues in `{target}`");
+    release_hold(&ctx.project_root, id)?;
+    Ok(())
+}
+
+/// What to print while `.decree/HOLD` exists, or `None` (docs/reference/cli.md, Hold).
+pub(crate) fn held(project_root: &Path) -> Option<String> {
+    let path = project_root.join(DECREE_DIR).join(layout::HOLD_FILE);
+    let text = std::fs::read_to_string(&path).ok().or_else(|| {
+        // A HOLD that cannot be read (a folder, no permission) holds all the same.
+        path.exists().then(String::new)
+    })?;
+    Some(format!(
+        "nothing runs while .decree/HOLD exists; delete it, or retry the run it names:\n{}",
+        text.trim_end()
+    ))
+}
+
+/// Remove `.decree/HOLD` if its first line is run `id`, which `--retry` continues.
+fn release_hold(project_root: &Path, id: &str) -> Result<(), DecreeError> {
+    let path = project_root.join(DECREE_DIR).join(layout::HOLD_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    if text.lines().next().map(str::trim) == Some(id) {
+        std::fs::remove_file(&path)?;
+        println!("removed .decree/HOLD, which run {id} wrote");
+    }
     Ok(())
 }
 
