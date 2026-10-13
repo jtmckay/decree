@@ -94,7 +94,7 @@ appear only where a machine invokes `model` or `person`.
 - **Call AI only through `ai`** from `lib/ai.sh`, never `claude` or `opencode` directly: it
   waits out Claude's usage limit, nudges OpenCode back after a rejected write, logs every call
   in `.decree/ai-use.md` and keeps the agent from naming an event. Pick the backend with
-  `AI_BACKEND` or a data entry `agent`. Every prompt says where scratch files go
+  `DECREE_AI` or a data entry `agent`. Every prompt says where scratch files go
   (`$DECREE_RUN_DIR`): OpenCode's `external_directory` permission covers its file tools, not
   its shell, so it is no sandbox.
 - **Declare the environment.** A command, package or tool the project needs is a line in
@@ -162,7 +162,7 @@ git worktree the user makes and runs decree in (`git worktree add ../app-exp -b 
 
 `develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
-source `lib/ai.sh` (`ai`, which calls `ai_<backend>`: `AI_BACKEND`, else a data entry
+source `lib/ai.sh` (`ai`, which calls `ai_<backend>`: `DECREE_AI`, else a data entry
 `agent`, else the `--ai` init chose) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and

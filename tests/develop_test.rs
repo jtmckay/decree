@@ -929,7 +929,7 @@ fn a_reset_past_ai_limit_wait_stops_the_run() {
     );
 }
 
-/// `ai` calls the backend AI_BACKEND names, else the one a data entry `agent` names, else
+/// `ai` calls the backend DECREE_AI names, else the one a data entry `agent` names, else
 /// the one `init` chose; an unknown one fails the call. Every call is a line in
 /// .decree/ai-use.md.
 #[test]
@@ -939,10 +939,7 @@ fn ai_picks_the_backend_and_logs_every_call() {
         "opencode",
         "#!/usr/bin/env bash\necho \"$*\" | head -c 40 >> \"$(dirname \"$0\")/opencode_calls\"\necho >> \"$(dirname \"$0\")/opencode_calls\"\necho 'VERDICT: pass'\n",
     );
-    let id = p.run(&[
-        ("AI_BACKEND", "opencode"),
-        ("OPENCODE_MODEL", "llama.cpp/q"),
-    ]);
+    let id = p.run(&[("DECREE_AI", "opencode"), ("OPENCODE_MODEL", "llama.cpp/q")]);
     assert_eq!(p.outcome(&id), "done");
     assert!(p.calls().is_empty(), "{:?}", p.calls());
     let calls = fs::read_to_string(p.bin().join("opencode_calls")).unwrap();
@@ -975,11 +972,11 @@ fn ai_picks_the_backend_and_logs_every_call() {
     );
     assert_eq!(row[8], "0 |", "{log}");
 
-    let id = p.run(&[("AI_BACKEND", "nobody")]);
+    let id = p.run(&[("DECREE_AI", "nobody")]);
     assert_eq!(p.outcome(&id), "failed");
     assert!(
         p.log(&id, "implement")
-            .contains("ai: no ai_nobody function in lib/ai.sh (AI_BACKEND=nobody)"),
+            .contains("ai: no ai_nobody function in lib/ai.sh (DECREE_AI=nobody)"),
         "{}",
         p.log(&id, "implement")
     );
@@ -1006,7 +1003,7 @@ fi
 echo 'VERDICT: pass'
 "#,
     );
-    let id = p.run(&[("AI_BACKEND", "opencode")]);
+    let id = p.run(&[("DECREE_AI", "opencode")]);
     assert_eq!(p.outcome(&id), "done");
     let calls = fs::read_to_string(p.bin().join("opencode_calls")).unwrap();
     let calls: Vec<&str> = calls.lines().collect();

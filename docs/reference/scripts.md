@@ -33,7 +33,7 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 
 ## Environment
 
-A script inherits decree's environment, with every inherited `DECREE_*` variable and `TRACESTATE` removed, then gets the variables below. So a decree started inside another decree run (a test suite run by a gate script, say) never hands the outer run's variables to its own scripts.
+A script inherits decree's environment, with every inherited `DECREE_*` variable but `DECREE_AI` (a setting, not a run's value) and `TRACESTATE` removed, then gets the variables below. So a decree started inside another decree run (a test suite run by a gate script, say) never hands the outer run's variables to its own scripts.
 
 A variable can come from four places. When two set the same name, the first in this list wins:
 
@@ -45,6 +45,7 @@ A variable can come from four places. When two set the same name, the first in t
 | Variable | Value |
 | --- | --- |
 | `DECREE` | Absolute path of the decree executable running the script, as Make's `MAKE` and Cargo's `CARGO`. A script that calls decree (`"${DECREE}" emit`) gets the same decree whether or not it is on `PATH`. |
+| `DECREE_AI` | Not set by decree: passed through from its environment or the `.env` files, the one `DECREE_*` variable that is. The backend `lib/ai.sh`'s `ai` calls ([The AI helper](#the-ai-helper)). |
 | `DECREE_PROJECT_ROOT` | Absolute path of the directory containing `.decree/`. |
 | `DECREE_LIB` | Absolute path of `.decree/lib/`, where scripts find shared code, config and data ([Shared code](#shared-code)). Set whether or not the directory exists. |
 | `DECREE_MESSAGE` | Absolute path of `runs/<id>/message.md`. |
@@ -108,7 +109,7 @@ They are dotenv files, read as Docker Compose's `env_file` and systemd's `Enviro
   ```
 
   `HOST=192.168.1.30 decree daemon` moves both URLs of `.decree/.env`.
-- Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors. A later line wins over an earlier one with the same key.
+- Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*` (but `DECREE_AI`, a setting scripts inherit), `TRACEPARENT` and `TRACESTATE` belong to decree and are errors. A later line wins over an earlier one with the same key.
 - `process` and `daemon` read them at start and again before each run, so an edit applies without a restart ([Edits while running](cli.md#edits-while-running)). A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and one that finds it later prints it once and keeps the variables it read last. Commands that run no scripts read none of them, since decree reads no setting of its own from them ([No configuration file](README.md#no-configuration-file)).
 - `decree check` warns when one of them exists and `.decree/.gitignore` has no `.env*` line.
 
@@ -141,7 +142,7 @@ workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD'
 
 ### The AI helper
 
-`lib/ai.sh` defines `ai <prompt>`, which asks an AI agent and prints its reply, and one function per backend: `ai_claude`, `ai_opencode`, `ai_copilot`. `ai` calls the one `AI_BACKEND` names; unset, the one a machine's `data` entry `agent` names (`DECREE_DATA_AGENT`), so a child machine invoked with `params: { agent: claude }` works with Claude; else the backend `decree init --ai` chose. The name is not `AI_AGENT`, which agent tools such as Claude Code set in the shells they start. Another backend is one more `ai_<name>` function. Scripts call AI only through `ai`, never `claude` or `opencode` directly, so every call gets the same handling:
+`lib/ai.sh` defines `ai <prompt>`, which asks an AI agent and prints its reply, and one function per backend: `ai_claude`, `ai_opencode`, `ai_copilot`. `ai` calls the one `DECREE_AI` names; unset, the one a machine's `data` entry `agent` names (`DECREE_DATA_AGENT`), so a child machine invoked with `params: { agent: claude }` works with Claude; else the backend `decree init --ai` chose. Another backend is one more `ai_<name>` function. Scripts call AI only through `ai`, never `claude` or `opencode` directly, so every call gets the same handling:
 
 - The agent names no event: a script it runs, such as the gate, gets `DECREE_EVENT_FILE=/dev/null`, and the caller's event file is emptied after the call. A call that leaves a `STOP` file in the run folder returns 0, so the caller's `STOP` check names `stop` instead of failing an attempt.
 - Every call adds a line to `.decree/ai-use.md` (gitignored), a Markdown table: time, run, machine and state, backend, model, `DECREE_RUN_ATTEMPT`, `DECREE_ATTEMPT`, seconds and exit code. Past 2 MiB it keeps the header and the last 10000 calls.

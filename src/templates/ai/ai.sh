@@ -2,11 +2,11 @@
 # then `ai "<prompt>"` asks the AI and prints its reply.
 #
 # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls
-# the one AI_BACKEND names (not AI_AGENT, which agent tools such as Claude Code set
-# for their own shells); unset, the one a machine's data entry `agent` names
-# (DECREE_DATA_AGENT), so a child machine invoked with `params: { agent: claude }`
-# works with Claude; else {ai}, which `decree init --ai` chose. To use another
-# backend, add an ai_<name> function and set AI_BACKEND=<name>.
+# the one DECREE_AI names (in .decree/.env, or the shell decree runs in); unset, the
+# one a machine's data entry `agent` names (DECREE_DATA_AGENT), so a child machine
+# invoked with `params: { agent: claude }` works with Claude; else {ai}, which
+# `decree init --ai` chose. To use another
+# backend, add an ai_<name> function and set DECREE_AI=<name>.
 #
 # The agent names no event (it writes STOP instead): a script it runs, such as the
 # gate, gets DECREE_EVENT_FILE=/dev/null, and the caller's event file is emptied
@@ -21,9 +21,9 @@
 AI_DEFAULT={ai}
 
 ai() {
-  local agent=${AI_BACKEND:-${DECREE_DATA_AGENT:-${AI_DEFAULT}}}
+  local agent=${DECREE_AI:-${DECREE_DATA_AGENT:-${AI_DEFAULT}}}
   if ! declare -F "ai_${agent}" >/dev/null; then
-    echo "ai: no ai_${agent} function in lib/ai.sh (AI_BACKEND=${agent})" >&2
+    echo "ai: no ai_${agent} function in lib/ai.sh (DECREE_AI=${agent})" >&2
     return 2
   fi
   local caller_event=${DECREE_EVENT_FILE:-} status=0 start=${SECONDS}
