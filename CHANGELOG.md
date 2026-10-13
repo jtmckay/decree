@@ -79,6 +79,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Fixed
 
+- `clean_tree` and `commit` touch only the project folder (`-- .`). In a decree project inside a larger repository, a change in a sibling folder stopped every run, and `done` committed it, staged or not, under the run's title.
 - `lib/ai.sh` empties the calling step's event file after the agent returns. An agent in a beta run found the run's `.event` file and ran the gate into it, so `fix` ended in the gate's `pass`, which it has no transition for.
 - A `: ` inside a plain YAML value (`description: Step one: build`) is reported as ``line 3: mapping values are not allowed in this context: a value with `: ` in it must be quoted (…) or written as a block (…)``, with the line once; it gave serde's message with the position twice.
 - Messages queued in the same second run in the order they were queued. An id is now `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`, the UTC time to the microsecond, and one process never makes an id with an earlier time than its last; ids were to the second, with a hex suffix that ordered same-second messages at random. `message.schema.json` describes the new form ([D56](docs/decisions.md#d56-ids-to-the-microsecond-in-the-order-they-were-made)). Found by a script that queued image jobs, then speech jobs, so the GPU switches models once.

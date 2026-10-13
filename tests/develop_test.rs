@@ -88,22 +88,38 @@ const GIT_IDENTITY: [(&str, &str); 4] = [
 
 struct Project {
     tmp: TempDir,
+    /// The folder holding `.decree/`: the temp dir, or a subfolder of it.
+    root: PathBuf,
 }
 
 impl Project {
     /// `decree init --ai claude`, plus a `bin/` holding a stub `claude`, and the gate
     /// `init` wrote with its checks replaced by the stub `check`.
     fn init() -> Project {
-        let p = Project {
-            tmp: TempDir::new().unwrap(),
-        };
+        Project::init_in("")
+    }
+
+    /// An empty folder, before `decree init`.
+    fn empty() -> Project {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+        Project { tmp, root }
+    }
+
+    /// `init`, with the project in `sub`, a folder of a larger git repository (the temp
+    /// dir); "" puts it at the repository's root.
+    fn init_in(sub: &str) -> Project {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join(sub);
+        fs::create_dir_all(&root).unwrap();
+        let p = Project { tmp, root };
         p.decree(&["init", "--ai", "claude"]).assert().success();
         fs::create_dir(p.bin()).unwrap();
         p.stub("claude", STUB_CLAUDE);
         p.stub("check", STUB_CHECK);
         p.edit_gate(UNCONFIGURED, "  check\n");
         fs::write(p.root().join(".gitignore"), "bin/\n").unwrap();
-        p.git(&["init", "-q"]);
+        p.git(&["init", "-q", p.tmp.path().to_str().unwrap()]);
         p.commit_all("init");
         p
     }
@@ -155,7 +171,7 @@ impl Project {
     }
 
     fn root(&self) -> &Path {
-        self.tmp.path()
+        &self.root
     }
 
     fn bin(&self) -> PathBuf {
@@ -196,6 +212,15 @@ impl Project {
     /// `run`, on `machine`, after committing what the test changed (as a person would).
     fn run_on(&self, machine: &str, env: &[(&str, &str)]) -> String {
         self.commit_all("test setup");
+        self.emit_and_process(machine, env)
+    }
+
+    /// `run`, leaving uncommitted changes where they are.
+    fn run_on_dirty(&self, env: &[(&str, &str)]) -> String {
+        self.emit_and_process("develop", env)
+    }
+
+    fn emit_and_process(&self, machine: &str, env: &[(&str, &str)]) -> String {
         let out = self
             .decree(&["emit", "--machine", machine])
             .write_stdin(MESSAGE)
@@ -282,9 +307,7 @@ fn files_under(dir: &Path) -> Vec<String> {
 #[test]
 fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
     for ai in ["claude", "opencode", "copilot"] {
-        let p = Project {
-            tmp: TempDir::new().unwrap(),
-        };
+        let p = Project::empty();
         p.decree(&["init", "--ai", ai]).assert().success();
         let decree = p.root().join(".decree");
         assert_eq!(
@@ -378,9 +401,7 @@ fn gate_alone(p: &Project) -> (Option<i32>, String, String, String, String) {
 /// names `pass`. Its commented checks each have a `command -v` line.
 #[test]
 fn the_default_gate_says_it_is_unconfigured_and_names_pass() {
-    let p = Project {
-        tmp: TempDir::new().unwrap(),
-    };
+    let p = Project::empty();
     p.decree(&["init", "--ai", "claude"]).assert().success();
     let said = "gate: no checks configured; edit .decree/scripts/develop/gate.sh\n";
     assert_eq!(
@@ -1173,6 +1194,31 @@ fn a_run_that_never_started_clean_stashes_nothing() {
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(p.git(&["status", "--porcelain"]), "?? mine.txt\n");
     assert_eq!(p.git(&["stash", "list"]), "");
+}
+
+/// A project in a subfolder of a larger repository touches only its own folder: changes in a
+/// sibling folder neither stop a run nor go into its commit, even when they are staged.
+#[test]
+fn a_project_in_a_subfolder_leaves_the_rest_of_the_repository_alone() {
+    let p = Project::init_in("app");
+    let sibling = p.tmp.path().join("other");
+    fs::create_dir(&sibling).unwrap();
+    fs::write(sibling.join("staged.txt"), "theirs\n").unwrap();
+    fs::write(sibling.join("loose.txt"), "theirs\n").unwrap();
+    p.git(&["add", "../other/staged.txt"]);
+    let id = p.run_on_dirty(&[(
+        "CLAUDE_DO",
+        "case \"$prompt\" in *senior*) echo hi > hello.txt ;; esac",
+    )]);
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(
+        p.git(&["show", "--format=", "--name-only", "HEAD"]),
+        "app/hello.txt\n"
+    );
+    assert_eq!(
+        p.git(&["status", "--porcelain"]),
+        "A  other/staged.txt\n?? other/loose.txt\n"
+    );
 }
 
 /// The `release` kind in docs/reference/scripts.md, run by `lib/infra/run.sh apply` from a
