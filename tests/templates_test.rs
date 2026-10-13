@@ -42,6 +42,19 @@ const DEVELOP: &[Pair] = &[
     ("lib/infra/kinds/command.sh", "infra/kinds/command.sh"),
 ];
 
+/// The built-in `qa` machine and what it runs, but `lib/qa/qa.sh`, where a project sets
+/// `QA_RUN`.
+const QA: &[Pair] = &[
+    ("machines/qa.yml", "machines/qa.yml"),
+    ("scripts/qa/recon.sh", "scripts/qa/recon.sh"),
+    ("scripts/qa/attack.sh", "scripts/qa/attack.sh"),
+    ("scripts/qa/run.sh", "scripts/qa/run.sh"),
+    ("scripts/qa/triage.sh", "scripts/qa/triage.sh"),
+    ("scripts/qa/report.sh", "scripts/qa/report.sh"),
+    ("lib/qa/invariants.md", "qa/invariants.md"),
+    ("lib/qa/wrenches.md", "qa/wrenches.md"),
+];
+
 /// Each project (relative to the repository) and the pairs it holds: the `feature` fixture and
 /// the escalation ladder, whose recorded runs `replay_test.rs` replays; the examples whose
 /// scripts ask an AI; and this repository's own `.decree/`, which runs its migrations.
@@ -50,7 +63,7 @@ const EXAMPLES: &[(&str, &[&[Pair]])] = &[
     ("tests/fixtures/escalation", &[ROUTER]),
     ("examples/project", &[AI]),
     ("examples/route-by-complexity", &[AI]),
-    (".", &[ROUTER, AI, DEVELOP]),
+    (".", &[ROUTER, AI, DEVELOP, QA]),
 ];
 
 fn repo() -> PathBuf {

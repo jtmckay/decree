@@ -46,6 +46,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- `qa`'s triage names Rust's `#[should_panic]` among the strict expected-failure markers, beside Python's, Playwright's and Jest's.
 - The `project` and `route-by-complexity` examples ask AI through `lib/ai.sh` (`DECREE_AI` per attempt) instead of calling `claude` and `opencode` directly, and every example's `.decree/.gitignore` lists `HOLD`, `process.log`, `cache/` and `ai-use.md`.
 - `develop`'s scripts keep `progress.md`, `plan.md`, `gaps.md`, `gate.log` and `STOP` in the root run's folder (`DECREE_ROOT_RUN_DIR`, the run's own in a top-level run), so a child machine whose steps are develop's scripts shares them.
 - Every built-in prompt says scratch files go in the run folder, never outside the project. The skill adds two rules: call AI only through `ai`, and keep a step's previous output until it has a new one.

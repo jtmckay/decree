@@ -26,7 +26,7 @@ ${QA_DIR}/, decide:
 - Real bug: the project breaks an invariant or its docs. Mark the test expected to fail,
   with the framework's strict marker, so the suite passes now and fails once the bug is
   fixed (Python @unittest.expectedFailure or pytest xfail(strict=True), Playwright
-  test.fail(), Jest test.failing).
+  test.fail(), Jest test.failing, Rust #[should_panic]).
 - Wrong test: it asserts something the docs do not require, or no correct code could pass
   it. Rewrite it to check the invariant, or delete it.
 - Acceptable behaviour: delete the test.
