@@ -376,7 +376,7 @@ fn shell_default(script: &str, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `SECURITY.md` has the usual sections, and says what `src/templates/ai/claude.sh` does:
+/// `SECURITY.md` has the usual sections, and says what `src/templates/ai/ai.sh` does:
 /// Claude runs with `--permission-mode auto` unless `CLAUDE_PERMISSION_MODE` says otherwise.
 #[test]
 fn the_security_policy_matches_the_claude_script() {
@@ -398,11 +398,11 @@ fn the_security_policy_matches_the_claude_script() {
         assert!(policy.contains(&format!("`.decree/{dir}/`")), "{dir}");
     }
 
-    let script = std::fs::read_to_string(root.join("src/templates/ai/claude.sh")).unwrap();
+    let script = std::fs::read_to_string(root.join("src/templates/ai/ai.sh")).unwrap();
     assert_eq!(
         shell_default(&script, "CLAUDE_PERMISSION_MODE").as_deref(),
         Some("auto"),
-        "claude.sh's default permission mode changed; update SECURITY.md"
+        "ai.sh's default permission mode changed; update SECURITY.md"
     );
     assert!(script.contains("--permission-mode \"${CLAUDE_PERMISSION_MODE}\""));
 }

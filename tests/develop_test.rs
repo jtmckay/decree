@@ -753,12 +753,6 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
             "05:07 (66m 30s)",
         ),
         (
-            "Claude AI usage limit reached. Limits reset at 10:00 PM",
-            "23:00:00",
-            "82800",
-            "22:00 (1380m 0s)",
-        ),
-        (
             "You've hit your session limit · resets 1:10am (America/Denver)",
             "00:40:00",
             "1800",
@@ -827,6 +821,156 @@ fn usage_limit_waits_until_the_reset_then_resumes_the_session() {
             .count();
         assert_eq!(attempts, 1, "{limit}");
     }
+}
+
+/// A reset further away than AI_LIMIT_WAIT is not waited for: the call writes STOP saying
+/// when to retry, and the run stops without sleeping or calling Claude again.
+#[test]
+fn a_reset_past_ai_limit_wait_stops_the_run() {
+    let p = Project::init();
+    p.stub("date", STUB_DATE);
+    p.stub("sleep", STUB_SLEEP);
+    let id = p.run(&[
+        (
+            "CLAUDE_LIMIT",
+            "Claude AI usage limit reached. Limits reset at 10:00 PM",
+        ),
+        ("STUB_NOW", "23:00:00"),
+    ]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id)[1..],
+        ["precheck -done-> implement", "implement -stop-> failed"]
+    );
+    assert!(!p.bin().join("slept").exists());
+    assert_eq!(p.calls().len(), 1, "{:?}", p.calls());
+    let stop = fs::read_to_string(p.run_dir(&id).join("STOP")).unwrap();
+    assert!(
+        stop.starts_with("Claude's usage limit is reached and resets at 22:00 (in 1380m 0s).\n"),
+        "{stop}"
+    );
+    assert!(stop.contains("more than AI_LIMIT_WAIT (6h) away"), "{stop}");
+    assert!(
+        stop.contains(&format!("`decree process --retry {id}`")),
+        "{stop}"
+    );
+
+    // A longer AI_LIMIT_WAIT waits it out.
+    let p = Project::init();
+    p.stub("date", STUB_DATE);
+    p.stub("sleep", STUB_SLEEP);
+    let id = p.run(&[
+        (
+            "CLAUDE_LIMIT",
+            "Claude AI usage limit reached. Limits reset at 10:00 PM",
+        ),
+        ("STUB_NOW", "23:00:00"),
+        ("AI_LIMIT_WAIT", "1d"),
+    ]);
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(
+        fs::read_to_string(p.bin().join("slept")).unwrap(),
+        "82800\n"
+    );
+}
+
+/// `ai` calls the backend AI_BACKEND names, else the one a data entry `agent` names, else
+/// the one `init` chose; an unknown one fails the call. Every call is a line in
+/// .decree/ai-use.md.
+#[test]
+fn ai_picks_the_backend_and_logs_every_call() {
+    let p = Project::init();
+    p.stub(
+        "opencode",
+        "#!/usr/bin/env bash\necho \"$*\" | head -c 40 >> \"$(dirname \"$0\")/opencode_calls\"\necho >> \"$(dirname \"$0\")/opencode_calls\"\necho 'VERDICT: pass'\n",
+    );
+    let id = p.run(&[
+        ("AI_BACKEND", "opencode"),
+        ("OPENCODE_MODEL", "llama.cpp/q"),
+    ]);
+    assert_eq!(p.outcome(&id), "done");
+    assert!(p.calls().is_empty(), "{:?}", p.calls());
+    let calls = fs::read_to_string(p.bin().join("opencode_calls")).unwrap();
+    assert_eq!(calls.lines().count(), 2, "implement and verify: {calls}");
+    assert!(
+        calls.starts_with("run -m llama.cpp/q You are a senior engi"),
+        "{calls}"
+    );
+
+    let log = fs::read_to_string(p.root().join(".decree/ai-use.md")).unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(
+        lines[0],
+        "| time | run | state | agent | model | run attempt | attempt | seconds | exit |"
+    );
+    assert_eq!(lines.len(), 4, "{log}");
+    let row: Vec<&str> = lines[2].split(" | ").collect();
+    assert_eq!(row[1], id, "{log}");
+    assert_eq!(
+        row[2..8],
+        [
+            "develop/implement",
+            "opencode",
+            "llama.cpp/q",
+            "1",
+            "1",
+            "0"
+        ],
+        "{log}"
+    );
+    assert_eq!(row[8], "0 |", "{log}");
+
+    let id = p.run(&[("AI_BACKEND", "nobody")]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert!(
+        p.log(&id, "implement")
+            .contains("ai: no ai_nobody function in lib/ai.sh (AI_BACKEND=nobody)"),
+        "{}",
+        p.log(&id, "implement")
+    );
+}
+
+/// OpenCode's default `external_directory: ask` ends the session when it rejects a write
+/// outside the project; `ai` continues the session, up to AI_NUDGES times, saying where
+/// scratch files go.
+#[test]
+fn opencode_is_nudged_back_after_a_rejected_write() {
+    let p = Project::init();
+    // Rejects on the first two calls, then answers.
+    p.stub(
+        "opencode",
+        r#"#!/usr/bin/env bash
+dir=$(dirname "$0")
+n=$(cat "$dir/n" 2>/dev/null || echo 0); echo $((n + 1)) > "$dir/n"
+printf '%s
+' "${*:1:$#-1} | $(head -n 1 <<<"${!#}")" >> "$dir/opencode_calls"
+if [ "$n" -lt 2 ]; then
+  echo '! permission requested: external_directory (/tmp/*); auto-rejecting'
+  exit 0
+fi
+echo 'VERDICT: pass'
+"#,
+    );
+    let id = p.run(&[("AI_BACKEND", "opencode")]);
+    assert_eq!(p.outcome(&id), "done");
+    let calls = fs::read_to_string(p.bin().join("opencode_calls")).unwrap();
+    let calls: Vec<&str> = calls.lines().collect();
+    assert!(
+        calls[0].starts_with("run | You are a senior engineer"),
+        "{calls:?}"
+    );
+    for call in &calls[1..3] {
+        assert!(
+            call.starts_with("run -c | A tool call you made was rejected because it used a path outside the project"),
+            "{calls:?}"
+        );
+    }
+    let log = p.log(&id, "implement");
+    assert!(
+        log.contains("=== opencode: a tool call was rejected; continuing the session (2/2) ==="),
+        "{log}"
+    );
+    assert!(p.run_dir(&id).join("opencode.out").is_file());
 }
 
 /// A failure that is not a usage limit does not wait: decree's attempts run again with

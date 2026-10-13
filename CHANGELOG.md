@@ -44,6 +44,8 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- `lib/ai.sh` holds every backend (`ai_claude`, `ai_opencode`, `ai_copilot`); `ai` calls the one `AI_BACKEND` names, else a data entry `agent`, else the one `init` chose. Every call is logged to `.decree/ai-use.md`, and a call that leaves `STOP` returns 0. Claude's usage-limit wait is capped by `AI_LIMIT_WAIT` (default `6h`), past which it writes `STOP`; OpenCode takes `OPENCODE_MODEL` and is nudged back, up to `AI_NUDGES` times, when a rejected write ends its session ([D66](docs/decisions.md#d66-one-ai-helper-with-every-backend-a-capped-limit-wait-and-a-nudge)).
+- `decree init --permissions` writes OpenCode's `"external_directory": "deny"` and `"share": "manual"` (`autoshare` is deprecated).
 - A failed `develop`, `infra` or `qa` run keeps its changes in the work tree: the shared `keep` script replaces `stash` as `failed`'s `onentry`, and writes `.decree/HOLD` so no other run starts on them. `clean_tree`'s message lists at most 20 paths and says how to continue the run that left them ([D65](docs/decisions.md#d65-a-failed-run-keeps-its-changes-and-holds-the-queue)).
 - `visits` count from a run's last retry, so a retried run gets all the rounds of a `check` on `visits` again ([D64](docs/decisions.md#d64-a-retry-is-the-runs-next-attempt-with-fresh-visits)).
 - `develop`'s `precheck` runs `lib/infra/run.sh check` instead of looking for the AI's command, which `lib/infra/requirements` lists ([D61](docs/decisions.md#d61-the-environment-is-declared)).

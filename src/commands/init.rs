@@ -19,8 +19,6 @@ struct Backend {
     invoke: &'static str,
     /// The line of `ask_<name>` that sends `$prompt` and prints the reply.
     ask: &'static str,
-    /// `lib/ai.sh`'s bash function `ai <prompt>`, which `develop`'s scripts source and call.
-    ai_function: &'static str,
     /// Where `init` writes the decree skill, relative to the project root; `None` if
     /// the backend reads no skills.
     skill_dir: Option<&'static str>,
@@ -31,7 +29,6 @@ const OPENCODE: Backend = Backend {
     title: "OpenCode",
     invoke: "opencode run",
     ask: "opencode run \"$prompt\"",
-    ai_function: AI_PLAIN_SH,
     skill_dir: None,
 };
 
@@ -40,7 +37,6 @@ const CLAUDE: Backend = Backend {
     title: "Claude",
     invoke: "claude -p",
     ask: "printf '%s' \"$prompt\" | claude -p",
-    ai_function: AI_CLAUDE_SH,
     skill_dir: Some(".claude/skills/decree"),
 };
 
@@ -49,7 +45,6 @@ const COPILOT: Backend = Backend {
     title: "Copilot",
     invoke: "copilot -p",
     ask: "copilot -p \"$prompt\"",
-    ai_function: AI_PLAIN_SH,
     skill_dir: Some(".github/skills/decree"),
 };
 
@@ -167,12 +162,9 @@ const SHARED_SCRIPTS: &[(&str, &str)] = &[
     ("keep", include_str!("../templates/scripts/keep.sh")),
 ];
 
-/// The top of `lib/ai.sh`: how scripts use it, and how to add another backend.
-const AI_HEADER_SH: &str = include_str!("../templates/ai/header.sh");
-/// `ai <prompt>` for Claude: waits out its usage limit and resumes the session.
-const AI_CLAUDE_SH: &str = include_str!("../templates/ai/claude.sh");
-/// `ai <prompt>` for the other backends: one call.
-const AI_PLAIN_SH: &str = include_str!("../templates/ai/plain.sh");
+/// `lib/ai.sh`: `ai <prompt>`, and a function for every backend, `{ai}` the one `init`
+/// chose.
+const AI_SH: &str = include_str!("../templates/ai/ai.sh");
 
 /// The AI helper under `lib/`, which `develop`'s scripts source.
 const LIB_AI_FILE: &str = "ai.sh";
@@ -239,9 +231,9 @@ impl Backend {
         self.fill(ROUTER_ASK_SH)
     }
 
-    /// `lib/ai.sh`: the header, then the backend's `ai` function.
+    /// `lib/ai.sh`, with this backend as the default.
     fn lib_ai_sh(&self) -> String {
-        self.fill(&format!("{AI_HEADER_SH}\n{}", self.ai_function))
+        self.fill(AI_SH)
     }
 
     fn fill(&self, template: &str) -> String {
@@ -275,14 +267,17 @@ fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
             let settings_path = "opencode.json";
             if Path::new(settings_path).exists() {
                 println!(
-                    "Note: opencode.json already exists — add Write and Edit permissions manually."
+                    "Note: opencode.json already exists — add \"permission\": {{ \"external_directory\": \"deny\" }} manually, so a write outside the project does not end the session."
                 );
             } else {
+                // `deny`, not OpenCode's default `ask`: `opencode run` cannot answer, so `ask`
+                // rejects a write outside the project and ends the session with no reply;
+                // `deny` rejects it and lets the agent go on (lib/ai.sh, ai_opencode).
                 std::fs::write(
                     settings_path,
-                    "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"autoshare\": false\n}\n",
+                    "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"share\": \"manual\",\n  \"permission\": {\n    \"external_directory\": \"deny\"\n  }\n}\n",
                 )?;
-                println!("Created opencode.json (configure permissions via opencode's settings).");
+                println!("Created opencode.json: writes outside the project are denied, not asked about.");
             }
         }
         _ => {
@@ -618,28 +613,20 @@ mod tests {
         }
     }
 
-    /// `lib/ai.sh` holds the `ai` function, filled for the backend, under a header that
-    /// shows how to add another; only Claude's waits out a usage limit.
+    /// `lib/ai.sh` holds `ai` and a function for every backend, defaulting to the one `init`
+    /// chose; only Claude's waits out a usage limit, and only OpenCode's nudges.
     #[test]
     fn test_lib_ai_sh_defines_ai_for_each_backend() {
         for b in AI_BACKENDS {
             let text = b.lib_ai_sh();
-            assert!(text.starts_with(AI_HEADER_SH.replace("{ai_title}", b.title).as_str()));
             assert!(!text.contains("{ai"), "{}: {text}", b.name);
-            assert!(text.contains("\nai() {\n"), "{}", b.name);
-            assert!(text.contains("opencode run --model ollama/<model>"));
-            assert!(text.contains("DECREE_ATTEMPT_VALUE"));
-            assert_eq!(
-                text.contains("Usage limit reached"),
-                b.name == "claude",
+            assert!(
+                text.contains(&format!("\nAI_DEFAULT={}\n", b.name)),
                 "{}",
                 b.name
             );
-            if b.name != "claude" {
-                assert!(
-                    text.contains(&format!("  {} \"$1\" || status=$?\n", b.invoke)),
-                    "{text}"
-                );
+            for f in ["ai", "ai_claude", "ai_opencode", "ai_copilot", "ai_log"] {
+                assert!(text.contains(&format!("\n{f}() {{\n")), "{}: {f}", b.name);
             }
         }
     }

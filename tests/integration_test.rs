@@ -395,7 +395,12 @@ fn test_init_permissions_writes_opencode_json() {
         .assert()
         .success();
 
-    assert!(dir.path().join("opencode.json").is_file());
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.path().join("opencode.json")).unwrap())
+            .unwrap();
+    assert_eq!(json["permission"]["external_directory"], "deny");
+    assert_eq!(json["share"], "manual");
+    assert!(json.get("autoshare").is_none(), "deprecated: {json}");
 }
 
 #[test]
@@ -425,7 +430,7 @@ fn test_init_gitignore_content() {
     let gitignore = fs::read_to_string(dir.path().join(".decree/.gitignore")).unwrap();
     assert_eq!(
         gitignore,
-        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nHOLD\nprocess.log\ncache/\n"
+        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nHOLD\nprocess.log\ncache/\nai-use.md\n"
     );
 }
 

@@ -142,7 +142,8 @@ git worktree the user makes and runs decree in (`git worktree add ../app-exp -b 
 
 `develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
-source `lib/ai.sh` (the `ai` function for the chosen `--ai`; add another backend there) and
+source `lib/ai.sh` (`ai`, which calls `ai_<backend>`: `AI_BACKEND`, else a data entry
+`agent`, else the `--ai` init chose) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and
 retries. `precheck` runs

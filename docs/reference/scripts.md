@@ -139,6 +139,15 @@ workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD'
 
 `decree init` creates it with a one-line `README.md`, `ai.sh`, the `ai` function the built-in machines' scripts source, and `infra/`, the project's [declared environment](#declared-environment).
 
+### The AI helper
+
+`lib/ai.sh` defines `ai <prompt>`, which asks an AI agent and prints its reply, and one function per backend: `ai_claude`, `ai_opencode`, `ai_copilot`. `ai` calls the one `AI_BACKEND` names; unset, the one a machine's `data` entry `agent` names (`DECREE_DATA_AGENT`), so a child machine invoked with `params: { agent: claude }` works with Claude; else the backend `decree init --ai` chose. The name is not `AI_AGENT`, which agent tools such as Claude Code set in the shells they start. Another backend is one more `ai_<name>` function. Scripts call AI only through `ai`, never `claude` or `opencode` directly, so every call gets the same handling:
+
+- The agent names no event: a script it runs, such as the gate, gets `DECREE_EVENT_FILE=/dev/null`, and the caller's event file is emptied after the call. A call that leaves a `STOP` file in the run folder returns 0, so the caller's `STOP` check names `stop` instead of failing an attempt.
+- Every call adds a line to `.decree/ai-use.md` (gitignored), a Markdown table: time, run, machine and state, backend, model, `DECREE_RUN_ATTEMPT`, `DECREE_ATTEMPT`, seconds and exit code. Past 2 MiB it keeps the header and the last 10000 calls.
+- **Claude** (`CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`): each call is a new session, listed in the run's `sessions.txt`. When Claude stops at its usage limit, the call waits until the reset time the message names (an hour if it names none) and resumes the same session, so the work is kept and no attempt is used. A reset further away than `AI_LIMIT_WAIT` (default `6h`; `s`, `m`, `h` or `d`) is not waited for: the call writes `STOP` with the reset time and the retry command.
+- **OpenCode** (`OPENCODE_MODEL`, passed as `-m`): its file tools ask before touching a path outside the project, and `opencode run` cannot answer, so with OpenCode's default `"external_directory": "ask"` the session ends with no reply. `decree init --permissions` writes `"deny"`, which rejects the call and lets the agent go on. If a rejection ends the session anyway, the call continues it (`opencode run -c`) up to `AI_NUDGES` times (default 2), saying scratch files go in the run folder; the last output stays in `opencode.out` there. The permission covers OpenCode's file tools, not its shell commands, so it is no sandbox: the prompt and the project's `AGENTS.md` are what keep an agent's writes in the project.
+
 ## Declared environment
 
 What the project's environment needs (commands, packages, tools) is declared, not scripted, as Ansible declares state: `.decree/lib/infra/requirements` lists one resource per line, in order, and `lib/infra/kinds/<kind>.sh` says how to check and install that kind.
