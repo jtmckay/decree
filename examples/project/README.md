@@ -26,10 +26,11 @@ examples/project/.decree/
     deploy.yml                build, a person approves, ship
   scripts/                  SCRIPTS: the work; scripts/<machine>/ is checked before scripts/
     hello/greet.sh
-    develop/implement.sh      picks the model from $DECREE_ATTEMPT_VALUE
+    develop/implement.sh      picks the model from $DECREE_ATTEMPT_VALUE and asks it through lib/ai.sh
     develop/test.sh
     deploy/build.sh  deploy/ship.sh
     ask_person.sh             tells a person the options of a person state
+  lib/ai.sh                 `ai`, as `decree init --ai claude` writes it; DECREE_AI picks the backend
   migrations/  processed.md MESSAGES: ordered, run once; processed.md lists 01 as run
   inbox/                    MESSAGES: FIFO queue; here, a person's reply
   cron/nightly-audit.md     a message template that drops into inbox/ every night

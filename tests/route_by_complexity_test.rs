@@ -357,6 +357,7 @@ fn an_unknown_attempt_value_is_an_error_naming_it() {
             .join(".decree/scripts/develop_by_size/implement.sh"),
     )
     .env("DECREE_ATTEMPT_VALUE", "gpt")
+    .env("DECREE_LIB", p.root().join(".decree/lib"))
     .env("DECREE_RUN_DIR", &run)
     .env("DECREE_MESSAGE", p.root().join("message.md"))
     .env("DECREE_EVENT_FILE", run.join(".event"))

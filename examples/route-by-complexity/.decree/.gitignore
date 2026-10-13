@@ -1,3 +1,7 @@
 schema/
 .env*
 !.env.example
+HOLD
+process.log
+cache/
+ai-use.md

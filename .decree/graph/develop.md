@@ -27,4 +27,13 @@ stateDiagram-v2
     verify --> failed: stop
     done --> [*]
     failed --> [*]
+    note left of precheck
+        machine onentry: clean_tree
+    end note
+    note right of done
+        onentry: commit
+    end note
+    note right of failed
+        onentry: keep
+    end note
 ```

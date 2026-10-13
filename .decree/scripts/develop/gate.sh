@@ -5,7 +5,7 @@
 # This repository's checks: cargo fmt, clippy and the tests, one per line
 # (tests/ci_test.rs reads them to keep .github/workflows/ci.yml the same).
 set -euo pipefail
-log="${DECREE_RUN_DIR}/gate.log"
+log="${DECREE_ROOT_RUN_DIR}/gate.log"
 
 # A tool the checks need is not on PATH: they cannot run.
 missing() {

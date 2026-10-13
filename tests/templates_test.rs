@@ -19,12 +19,38 @@ const ROUTER: &[Pair] = &[
     ("scripts/router/ask_claude.sh", "router/ask.sh"),
 ];
 
+const AI: &[Pair] = &[("lib/ai.sh", "ai/ai.sh")];
+
+/// The built-in `develop` and `infra` machines and what they run, but `gate.sh`, which a
+/// project fills in.
+const DEVELOP: &[Pair] = &[
+    ("machines/develop.yml", "machines/develop.yml"),
+    ("machines/infra.yml", "machines/infra.yml"),
+    ("scripts/clean_tree.sh", "scripts/clean_tree.sh"),
+    ("scripts/commit.sh", "scripts/commit.sh"),
+    ("scripts/keep.sh", "scripts/keep.sh"),
+    (
+        "scripts/develop/implement.sh",
+        "scripts/develop/implement.sh",
+    ),
+    ("scripts/develop/fix.sh", "scripts/develop/fix.sh"),
+    ("scripts/develop/verify.sh", "scripts/develop/verify.sh"),
+    ("scripts/develop/precheck.sh", "scripts/develop/precheck.sh"),
+    ("scripts/infra/declare.sh", "scripts/infra/declare.sh"),
+    ("scripts/infra/apply.sh", "scripts/infra/apply.sh"),
+    ("lib/infra/run.sh", "infra/run.sh"),
+    ("lib/infra/kinds/command.sh", "infra/kinds/command.sh"),
+];
+
 /// Each project (relative to the repository) and the pairs it holds: the `feature` fixture and
-/// the escalation ladder, whose recorded runs `replay_test.rs` replays. `examples/project` has
-/// no file `init` writes.
+/// the escalation ladder, whose recorded runs `replay_test.rs` replays; the examples whose
+/// scripts ask an AI; and this repository's own `.decree/`, which runs its migrations.
 const EXAMPLES: &[(&str, &[&[Pair]])] = &[
     ("tests/fixtures/feature", &[ROUTER]),
     ("tests/fixtures/escalation", &[ROUTER]),
+    ("examples/project", &[AI]),
+    ("examples/route-by-complexity", &[AI]),
+    (".", &[ROUTER, AI, DEVELOP]),
 ];
 
 fn repo() -> PathBuf {

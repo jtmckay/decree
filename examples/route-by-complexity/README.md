@@ -45,7 +45,7 @@ stateDiagram-v2
 
 1. `describe` prints what the classifier reads: the message's title, its acceptance criteria, and the files it names that exist, with their line counts, so the classifier sees a size and not only prose.
 2. `size_up` asks [`gliner_router`](.decree/machines/gliner_router.yml) "How much reasoning does this change need?", with two options: `small` ("A local, mechanical change: a typo, a rename, a config value, one small function with a clear spec.") and `large` ("Design, several files, unclear requirements, concurrency or security."). Below `min_confidence: 0.7` the event is `unsure`, and `unsure` goes to Claude: when in doubt, use the stronger model. So does `error`, when the classifier is not running.
-3. `local_first` and `claude_only` run one script, [`implement`](.decree/scripts/develop_by_size/implement.sh), once per entry of their attempt list until an attempt succeeds. The entry, in `$DECREE_ATTEMPT_VALUE`, names the tool: `local` runs `opencode run --model ollama/<model>`, and `claude` runs `claude -p`, logging each step in the run's `progress.md` and writing `STOP` instead of guessing, as `develop` does. A `STOP` from any attempt is the `stop` event, which ends the run in `failed` until a person answers it.
+3. `local_first` and `claude_only` run one script, [`implement`](.decree/scripts/develop_by_size/implement.sh), once per entry of their attempt list until an attempt succeeds. The entry, in `$DECREE_ATTEMPT_VALUE`, names the tool, and both ask through `lib/ai.sh`'s `ai` ([The AI helper](../../docs/reference/scripts.md#the-ai-helper)): `local` with `DECREE_AI=opencode` and `OPENCODE_MODEL=ollama/<model>`, `claude` with `DECREE_AI=claude`, which waits out a usage limit. Every call is logged in `.decree/ai-use.md`. The `claude` prompt logs each step in the run's `progress.md` and writes `STOP` instead of guessing, as `develop` does. A `STOP` from any attempt is the `stop` event, which ends the run in `failed` until a person answers it.
 4. Each attempt then runs `$TEST_CMD` (`cargo test` by default), and fails if the tests fail. `local_first` tries `local`, `local`, then `claude`; `claude_only` tries `claude` twice. If every attempt fails, the event is `error`, and the run ends in `failed`.
 
 The tests run inside the attempt because an attempt succeeds when the change passes the tests, not when the model stops talking. So a local model's change that fails them moves to the next attempt, in the same state, with no state to count the tries.
@@ -128,9 +128,10 @@ examples/route-by-complexity/
       llm_router.yml                   a typed router: asks a local model through Ollama, held to reply_schema
     scripts/
       develop_by_size/describe.sh      prints the title, acceptance criteria and named files with line counts
-      develop_by_size/implement.sh     one attempt: opencode with an Ollama model (local) or claude -p (claude), then $TEST_CMD
+      develop_by_size/implement.sh     one attempt: opencode with an Ollama model (local) or Claude (claude), through lib/ai.sh, then $TEST_CMD
       gliner_router/ask_gliner.sh      posts the request to the classifier server, writes the reply
       llm_router/ask_llm.sh            posts the request to Ollama's /api/chat with format: reply_schema (or llama.cpp's server)
+    lib/ai.sh                          `ai`, as `decree init --ai claude` writes it
     migrations/01-raise-upload-limit.md   a small change to try it with
     graph/  schema/                    written by `decree graph` and `decree schema`
 ```

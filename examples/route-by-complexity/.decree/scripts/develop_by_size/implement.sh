@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # develop_by_size's implement: one attempt. $DECREE_ATTEMPT_VALUE names the
 # tool, then the tests run: an attempt succeeds when the change passes them, so
-# a failing attempt exits non-zero and decree runs the next value.
-#   local   a model served by Ollama, through OpenCode. `opencode run --model
-#           <provider>/<model>` runs one prompt without the TUI
-#           (https://opencode.ai/docs/cli/); the `ollama` provider and this
-#           model must be in opencode.json, as the example's README shows
-#           (https://opencode.ai/docs/providers/).
-#   claude  claude -p, in small steps noted in progress.md, so a later attempt
+# a failing attempt exits non-zero and decree runs the next value. Both go through
+# lib/ai.sh's `ai`, with DECREE_AI naming the backend.
+#   local   a model served by Ollama, through OpenCode (`opencode run -m
+#           ollama/<model>`, https://opencode.ai/docs/cli/); the `ollama`
+#           provider and this model must be in opencode.json, as the example's
+#           README shows (https://opencode.ai/docs/providers/).
+#   claude  Claude, in small steps noted in progress.md, so a later attempt
 #           continues where this one stopped. If the message is unclear, it
 #           writes the question to STOP instead of guessing; the state's event
 #           is then `stop`, and the run fails until a person answers it,
 #           deletes STOP and runs `decree process --retry`.
 set -euo pipefail
+. "${DECREE_LIB}/ai.sh"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3-coder:30b}"
 TEST_CMD="${TEST_CMD:-cargo test}"
 progress="${DECREE_RUN_DIR}/progress.md"
@@ -27,10 +28,11 @@ stopped && exit 0
 case "${DECREE_ATTEMPT_VALUE:-}" in
   local)
     prompt="Read ${DECREE_MESSAGE} and implement it. It is a small, mechanical change:
-change only what it asks for, and keep the tests passing."
-    echo "=== opencode run --model ollama/${OLLAMA_MODEL} ==="
+change only what it asks for, and keep the tests passing.
+Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
+    echo "=== opencode, ollama/${OLLAMA_MODEL} ==="
     echo "${prompt}"
-    opencode run --model "ollama/${OLLAMA_MODEL}" "${prompt}"
+    DECREE_AI=opencode OPENCODE_MODEL="ollama/${OLLAMA_MODEL}" ai "${prompt}"
     ;;
   claude)
     prompt="Read ${DECREE_MESSAGE} and implement all requirements with proper error
@@ -40,10 +42,11 @@ what is done and what is next. If ${progress} exists, an earlier attempt was
 cut short: check the code against it and continue from there.
 If the message is ambiguous or conflicts with the code, do not guess: write
 the question to ${stop} and stop.
-Logs of earlier attempts, a local model's included, are in ${DECREE_RUN_DIR}."
-    echo "=== claude -p ==="
+Logs of earlier attempts, a local model's included, are in ${DECREE_RUN_DIR}.
+Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
+    echo "=== claude ==="
     echo "${prompt}"
-    claude -p "${prompt}"
+    DECREE_AI=claude ai "${prompt}"
     stopped && exit 0
     ;;
   *)
