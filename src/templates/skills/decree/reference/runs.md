@@ -46,7 +46,9 @@ To find out why a run failed, read its `events.jsonl` from the end, then the log
 | `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree process --retry <id>`. decree never continues it on its own. |
 
 A failed, interrupted or waiting migration blocks every later migration; `decree process` exits 1
-ending ``Fix the cause, then run `decree process --retry`.`` (or 0 while only waiting).
+ending ``Fix the cause, then run `decree process --retry`.`` (or 0 while only waiting). A
+migration waiting for an interrupted child run counts as interrupted: the message names the
+child, and `--retry` alone continues it. `decree status` shows the blocker first, under `Blocked:`.
 
 ## Graphs
 

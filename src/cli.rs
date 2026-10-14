@@ -161,6 +161,10 @@ pub enum Command {
         #[arg(long)]
         cron: bool,
 
+        /// List every run and queued message, not only the latest of each kind
+        #[arg(long, conflicts_with_all = ["id", "cron"])]
+        all: bool,
+
         /// Output format, without --cron
         #[arg(long, value_enum, default_value_t)]
         format: Format,

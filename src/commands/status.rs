@@ -1,8 +1,11 @@
 //! `decree status [<id>] [--cron]` (docs/reference/cli.md). Reads runs and queues; never touches
 //! a run.
 //!
-//! - No id: the runs by status, with the script each `active` run is running now (from
-//!   `.running`, docs/reference/scripts.md) and the wait of each `waiting` run, then the queued messages.
+//! - No id: first what stops the queue, `.decree/HOLD` or the migration that blocks it, with
+//!   the command that continues it; then the runs by status, with the script each `active`
+//!   run is running now (from `.running`, docs/reference/scripts.md) and the wait of each
+//!   `waiting` run; then the queued messages. Runs finished in a state other than `failed`
+//!   are counted, not listed, and each list shows its last `SHOWN` entries, unless `--all`.
 //! - With id: the run's frontmatter, status, and its events as a table.
 //! - `--cron`: the cron files and when each fires next.
 //!
@@ -21,7 +24,7 @@ use serde_json::{json, Value};
 use crate::cli::Format;
 use crate::commands::check::{md_files, Project};
 use crate::commands::print_json;
-use crate::commands::process::{blocking_migration, context};
+use crate::commands::process::{blocking_migration, context, held, held_back};
 use crate::cron;
 use crate::error::DecreeError;
 use crate::events::{current_state, strings, text, Event};
@@ -39,6 +42,9 @@ const NESTED_DEPTH: usize = 4;
 /// Folders never searched for nested projects: dependencies and build output.
 const SKIPPED: [&str; 4] = ["node_modules", "target", "vendor", "dist"];
 
+/// How many entries each list in the overview shows without `--all`.
+const SHOWN: usize = 5;
+
 /// Run `decree status` from `cwd`: in the project at or above it, else, without an id or
 /// `--cron`, as a listing of the active runs of the projects below it.
 pub fn run_from(
@@ -46,10 +52,11 @@ pub fn run_from(
     root: Option<PathBuf>,
     id: Option<&str>,
     cron: bool,
+    all: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     if let Some(root) = root {
-        return run(&root, id, cron, format);
+        return run(&root, id, cron, all, format);
     }
     if id.is_some() || cron || format == Format::Json {
         return Err(DecreeError::NoProject);
@@ -70,6 +77,7 @@ pub fn run(
     project_root: &Path,
     id: Option<&str>,
     cron: bool,
+    all: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     if cron {
@@ -80,7 +88,7 @@ pub fn run(
     match (id, format) {
         (Some(id), Format::Text) => show_run(&ctx, &project, id),
         (Some(id), Format::Json) => run_json(&ctx, id),
-        (None, format) => overview(&ctx, &project, format),
+        (None, format) => overview(&ctx, &project, all, format),
     }
 }
 
@@ -144,14 +152,20 @@ impl Row {
     }
 }
 
-/// Counts and lists of runs by status, then of queued messages.
-fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), DecreeError> {
+/// What stops the queue, then counts and lists of runs by status, then of queued messages;
+/// every entry of each list with `all`.
+fn overview(
+    ctx: &Context,
+    project: &Project,
+    all: bool,
+    format: Format,
+) -> Result<(), DecreeError> {
     let mut groups: Vec<(RunStatus, Row)> = Vec::new();
     let mut finished: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let ids = run_ids(&ctx.runs_dir())?;
     let blocking = blocking_migration(ctx, project)?;
     let retry = |id: &str| Detail::Retry {
-        blocking: blocking.as_deref() == Some(id),
+        blocking: blocking.as_ref().is_some_and(|b| b.run == id),
     };
     for id in &ids {
         // A finished run: its last line, `run_finished`, names its machine and final state.
@@ -222,6 +236,14 @@ fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), Decr
             "runs": runs,
             "queued": { "inbox": inbox, "migrations": pending },
         });
+        if let Some(b) = &blocking {
+            out["blocked"] = json!({
+                "migration": b.file,
+                "run": b.run,
+                "status": b.status.as_str(),
+                "state": b.state,
+            });
+        }
         let nested: Vec<Value> = nested_projects(&ctx.project_root)?
             .into_iter()
             .filter(|n| !n.active.is_empty())
@@ -238,27 +260,63 @@ fn overview(ctx: &Context, project: &Project, format: Format) -> Result<(), Decr
         return print_json(&out);
     }
 
+    if let Some(message) = held(&ctx.project_root) {
+        println!("{} {message}", "Held:".bold());
+    }
+    if let Some(b) = &blocking {
+        println!(
+            "{} migration {} {}; later migrations wait",
+            "Blocked:".bold(),
+            b.file,
+            b.what()
+        );
+        println!("  {}", retry_line(&b.run, true));
+    } else if let Some(why) = held_back(ctx, project)? {
+        println!("{} {why}", "Held back:".bold());
+    }
     println!("{} {}", "Runs:".bold(), ids.len());
     for status in unfinished {
         let rows = of(status);
-        println!("  {}: {}", status.as_str(), rows.len());
-        print_rows(&rows, "    ");
+        if !rows.is_empty() {
+            println!("  {}: {}", status.as_str(), rows.len());
+            print_rows(&shown(&rows, all, "    "), "    ");
+        }
     }
     let total: usize = finished.values().map(Vec::len).sum();
-    println!("  {}: {total}", RunStatus::Finished.as_str());
+    if total > 0 {
+        println!("  {}: {total}", RunStatus::Finished.as_str());
+    }
     for (state, rows) in &finished {
         println!("    {state}: {}", rows.len());
-        print_rows(&rows.iter().collect::<Vec<_>>(), "      ");
+        if all || state == FAILED {
+            print_rows(
+                &shown(&rows.iter().collect::<Vec<_>>(), all, "      "),
+                "      ",
+            );
+        }
     }
 
     println!("{}", "Queued:".bold());
-    println!("  {INBOX_DIR}/: {}", inbox.len());
-    for file in &inbox {
-        println!("    {file}");
-    }
-    println!("  {MIGRATIONS_DIR}/: {} pending", pending.len());
-    for file in &pending {
-        println!("    {file}");
+    for (label, files) in [
+        (format!("{INBOX_DIR}/: {}", inbox.len()), &inbox),
+        (
+            format!("{MIGRATIONS_DIR}/: {} pending", pending.len()),
+            &pending,
+        ),
+    ] {
+        println!("  {label}");
+        // The next to run come first.
+        let more = if all {
+            0
+        } else {
+            files.len().saturating_sub(SHOWN)
+        };
+        for file in &files[..files.len() - more] {
+            println!("    {file}");
+        }
+        if more > 0 {
+            println!("    … {more} more; `decree status --all` lists them");
+        }
     }
     let nested = nested_projects(&ctx.project_root)?;
     if nested.iter().any(|n| !n.active.is_empty()) {
@@ -370,6 +428,20 @@ fn relative(base: &Path, path: &Path) -> String {
         .into_owned()
 }
 
+/// The last `SHOWN` of `rows`, the latest runs, or all of them with `all`; says at `indent`
+/// how many earlier ones it leaves out.
+fn shown<'r>(rows: &[&'r Row], all: bool, indent: &str) -> Vec<&'r Row> {
+    let earlier = if all {
+        0
+    } else {
+        rows.len().saturating_sub(SHOWN)
+    };
+    if earlier > 0 {
+        println!("{indent}… {earlier} earlier; `decree status --all` lists them");
+    }
+    rows[earlier..].to_vec()
+}
+
 fn print_rows(rows: &[&Row], indent: &str) {
     for row in rows {
         println!(
@@ -464,7 +536,7 @@ fn show_run(ctx: &Context, project: &Project, id: &str) -> Result<(), DecreeErro
         }
     }
     if status == RunStatus::Interrupted || (status == RunStatus::Finished && state == FAILED) {
-        let blocking = blocking_migration(ctx, project)?.as_deref() == Some(id);
+        let blocking = blocking_migration(ctx, project)?.is_some_and(|b| b.run == id);
         println!("  {}", retry_line(id, blocking));
     }
 

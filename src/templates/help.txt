@@ -48,7 +48,8 @@ Commands:
                               stdin. Prints its id
   decree event ID EVENT [-m NOTE]
                               Reply to a run waiting for a person
-  decree status [ID]          Runs by status and queued messages, and active
+  decree status [ID] [--all]  What blocks the queue, runs by status and queued
+                              messages (--all lists every one), and active
                               runs in projects below; one run's events
   decree status --cron        Cron files and when each fires next
   decree tail [ID]            Follow the live output of each run as it comes,

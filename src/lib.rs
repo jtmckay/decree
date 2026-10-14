@@ -92,7 +92,12 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             dry_run,
             format,
         } => commands::prune::run(&root()?, older_than, dry_run, format),
-        Command::Status { id, cron, format } => {
+        Command::Status {
+            id,
+            cron,
+            all,
+            format,
+        } => {
             if cron && format == Format::Json {
                 use clap::CommandFactory;
                 Cli::command()
@@ -104,7 +109,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             }
             let cwd = std::env::current_dir()?;
             let root = error::find_project_root();
-            commands::status::run_from(&cwd, root, id.as_deref(), cron, format)
+            commands::status::run_from(&cwd, root, id.as_deref(), cron, all, format)
         }
     }
 }

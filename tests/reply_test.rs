@@ -172,6 +172,43 @@ fn invalid_message(events: &[Value]) -> String {
 // Delivery (docs/reference/messages.md, Replies, steps 2 and 3)
 // ---------------------------------------------------------------
 
+/// A migration whose child run waits for a reply: `process` and `status` say that is what
+/// holds the migrations back.
+#[test]
+fn a_migration_held_back_by_a_child_waiting_for_a_reply_is_named() {
+    let p = Project::new("1h");
+    fs::remove_file(p.decree().join("inbox/a.md")).unwrap();
+    p.write(
+        "machines/release.yml",
+        "name: release\ndescription: Deploy as a child run.\ninitial: call\nstates:\n  \
+         call:\n    invoke: { machine: deploy }\n    transitions: { done: done, rejected: done, expired: done }\n  \
+         done: { final: true }\n  failed: { final: true }\n",
+    );
+    p.write("migrations/01-release.md", "---\nmachine: release\n---\n");
+    p.write("migrations/02-later.md", "---\nmachine: release\n---\n");
+    let out = p.process().assert().code(0).get_output().stdout.clone();
+    let out = String::from_utf8(out).unwrap();
+    let child = p.runs().into_iter().find(|r| r != "01-release").unwrap();
+    let wait_id = p.events(&child).last().unwrap()["wait_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let why = format!(
+        "Held back: migration 01-release.md waits for child run {child}, which waits for a \
+         reply: `decree event {wait_id} <approve|reject>`; 1 later migration(s) wait behind it\n"
+    );
+    assert!(out.ends_with(&why), "{out}");
+    let status = p
+        .decree_cmd()
+        .arg("status")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert!(String::from_utf8(status).unwrap().starts_with(&why));
+}
+
 #[test]
 fn reply_with_wait_id_and_option_continues_with_source_person() {
     let p = Project::new("1h");

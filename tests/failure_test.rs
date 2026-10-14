@@ -332,9 +332,116 @@ fn sigterm_during_a_script_interrupts_the_run_and_decree_retry_reruns_the_script
     );
 }
 
+/// A migration whose `machine` invoke runs `slow` as a child run.
+const PARENT: &str = "\
+name: parent
+description: Run slow as a child run.
+initial: call
+states:
+  call:
+    invoke: { machine: slow }
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+#[test]
+fn a_migration_waiting_for_an_interrupted_child_blocks_and_retry_continues_the_child() {
+    let p = Project::new(
+        &[("slow", SLOW), ("parent", PARENT)],
+        &[("record", RECORD), ("work", WORK)],
+    );
+    fs::write(
+        p.root().join(".decree/migrations/01-call.md"),
+        "---\nmachine: parent\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        p.root().join(".decree/migrations/02-next.md"),
+        "---\nmachine: slow\n---\n",
+    )
+    .unwrap();
+    fs::write(p.root().join("wait.flag"), "").unwrap();
+    let mut decree = p.spawn_process();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let child = loop {
+        let started = p
+            .runs()
+            .into_iter()
+            .find(|id| p.run_dir(id).join("work.pid").exists());
+        if let Some(id) = started {
+            break id;
+        }
+        assert!(Instant::now() < deadline, "work never started");
+        thread::sleep(Duration::from_millis(5));
+    };
+    // SAFETY: sends SIGTERM to the decree process.
+    unsafe { libc::kill(decree.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        wait_with_timeout(&mut decree, Duration::from_secs(15)).code(),
+        Some(130)
+    );
+    fs::remove_file(p.root().join("wait.flag")).unwrap();
+
+    // `process` says why nothing runs, and how to continue, instead of exiting 0.
+    let blocked = format!(
+        "migration 01-call.md waits for child run {child}, interrupted in `work`; \
+         later migrations are blocked. Fix the cause, then run `decree process --retry`."
+    );
+    p.cmd(&["process"])
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains(blocked.as_str()));
+    let status = p
+        .cmd(&["status"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let status = String::from_utf8(status).unwrap();
+    assert!(
+        status.starts_with(&format!(
+            "Blocked: migration 01-call.md waits for child run {child}, interrupted in `work`; \
+             later migrations wait\n  continue with `decree process --retry`\n"
+        )),
+        "{status}"
+    );
+
+    // `--retry` alone continues the child; its parent and the next migration follow.
+    p.cmd(&["process", "--retry"]).assert().code(0);
+    assert_eq!(
+        fs::read_to_string(p.root().join(".decree/processed.md")).unwrap(),
+        "01-call.md\n02-next.md\n"
+    );
+}
+
 // ---------------------------------------------------------------
 // The run lock (docs/reference/messages.md, Run lock)
 // ---------------------------------------------------------------
+
+#[test]
+fn a_second_process_says_the_migration_is_active_in_the_first() {
+    let p = Project::new(&[("slow", SLOW)], &[("record", RECORD), ("work", WORK)]);
+    fs::write(
+        p.root().join(".decree/migrations/01-slow.md"),
+        "---\nmachine: slow\n---\n",
+    )
+    .unwrap();
+    let (mut first, _) = p.working("01-slow");
+    let pid = first.id();
+    p.cmd(&["process"])
+        .assert()
+        .code(0)
+        .stdout(predicates::str::ends_with(format!(
+            "Held back: migration 01-slow.md is active in another process (pid {pid})\n"
+        )));
+    fs::remove_file(p.root().join("wait.flag")).unwrap();
+    assert_eq!(
+        wait_with_timeout(&mut first, Duration::from_secs(15)).code(),
+        Some(0)
+    );
+}
 
 #[test]
 fn two_processes_at_once_the_second_skips_the_active_run() {

@@ -133,7 +133,7 @@ appear only where a machine invokes `model` or `person`.
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>] [--retry [<id>]]` | The same, in a loop, with cron, every `2s` by default. |
 
-| `decree status [<id>] [--cron] [--format json]` | Runs by status, and active runs in projects below; one run's events; cron schedule (text only). |
+| `decree status [<id>] [--cron] [--all] [--format json]` | What blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |

@@ -474,7 +474,7 @@ fn finished_run_is_read_from_its_last_line_only() {
     let corrupt = format!("{first}\nnot json\n{rest}");
     fs::write(&path, &corrupt).unwrap();
 
-    let out = decree(&p, &["status"])
+    let out = decree(&p, &["status", "--all"])
         .assert()
         .success()
         .get_output()
@@ -482,7 +482,7 @@ fn finished_run_is_read_from_its_last_line_only() {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(stdout.contains("  finished: 1\n    done: 1\n"), "{stdout}");
     assert!(stdout.contains("run-a  slow  `done`"), "{stdout}");
-    assert!(stdout.contains("  interrupted: 0\n"), "{stdout}");
+    assert!(!stdout.contains("interrupted"), "{stdout}");
 
     p.process().assert().success();
     assert_eq!(fs::read_to_string(&path).unwrap(), corrupt);

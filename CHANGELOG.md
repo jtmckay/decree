@@ -46,6 +46,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- `decree status` starts with what stops the queue (`Held:`, `Blocked:` and the `--retry` command), leaves out statuses with no runs, counts runs finished in a state other than `failed` instead of listing them, and lists the last 5 runs of each status and the first 5 queued files; `--all` lists everything. `--format json` adds `blocked`.
 - The switch `lib/ai.sh`'s `ai` reads is `AI_CLI`, and a machine's data entry for it is `ai_cli`: beta.7's `DECREE_AI` and `agent` are gone, and `DECREE_*` is again decree's alone, in a script's environment and in `.env` files ([D66](docs/decisions.md#d66-one-ai-helper-with-every-backend-a-capped-limit-wait-and-a-nudge)). `.decree/ai-use.md`'s `agent` column is `cli`.
 - `qa`'s triage names Rust's `#[should_panic]` among the strict expected-failure markers, beside Python's, Playwright's and Jest's.
 - The `project` and `route-by-complexity` examples ask AI through `lib/ai.sh` (`AI_CLI` per attempt) instead of calling `claude` and `opencode` directly, and every example's `.decree/.gitignore` lists `HOLD`, `process.log`, `cache/` and `ai-use.md`.
@@ -94,6 +95,9 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Fixed
 
+- `decree process` exited 0 and printed nothing when a migration waited for a child run that was `interrupted`, since a child never continues its parent by itself. It now stops with ``migration <file> waits for child run <id>, interrupted in `<s>`; later migrations are blocked. Fix the cause, then run `decree process --retry`.``, exit 1, and `--retry` alone continues that child; `decree status` shows the same under `Blocked:`.
+- `decree process` also exited 0 without a word when the first pending migration, or a child run it waits for, was active in another process, and named a child's wait without saying it held the migrations. It now ends with `Held back:` and why, and `decree status` shows the same line.
+- SIGINT or SIGTERM during a child run's script made `decree process` exit 0 instead of 130.
 - `ai` let `AI_CLI` win over a run's data entry `ai_cli`, so with `AI_CLI` set in `.decree/.env`, a message's or a parent's `params: { ai_cli: … }` was ignored and the escalation ladder's Claude round ran the project's default. The run's data entry now wins.
 - `clean_tree`, `commit` and the old `stash` touched the whole repository; `clean_tree`, `commit` and `keep` now touch only the project folder (`-- .`). In a decree project inside a larger repository, a change in a sibling folder stopped every run, and `done` committed it, staged or not, under the run's title.
 - `lib/ai.sh` empties the calling step's event file after the agent returns. An agent in a beta run found the run's `.event` file and ran the gate into it, so `fix` ended in the gate's `pass`, which it has no transition for.

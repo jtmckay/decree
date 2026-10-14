@@ -453,10 +453,11 @@ fn test_status_empty_project() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
-    decree_cmd(&dir).arg("status").assert().success().stdout(
-        "Runs: 0\n  active: 0\n  waiting: 0\n  pending: 0\n  interrupted: 0\n  finished: 0\n\
-         Queued:\n  inbox/: 0\n  migrations/: 0 pending\n",
-    );
+    decree_cmd(&dir)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout("Runs: 0\nQueued:\n  inbox/: 0\n  migrations/: 0 pending\n");
 }
 
 #[test]

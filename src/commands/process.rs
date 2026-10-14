@@ -33,7 +33,8 @@ use crate::commands::print_json;
 use crate::commands::report::{self, Reporter};
 use crate::error::DecreeError;
 use crate::events::{
-    current_state, first_text, is_transition, is_type, run_attempt, strings, text, Event, EventLog,
+    current_state, first_text, is_transition, is_type, run_attempt, strings, text, waiting_child,
+    Event, EventLog,
 };
 use crate::interpreter::child::continue_run;
 use crate::interpreter::recover::{self, mirror_state, RunStatus};
@@ -87,6 +88,11 @@ pub fn run(
         pipeline.recover().and_then(|()| pipeline.drain())
     });
     print_waiting(&pipeline.ctx)?;
+    if result.is_ok() {
+        if let Some(why) = held_back(&pipeline.ctx, &pipeline.project)? {
+            println!("Held back: {why}");
+        }
+    }
     let failed = pipeline.take_failed();
     print_failed(&failed);
     result.map_err(Stop::into_error)?;
@@ -405,7 +411,7 @@ impl Pipeline {
                 self.fail(id, None);
                 Ok(())
             }
-            Outcome::Interrupted(_) => Err(Stop::Interrupted),
+            ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
             _ => Ok(()),
         }
     }
@@ -461,7 +467,7 @@ impl Pipeline {
                 self.fail(&id, Some(&file));
                 Ok(true)
             }
-            Outcome::Interrupted(_) => Err(Stop::Interrupted),
+            ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
             _ => Ok(true),
         }
     }
@@ -676,7 +682,17 @@ fn step_migration(
                     Err(e) => return Err(e.into()),
                 }
             }
-            RunStatus::Waiting | RunStatus::Active => return Ok(false),
+            RunStatus::Waiting => {
+                // A child that was interrupted never continues its parent by itself.
+                return match stalled_child(ctx, &events)? {
+                    Some((child, state)) => Err(blocked(
+                        file,
+                        &format!("waits for child run {child}, interrupted in `{state}`"),
+                    )),
+                    None => Ok(false),
+                };
+            }
+            RunStatus::Active => return Ok(false),
             RunStatus::Finished | RunStatus::Interrupted => {
                 let state = current_state(&events).unwrap_or("no state");
                 return Err(blocked(
@@ -696,8 +712,18 @@ fn step_migration(
         }
         // Rule 5 wrote the ledger line; the loop moves on to the next migration.
         Outcome::Finished(_) => Ok(true),
-        Outcome::Interrupted(_) => Err(Stop::Interrupted),
-        Outcome::Waiting { .. } | Outcome::Child { .. } => Ok(false),
+        ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
+        // It waits for a reply, or for a child run.
+        _ => Ok(false),
+    }
+}
+
+/// Whether a signal stopped the run, or the child run it waits for, child after child.
+fn interrupted(outcome: &Outcome) -> bool {
+    match outcome {
+        Outcome::Interrupted(_) => true,
+        Outcome::Child { outcome, .. } => interrupted(outcome),
+        _ => false,
     }
 }
 
@@ -732,23 +758,138 @@ fn blocked(file: &str, what: &str) -> Stop {
     ))
 }
 
+/// The migration that blocks the queue, and the run `decree process --retry` continues for it.
+pub(crate) struct Blocker {
+    /// The migration's file name.
+    pub(crate) file: String,
+    /// The migration's run, or the interrupted child run it waits for.
+    pub(crate) run: String,
+    /// The state `run` is in.
+    pub(crate) state: String,
+    pub(crate) status: RunStatus,
+}
+
+impl Blocker {
+    /// Why the migration blocks: `is interrupted in `work``, or `waits for child run <id>,
+    /// interrupted in `work``.
+    pub(crate) fn what(&self) -> String {
+        let (status, state) = (self.status.as_str(), &self.state);
+        if self.file.strip_suffix(".md") == Some(self.run.as_str()) {
+            format!("is {status} in `{state}`")
+        } else {
+            format!("waits for child run {}, {status} in `{state}`", self.run)
+        }
+    }
+}
+
 /// docs/reference/messages.md, Migrations, rule 4: the migration that blocks the queue, the
-/// earliest pending one whose run is `failed` or `interrupted`. A finished run of a pending
-/// migration blocks too, as `process` reports it, so `--retry` can continue it.
+/// earliest pending one whose run is `failed` or `interrupted`, or `waiting` for a child run
+/// that is `interrupted`. A finished run of a pending migration blocks too, as `process`
+/// reports it, so `--retry` can continue it.
 pub(crate) fn blocking_migration(
     ctx: &Context,
     project: &Project,
-) -> Result<Option<String>, DecreeError> {
+) -> Result<Option<Blocker>, DecreeError> {
     for file in project.pending_migrations()? {
-        let id = file.strip_suffix(".md").unwrap_or(&file);
-        if !ctx.runs_dir().join(id).is_dir() {
+        let id = file.strip_suffix(".md").unwrap_or(&file).to_string();
+        if !ctx.runs_dir().join(&id).is_dir() {
             continue;
         }
-        if matches!(
-            ctx.status_of(id)?.0,
-            RunStatus::Finished | RunStatus::Interrupted
-        ) {
-            return Ok(Some(id.to_string()));
+        let (status, events) = ctx.status_of(&id)?;
+        let (run, state, status) = match status {
+            RunStatus::Finished | RunStatus::Interrupted => {
+                let state = current_state(&events).unwrap_or("no state").to_string();
+                (id, state, status)
+            }
+            RunStatus::Waiting => match stalled_child(ctx, &events)? {
+                Some((child, state)) => (child, state, RunStatus::Interrupted),
+                None => continue,
+            },
+            RunStatus::Active | RunStatus::Pending => continue,
+        };
+        return Ok(Some(Blocker {
+            file,
+            run,
+            state,
+            status,
+        }));
+    }
+    Ok(None)
+}
+
+/// Why the first pending migration has not finished, when nothing blocks it
+/// (`blocking_migration`): it, or the child run it waits for, waits for a reply or is
+/// active in another process, or it waits for `inbox/` to empty. `None` when no migration
+/// is pending, or the pass would start or continue it.
+pub(crate) fn held_back(ctx: &Context, project: &Project) -> Result<Option<String>, DecreeError> {
+    let pending = project.pending_migrations()?;
+    let Some(file) = pending.first() else {
+        return Ok(None);
+    };
+    let behind = match pending.len() - 1 {
+        0 => String::new(),
+        n => format!("; {n} later migration(s) wait behind it"),
+    };
+    let id = file.strip_suffix(".md").unwrap_or(file);
+    if !ctx.runs_dir().join(id).is_dir() {
+        let inbox = md_files(&ctx.project_root.join(DECREE_DIR).join(INBOX_DIR))?.len();
+        return Ok((inbox > 0).then(|| {
+            format!("migration {file} starts once the {inbox} file(s) in inbox/ have run{behind}")
+        }));
+    }
+    let mut run = id.to_string();
+    let mut seen = HashSet::new();
+    let reason = loop {
+        let (status, events) = ctx.status_of(&run)?;
+        match (status, waiting_child(&events)) {
+            (RunStatus::Waiting, Some(child)) if seen.insert(child.to_string()) => {
+                run = child.to_string();
+            }
+            (RunStatus::Waiting, _) => {
+                let Some(last) = events.last() else {
+                    return Ok(None);
+                };
+                let wait_id = text(last, "wait_id").unwrap_or_default();
+                break format!(
+                    "waits for a reply: `decree event {wait_id} <{}>`",
+                    strings(last, "options").join("|")
+                );
+            }
+            (RunStatus::Active, _) => {
+                let pid = match message::lock_state(&ctx.runs_dir().join(&run))? {
+                    LockState::Live(pid) => format!(" (pid {pid})"),
+                    _ => String::new(),
+                };
+                break format!("is active in another process{pid}");
+            }
+            // Blocked, or the pass continues it.
+            _ => return Ok(None),
+        }
+    };
+    Ok(Some(if run == id {
+        format!("migration {file} {reason}{behind}")
+    } else {
+        format!("migration {file} waits for child run {run}, which {reason}{behind}")
+    }))
+}
+
+/// The `interrupted` run, and its state, at the end of the child runs a run with `events`
+/// waits for, child after child; `None` if the last one is not `interrupted`.
+fn stalled_child(ctx: &Context, events: &[Event]) -> Result<Option<(String, String)>, DecreeError> {
+    let mut seen = HashSet::new();
+    let mut next = waiting_child(events).map(String::from);
+    while let Some(id) = next {
+        if !seen.insert(id.clone()) || !ctx.runs_dir().join(&id).is_dir() {
+            break;
+        }
+        let (status, events) = ctx.status_of(&id)?;
+        match status {
+            RunStatus::Interrupted => {
+                let state = current_state(&events).unwrap_or("no state").to_string();
+                return Ok(Some((id, state)));
+            }
+            RunStatus::Waiting => next = waiting_child(&events).map(String::from),
+            _ => break,
         }
     }
     Ok(None)
@@ -765,11 +906,15 @@ fn retry_run(
 ) -> Result<(), DecreeError> {
     let id = match id {
         Some(id) => id.to_string(),
-        None => blocking_migration(ctx, project)?.ok_or_else(|| {
-            DecreeError::Other(
-                "nothing to retry: no migration is failed or interrupted".to_string(),
-            )
-        })?,
+        None => {
+            blocking_migration(ctx, project)?
+                .ok_or_else(|| {
+                    DecreeError::Other(
+                        "nothing to retry: no migration is failed or interrupted".to_string(),
+                    )
+                })?
+                .run
+        }
     };
     let id = id.as_str();
     let run_dir = ctx.runs_dir().join(id);

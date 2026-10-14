@@ -279,12 +279,18 @@ fn init_emit_process_status_shows_the_run_done() {
     assert!(status.contains("greet --done--> done (exit_code), exit 0"));
     assert!(status.contains("run_finished done after "), "{status}");
 
+    // A run finished in a state other than `failed` is counted; `--all` lists it.
     let overview = p.stdout(&["status"], 0);
     assert!(
-        overview.contains(&format!(
+        overview.contains("Runs: 1\n  finished: 1\n    done: 1\nQueued:\n"),
+        "{overview}"
+    );
+    let all = p.stdout(&["status", "--all"], 0);
+    assert!(
+        all.contains(&format!(
             "  finished: 1\n    done: 1\n      {id}  hello  `done`\n"
         )),
-        "{overview}"
+        "{all}"
     );
     assert!(overview.contains("  inbox/: 0\n"), "{overview}");
 }

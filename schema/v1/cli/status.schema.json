@@ -66,6 +66,18 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "blocked": {
+          "type": "object",
+          "description": "The migration that blocks the queue (docs/reference/messages.md, Migrations, rule 4), and the run `decree process --retry` continues for it: the migration's own, or the interrupted child run it waits for. Absent when none blocks.",
+          "required": ["migration", "run", "status", "state"],
+          "additionalProperties": false,
+          "properties": {
+            "migration": { "type": "string", "description": "The migration's filename." },
+            "run": { "type": "string", "description": "The run `decree process --retry` continues." },
+            "status": { "enum": ["interrupted", "finished"], "description": "That run's status." },
+            "state": { "type": "string", "description": "That run's state." }
+          }
+        },
         "nested": {
           "type": "array",
           "description": "Decree projects below this one (at most 4 folders down, not in hidden folders, node_modules, target, vendor or dist) that have active runs, in path order. Absent when none has.",
