@@ -394,9 +394,12 @@ fn named_event<'a>(script: &Value, rest: &'a [Value]) -> Option<&'a str> {
 }
 
 /// One event as a JSON line, with timestamps, durations and deadlines replaced by their
-/// key, and generated ids (anywhere, `router_error` included) replaced by the recorded ones.
+/// key, `decree_version` removed, and generated ids (anywhere, `router_error` included)
+/// replaced by the recorded ones.
 fn normalise(mut event: Value, ids: &BTreeMap<String, String>) -> String {
     let map = event.as_object_mut().unwrap();
+    // The recording was made by another decree version, or before it was recorded.
+    map.remove("decree_version");
     for key in ["ts", "started_at", "duration_ms", "timeout_at"] {
         if let Some(v) = map.get_mut(key) {
             if !v.is_null() {

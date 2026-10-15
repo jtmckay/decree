@@ -433,6 +433,42 @@ fn a_retry_is_the_next_run_attempt_with_fresh_visits() {
         .all(|e| e.get("run_attempt").is_none()));
 }
 
+/// AC: the claim and each `retry` event record the running decree's version as
+/// `decree_version`, no other event does, and `decree status <id>` shows it on both rows.
+#[test]
+fn the_claim_and_each_retry_record_the_decree_version() {
+    let version = env!("CARGO_PKG_VERSION");
+    let p = Project::init();
+    p.machine("flaky", FLAKY);
+    p.script("work", FLAKY_WORK);
+    let id = p.emit("flaky", "Do the work.\n");
+    p.decree(&["process"]).assert().code(1);
+    let events = p.events(&id);
+    assert_eq!(events[0]["source"], "claim");
+    assert_eq!(events[0]["decree_version"], version);
+
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+    p.decree(&["process", "--retry", &id]).assert().success();
+    let events = p.events(&id);
+    let retries: Vec<_> = events.iter().filter(|e| e["source"] == "retry").collect();
+    assert_eq!(retries.len(), 1);
+    assert_eq!(retries[0]["decree_version"], version);
+    let recorded: Vec<_> = events
+        .iter()
+        .filter(|e| e.get("decree_version").is_some())
+        .map(|e| e["source"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(recorded, ["claim", "retry"]);
+
+    let status = p.stdout(&["status", &id], 0);
+    for want in [
+        format!("· --claimed--> work (claim), decree {version}"),
+        format!("failed --retry--> work (retry), decree {version}"),
+    ] {
+        assert!(status.contains(&want), "missing {want:?} in:\n{status}");
+    }
+}
+
 /// AC: `--retry` with nothing to retry exits 1 and says so; `--retry` with `--dry-run`,
 /// `--state` without `--retry`, and the removed `retry` command are usage errors (exit 2).
 #[test]

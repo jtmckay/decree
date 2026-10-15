@@ -592,6 +592,9 @@ fn event_detail(kind: &str, e: &Event) -> String {
             if let Some(code) = e.get("exit_code").and_then(Value::as_i64) {
                 s.push_str(&format!(", exit {code}"));
             }
+            if let Some(version) = text(e, "decree_version") {
+                s.push_str(&format!(", decree {version}"));
+            }
             s
         }
         "script" => {
@@ -765,6 +768,17 @@ mod tests {
                 json!({"type": "transition", "from": null, "event": "claimed", "to": "work",
                        "source": "claim", "exit_code": null}),
                 "· --claimed--> work (claim)",
+            ),
+            (
+                json!({"type": "transition", "from": null, "event": "claimed", "to": "work",
+                       "source": "claim", "exit_code": null, "decree_version": "0.5.0-beta.11"}),
+                "· --claimed--> work (claim), decree 0.5.0-beta.11",
+            ),
+            (
+                json!({"type": "transition", "from": "work", "event": "retry", "to": "work",
+                       "source": "retry", "exit_code": null, "run_attempt": 2,
+                       "decree_version": "0.5.0-beta.11"}),
+                "work --retry--> work (retry), decree 0.5.0-beta.11",
             ),
             (
                 json!({"type": "script", "state": "work", "phase": "invoke", "script": "build",

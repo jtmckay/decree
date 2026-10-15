@@ -168,6 +168,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `run_attempt` | integer | `retry` | The run attempt this retry starts: 2 for the first retry ([Step loop](#step-loop), Run attempts). |
 | `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree process --retry` starts a new run span, linked to the previous one. |
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
+| `decree_version` | string | The claim (`claim` or `invalid_message`), and `retry` | The version of the decree that started or retried the run, for example `0.5.0-beta.11`. Runs recorded before decree wrote it have none. `decree status <id>` shows it on these rows. |
 
 `source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `person` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `person` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree process --retry`.
 

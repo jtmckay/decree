@@ -2571,6 +2571,7 @@ fn every_transition_script_and_run_finished_field_appears() {
                 "file",
                 "error",
                 "span_id",
+                "decree_version",
             ],
         ),
         (

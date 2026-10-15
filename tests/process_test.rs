@@ -172,6 +172,7 @@ fn unknown_machine_ends_failed_with_invalid_message() {
     assert_eq!(e["type"], "transition");
     assert_eq!(e["to"], "failed");
     assert_eq!(e["source"], "invalid_message");
+    assert_eq!(e["decree_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(e["file"], "a.md");
     assert!(e["error"]
         .as_str()

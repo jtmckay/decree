@@ -736,6 +736,25 @@ fn every_request_and_reply_in_examples_validates() {
     }
 }
 
+/// `decree_version` is optional on the claim, an `invalid_message` claim and a `retry`, so
+/// lines recorded with it and without it both validate.
+#[test]
+fn decree_version_is_optional_on_the_claim_and_retry() {
+    let events = schema::events_validator();
+    let common = r#""v": 1, "seq": 1, "ts": "2026-10-01T14:30:05.123Z", "run_id": "r", "machine": "m", "trigger": "inbox", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "type": "transition", "exit_code": null, "span_id": "00f067aa0ba902b7""#;
+    for fields in [
+        r#""from": null, "event": "claimed", "to": "a", "source": "claim", "file": "a.md""#,
+        r#""from": null, "event": "claimed", "to": "failed", "source": "invalid_message", "file": "a.md", "error": "x""#,
+        r#""from": "failed", "event": "retry", "to": "a", "source": "retry", "run_attempt": 2"#,
+    ] {
+        for version in ["", r#", "decree_version": "0.5.0-beta.11""#] {
+            let line: serde_json::Value =
+                serde_json::from_str(&format!("{{{common}, {fields}{version}}}")).unwrap();
+            assert!(events.is_valid(&line), "rejected: {line}");
+        }
+    }
+}
+
 /// Mistakes a router or a pipeline could make: each is rejected.
 #[test]
 fn wrong_events_requests_and_replies_are_rejected() {
@@ -761,6 +780,9 @@ fn wrong_events_requests_and_replies_are_rejected() {
         r#""type": "script", "state": "s", "phase": "invoke", "script": "x", "path": "x", "attempt": 1, "started_at": "2026-10-01T14:30:05.123Z", "duration_ms": 1, "exit_code": 0, "log": "0001-s-x.log""#,
         r#""type": "waiting", "state": "s", "child": "c", "span_id": "00f067aa0ba902b7""#,
         r#""type": "transition", "from": "a", "event": "done", "to": "b", "source": "exit_code", "exit_code": 0, "parent_span_id": "00f067aa0ba902b7""#,
+        // decree's version on a transition that is not the claim or a retry, or not a string.
+        r#""type": "transition", "from": "a", "event": "done", "to": "b", "source": "exit_code", "exit_code": 0, "decree_version": "0.5.0""#,
+        r#""type": "transition", "from": null, "event": "claimed", "to": "a", "source": "claim", "exit_code": null, "file": "a.md", "span_id": "00f067aa0ba902b7", "decree_version": 5"#,
     ] {
         // The fields of `wrong` replace the common ones of the same name.
         let mut line: serde_json::Map<String, serde_json::Value> =

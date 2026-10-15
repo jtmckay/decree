@@ -24,6 +24,10 @@ pub const EVENTS_FILE: &str = "events.jsonl";
 /// `events.jsonl` schema version (docs/reference/runs.md).
 const EVENTS_VERSION: u64 = 1;
 
+/// The running decree's version, recorded as `decree_version` on the claim and `retry`
+/// events (docs/reference/runs.md).
+pub const DECREE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// RFC 3339 UTC with milliseconds, as every timestamp in `events.jsonl` is written.
 pub fn timestamp(t: chrono::DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Millis, true)
@@ -89,7 +93,8 @@ impl EventLog {
     /// `fields`, a JSON object. Returns its `seq`. A `script`, `decision` or `received`
     /// event without a `span_id` gets a new one; the claim `transition` (`from: null`)
     /// gets the run span's `span_id` and its `parent_span_id`, and a `retry` transition
-    /// a new run span's `span_id`. A span the event ends is then appended to
+    /// a new run span's `span_id`. Both also get `decree_version`, the version of the
+    /// decree that started or retried the run. A span the event ends is then appended to
     /// `traces.jsonl`.
     pub fn append(&mut self, kind: &str, fields: Value) -> io::Result<u64> {
         let Value::Object(mut fields) = fields else {
@@ -101,6 +106,9 @@ impl EventLog {
         let starts_run = kind == "transition"
             && (fields.get("from") == Some(&Value::Null)
                 || fields.get("source") == Some(&json!("retry")));
+        if starts_run {
+            fields.insert("decree_version".into(), json!(DECREE_VERSION));
+        }
         if starts_run || matches!(kind, "script" | "decision" | "received") {
             fields
                 .entry("span_id")
