@@ -4,7 +4,8 @@
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
 //! `.decree/schema/`, when it exists, from what `decree schema` would write, when `.decree/store/` holds
 //! what no machine's `store:` declares, when an `.env` file uses a variable that is not set,
-//! when a machine's `env_file` is missing, and when `.decree/.gitignore` does not list `.env*`.
+//! when a machine's `env_file` is missing, when `.decree/.gitignore` does not list `.env*`, and
+//! when a pending migration sorts before one that already ran.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -127,8 +128,8 @@ fn split_rule(message: &str) -> (String, Option<String>) {
 
 /// A file in `.decree/graph/` or `.decree/schema/` that differs from what `decree graph`
 /// or `decree schema` would write, one in `.decree/store/` that no machine declares, or a
-/// problem with an `.env` file that does not stop it being read.
-/// `decree check` warns about it without failing.
+/// problem with an `.env` file that does not stop it being read, or a pending migration
+/// that sorts before one that ran. `decree check` warns about it without failing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckWarning {
     /// Path relative to `.decree/`.
@@ -142,7 +143,8 @@ impl std::fmt::Display for CheckWarning {
     }
 }
 
-/// Every warning: stale graphs, then stale schemas, then the store, then the `.env` files.
+/// Every warning: stale graphs, then stale schemas, then the store, then the `.env` files,
+/// then inserted migrations.
 fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
     let mut out = Vec::new();
     // A machine that fails to load cannot be drawn; its error is reported as an error.
@@ -162,7 +164,28 @@ fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>,
     );
     out.extend(store_warnings(&project_root.join(DECREE_DIR))?);
     out.extend(resolve_env(project)?.1);
+    out.extend(inserted_migrations(project)?);
     Ok(out)
+}
+
+/// Each pending migration whose filename sorts before the last one in `processed.md`, in
+/// the byte order `process` runs them (docs/reference/messages.md, Migrations): it runs
+/// next, after work that sorts later. Inserting one is allowed, so this only warns.
+fn inserted_migrations(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
+    let Some(last) = read_processed(&project.decree_dir)?.pop_last() else {
+        return Ok(Vec::new());
+    };
+    Ok(project
+        .pending_migrations()?
+        .into_iter()
+        .filter(|name| *name < last)
+        .map(|name| CheckWarning {
+            file: format!("{}/{name}", layout::MIGRATIONS_DIR),
+            message: format!(
+                "migration {name} sorts before {last}, which already ran; it runs next"
+            ),
+        })
+        .collect())
 }
 
 /// What `.decree/store/` holds that no machine declares (docs/reference/machines.md, Store):

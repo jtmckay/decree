@@ -163,6 +163,102 @@ fn check_warns_about_undeclared_store_files_and_orphan_store_folders() {
     );
 }
 
+/// Write `migrations/<name>` for `hello` for each of `names`, and `processed.md` listing `ran`.
+fn queue_migrations(decree: &Path, names: &[&str], ran: &[&str]) {
+    for name in names {
+        fs::write(
+            decree.join("migrations").join(name),
+            "---\nmachine: hello\n---\n# x\n",
+        )
+        .unwrap();
+    }
+    let mut ledger = fs::read_to_string(decree.join("processed.md")).unwrap();
+    for name in ran {
+        ledger.push_str(&format!("{name}\n"));
+    }
+    fs::write(decree.join("processed.md"), ledger).unwrap();
+}
+
+/// Run `decree check --format <format>` in a copy of `examples/project` with `01-a.md` and
+/// `03-c.md` run and `02-b.md` pending: (exit code, stdout).
+fn check_inserted_migration(format: &str) -> (i32, String) {
+    let tmp = TempDir::new().unwrap();
+    copy_dir(&decree_dir(PROJECT), &tmp.path().join(".decree"));
+    queue_migrations(
+        &tmp.path().join(".decree"),
+        &["01-a.md", "02-b.md", "03-c.md"],
+        &["01-a.md", "03-c.md"],
+    );
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .args(["check", "--format", format])
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8(out.stdout).unwrap(),
+    )
+}
+
+const INSERTED: &str = "migration 02-b.md sorts before 03-c.md, which already ran; it runs next";
+
+/// A pending migration that sorts before one that ran is a warning, not an error
+/// (docs/reference/messages.md, Migrations): it runs next, after work that sorts later.
+#[test]
+fn check_warns_about_a_migration_inserted_before_ones_that_ran() {
+    let (code, stdout, stderr) = check_project(PROJECT, |decree| {
+        queue_migrations(
+            decree,
+            &["01-a.md", "02-b.md", "03-c.md"],
+            &["01-a.md", "03-c.md"],
+        );
+    });
+    assert_eq!((code, stdout.as_str()), (0, ""));
+    assert_eq!(
+        stderr,
+        format!("warning: migrations/02-b.md: {INSERTED}\n"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn check_json_lists_a_migration_inserted_before_ones_that_ran() {
+    let (code, stdout) = check_inserted_migration("json");
+    assert_eq!(code, 0, "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(doc["valid"], true);
+    assert_eq!(
+        doc["warnings"],
+        serde_json::json!([{ "file": "migrations/02-b.md", "message": INSERTED }])
+    );
+}
+
+#[test]
+fn check_sarif_lists_a_migration_inserted_before_ones_that_ran() {
+    let (code, stdout) = check_inserted_migration("sarif");
+    assert_eq!(code, 0, "{stdout}");
+    let log: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let results = log["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1, "{stdout}");
+    let w = &results[0];
+    assert_eq!(w["level"], "warning");
+    assert!(w.get("ruleId").is_none(), "{w}");
+    assert_eq!(w["message"]["text"], INSERTED);
+    assert_eq!(
+        w["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        ".decree/migrations/02-b.md"
+    );
+}
+
+/// A pending migration after every one that ran is the normal case: no warning.
+#[test]
+fn check_does_not_warn_about_a_migration_after_the_ones_that_ran() {
+    let (code, stdout, stderr) = check_project(PROJECT, |decree| {
+        queue_migrations(decree, &["01-a.md", "02-b.md"], &["01-a.md"]);
+    });
+    assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
+}
+
 /// A new machine makes `graph/` stale until `decree graph` rewrites it.
 #[test]
 fn check_warns_until_the_graph_is_rewritten() {

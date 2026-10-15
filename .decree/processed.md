@@ -107,3 +107,4 @@
 107-decree-stop.md
 108-machine-filter.md
 109-decree-version-in-events.md
+110-check-inserted-migrations.md

@@ -326,7 +326,7 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 
 ## Validation
 
-`decree check` runs every rule below, plus the message checks M1–M3 and the `.env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/`, when it exists, from what `decree schema` would write, or when `.decree/store/` holds what no machine's `store:` declares ([Store](#store)), or when an `.env` file uses a variable that is not set, a machine's `env_file` does not exist, or `.decree/.gitignore` does not list `.env*` while an `.env` file exists ([`.env` files](scripts.md#env-files)). `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
+`decree check` runs every rule below, plus the message checks M1–M3 and the `.env` check E1, and warns (without failing) when `.decree/graph/` is missing or differs from what `decree graph` would write, or `.decree/schema/`, when it exists, from what `decree schema` would write, or when `.decree/store/` holds what no machine's `store:` declares ([Store](#store)), or when an `.env` file uses a variable that is not set, a machine's `env_file` does not exist, or `.decree/.gitignore` does not list `.env*` while an `.env` file exists ([`.env` files](scripts.md#env-files)), or when a pending migration sorts before the last one in `processed.md` ([Migrations](messages.md#migrations-ordered-run-once-stop-on-error)). `process` and `daemon` run V1–V21 and E1 at start; any failure stops startup. Error format: `<path relative to .decree/>: <state path or line>: <message>`.
 
 | Rule | Check |
 | --- | --- |
