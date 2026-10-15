@@ -17,7 +17,7 @@ const OLD_TERMS: &[&str] = &[
     "beforeEach",
 ];
 
-/// The 12 commands of docs/reference/cli.md, `process --retry`, and `--version`.
+/// The 14 commands of docs/reference/cli.md, `process --retry`, and `--version`.
 const COMMANDS: &[&str] = &[
     "decree init",
     "decree process",
@@ -25,12 +25,14 @@ const COMMANDS: &[&str] = &[
     "decree check",
     "decree graph",
     "decree schema",
+    "decree skill",
     "decree emit",
     "decree status",
     "decree tail",
     "decree process --retry",
     "decree prune",
     "decree event",
+    "decree stop",
     "decree help",
     "decree --version",
 ];

@@ -250,19 +250,20 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree graph` | Write Mermaid diagrams to `.decree/graph/` |
 | `decree schema` | Write a local copy of the JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
 | `decree skill [--ai AI]` | Refresh the decree skill in `.claude/skills/decree/` or `.github/skills/decree/` after an upgrade |
-| `decree process [--dry-run]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order |
+| `decree process [--dry-run] [--machine M \| --exclude-machine M]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order; `--machine` runs only those machines, `--exclude-machine` all but those, so several processes can share one folder |
 | `decree process --retry [ID] [--state S]` | First continue a failed or interrupted run: `ID`, or the migration blocking the queue |
-| `decree daemon [--interval D] [--retry [ID]]` | The same passes plus cron, every `D` (default `2s`), until stopped: what unattended work runs under, since `process` exits while a run waits for a person |
+| `decree daemon [--interval D] [--retry [ID]] [--machine M \| --exclude-machine M]` | The same passes plus cron, every `D` (default `2s`), until stopped: what unattended work runs under, since `process` exits while a run waits for a person |
 | `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
 | `decree event ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
-| `decree status [ID]` | Runs by status and queued messages; one run's events |
+| `decree stop [-m NOTE]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the run instead |
+| `decree status [ID]` | What needs attention, runs by status and queued messages; one run's events |
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
 | `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`, `90s`); ship them to Loki first if you keep history |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree --version` | Print the version |
 
-`--format json` on `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema` and `process --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
+`--format json` on `check`, `status`, `emit`, `event`, `stop`, `prune`, `graph`, `schema`, `skill` and `process --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
 decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree process --retry`, because a kill may be deliberate. A failed migration blocks the ones after it the same way, and `decree process` prints the exact command that continues it.
 
@@ -270,8 +271,8 @@ decree never continues a run that was stopped by a signal or a crash: the run is
 
 ```text
 .decree/
-  .gitignore                      # inbox/, runs/ and store/
-  env                             # KEY=value for every script; the process environment wins
+  .gitignore                      # inbox/, runs/, store/, attention/, .env and other local files
+  .env                            # KEY=value for every script; the process environment wins
   machines/<name>.yml             # machines
   scripts/<name>                  # scripts shared by every machine
   scripts/<machine>/<name>        # a machine's own scripts, found first
@@ -281,6 +282,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   inbox/                          # queued messages
   cron/                           # message templates queued on a schedule
   runs/<id>/                      # one folder per run: message.md, events.jsonl, traces.jsonl, logs
+  attention/<id>.md               # what needs a person, with the command that continues it
   store/<machine>/                # what a machine keeps between runs ($DECREE_STORE), declared under its store:; never pruned
   graph/                          # written by decree graph; committed
   schema/v1/                      # optional local copy written by decree schema; not committed

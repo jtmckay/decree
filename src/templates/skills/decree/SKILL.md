@@ -87,8 +87,8 @@ appear only where a machine invokes `model` or `person`.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and
   `decree graph` after changing a machine. Commit `.decree/graph/`.
 - **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,
-  `decree status [<id>] --format json`, and `--format json` on `emit`, `event`, `prune`,
-  `graph`, `schema` and `process --dry-run` print one JSON document, described by
+  `decree status [<id>] --format json`, and `--format json` on `emit`, `event`, `stop`,
+  `prune`, `graph`, `schema`, `skill` and `process --dry-run` print one JSON document, described by
   `.decree/schema/v1/cli/<command>.schema.json`. Exit codes are the same as in text.
   `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
   `message`.
@@ -156,7 +156,6 @@ appear only where a machine invokes `model` or `person`.
 | `decree process [--dry-run] [--quiet] [--machine <m> \| --exclude-machine <m>]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order, printing each run's output. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>] [--retry [<id>]] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with cron, every `2s` by default; `--machine` and `--exclude-machine` as for `process`. |
-
 | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then what blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |

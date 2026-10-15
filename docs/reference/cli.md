@@ -1,6 +1,6 @@
 # CLI
 
-decree has 13 commands, plus `--version` (`-v`). `decree` with no command runs `decree process`. Every command takes `--no-color`; without it, colour follows `NO_COLOR` and whether the output is a terminal. Every command that reports something takes `--format <text|json>`, and `decree check` also `--format sarif` ([Machine-readable output](#machine-readable-output)).
+decree has 14 commands, plus `--version` (`-v`). `decree` with no command runs `decree process`. Every command takes `--no-color`; without it, colour follows `NO_COLOR` and whether the output is a terminal. Every command that reports something takes `--format <text|json>`, and `decree check` also `--format sarif` ([Machine-readable output](#machine-readable-output)).
 
 Every command except `init` and `help` works on the project whose `.decree/` is in the current directory or the nearest ancestor. Without one it fails with ``not inside a decree project (run `decree init` first)``. Errors are printed to stderr as `error: <message>`.
 
