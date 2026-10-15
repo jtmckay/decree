@@ -1,0 +1,37 @@
+name: Release
+
+# A pushed `v*` tag becomes a GitHub release with a static Linux x86-64 binary, its sha256 and
+# install.sh. A tag with a `-` (v0.5.0-beta.12) is a prerelease; install.sh still finds it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          bin=target/x86_64-unknown-linux-musl/release/decree
+          [ "$("${bin}" --version)" = "decree ${TAG#v}" ] || { echo "Cargo.toml version is not ${TAG}" >&2; exit 1; }
+          cp "${bin}" decree-x86_64-linux
+          sha256sum decree-x86_64-linux > decree-x86_64-linux.sha256
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pre=
+          case "${TAG}" in *-*) pre=--prerelease ;; esac
+          gh release create "${TAG}" ${pre} --verify-tag --title "decree ${TAG#v}" --generate-notes \
+            decree-x86_64-linux decree-x86_64-linux.sha256 install.sh

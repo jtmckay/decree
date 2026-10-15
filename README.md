@@ -32,8 +32,10 @@ Decisions are states of their own, cheapest first: a deterministic `check`, then
 ## Install
 
 ```bash
-cargo install decree
+curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh
 ```
+
+This installs the newest release's static Linux x86-64 binary to `~/.local/bin` (or `$DECREE_INSTALL_DIR`), with no sudo, after checking its sha256; run it again to update, or pin a version with `| sh -s -- v0.5.0-beta.11`. Elsewhere (macOS, ARM), build from a tag: `cargo install --git https://github.com/jtmckay/decree --tag v0.5.0-beta.11`. `cargo install decree` installs 0.4.2 from crates.io until 0.5.0 is published.
 
 decree runs on Linux and macOS.
 
