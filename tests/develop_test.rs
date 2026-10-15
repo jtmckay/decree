@@ -1760,6 +1760,135 @@ fn the_documented_escalation_ladder_runs_rounds_then_claude() {
     assert!(log.contains("| gaps/fill | claude |"), "{log}");
 }
 
+/// A project `init` wrote, with the consensus router of docs/routers.md, one stub router per
+/// router it asks (each picks the next of `picks`, after checking the consensus router's
+/// request offers it), and a machine `pick` whose `decide` state asks it, sending `unsure`
+/// to a person. `decree check` passes.
+fn consensus_project(picks: [&str; 3]) -> Project {
+    let p = Project::init();
+    let docs =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/routers.md")).unwrap();
+    let section = &docs[docs.find("## Consensus of several routers").unwrap()..];
+    let file = regex::Regex::new(r"(?s)`(\.decree/[^`]+)`[^\n]*\n\n```\w*\n(.*?)```\n").unwrap();
+    let mut written = Vec::new();
+    for c in file.captures_iter(section) {
+        let path = p.root().join(&c[1]);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if c[1].ends_with(".sh") {
+            write_script(&path, &c[2]);
+        } else {
+            fs::write(&path, &c[2]).unwrap();
+        }
+        written.push(c[1].to_string());
+    }
+    assert_eq!(
+        written,
+        [
+            ".decree/machines/consensus_router.yml",
+            ".decree/scripts/consensus_router/combine.sh"
+        ]
+    );
+    let machine = fs::read_to_string(p.root().join(&written[0])).unwrap();
+    let routers: Vec<String> = regex::Regex::new(r"machine: (\w+)")
+        .unwrap()
+        .captures_iter(&machine)
+        .map(|c| c[1].to_string())
+        .collect();
+    assert_eq!(routers.len(), picks.len(), "{routers:?}");
+    for (router, pick) in routers.iter().zip(picks) {
+        fs::write(
+            p.root().join(format!(".decree/machines/{router}.yml")),
+            format!(
+                "name: {router}\ndescription: Pick {pick}.\ninitial: ask\nstates:\n  \
+                 ask:\n    invoke: ask\n    transitions: {{ done: done }}\n  \
+                 done:   {{ final: true }}\n  failed: {{ final: true }}\n"
+            ),
+        )
+        .unwrap();
+        let dir = p.root().join(format!(".decree/scripts/{router}"));
+        fs::create_dir_all(&dir).unwrap();
+        write_script(
+            &dir.join("ask.sh"),
+            &format!(
+                "#!/usr/bin/env bash\nset -euo pipefail\n\
+                 request=${{DECREE_REQUEST:-$DECREE_PARENT_RUN_DIR/request.json}}\n\
+                 reply=${{DECREE_REPLY:-$DECREE_RUN_DIR/reply.json}}\n\
+                 jq -e --arg pick {pick} '.options | map(.event) | index($pick)' \"$request\" > /dev/null\n\
+                 jq -n --arg pick {pick} '{{event: $pick}}' > \"$reply\"\n"
+            ),
+        );
+    }
+    let option = |e: &str| format!("      {e}: {{ target: done, description: The letter {e}. }}\n");
+    let options: String = ["a", "b", "c"].iter().map(|e| option(e)).collect();
+    fs::write(
+        p.root().join(".decree/machines/pick.yml"),
+        format!(
+            "name: pick\ndescription: Pick a letter.\ninitial: decide\nstates:\n  \
+             decide:\n    invoke:\n      model:\n        question: Which letter?\n        \
+             router: consensus_router\n        min_confidence: 0.6\n    transitions:\n{options}      \
+             unsure: ask_person\n  \
+             ask_person:\n    invoke:\n      person:\n        question: Which letter?\n        \
+             ask: tell\n    transitions:\n{options}  \
+             done:   {{ final: true }}\n  failed: {{ final: true }}\n"
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(p.root().join(".decree/scripts/pick")).unwrap();
+    write_script(
+        &p.root().join(".decree/scripts/pick/tell.sh"),
+        "#!/usr/bin/env bash\necho \"asked $DECREE_WAIT_ID\"\n",
+    );
+    p.decree(&["graph"]).assert().success();
+    let out = p.decree(&["check"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    p
+}
+
+/// The consensus router of docs/routers.md, with `quorum` 2: two of three routers picking
+/// `a` is the pick, at a confidence of 2/3.
+#[test]
+fn the_documented_consensus_router_takes_the_quorums_pick() {
+    let p = consensus_project(["a", "a", "b"]);
+    let id = p.run_on("pick", &[]);
+    assert_eq!(p.outcome(&id), "done", "{:?}", path(&p, &id));
+    assert_eq!(path(&p, &id)[1..], ["decide -a-> done"]);
+    let decision = p
+        .events(&id)
+        .into_iter()
+        .find(|e| e["type"] == "decision")
+        .unwrap();
+    assert_eq!(decision["router"], "consensus_router");
+    assert_eq!(decision["pick"], "a");
+    let confidence = decision["confidence"].as_f64().unwrap();
+    assert!((confidence - 2.0 / 3.0).abs() < 1e-9, "{decision}");
+}
+
+/// Three routers picking `a`, `b` and `c` is a split: the state's event is `unsure`, and a
+/// person is asked.
+#[test]
+fn the_documented_consensus_router_sends_a_split_to_a_person() {
+    let p = consensus_project(["a", "b", "c"]);
+    let id = p.run_on("pick", &[]);
+    assert_eq!(path(&p, &id)[1..], ["decide -unsure-> ask_person"]);
+    let decision = p
+        .events(&id)
+        .into_iter()
+        .find(|e| e["type"] == "decision")
+        .unwrap();
+    assert_eq!(decision["confidence"], 0.0, "{decision}");
+    assert!(
+        decision["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("no 2 of 3 routers agree"),
+        "{decision}"
+    );
+    let events = p.events(&id);
+    let last = events.last().unwrap();
+    assert_eq!(last["type"], "waiting", "{events:?}");
+    assert_eq!(last["state"], "ask_person");
+}
+
 /// The `release` kind in docs/reference/scripts.md, run by `lib/infra/run.sh apply` from a
 /// local archive: installed when the sha256 in its source matches, refused when it does not
 /// or when the source has none.

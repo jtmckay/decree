@@ -66,7 +66,9 @@ appear only where a machine invokes `model` or `person`.
 - **Route with a typed router.** For a `model` decision that routes work (which model, which
   path), point `router:` at a typed router (a classifier such as GLiNER2.5-Decide, or a model
   constrained by `reply_schema`): it cannot answer outside the options and costs little. Keep
-  untyped models (`claude -p`) for the work itself.
+  untyped models (`claude -p`) for the work itself. To combine several routers by a quorum, use
+  the [consensus recipe](https://github.com/jtmckay/decree/blob/main/docs/routers.md#consensus-of-several-routers)
+  (a router machine, no new decision kind).
 - **Queue follow-up work with `decree emit`**, never by writing into `.decree/inbox/` by hand
   from a script. The emitting state must list the target in `emits:`.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and

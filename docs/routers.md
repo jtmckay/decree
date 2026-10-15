@@ -315,3 +315,95 @@ worth_asking:                      # at least 0.4: ask a person; lower: set asid
     check: { confidence: large_model, at_least: 0.4 }
   transitions: { true: ask_person, false: set_aside }
 ```
+
+## Consensus of several routers
+
+A router can ask several routers and reply with what enough of them agree on: all of them, a majority, or a set number. It is a router machine like any other, so it needs nothing new in decree: each router it asks is a child machine (`invoke: { machine: … }`), and a script combines their replies into its own. A split goes to a person through the calling state's `min_confidence` and `unsure`.
+
+`.decree/machines/consensus_router.yml`, which asks three routers in turn, then combines their picks:
+
+```yaml
+# Graph: ../graph/consensus_router.md
+name: consensus_router
+description: Ask three routers the same request, and reply with the pick at least quorum of them agree on.
+data:
+  quorum: { type: int, default: 2 }  # how many routers must pick the same option
+initial: gliner
+states:
+  gliner:                          # each router reads this run's request.json and writes its own reply.json
+    invoke: { machine: gliner_router }
+    transitions: { done: llm }
+  llm:
+    invoke: { machine: llm_router }
+    transitions: { done: jev }
+  jev:
+    invoke: { machine: jev_router }
+    transitions: { done: combine }
+  combine:                         # writes $DECREE_REPLY from the three replies
+    invoke: combine
+    transitions: { done: done }
+  done:   { final: true }
+  failed: { final: true }
+```
+
+A router asked this way is a child run, not a router run, so decree does not set `DECREE_REQUEST` and `DECREE_REPLY` for it ([Environment](reference/scripts.md#environment)). Its script reads the consensus router's request from its parent's folder and writes `reply.json` in its own, so the same router works on its own and as one of several. In `ask_gliner.sh`, for example, the first two lines name the files, and the rest uses `$request` and `$reply` in their place:
+
+```bash
+request=${DECREE_REQUEST:-$DECREE_PARENT_RUN_DIR/request.json}   # asked by consensus_router: its request
+reply=${DECREE_REPLY:-$DECREE_RUN_DIR/reply.json}                # asked by consensus_router: read by combine
+```
+
+`.decree/scripts/consensus_router/combine.sh` finds each router's run from the `waiting` events in its own `events.jsonl` ([events.jsonl](reference/runs.md#eventsjsonl)), counts their picks over the request's options, and writes the reply ([The contract](#the-contract)):
+
+```bash
+#!/usr/bin/env bash
+# consensus_router's last step: the pick at least `quorum` routers agree on, as its own reply.
+set -euo pipefail
+runs=$(dirname "$DECREE_RUN_DIR")
+# The child run of each asking state: the last one per state, after a retry.
+children=$(jq -rs 'map(select(.type == "waiting" and .child)) | group_by(.state) | map(last.child) | .[]' \
+  "$DECREE_RUN_DIR/events.jsonl")
+picks=$(for child in $children; do jq '.event' "$runs/$child/reply.json"; done | jq -s .)
+jq --argjson picks "$picks" --argjson quorum "$DECREE_DATA_QUORUM" '
+  ($picks | length) as $n
+  | [.options[].event as $o | {event: $o, count: ([$picks[] | select(. == $o)] | length)}] as $tally
+  | ($tally | max_by(.count)) as $top
+  | ($top.count >= $quorum and ([$tally[] | select(.count == $top.count)] | length) == 1) as $agreed
+  | {reason: (if $agreed then "\($top.count) of \($n) routers picked \($top.event)"
+              else "no \($quorum) of \($n) routers agree: \($picks | join(", "))" end),
+     event: $top.event,
+     confidence: (if $agreed then $top.count / $n else 0 end),
+     probabilities: ($tally | map({(.event): (.count / $n)}) | add)}
+' "$DECREE_REQUEST" > "$DECREE_REPLY"
+jq -r '.reason' "$DECREE_REPLY"   # for the log only
+```
+
+The reply's `confidence` is the share of routers that agreed, and `0` on a split: fewer than `quorum` picked the same option, or two options tied. The reply's `event` must still be one of the options, so a split names the most common pick, with confidence `0`. A `model` state that uses it sets `min_confidence` above `0` and at most `quorum` over the number of routers (`2` of `3` agreeing is `0.67`), and sends `unsure` to a person:
+
+```yaml
+size_up:
+  invoke:
+    model:
+      question: How much reasoning does this change need?
+      router: consensus_router
+      min_confidence: 0.6          # 2 of 3 routers agree
+      output: describe
+  transitions:
+    small:
+      target: local_first
+      description: "A local, mechanical change: a typo, a rename, a config value, one small function with a clear spec."
+    large:
+      target: claude_only
+      description: Design, several files, unclear requirements, concurrency or security.
+    unsure: ask_person             # a split
+    error: claude_only
+```
+
+- **All agree**: `quorum` equal to the number of routers. **A majority**: more than half of them.
+- **More or fewer routers**: one state per router, in a line before `combine`; `combine` counts however many there are.
+- **A router that fails** ends `consensus_router` in `failed`, so the calling state's event is `error`, as for any router. A router's script that checks its own pick against the options (as `ask_claude` does) keeps a pick outside them from counting; `combine` counts only the request's options, and decree checks the reply either way.
+- Each router's `confidence` is not used: a pick counts once whatever its score. Each router still calls its own model, so the cost is the sum of theirs.
+
+### Where it does not apply
+
+A script step that wants a second opinion, such as a `verify` that reads `VERDICT:` from an agent, is not a `model` decision and has no router. Its second opinion stays in the script: it calls `ai` twice, with a different `ai_cli` or model for each call, and names `pass` only if both replies say `VERDICT: pass`. Which agents to ask, and how to combine them, is a choice of how that one step does its job, not of which step runs next ([Scripts choose how](../src/templates/skills/decree/SKILL.md)).
