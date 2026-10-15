@@ -10,6 +10,9 @@
 //! `hold` file), or any `.md` file decree cannot read as one of its own, holds the queue:
 //! `process` and `daemon` start and continue no runs until it is gone. decree never rewrites
 //! or deletes a file it did not write.
+//!
+//! `decree stop` writes the one file that is not about a run, `manual-stop.md`
+//! (`kind: manual-stop`): it holds the queue until a person deletes it.
 
 use std::fs;
 use std::io;
@@ -27,6 +30,15 @@ use crate::message::{lock_state, run_ids, write_replace, LockState, Message};
 
 /// The `kind` of a file decree writes for a run.
 pub const KIND_RUN: &str = "run";
+
+/// The `kind` of the file `decree stop` writes.
+pub const KIND_MANUAL_STOP: &str = "manual-stop";
+
+/// The file `decree stop` writes in `.decree/attention/`.
+pub const MANUAL_STOP_FILE: &str = "manual-stop.md";
+
+/// The frontmatter keys of the file `decree stop` writes, in the order it writes them.
+const STOP_KEYS: [&str; 3] = ["kind", "since", "holds"];
 
 /// The frontmatter keys of a run's attention file, in the order decree writes them
 /// (`schema/v1/attention.schema.json`).
@@ -119,6 +131,10 @@ impl Entry {
             ""
         };
         match &self.frontmatter {
+            Ok(fm) if fm.get("kind").and_then(Value::as_str) == Some(KIND_MANUAL_STOP) => {
+                let since = fm.get("since").and_then(Value::as_str).unwrap_or_default();
+                format!("{}: {holds}`decree stop` since {since}", self.path())
+            }
             Ok(fm) => {
                 let get = |k: &str| fm.get(k).and_then(Value::as_str).unwrap_or_default();
                 format!(
@@ -185,39 +201,101 @@ pub fn parse(text: &str) -> Result<Map<String, Value>, String> {
     }
 }
 
-/// Check `value` against `attention.schema.json`: an object with exactly the keys in
-/// `KEYS`, each of its type.
+/// Check `value` against `attention.schema.json`: a run's file, an object with exactly the
+/// keys in `KEYS`, or the file `decree stop` writes, with exactly those in `STOP_KEYS`; each
+/// key of its type.
 pub fn validate(value: &Value) -> Result<(), String> {
     let Value::Object(map) = value else {
         return Err("not a mapping".to_string());
     };
-    if let Some(key) = map.keys().find(|k| !KEYS.contains(&k.as_str())) {
+    let kind = map.get("kind").and_then(Value::as_str);
+    let keys: &[&str] = match kind {
+        Some(KIND_MANUAL_STOP) => &STOP_KEYS,
+        _ => &KEYS,
+    };
+    if let Some(key) = map.keys().find(|k| !keys.contains(&k.as_str())) {
         return Err(format!("unknown key `{key}`"));
     }
-    if let Some(key) = KEYS.iter().find(|k| !map.contains_key(**k)) {
+    if let Some(key) = keys.iter().find(|k| !map.contains_key(**k)) {
         return Err(format!("missing `{key}`"));
     }
-    for key in ["run", "machine", "message", "state"] {
-        match map.get(key) {
-            Some(Value::String(s)) if !s.is_empty() => {}
-            _ => return Err(format!("`{key}` is not a non-empty string")),
+    if kind != Some(KIND_MANUAL_STOP) {
+        for key in ["run", "machine", "message", "state"] {
+            match map.get(key) {
+                Some(Value::String(s)) if !s.is_empty() => {}
+                _ => return Err(format!("`{key}` is not a non-empty string")),
+            }
         }
-    }
-    if map.get("kind").and_then(Value::as_str) != Some(KIND_RUN) {
-        return Err(format!("`kind` is not `{KIND_RUN}`"));
-    }
-    let status = map.get("status").and_then(Value::as_str);
-    if !status.is_some_and(|s| STATUSES.contains(&s)) {
-        return Err(format!("`status` is not one of {}", STATUSES.join(", ")));
+        if kind != Some(KIND_RUN) {
+            return Err(format!(
+                "`kind` is not `{KIND_RUN}` or `{KIND_MANUAL_STOP}`"
+            ));
+        }
+        let status = map.get("status").and_then(Value::as_str);
+        if !status.is_some_and(|s| STATUSES.contains(&s)) {
+            return Err(format!("`status` is not one of {}", STATUSES.join(", ")));
+        }
     }
     let since = map.get("since").and_then(Value::as_str);
     if !since.is_some_and(|s| DateTime::parse_from_rfc3339(s).is_ok()) {
         return Err("`since` is not an RFC 3339 time".to_string());
     }
-    if !map.get("holds").is_some_and(Value::is_boolean) {
-        return Err("`holds` is not `true` or `false`".to_string());
+    match (kind, map.get("holds")) {
+        (Some(KIND_MANUAL_STOP), Some(Value::Bool(true))) => {}
+        (Some(KIND_MANUAL_STOP), _) => return Err("`holds` is not `true`".to_string()),
+        (_, Some(Value::Bool(_))) => {}
+        _ => return Err("`holds` is not `true` or `false`".to_string()),
     }
     Ok(())
+}
+
+/// What `decree stop` did.
+#[derive(Debug, PartialEq)]
+pub enum Stopped {
+    /// It wrote `manual-stop.md`.
+    Written,
+    /// `manual-stop.md` was there already, and is left as it is.
+    Exists,
+}
+
+/// `decree stop [-m <note>]`: write `.decree/attention/manual-stop.md`, which holds the
+/// queue until a person deletes it, unless it exists. The file appears whole or not at all
+/// (a temp file, then a hard link that fails if the file exists), so two `stop`s at once
+/// write one and the first `since` stays.
+pub fn stop(
+    project_root: &Path,
+    note: Option<&str>,
+    now: DateTime<chrono::Utc>,
+) -> io::Result<Stopped> {
+    let dir = dir(project_root);
+    let path = dir.join(MANUAL_STOP_FILE);
+    if path.exists() {
+        return Ok(Stopped::Exists);
+    }
+    fs::create_dir_all(&dir)?;
+    let since = crate::events::timestamp(now);
+    let note = note
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(|n| format!("\n\n{n}"))
+        .unwrap_or_default();
+    let text = format!(
+        "---\nkind: {KIND_MANUAL_STOP}\nsince: {since}\nholds: true\n---\n# decree stop\n\n\
+         `decree stop` was run at {since}.{note}\n\n\
+         Runs going now finish their current step loop, each ending in a final state or \
+         waiting; no new run starts and no run continues while this file exists. Delete this \
+         file to resume; a daemon goes on without a restart:\n\n    \
+         rm {DECREE_DIR}/{ATTENTION_DIR}/{MANUAL_STOP_FILE}\n"
+    );
+    let temp = dir.join(format!(".{MANUAL_STOP_FILE}.{}.tmp", std::process::id()));
+    fs::write(&temp, text)?;
+    let linked = fs::hard_link(&temp, &path);
+    let removed = fs::remove_file(&temp);
+    match linked {
+        Ok(()) => removed.map(|()| Stopped::Written),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(Stopped::Exists),
+        Err(e) => Err(e),
+    }
 }
 
 /// What `process` and `daemon` print, and stop for, while a file holds the queue: each
@@ -614,6 +692,59 @@ mod tests {
         remove(tmp.path(), "01-a").unwrap();
         assert!(!dir.join("01-a.md").exists());
         remove(tmp.path(), "01-a").unwrap();
+    }
+
+    #[test]
+    fn test_validate_accepts_a_manual_stop_and_names_what_is_wrong() {
+        let stop =
+            || json!({ "kind": "manual-stop", "since": "2026-10-15T08:09:00.000Z", "holds": true });
+        assert_eq!(validate(&stop()), Ok(()));
+        let mut v = stop();
+        v["holds"] = json!(false);
+        assert_eq!(validate(&v).unwrap_err(), "`holds` is not `true`");
+        let mut v = stop();
+        v["run"] = json!("01-a");
+        assert_eq!(validate(&v).unwrap_err(), "unknown key `run`");
+        let mut v = stop();
+        v.as_object_mut().unwrap().remove("since");
+        assert_eq!(validate(&v).unwrap_err(), "missing `since`");
+    }
+
+    #[test]
+    fn test_stop_writes_a_file_that_holds_and_keeps_the_first() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let first = DateTime::parse_from_rfc3339("2026-10-15T08:09:00Z")
+            .unwrap()
+            .to_utc();
+        assert_eq!(
+            stop(tmp.path(), Some("release freeze"), first).unwrap(),
+            Stopped::Written
+        );
+        let path = dir(tmp.path()).join(MANUAL_STOP_FILE);
+        let text = fs::read_to_string(&path).unwrap();
+        let fm = parse(&text).unwrap();
+        assert_eq!(fm["kind"], "manual-stop");
+        assert_eq!(fm["since"], "2026-10-15T08:09:00.000Z");
+        assert!(text.contains("\n\nrelease freeze\n\n"), "{text}");
+        assert!(
+            text.contains("rm .decree/attention/manual-stop.md\n"),
+            "{text}"
+        );
+        let entries = list(tmp.path()).unwrap();
+        assert_eq!(entries.len(), 1, "no temp file is left");
+        assert!(entries[0].holds());
+        assert_eq!(
+            entries[0].summary(),
+            ".decree/attention/manual-stop.md: holds the queue: `decree stop` since \
+             2026-10-15T08:09:00.000Z"
+        );
+
+        let later = first + chrono::Duration::hours(1);
+        assert_eq!(stop(tmp.path(), None, later).unwrap(), Stopped::Exists);
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        // Nothing decree does for a run named `manual-stop` touches it.
+        remove(tmp.path(), "manual-stop").unwrap();
+        assert!(path.exists());
     }
 
     #[test]

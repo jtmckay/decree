@@ -377,3 +377,139 @@ fn prune_deletes_the_file_of_the_run_it_deletes() {
     assert!(!p.path("runs/run-a").exists());
     assert!(!p.attention("run-a").exists());
 }
+
+/// Runs `decree stop` from inside its run, as a person would while it goes.
+const STOPPER: &str = "\
+name: stopper
+description: Stop the queue, then finish.
+initial: work
+states:
+  work:
+    invoke: stop_queue
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+#[test]
+fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
+    let p = Project::new();
+    p.write("machines/stopper.yml", STOPPER);
+    write_script(
+        &p.path("scripts/stop_queue"),
+        "#!/bin/sh\n\"${DECREE}\" stop -m \"release freeze\"\n",
+    );
+    p.write("inbox/1-a.md", "---\nid: run-a\nmachine: stopper\n---\n");
+    p.write("inbox/2-b.md", "---\nid: run-b\nmachine: hello\n---\n");
+
+    let (code, _, stderr) = p.output(&["process"]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert_eq!(
+        p.last_event("run-a")["state"],
+        "done",
+        "the run is not interrupted"
+    );
+    assert!(p.path("inbox/2-b.md").exists(), "no new run starts");
+    assert_eq!(p.runs(), 1);
+    assert!(
+        stderr.contains(
+            "holds the queue; do what it says, or delete it:\n\
+             .decree/attention/manual-stop.md:\n# decree stop\n"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("\nrelease freeze\n"), "{stderr}");
+    let path = p.attention("manual-stop");
+    let fm = frontmatter(&path);
+    assert_eq!(fm["kind"], "manual-stop");
+    assert_eq!(fm["holds"], true);
+    let text = fs::read_to_string(&path).unwrap();
+
+    // `status` lists it, first, in text and JSON.
+    let (_, status, _) = p.output(&["status"]);
+    assert!(
+        status.starts_with(
+            "Attention: .decree/attention/: 1 file(s)\n  .decree/attention/manual-stop.md: \
+             holds the queue: `decree stop` since "
+        ),
+        "{status}"
+    );
+    let (_, json, _) = p.output(&["status", "--format", "json"]);
+    let doc: Value = serde_json::from_str(&json).unwrap();
+    let validator = schema::validator(schema::CLI_STATUS_SCHEMA);
+    assert_eq!(schema::errors(&validator, &doc), Vec::<String>::new());
+    assert_eq!(doc["attention"][0]["kind"], "manual-stop");
+    assert_eq!(
+        doc["attention"][0]["path"],
+        ".decree/attention/manual-stop.md"
+    );
+
+    // A new `process` starts nothing; a retried run waits as `pending`, and the file stays.
+    let (code, _, stderr) = p.output(&["process"]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert_eq!(p.runs(), 1);
+    let (code, stdout, stderr) = p.output(&["process", "--retry", "run-a"]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(stdout.contains("run run-a continues in `work`"), "{stdout}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    let (_, status, _) = p.output(&["status", "run-a", "--format", "json"]);
+    let doc: Value = serde_json::from_str(&status).unwrap();
+    assert_eq!(doc["status"], "pending");
+
+    // Deleting it resumes: the next `process` runs the queue.
+    fs::remove_file(&path).unwrap();
+    let (code, _, stderr) = p.output(&["process"]);
+    // run-a stops the queue again as it is retried; it ends in `done` first.
+    assert_eq!(code, Some(1), "{stderr}");
+    assert_eq!(p.last_event("run-a")["state"], "done");
+    fs::remove_file(&path).unwrap();
+    let (code, _, stderr) = p.output(&["process"]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(p.last_event("run-b")["state"], "done");
+    assert!(!p.path("inbox/2-b.md").exists());
+}
+
+#[test]
+fn decree_stop_keeps_the_first_file_and_prints_json() {
+    let p = Project::new();
+    let (code, stdout, stderr) = p.output(&["stop"]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "stopping after the current run; delete .decree/attention/manual-stop.md to resume\n"
+    );
+    let path = p.attention("manual-stop");
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains("`decree stop` was run at ") && text.contains("Delete this file to resume"),
+        "{text}"
+    );
+
+    let (code, stdout, _) = p.output(&["stop", "-m", "again"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        stdout,
+        "already stopped: .decree/attention/manual-stop.md exists; delete it to resume\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        text,
+        "the first `since` stays"
+    );
+
+    let (code, json, _) = p.output(&["stop", "--format", "json"]);
+    assert_eq!(code, Some(0));
+    let doc: Value = serde_json::from_str(&json).unwrap();
+    let validator = schema::validator(schema::CLI_STOP_SCHEMA);
+    assert_eq!(schema::errors(&validator, &doc), Vec::<String>::new());
+    assert_eq!(doc["attention"], ".decree/attention/manual-stop.md");
+
+    // Outside a project it fails, and writes nothing.
+    let outside = TempDir::new().unwrap();
+    cargo_bin_cmd!("decree")
+        .current_dir(outside.path())
+        .arg("stop")
+        .assert()
+        .code(1);
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+}

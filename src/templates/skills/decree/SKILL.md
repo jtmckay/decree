@@ -122,7 +122,9 @@ appear only where a machine invokes `model` or `person`.
   to answer; never write one from a machine's script. A step whose failure must stop every
   run writes `$DECREE_RUN_DIR/hold` (what `keep` does), and decree turns it into a holding
   attention file. Any `.md` file a person or another tool puts in the folder halts the queue
-  until it is deleted.
+  until it is deleted. To pause the queue, `decree stop`: the runs going now finish, and
+  nothing more runs until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the
+  run instead.
 - **Never delete run folders to clean up**; they are the record. Use
   `decree prune --older-than <age>`.
 - Do not commit `.decree/inbox/`, `.decree/runs/`, `.decree/store/` or `.decree/cache/`.
@@ -143,6 +145,7 @@ appear only where a machine invokes `model` or `person`.
 | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then what blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
+| `decree stop [-m <note>]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted (no restart needed). Ctrl-C interrupts the run instead. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 
 `process` exits once nothing more can run, leaving `person` waits and `timeout`s for the next

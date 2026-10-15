@@ -984,7 +984,7 @@ fn machine_prune_and_daemon_take_the_same_durations() {
 #[test]
 fn commands_without_a_project_fail() {
     let tmp = TempDir::new().unwrap();
-    for cmd in ["process", "check", "graph", "status"] {
+    for cmd in ["process", "check", "graph", "status", "stop"] {
         cargo_bin_cmd!("decree")
             .current_dir(tmp.path())
             .arg(cmd)
@@ -1240,6 +1240,51 @@ fn daemon_runs_nothing_while_an_attention_file_holds() {
         || p.events(&id).last().unwrap()["state"] != "done"
     {
         assert!(Instant::now() < deadline, "run {id} never ran");
+        thread::sleep(Duration::from_millis(50));
+    }
+    // SAFETY: sends SIGTERM to the daemon.
+    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        wait_exit(&mut daemon, Duration::from_secs(15)).code(),
+        Some(0)
+    );
+}
+
+/// `decree stop` during a daemon's run: the run finishes, the next queued message waits
+/// while `manual-stop.md` exists, and runs once it is deleted, without a restart.
+#[test]
+fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
+    let p = Project::init();
+    p.machine("flaky", FLAKY);
+    p.script("work", FLAKY_WORK);
+    p.machine(
+        "stopper",
+        &FLAKY
+            .replace("name: flaky", "name: stopper")
+            .replace("invoke: work", "invoke: stop_queue"),
+    );
+    p.script("stop_queue", "#!/bin/sh\n\"${DECREE}\" stop\n");
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+    let first = p.emit("stopper", "Stop.\n");
+    let second = p.emit("flaky", "Works.\n");
+    let stop = p.decree_dir().join("attention/manual-stop.md");
+
+    let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !p.run_dir(&first).join("events.jsonl").exists()
+        || p.events(&first).last().unwrap()["state"] != "done"
+    {
+        assert!(Instant::now() < deadline, "run {first} never finished");
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(stop.exists());
+    thread::sleep(Duration::from_millis(1500));
+    assert!(!p.run_dir(&second).exists(), "claimed while held");
+    fs::remove_file(&stop).unwrap();
+    while !p.run_dir(&second).join("events.jsonl").exists()
+        || p.events(&second).last().unwrap()["state"] != "done"
+    {
+        assert!(Instant::now() < deadline, "run {second} never ran");
         thread::sleep(Duration::from_millis(50));
     }
     // SAFETY: sends SIGTERM to the daemon.

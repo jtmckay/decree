@@ -43,6 +43,9 @@ Commands:
                               The same passes plus cron, every D (default 2s),
                               until stopped; for unattended work, as process
                               exits while a run waits for a reply
+  decree stop [-m NOTE]       Let the runs going now finish, then hold the
+                              queue: writes .decree/attention/manual-stop.md;
+                              delete it to resume (Ctrl-C interrupts the run)
   decree emit --machine M [--param K=V]...
                               Queue a message for M; the body is read from
                               stdin. Prints its id
@@ -60,7 +63,7 @@ Commands:
   decree help                 This help text
   decree --version            Print the version
 
-  --format json on check, status, emit, event, prune, graph, schema, skill
+  --format json on check, status, emit, event, stop, prune, graph, schema, skill
   and process --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 

@@ -90,13 +90,13 @@
               "path": { "type": "string", "description": "The file, from the project root: `.decree/attention/<name>.md`." },
               "holds": { "type": "boolean", "description": "Whether the file holds the queue." },
               "error": { "type": "string", "description": "Why a file decree cannot read holds: `no frontmatter`, `invalid frontmatter: <error>` or `cannot be read: <error>`." },
-              "kind": { "const": "run", "description": "As in attention.schema.json: the file is about a run." },
+              "kind": { "enum": ["run", "manual-stop"], "description": "As in attention.schema.json: the file is about a run, or `decree stop` wrote it." },
               "run": { "type": "string", "description": "The run's id." },
               "machine": { "type": "string", "description": "The run's machine." },
               "message": { "type": "string", "description": "The migration's file name, or `inbox`." },
               "status": { "enum": ["failed", "interrupted", "waiting"], "description": "Why the run needs a person." },
               "state": { "type": "string", "description": "The state the run is in." },
-              "since": { "type": "string", "description": "When the run's status changed, RFC 3339 UTC." }
+              "since": { "type": "string", "description": "When the run's status changed, or when `decree stop` wrote the file, RFC 3339 UTC." }
             },
             "additionalProperties": false
           }

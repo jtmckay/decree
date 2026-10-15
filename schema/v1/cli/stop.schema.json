@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/stop.schema.json",
+  "title": "decree stop --format json",
+  "description": "What `decree stop --format json` prints on stdout: the attention file that holds the queue, whether this command wrote it or it was there already. On failure nothing is printed on stdout; the error goes to stderr and the exit code is 1. Reference: docs/reference/cli.md, Machine-readable output.",
+  "type": "object",
+  "required": [
+    "attention"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "attention": {
+      "const": ".decree/attention/manual-stop.md",
+      "description": "The file, relative to the project root; delete it to resume."
+    }
+  },
+  "examples": [
+    {
+      "attention": ".decree/attention/manual-stop.md"
+    }
+  ]
+}

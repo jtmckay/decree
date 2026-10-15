@@ -152,6 +152,18 @@ pub enum Command {
         quiet: bool,
     },
 
+    /// Hold the queue: runs going now finish, no new run starts until
+    /// .decree/attention/manual-stop.md is deleted
+    Stop {
+        /// Note, written into the file
+        #[arg(short = 'm', value_name = "NOTE")]
+        note: Option<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
     /// Runs by status and queued messages; with an id, one run's events
     Status {
         /// Run id

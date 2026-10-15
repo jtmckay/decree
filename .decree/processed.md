@@ -104,3 +104,4 @@
 104-decree-skill.md
 105-hosted-schemas.md
 106-attention-directory.md
+107-decree-stop.md

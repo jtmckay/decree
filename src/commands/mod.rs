@@ -10,6 +10,7 @@ pub(crate) mod report;
 pub mod schema;
 pub mod skill;
 pub mod status;
+pub mod stop;
 pub mod tail;
 
 use crate::error::DecreeError;
