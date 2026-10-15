@@ -336,6 +336,52 @@ fn nothing_mentions_the_removed_spec() {
     );
 }
 
+/// Messages describe the outcome, not the steps: no file outside the recorded history (the
+/// repository's migrations and runs, and the test fixtures) has a `## Requirements` heading.
+#[test]
+fn no_message_has_a_requirements_heading() {
+    let root = repo();
+    let kept = [
+        root.join(".decree/migrations"),
+        root.join(".decree/runs"),
+        root.join("tests/fixtures"),
+    ];
+    let hits: Vec<String> = repository_files()
+        .iter()
+        .filter(|f| !kept.iter().any(|k| f.starts_with(k)))
+        .filter(|f| {
+            std::fs::read_to_string(f)
+                .is_ok_and(|text| text.lines().any(|l| l.starts_with("## Requirements")))
+        })
+        .map(|f| f.strip_prefix(&root).unwrap().display().to_string())
+        .collect();
+    assert!(hits.is_empty(), "files with `## Requirements`: {hits:?}");
+}
+
+/// The reference docs carry the rule beside "one concern per migration", the body's shape and
+/// migration 110's step rewritten as an outcome.
+#[test]
+fn the_messages_reference_says_describe_the_outcome_not_the_steps() {
+    let text = std::fs::read_to_string(repo().join("docs/reference/messages.md")).unwrap();
+    let section = text
+        .split("## Writing a message")
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    for want in [
+        "**One concern per migration**",
+        "**Describe the outcome, not the steps.**",
+        "if a different correct implementation would fail it, it is a step",
+        "`## Overview` (why), `## Outcome` (what is true afterwards), `## Constraints`",
+        "**Step:** The warning has its own rule id, following the existing warnings.",
+        "**Outcome:** `decree check` shows this warning and still exits 0, in text, JSON and SARIF.",
+    ] {
+        assert!(section.contains(want), "{want:?} not in:\n{section}");
+    }
+}
+
 #[test]
 fn slugs_follow_github() {
     assert_eq!(

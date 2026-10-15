@@ -6,10 +6,18 @@ state: done
 ---
 # Rate-limit /api/upload
 
-## Requirements
+## Overview
 
-Limit each API key to 10 uploads per minute on `POST /api/upload`. Over the
-limit, respond 429 with a `Retry-After` header in seconds.
+One API key can flood uploads and slow the service for every other key.
+
+## Outcome
+
+Each API key makes at most 10 uploads per minute on `POST /api/upload`. Over
+the limit, the response is 429 with a `Retry-After` header in seconds.
+
+## Constraints
+
+- Other endpoints respond as before.
 
 ## Acceptance Criteria
 

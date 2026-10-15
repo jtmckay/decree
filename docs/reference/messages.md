@@ -14,8 +14,31 @@ params:
   max_rounds: 3
 ---
 # Add rate limiting to /api/upload
-Given ... When ... Then ...
+
+## Overview
+## Outcome
+## Constraints
+## Acceptance Criteria
 ```
+
+## Writing a message
+
+decree never reads the body: a message with any headings is valid and runs the same. The body is a spec for whoever does the work, usually an agent, and these rules keep it one.
+
+- **One concern per migration**, day-sized: implementable in one agent session and reviewable on its own.
+- **Describe the outcome, not the steps.** A message says what is true when it is done and why; the agent chooses how. A message that says *how* ties the agent to the implementation its author pictured, and when the code differs, the run stops or the agent forces the plan. This is declarative configuration, as `infra` declares a desired state and `apply` reaches it, like Ansible and Terraform; the acceptance criteria are BDD's Given / When / Then.
+  - **Outcome** (belongs in a message): behaviour a user or another program can observe; the public contract (command and flag names, file names, formats and locations, exit codes, messages printed); what must not change; why the change is wanted.
+  - **Steps** (left out): which functions, modules or files to change, in what order, which data structures. One is named only as a constraint ("no new dependencies", "decree itself runs no git command"), never as a suggestion.
+  - The test for any sentence: if a different correct implementation would fail it, it is a step.
+- **The body** has four sections: `## Overview` (why), `## Outcome` (what is true afterwards), `## Constraints` (what must hold or not change) and `## Acceptance Criteria` (Given / When / Then, each observable: exit code, file contents, output, response).
+
+One sentence, written as a step and as an outcome:
+
+> **Step:** The warning has its own rule id, following the existing warnings.
+>
+> **Outcome:** `decree check` shows this warning and still exits 0, in text, JSON and SARIF.
+
+The step assumed the existing warnings had rule ids; they had none, and the run stopped. The outcome holds for any correct implementation.
 
 ## Frontmatter keys
 

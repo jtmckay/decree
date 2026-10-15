@@ -675,6 +675,119 @@ fn test_init_writes_skill_as_regular_files_matching_the_template() {
     }
 }
 
+/// The skill `init` writes says to describe the outcome, not the steps, beside "one concern per
+/// migration", and its worked example message follows the body shape.
+#[test]
+fn test_init_skill_says_describe_the_outcome_not_the_steps() {
+    let dir = TempDir::new().unwrap();
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude"])
+        .assert()
+        .success();
+    let text = fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
+    for want in [
+        "**One concern per migration**",
+        "**Describe the outcome, not the steps.**",
+        "**Outcome** (belongs in a message): behaviour a user or another program can observe",
+        "**Steps** (left out): which functions, modules or files to change, in what order",
+        "never as a suggestion",
+        "if a different correct implementation would fail it, it is a\n    step.",
+    ] {
+        assert!(text.contains(want), "{want:?} not in SKILL.md");
+    }
+    let example = text.split("## Worked example").nth(1).unwrap();
+    let message = example.split("```").nth(1).unwrap();
+    for heading in [
+        "## Overview",
+        "## Outcome",
+        "## Constraints",
+        "## Acceptance Criteria",
+    ] {
+        assert!(message.contains(heading), "{heading} not in:\n{message}");
+    }
+    assert!(!text.contains("## Requirements"), "{message}");
+}
+
+/// The skill's reference on writing a message gives the body's shape and migration 110's step
+/// rewritten as an outcome.
+#[test]
+fn test_init_skill_messages_reference_gives_the_body_shape_and_a_step_rewritten() {
+    let dir = TempDir::new().unwrap();
+    decree_cmd(&dir)
+        .args(["init", "--ai", "claude"])
+        .assert()
+        .success();
+    let text = fs::read_to_string(
+        dir.path()
+            .join(".claude/skills/decree/reference/messages.md"),
+    )
+    .unwrap();
+    let section = text
+        .split("### Writing a good migration")
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    let shape = [
+        "  ## Overview\n",
+        "  ## Outcome\n",
+        "  ## Constraints\n",
+        "  ## Acceptance Criteria\n",
+    ];
+    let at: Vec<usize> = shape
+        .iter()
+        .map(|h| section.find(h).unwrap_or_else(|| panic!("{h:?}")))
+        .collect();
+    assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?}");
+    for want in [
+        "**Describe the outcome, not the steps.**",
+        "**Step:** The warning has its own rule id, following the existing warnings.",
+        "**Outcome:** `decree check` shows this warning and still exits 0, in text, JSON and\n  > SARIF.",
+    ] {
+        assert!(section.contains(want), "{want:?} not in:\n{section}");
+    }
+}
+
+/// decree never reads a message's body: one with `## Requirements` and no `## Outcome` passes
+/// `check` and runs as any other.
+#[test]
+fn test_message_with_requirements_heading_checks_and_runs() {
+    let dir = TempDir::new().unwrap();
+    let decree = dir.path().join(".decree");
+    fs::create_dir_all(decree.join("machines")).unwrap();
+    fs::create_dir_all(decree.join("migrations")).unwrap();
+    fs::create_dir_all(decree.join("scripts")).unwrap();
+    fs::write(
+        decree.join("machines/hello.yml"),
+        "name: hello\ndescription: Run one script.\ninitial: greet\nstates:\n  greet:\n    invoke: greet\n    \
+         transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
+    )
+    .unwrap();
+    write_script(
+        &decree.join("scripts/greet.sh"),
+        "#!/bin/sh\ngrep -q '^## Requirements' \"$DECREE_MESSAGE\"\n",
+    );
+    fs::write(
+        decree.join("migrations/01-old-shape.md"),
+        "---\nmachine: hello\n---\n# Old shape\n\n## Requirements\n\n1. Say hello.\n\n\
+         ## Acceptance Criteria\n\n- **Given** nothing **When** it runs **Then** it exits 0\n",
+    )
+    .unwrap();
+    decree_cmd(&dir).arg("graph").assert().success();
+    assert_check_passes(&dir);
+    decree_cmd(&dir)
+        .args(["process", "--quiet"])
+        .assert()
+        .code(0);
+    assert_eq!(
+        fs::read_to_string(decree.join("processed.md")).unwrap(),
+        "01-old-shape.md\n"
+    );
+    let events = fs::read_to_string(decree.join("runs/01-old-shape/events.jsonl")).unwrap();
+    assert!(events.contains("\"to\":\"done\""), "{events}");
+}
+
 #[test]
 fn test_init_opencode_writes_no_skill() {
     let dir = TempDir::new().unwrap();

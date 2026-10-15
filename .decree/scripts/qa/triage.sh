@@ -32,11 +32,14 @@ ${QA_DIR}/, decide:
 - Acceptable behaviour: delete the test.
 - Unclear: the docs and invariants do not say. Write the question to ${stop} and stop.
 Then group the real bugs by root cause: tests that fail for the same reason are one bug.
-For each root cause write ${bugs}/<short-slug>.md for the developer: a title line, every
-test it covers (file and name), the wrench, the invariant broken, what happened (the error
-from chaos.log), then '## Acceptance Criteria': Given those tests, When the chaos suite
-runs (${QA_RUN}), Then they pass with their expected-failure marker removed and their
-assertions unchanged.
+For each root cause write ${bugs}/<short-slug>.md for the developer: a title line naming
+the broken behaviour; '## Overview': the invariant broken, every test it covers (file and
+name), the wrench, and what happened (the error from chaos.log); '## Outcome': the expected
+behaviour, as the invariant and the docs state it; '## Constraints': the tests' assertions
+do not change; '## Acceptance Criteria': Given those tests, When the chaos suite runs
+(${QA_RUN}), Then they pass with their expected-failure marker removed and their
+assertions unchanged. State what is broken and what is expected, never a fix: name no
+code, file or function to change and no way to change it.
 Write one line per test to ${DECREE_RUN_DIR}/triage.md: test, verdict, root cause, why.
 Change only files in ${QA_DIR}/ and ${DECREE_RUN_DIR}/. Do not run the tests.
 Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."

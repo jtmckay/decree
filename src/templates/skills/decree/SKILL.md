@@ -52,6 +52,19 @@ appear only where a machine invokes `model` or `person`.
   number.
 - **One concern per migration**, day-sized, with Given / When / Then acceptance criteria whose
   outcomes are observable (exit codes, file contents, output).
+- **Describe the outcome, not the steps.** A message says what is true when it is done and
+  why; the agent chooses how, as `infra` declares a desired state and `apply` reaches it.
+  - **Outcome** (belongs in a message): behaviour a user or another program can observe; the
+    public contract (command and flag names, file names, formats and locations, exit codes,
+    messages printed); what must not change; why the change is wanted.
+  - **Steps** (left out): which functions, modules or files to change, in what order, which
+    data structures. Name one only as a constraint ("no new dependencies", "decree itself runs
+    no git command"), never as a suggestion.
+  - The test for any sentence: if a different correct implementation would fail it, it is a
+    step.
+  - The body: `## Overview` (why), `## Outcome` (what is true afterwards), `## Constraints`
+    (what must hold or not change), `## Acceptance Criteria` (Given / When / Then,
+    observable). `reference/messages.md` shows a step rewritten as an outcome.
 - **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
 - **Before writing a machine, run `decree schema` and read
   `.decree/schema/v1/machine.schema.json`**, the JSON Schema of every machine key, and write
@@ -200,8 +213,8 @@ every line. The first `infra` migration builds the environment; later ones add t
 `qa`: `recon` → `attack` → `run` → `triage` → `report`. The AI writes chaos tests in
 `QA_DIR` (`tests/chaos`) against `lib/qa/invariants.md`, each naming a wrench from
 `lib/qa/wrenches.md`; triage marks each real bug's tests with the framework's strict
-expected-failure marker and writes one report per root cause, and `report` emits each as a
-`develop` message. A guard (`lib/qa/qa.sh`) fails any step whose AI changed a file outside
+expected-failure marker and writes one report per root cause (the broken invariant and the
+expected behaviour, no fix), and `report` emits each as a `develop` message. A guard (`lib/qa/qa.sh`) fails any step whose AI changed a file outside
 `QA_DIR`. It does not start until `QA_RUN` in `lib/qa/qa.sh` names the suite's command; once
 qa finds bugs, the gate should run it too.
 
@@ -215,9 +228,17 @@ machine: feature
 ---
 # Rate-limit /api/upload
 
-## Requirements
+## Overview
 
-Limit each API key to 10 uploads per minute on `POST /api/upload`.
+One API key can flood uploads and slow the service for every other key.
+
+## Outcome
+
+Each API key makes at most 10 uploads per minute on `POST /api/upload`.
+
+## Constraints
+
+- Other endpoints respond as before.
 
 ## Acceptance Criteria
 

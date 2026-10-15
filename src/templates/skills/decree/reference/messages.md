@@ -10,7 +10,11 @@ params:
   max_rounds: 3
 ---
 # Add rate limiting to /api/upload
-Given ... When ... Then ...
+
+## Overview
+## Outcome
+## Constraints
+## Acceptance Criteria
 ```
 
 ## Frontmatter keys
@@ -54,6 +58,48 @@ history in git.
 - One concern, day-sized: implementable in one agent session and reviewable on its own. Five
   subsystems means five migrations.
 - Self-contained: no dependency on a sibling migration's runtime state.
+- **Describe the outcome, not the steps.** A message says what is true when it is done and
+  why; the agent chooses how. A message that says *how* ties the agent to the implementation
+  its author pictured, and when the code differs, the run stops or the agent forces the plan.
+  This is declarative configuration, as `infra` declares a desired state and `apply` reaches
+  it.
+  - **Outcome** (belongs in a message): behaviour a user or another program can observe; the
+    public contract (command and flag names, file names, formats and locations, exit codes,
+    messages printed); what must not change; why the change is wanted.
+  - **Steps** (left out): which functions, modules or files to change, in what order, which
+    data structures. Name one only as a constraint ("no new dependencies", "decree itself runs
+    no git command"), never as a suggestion.
+  - The test for any sentence: if a different correct implementation would fail it, it is a
+    step.
+- The body has four sections:
+
+  ```markdown
+  # <title>
+
+  ## Overview
+  Why the change is wanted.
+
+  ## Outcome
+  What is true afterwards, as a user or another program sees it.
+
+  ## Constraints
+  What must hold or must not change.
+
+  ## Acceptance Criteria
+  Given / When / Then, each observable.
+  ```
+
+  A message with other headings is still valid and runs the same: decree never reads the
+  body.
+- One sentence, written as a step and as an outcome:
+
+  > **Step:** The warning has its own rule id, following the existing warnings.
+  >
+  > **Outcome:** `decree check` shows this warning and still exits 0, in text, JSON and
+  > SARIF.
+
+  The step assumed the existing warnings had rule ids; they had none, and the run stopped.
+  The outcome holds for any correct implementation.
 - Acceptance criteria as Given / When / Then, each automatable:
 
   ```markdown
@@ -79,7 +125,11 @@ history in git.
   ```bash
   "${DECREE}" emit --machine feature --param max_rounds=3 <<'EOF'
   # Follow-up: split rate limiting per route
-  Given ... When ... Then ...
+
+  ## Overview
+  ## Outcome
+  ## Constraints
+  ## Acceptance Criteria
   EOF
   ```
 
@@ -96,7 +146,25 @@ schedule. The `cron:` key is a standard cron expression; the rest is an ordinary
 cron: "0 3 * * *"
 machine: develop
 ---
-Run `cargo audit` and update any dependency that has a patched version.
+# No dependency has an advisory that a patched version fixes
+
+## Overview
+
+A vulnerability whose fix is published should not stay in the build overnight.
+
+## Outcome
+
+`cargo audit` reports no advisory that a compatible patched version of the dependency fixes.
+
+## Constraints
+
+- The project's own code does not change, only the versions of its dependencies.
+
+## Acceptance Criteria
+
+- **Given** the project after the run
+  **When** `cargo audit` runs
+  **Then** it lists no advisory that a compatible patched version fixes
 ```
 
 `decree status --cron` lists them with their next fire time.

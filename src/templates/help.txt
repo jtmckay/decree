@@ -170,7 +170,8 @@ Cron (.decree/cron/<name>.md, run by `decree daemon`):
   cron: "0 9 * * 1-5"             # weekdays at 9:00
   machine: develop
   ---
-  Run the weekday morning task.
+  # The weekday morning task
+  ## Overview, ## Outcome, ## Constraints, ## Acceptance Criteria
 
 Getting started:
   1. decree init                  Set up the project

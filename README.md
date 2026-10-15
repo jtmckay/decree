@@ -55,7 +55,7 @@ This writes `.decree/` with the `develop`, `infra` and `qa` machines and their s
 
 `infra` changes the environment the project needs, the first time and every time after: the AI declares each resource in `.decree/lib/infra/requirements` (`command python3`, `pip hypothesis 6.112.0`), and a script installs what is missing and checks every line, as Ansible applies a play. Nothing runs `sudo`; a step only you can do prints the command and fails until you run it. `develop` checks the same file before it starts ([Declared environment](docs/reference/scripts.md#declared-environment)).
 
-`qa` tries to break the project and hands what breaks to `develop`. The AI lists the attack surface, writes chaos tests in `tests/chaos/` against the invariants in `.decree/lib/qa/invariants.md`, using the wrenches in `lib/qa/wrenches.md` (bad input, repetition, interruption, full disks, corrupt state, …), and runs them. Triage marks each real bug's tests expected to fail and writes one report per root cause, and each report becomes a `develop` message. QA never fixes code: a script fails the step if the AI changed anything outside the chaos tests. Set `QA_RUN` in `lib/qa/qa.sh` to the command that runs the chaos suite first, and add it to the gate once qa finds bugs, so a fixed bug whose test is still marked fails the gate ([D62](docs/decisions.md#d62-qa-finds-bugs-and-never-fixes-them)).
+`qa` tries to break the project and hands what breaks to `develop`. The AI lists the attack surface, writes chaos tests in `tests/chaos/` against the invariants in `.decree/lib/qa/invariants.md`, using the wrenches in `lib/qa/wrenches.md` (bad input, repetition, interruption, full disks, corrupt state, …), and runs them. Triage marks each real bug's tests expected to fail and writes one report per root cause, stating the broken invariant and the expected behaviour and proposing no fix, and each report becomes a `develop` message. QA never fixes code: a script fails the step if the AI changed anything outside the chaos tests. Set `QA_RUN` in `lib/qa/qa.sh` to the command that runs the chaos suite first, and add it to the gate once qa finds bugs, so a fixed bug whose test is still marked fails the gate ([D62](docs/decisions.md#d62-qa-finds-bugs-and-never-fixes-them)).
 
 **2. Write a script.** A script does one thing. Exit 0 is the event `done`, anything else is `error`.
 
@@ -146,7 +146,11 @@ params:                     # sets the machine's data for this run
   max_rounds: 3
 ---
 # Add rate limiting to /api/upload
-Given ... When ... Then ...
+
+## Overview
+## Outcome
+## Constraints
+## Acceptance Criteria
 ```
 
 Messages come from four places, and all of them run the same way:
@@ -300,7 +304,12 @@ A cron file (`.decree/cron/<name>.md`, queued by `decree daemon`):
 cron: "0 9 * * 1-5"
 machine: develop
 ---
-Run the weekday morning task.
+# The weekday morning task
+
+## Overview
+## Outcome
+## Constraints
+## Acceptance Criteria
 ```
 
 ## Observability

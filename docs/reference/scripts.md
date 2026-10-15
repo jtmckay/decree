@@ -266,6 +266,10 @@ fi
 set -euo pipefail
 decree emit --machine feature <<'EOF'
 # Follow-up: split rate limiting per route
-Given ... When ... Then ...
+
+## Overview
+## Outcome
+## Constraints
+## Acceptance Criteria
 EOF
 ```
