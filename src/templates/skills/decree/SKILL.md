@@ -138,9 +138,9 @@ appear only where a machine invokes `model` or `person`.
 | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
-| `decree process [--dry-run] [--quiet]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order, printing each run's output. `--quiet` for cron and CI. |
+| `decree process [--dry-run] [--quiet] [--machine <m> \| --exclude-machine <m>]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order, printing each run's output. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
-| `decree daemon [--interval <duration>] [--retry [<id>]]` | The same, in a loop, with cron, every `2s` by default. |
+| `decree daemon [--interval <duration>] [--retry [<id>]] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with cron, every `2s` by default; `--machine` and `--exclude-machine` as for `process`. |
 
 | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then what blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
@@ -165,7 +165,8 @@ in `.decree/attention/` holds every run until the run is retried). All three tou
 project folder. Before queuing work for them, commit or stash any changes. To continue: answer
 any `STOP` in `plan.md`, delete `STOP`, `decree process --retry <id>`, which builds on the
 kept changes and removes the hold. To drop the run: stash its changes and delete its
-attention file. For divergent work,
+attention file. Never run `develop`, `infra` or `qa` in two processes in one checkout (they
+share the work tree through `clean_tree` and `commit`); give each its own git worktree. For divergent work,
 or to keep editing while runs go on, suggest a
 git worktree the user makes and runs decree in (`git worktree add ../app-exp -b exp`, then
 `decree process` there): each checkout has its own runs and inbox, and its branch its own

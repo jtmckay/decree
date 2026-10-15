@@ -108,7 +108,7 @@ They are dotenv files, read as Docker Compose's `env_file` and systemd's `Enviro
   ```
 
   `HOST=192.168.1.30 decree daemon` moves both URLs of `.decree/.env`.
-- Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors. A later line wins over an earlier one with the same key.
+- Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors, except `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES` in `.decree/.env`, which decree reads itself and never passes to scripts ([Several processes](cli.md#several-processes)). A later line wins over an earlier one with the same key.
 - `process` and `daemon` read them at start and again before each run, so an edit applies without a restart ([Edits while running](cli.md#edits-while-running)). A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and one that finds it later prints it once and keeps the variables it read last. Commands that run no scripts read none of them, since decree reads no setting of its own from them ([No configuration file](README.md#no-configuration-file)).
 - `decree check` warns when one of them exists and `.decree/.gitignore` has no `.env*` line.
 

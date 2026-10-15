@@ -29,6 +29,7 @@ use crate::commands::process::{blocking_migration, context, held_back};
 use crate::cron;
 use crate::error::DecreeError;
 use crate::events::{current_state, strings, text, Event};
+use crate::filter::MachineFilter;
 use crate::interpreter::recover::RunStatus;
 use crate::interpreter::Context;
 use crate::layout::MESSAGE_FILE;
@@ -283,7 +284,7 @@ fn overview(
             b.what()
         );
         println!("  {}", retry_line(&b.run, true));
-    } else if let Some(why) = held_back(ctx, project)? {
+    } else if let Some(why) = held_back(ctx, project, &MachineFilter::All)? {
         println!("{} {why}", "Held back:".bold());
     }
     println!("{} {}", "Runs:".bold(), ids.len());

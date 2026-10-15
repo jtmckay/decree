@@ -8,6 +8,7 @@ pub(crate) mod dotenv;
 pub(crate) mod duration;
 pub(crate) mod error;
 pub(crate) mod events;
+pub(crate) mod filter;
 pub(crate) mod graph;
 pub(crate) mod interpreter;
 pub(crate) mod layout;
@@ -50,6 +51,8 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         state: None,
         format: Format::Text,
         quiet: false,
+        machines: Vec::new(),
+        exclude_machines: Vec::new(),
     }) {
         Command::Init { ai, permissions } => commands::init::run(ai, permissions),
         Command::Help => commands::help(),
@@ -59,9 +62,12 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             state,
             format,
             quiet,
+            machines,
+            exclude_machines,
         } => {
             let retry = commands::process::Retry::from_args(retry, state);
-            commands::process::run(&root()?, dry_run, retry, format, quiet)
+            let select = filter::Select::new(machines, exclude_machines);
+            commands::process::run(&root()?, dry_run, retry, format, quiet, &select)
         }
         Command::Check { format } => commands::check::run(&root()?, format),
         Command::Graph { format } => commands::graph::run(&root()?, format),
@@ -83,9 +89,12 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             retry,
             state,
             quiet,
+            machines,
+            exclude_machines,
         } => {
             let retry = commands::process::Retry::from_args(retry, state);
-            commands::daemon::run(&root()?, interval, retry, quiet)
+            let select = filter::Select::new(machines, exclude_machines);
+            commands::daemon::run(&root()?, interval, retry, quiet, &select)
         }
         Command::Stop { note, format } => commands::stop::run(&root()?, note.as_deref(), format),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),

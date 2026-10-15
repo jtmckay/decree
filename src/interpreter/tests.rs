@@ -1216,7 +1216,7 @@ fn recover_marks_a_crashed_run_once_and_never_continues_it() {
         json!({"from": null, "event": "claimed", "to": "a", "source": "claim", "exit_code": null}),
     );
     fs::write(p.run_dir().join(LOCK_FILE), "999999999").unwrap();
-    let found = recover(&p.ctx()).unwrap();
+    let found = recover(&p.ctx(), |_| true).unwrap();
     assert_eq!(found.crashed, [(RUN_ID.to_string(), "a".to_string())]);
     assert!(found.pending.is_empty());
     let events = p.events();
@@ -1228,12 +1228,12 @@ fn recover_marks_a_crashed_run_once_and_never_continues_it() {
     assert!(p.order().is_empty());
 
     // Already marked: nothing more is appended.
-    assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+    assert_eq!(recover(&p.ctx(), |_| true).unwrap(), Recovery::default());
     assert_eq!(p.events().len(), 2);
 
     // `decree process --retry` makes it pending; the stale lock does not stop it continuing.
     retry(&p, "a");
-    let found = recover(&p.ctx()).unwrap();
+    let found = recover(&p.ctx(), |_| true).unwrap();
     assert_eq!(found.pending, [RUN_ID]);
     assert_eq!(
         continue_run(&p.ctx(), RUN_ID).unwrap(),
@@ -1256,11 +1256,11 @@ fn recover_leaves_an_active_run_alone_and_resume_refuses_it() {
         .unwrap();
     fs::write(p.run_dir().join(LOCK_FILE), holder.id().to_string()).unwrap();
     assert_eq!(status_of(&p), RunStatus::Active);
-    assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+    assert_eq!(recover(&p.ctx(), |_| true).unwrap(), Recovery::default());
     assert_eq!(p.events().len(), 1);
 
     retry(&p, "a");
-    assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+    assert_eq!(recover(&p.ctx(), |_| true).unwrap(), Recovery::default());
     let err = continue_run(&p.ctx(), RUN_ID).unwrap_err();
     assert!(
         matches!(&err, InterpreterError::Active(id) if id == RUN_ID),
@@ -1280,7 +1280,7 @@ fn recover_does_not_mark_a_waiting_run_without_a_lock() {
     let (p, _) = person_project(&[]);
     assert!(matches!(p.run(), Outcome::Waiting { .. }));
     let before = p.events().len();
-    assert_eq!(recover(&p.ctx()).unwrap(), Recovery::default());
+    assert_eq!(recover(&p.ctx(), |_| true).unwrap(), Recovery::default());
     assert_eq!(p.events().len(), before);
     assert_eq!(status_of(&p), RunStatus::Waiting);
 }
@@ -1290,7 +1290,7 @@ fn recover_and_continue_rewrite_a_mirror_that_disagrees_with_the_events() {
     let p = interrupted_compound();
     let path = p.run_dir().join(MESSAGE_FILE);
     mirror_state(&path, "after").unwrap();
-    recover(&p.ctx()).unwrap();
+    recover(&p.ctx(), |_| true).unwrap();
     assert_eq!(mirrored_state(&p), "inner");
     assert!(p.message().ends_with(BODY));
 

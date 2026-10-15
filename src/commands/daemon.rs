@@ -11,6 +11,7 @@ use crate::commands::process::{context, reporting, Pipeline, Retry, Stop};
 use crate::commands::report::{line, notice};
 use crate::cron::{self, CronTracker};
 use crate::error::DecreeError;
+use crate::filter::{MachineFilter, Select};
 use crate::layout;
 use crate::message;
 use crate::runtime;
@@ -27,6 +28,7 @@ pub fn run(
     interval: Duration,
     retry: Option<Retry>,
     quiet: bool,
+    select: &Select,
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -37,6 +39,7 @@ pub fn run(
         project,
         Arc::clone(&shutdown),
         "decree daemon: ",
+        select,
     )?;
     if let Some(retry) = retry {
         pipeline.retry(&retry)?;
@@ -111,7 +114,7 @@ fn pass(
     for id in pipeline.pending()? {
         report(pipeline.continue_one(&id))?;
     }
-    fire_due_cron_jobs(project_root, cron_tracker);
+    fire_due_cron_jobs(project_root, cron_tracker, pipeline.filter());
     loop {
         match pipeline.next_inbox() {
             Ok(true) => {}
@@ -148,8 +151,8 @@ fn report(result: Result<(), Stop>) -> Result<(), Stop> {
     }
 }
 
-/// Check cron directory and fire due jobs into inbox.
-fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker) {
+/// Check cron directory and fire due jobs for the machines `filter` runs into inbox.
+fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker, filter: &MachineFilter) {
     let cron_files = match cron::scan_cron_files(project_root) {
         Ok(files) => files,
         Err(e) => {
@@ -159,7 +162,7 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker) {
     };
 
     for cf in &cron_files {
-        if !tracker.is_due(cf) {
+        if !filter.runs(cf.message.machine()) || !tracker.is_due(cf) {
             continue;
         }
 
@@ -207,7 +210,7 @@ mod tests {
         .unwrap();
 
         let mut tracker = CronTracker::new();
-        fire_due_cron_jobs(dir.path(), &mut tracker);
+        fire_due_cron_jobs(dir.path(), &mut tracker, &MachineFilter::All);
 
         // Should have created an inbox message
         let inbox_files =
@@ -227,7 +230,7 @@ mod tests {
         assert!(!content.lines().any(|l| l.starts_with("cron:")));
 
         // Second fire within same minute should not create duplicate
-        fire_due_cron_jobs(dir.path(), &mut tracker);
+        fire_due_cron_jobs(dir.path(), &mut tracker, &MachineFilter::All);
         let inbox_files2 =
             crate::commands::check::md_files(&dir.path().join(".decree/inbox")).unwrap();
         assert_eq!(inbox_files2.len(), 1); // Still just one
@@ -242,7 +245,7 @@ mod tests {
             "---\r\ncron: \"* * * * *\"\r\nmachine: develop\r\n---\r\nMinutely task.\r\n",
         )
         .unwrap();
-        fire_due_cron_jobs(dir.path(), &mut CronTracker::new());
+        fire_due_cron_jobs(dir.path(), &mut CronTracker::new(), &MachineFilter::All);
         let inbox_files =
             crate::commands::check::md_files(&dir.path().join(".decree/inbox")).unwrap();
         assert_eq!(inbox_files.len(), 1);

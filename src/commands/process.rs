@@ -37,6 +37,7 @@ use crate::events::{
     current_state, first_text, is_transition, is_type, run_attempt, strings, text, waiting_child,
     Event, EventLog,
 };
+use crate::filter::{self, MachineFilter, Select};
 use crate::interpreter::child::continue_run;
 use crate::interpreter::recover::{self, mirror_state, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
@@ -65,32 +66,41 @@ impl Retry {
     }
 }
 
-/// Run `decree process [--dry-run | --retry [<id>] [--state <s>]] [--quiet]`. Unless
-/// `quiet`, each run's output is printed as it goes (`commands::report`).
+/// Run `decree process [--dry-run | --retry [<id>] [--state <s>]] [--quiet]
+/// [--machine <m> | --exclude-machine <m>]`. Unless `quiet`, each run's output is printed as
+/// it goes (`commands::report`).
 pub fn run(
     project_root: &Path,
     dry_run: bool,
     retry: Option<Retry>,
     format: Format,
     quiet: bool,
+    select: &Select,
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     if dry_run {
-        return run_dry(&project, format);
+        // The variables are read only when no flag beats them.
+        let dotenv = if select.is_given() {
+            Vec::new()
+        } else {
+            check::load_env(&project)?.decree
+        };
+        let filter = select.filter(&dotenv, |m| project.machine_ids.contains(m))?;
+        return run_dry(&project, format, &filter);
     }
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
     let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
-    let mut pipeline = Pipeline::new(project_root, project, shutdown, "")?;
+    let mut pipeline = Pipeline::new(project_root, project, shutdown, "", select)?;
     if let Some(retry) = retry {
         pipeline.retry(&retry)?;
     }
     let result = reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
         pipeline.recover().and_then(|()| pipeline.drain())
     });
-    print_waiting(&pipeline.ctx)?;
+    print_waiting(&pipeline.ctx, &pipeline.filter)?;
     if result.is_ok() {
-        if let Some(why) = held_back(&pipeline.ctx, &pipeline.project)? {
+        if let Some(why) = held_back(&pipeline.ctx, &pipeline.project, &pipeline.filter)? {
             println!("Held back: {why}");
         }
     }
@@ -163,6 +173,8 @@ pub(crate) struct Pipeline {
     project: Project,
     /// Inbox files another process claimed first, or is claiming now.
     lost: HashSet<String>,
+    /// The machines this process runs (`--machine`, `--exclude-machine`).
+    filter: MachineFilter,
     /// Put before each failed run's report: `process` prints none, `daemon` its name.
     prefix: &'static str,
     /// Runs that are not migrations and ended in `failed` since the last `take_failed`.
@@ -176,12 +188,14 @@ pub(crate) struct Pipeline {
 
 impl Pipeline {
     /// Validate every machine and pending migration (docs/reference/messages.md, Migrations, rule 6), and
-    /// set up the context runs are stepped in. Nothing runs if anything is invalid.
+    /// set up the context runs are stepped in, and the machines `select` runs. Nothing runs if
+    /// anything is invalid.
     pub(crate) fn new(
         project_root: &Path,
         project: Project,
         shutdown: Arc<AtomicBool>,
         prefix: &'static str,
+        select: &Select,
     ) -> Result<Self, DecreeError> {
         if !project.problems.is_empty() {
             for problem in &project.problems {
@@ -195,10 +209,12 @@ impl Pipeline {
         validate_migrations(&project)?;
         let mut ctx = context(project_root, &project, shutdown);
         ctx.env = check::load_env(&project)?;
+        let filter = select.filter(&ctx.env.decree, |m| project.machine_ids.contains(m))?;
         Ok(Pipeline {
             ctx,
             project,
             lost: HashSet::new(),
+            filter,
             prefix,
             failed: Vec::new(),
             report: None,
@@ -212,9 +228,20 @@ impl Pipeline {
         retry_run(
             &self.ctx,
             &self.project,
+            &self.filter,
             retry.id.as_deref(),
             retry.state.as_deref(),
         )
+    }
+
+    /// The machines this process runs.
+    pub(crate) fn filter(&self) -> &MachineFilter {
+        &self.filter
+    }
+
+    /// Whether this process runs run `id`: its root run's machine is one it runs.
+    fn owns(&self, id: &str) -> bool {
+        owns(&self.ctx, &self.filter, id)
     }
 
     /// Read the machines and the `.env` files again, so edits apply to the next run without
@@ -341,7 +368,7 @@ impl Pipeline {
     /// At start: mark runs a crash left behind `interrupted` (never continued), then
     /// continue `pending` runs in `id` order (docs/reference/messages.md, Run status).
     pub(crate) fn recover(&mut self) -> Result<(), Stop> {
-        let recovery = recover::recover(&self.ctx)?;
+        let recovery = recover::recover(&self.ctx, |id| self.owns(id))?;
         for (id, state) in &recovery.crashed {
             eprintln!(
                 "run {id} was interrupted in `{state}` (crash); \
@@ -378,13 +405,15 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Every `pending` run, in `id` order: after `decree process --retry`, or a delivery another
-    /// process made. A run another process holds is `active`, not `pending`.
+    /// Every `pending` run this process runs, in `id` order: after `decree process --retry`,
+    /// or a delivery another process made. A run another process holds is `active`, not
+    /// `pending`.
     pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
         let mut pending = Vec::new();
         for id in message::run_ids(&self.ctx.runs_dir())? {
             if self.ctx.run_finished(&id)?.is_none()
                 && self.ctx.status_of(&id)?.0 == RunStatus::Pending
+                && self.owns(&id)
             {
                 pending.push(id);
             }
@@ -420,24 +449,29 @@ impl Pipeline {
         }
     }
 
-    /// Deliver every `timeout` deadline that has passed, and continue those runs.
+    /// Deliver every `timeout` deadline of a run this process runs that has passed, and
+    /// continue those runs.
     pub(crate) fn deliver_timeouts(&mut self) -> Result<(), Stop> {
         self.may_run()?;
-        let timed_out = reply::deliver_timeouts(&self.ctx, chrono::Utc::now())?;
+        let timed_out = reply::deliver_timeouts(&self.ctx, chrono::Utc::now(), |id| self.owns(id))?;
         self.continue_runs(&timed_out)
     }
 
-    /// Take the next `inbox/` file in filename order: deliver a reply and continue its
-    /// run, or claim a message and run it (docs/reference/messages.md, Lifecycle). Returns `false` when the
-    /// inbox is empty.
+    /// Take the next `inbox/` file in filename order that is for a machine this process
+    /// runs: deliver a reply and continue its run, or claim a message and run it
+    /// (docs/reference/messages.md, Lifecycle). Returns `false` when there is none.
     pub(crate) fn next_inbox(&mut self) -> Result<bool, Stop> {
         self.may_run()?;
         self.refresh();
         let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let inbox = decree_dir.join(INBOX_DIR);
-        let next = md_files(&inbox)?
-            .into_iter()
-            .find(|f| !self.lost.contains(f));
+        let next = md_files(&inbox)?.into_iter().find(|f| {
+            !self.lost.contains(f)
+                && (self.filter.is_all()
+                    || self
+                        .filter
+                        .runs(inbox_machine(&self.ctx.runs_dir(), &inbox, f).as_deref()))
+        });
         let Some(file) = next else {
             return Ok(false);
         };
@@ -478,17 +512,47 @@ impl Pipeline {
 
     /// Start or continue the first pending migration (docs/reference/messages.md, Migrations). Returns
     /// whether it finished, so the next may start; `false` when there is none, or it
-    /// waits.
+    /// waits, also when it is for a machine this process does not run: migrations keep one
+    /// order for every process.
     pub(crate) fn next_migration(&mut self) -> Result<bool, Stop> {
         self.may_run()?;
         self.refresh();
         match self.project.pending_migrations()?.into_iter().next() {
+            Some(migration)
+                if !self
+                    .filter
+                    .runs(migration_machine(&self.project, &migration).as_deref()) =>
+            {
+                Ok(false)
+            }
             Some(migration) => {
                 step_migration(&self.ctx, &self.project, &migration, self.report.as_ref())
             }
             None => Ok(false),
         }
     }
+}
+
+/// Whether a process that runs `filter` runs run `id`: its root run's machine is one it runs.
+fn owns(ctx: &Context, filter: &MachineFilter, id: &str) -> bool {
+    filter.is_all() || filter.runs(filter::owner(&ctx.runs_dir(), id).as_deref())
+}
+
+/// The machine `inbox/<file>` is for: a reply's, that of the run it answers; a message's, its
+/// `machine`. `None` when it cannot be read.
+fn inbox_machine(runs_dir: &Path, inbox: &Path, file: &str) -> Option<String> {
+    let message = Message::read(&inbox.join(file)).ok()?;
+    if message.frontmatter.contains_key("to") {
+        let run = reply::target_run(runs_dir, message.text("to")?)?;
+        return filter::owner(runs_dir, &run);
+    }
+    message.machine().map(String::from)
+}
+
+/// The machine pending migration `file` names, `None` when it cannot be read.
+fn migration_machine(project: &Project, file: &str) -> Option<String> {
+    let message = Message::read(&project.decree_dir.join(MIGRATIONS_DIR).join(file)).ok()?;
+    message.machine().map(String::from)
 }
 
 /// Run `run`, the steps of run `id`, telling `report` when it starts and stops.
@@ -832,14 +896,26 @@ pub(crate) fn blocking_migration(
 }
 
 /// Why the first pending migration has not finished, when nothing blocks it
-/// (`blocking_migration`): it, or the child run it waits for, waits for a reply or is
-/// active in another process, or it waits for `inbox/` to empty. `None` when no migration
-/// is pending, or the pass would start or continue it.
-pub(crate) fn held_back(ctx: &Context, project: &Project) -> Result<Option<String>, DecreeError> {
+/// (`blocking_migration`): it is for a machine a process that runs `filter` does not run;
+/// it, or the child run it waits for, waits for a reply or is active in another process;
+/// or it waits for `inbox/` to empty. `None` when no migration is pending, or the pass
+/// would start or continue it.
+pub(crate) fn held_back(
+    ctx: &Context,
+    project: &Project,
+    filter: &MachineFilter,
+) -> Result<Option<String>, DecreeError> {
     let pending = project.pending_migrations()?;
     let Some(file) = pending.first() else {
         return Ok(None);
     };
+    let machine = migration_machine(project, file);
+    if !filter.runs(machine.as_deref()) {
+        let machine = machine.unwrap_or_default();
+        return Ok(Some(format!(
+            "migration {file} is for machine `{machine}`, which this process does not run"
+        )));
+    }
     let behind = match pending.len() - 1 {
         0 => String::new(),
         n => format!("; {n} later migration(s) wait behind it"),
@@ -893,6 +969,7 @@ pub(crate) fn held_back(ctx: &Context, project: &Project) -> Result<Option<Strin
 fn retry_run(
     ctx: &Context,
     project: &Project,
+    filter: &MachineFilter,
     id: Option<&str>,
     state: Option<&str>,
 ) -> Result<(), DecreeError> {
@@ -912,6 +989,12 @@ fn retry_run(
     let run_dir = ctx.runs_dir().join(id);
     if !is_valid_id(id) || !run_dir.is_dir() {
         return Err(DecreeError::MessageNotFound(id.to_string()));
+    }
+    if !owns(ctx, filter, id) {
+        let machine = filter::owner(&ctx.runs_dir(), id).unwrap_or_default();
+        return Err(DecreeError::Other(format!(
+            "run {id} is for machine `{machine}`, which this process does not run"
+        )));
     }
     // Hold the lock while writing, so no other process steps the run meanwhile.
     let Some(_lock) = RunLock::acquire(&run_dir)? else {
@@ -997,11 +1080,12 @@ fn refuse_retry(id: &str, status: RunStatus) -> DecreeError {
     ))
 }
 
-/// Print every waiting run: its question (the state's `description`), its wait id and
-/// options, and a `decree event` command for each option (docs/reference/messages.md, Replies).
-fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
+/// Print every waiting run of the machines `filter` runs: its question (the state's
+/// `description`), its wait id and options, and a `decree event` command for each option
+/// (docs/reference/messages.md, Replies).
+fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeError> {
     for id in message::run_ids(&ctx.runs_dir())? {
-        if ctx.run_finished(&id)?.is_some() {
+        if ctx.run_finished(&id)?.is_some() || !owns(ctx, filter, &id) {
             continue;
         }
         let events = ctx.events(&id)?;
@@ -1029,13 +1113,32 @@ fn print_waiting(ctx: &Context) -> Result<(), DecreeError> {
 
 /// `decree process --dry-run`: list what would run, and run nothing. Pending migrations
 /// in order with their machine, then queued inbox messages; invalid ones with their errors.
-fn run_dry(project: &Project, format: Format) -> Result<(), DecreeError> {
+/// With a machine filter, only what this process would run: the migrations up to the first
+/// one for a machine it does not run, which holds back the rest, and the inbox messages for
+/// its machines.
+fn run_dry(project: &Project, format: Format, filter: &MachineFilter) -> Result<(), DecreeError> {
     let mut problems = project.problems.clone();
     let mut document = serde_json::Map::new();
-    let lists = [
-        (MIGRATIONS_DIR, project.pending_migrations()?),
-        (INBOX_DIR, md_files(&project.decree_dir.join(INBOX_DIR))?),
-    ];
+    let mut migrations = project.pending_migrations()?;
+    let mut held = None;
+    if let Some(n) = migrations
+        .iter()
+        .position(|m| !filter.runs(migration_machine(project, m).as_deref()))
+    {
+        let machine = migration_machine(project, &migrations[n]).unwrap_or_default();
+        held = Some(format!(
+            "migration {} is for machine `{machine}`, which this process does not run",
+            migrations[n]
+        ));
+        migrations.truncate(n);
+    }
+    let inbox_dir = project.decree_dir.join(INBOX_DIR);
+    let runs_dir = project.decree_dir.join(layout::RUNS_DIR);
+    let mut inbox = md_files(&inbox_dir)?;
+    if !filter.is_all() {
+        inbox.retain(|f| filter.runs(inbox_machine(&runs_dir, &inbox_dir, f).as_deref()));
+    }
+    let lists = [(MIGRATIONS_DIR, migrations), (INBOX_DIR, inbox)];
     for (dir, files) in lists {
         let text = format == Format::Text;
         if text && files.is_empty() {
@@ -1084,6 +1187,8 @@ fn run_dry(project: &Project, format: Format) -> Result<(), DecreeError> {
     }
     if format == Format::Json {
         print_json(&document.into())?;
+    } else if let Some(held) = held {
+        println!("Held back: {held}");
     }
     for problem in &problems {
         eprintln!("{problem}");

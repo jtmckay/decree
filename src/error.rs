@@ -37,6 +37,10 @@ pub enum DecreeError {
     #[error("interrupted")]
     Interrupted,
 
+    /// A command line that cannot run, as clap's own usage errors (exit 2).
+    #[error("{0}")]
+    Usage(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -45,7 +49,7 @@ impl DecreeError {
     /// Map error to the appropriate exit code.
     pub fn exit_code(&self) -> i32 {
         match self {
-            DecreeError::AlreadyInitialized => EXIT_USAGE,
+            DecreeError::AlreadyInitialized | DecreeError::Usage(_) => EXIT_USAGE,
             DecreeError::Interrupted => EXIT_INTERRUPTED,
             _ => EXIT_FAILURE,
         }

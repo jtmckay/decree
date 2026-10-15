@@ -14,8 +14,12 @@ pub type Vars = Vec<(String, String)>;
 /// What scripts get from the `.env` files (docs/reference/scripts.md, Environment).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ProjectEnv {
-    /// `.decree/.env`, without the variables decree's own environment sets, which win.
+    /// `.decree/.env`, without the variables decree's own environment sets, which win, and
+    /// without those decree reads itself.
     pub base: Vars,
+    /// The variables of `.decree/.env` decree reads itself and never passes to scripts:
+    /// `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES` (`crate::filter`).
+    pub decree: Vars,
     /// Each machine's `env_file`, by machine name, which wins over decree's own
     /// environment. A machine without one, or whose file is missing, has no entry.
     pub machines: std::collections::BTreeMap<String, Vars>,
@@ -45,9 +49,11 @@ pub fn is_key(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Whether `key` belongs to decree: `DECREE_*`, `TRACEPARENT` or `TRACESTATE`.
+/// Whether `key` belongs to decree: `DECREE_*`, `TRACEPARENT` or `TRACESTATE`. The two
+/// variables decree reads itself, `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES`, are let
+/// through: `.decree/.env` may set them (docs/reference/cli.md, Several processes).
 pub fn is_reserved(key: &str) -> bool {
-    key.starts_with("DECREE_")
+    (key.starts_with("DECREE_") && !crate::filter::is_filter_var(key))
         || key == crate::trace::TRACEPARENT_ENV
         || key == crate::trace::TRACESTATE_ENV
 }
@@ -606,6 +612,14 @@ mod tests {
         let lines: Vec<usize> = errors.iter().map(|(n, _)| *n).collect();
         assert_eq!(lines, vec![1, 2, 3], "{errors:?}");
         assert!(errors[0].1.contains("reserved"), "{errors:?}");
+    }
+
+    #[test]
+    fn only_the_two_machine_filter_keys_are_let_through() {
+        assert!(parse("DECREE_MACHINES=a\nDECREE_EXCLUDE_MACHINES=b\n").is_ok());
+        for key in ["DECREE_FOO", "DECREE_MACHINE", "DECREE_MACHINES_X"] {
+            assert!(parse(&format!("{key}=1\n")).is_err(), "{key}");
+        }
     }
 
     #[test]

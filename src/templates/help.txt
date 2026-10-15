@@ -39,6 +39,10 @@ Commands:
   decree process --retry [ID] [--state S]
                               First continue a failed or interrupted run: ID,
                               or the migration blocking the queue
+  decree process --machine M,... | --exclude-machine M,...
+                              Run only these machines, or all but these
+                              (also DECREE_MACHINES, DECREE_EXCLUDE_MACHINES;
+                              daemon takes them too)
   decree daemon [--interval D] [--retry [ID] [--state S]] [--quiet]
                               The same passes plus cron, every D (default 2s),
                               until stopped; for unattended work, as process

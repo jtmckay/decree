@@ -1210,9 +1210,19 @@ fn the_environment_table_matches_what_decree_sets() {
         only_set.is_empty(),
         "set by src/runtime.rs but not in scripts.md's Environment table: {only_set:?}"
     );
+    // The variables decree reads itself and never passes to scripts: the machine filter
+    // (docs/reference/cli.md, Several processes).
+    let filter = read("src/filter.rs");
+    let read_by_decree: BTreeSet<String> =
+        Regex::new(r#"pub const [A-Z_]+_VAR: &str = "([A-Z_]+)";"#)
+            .unwrap()
+            .captures_iter(&filter)
+            .map(|c| c[1].to_string())
+            .collect();
+    assert_eq!(read_by_decree.len(), 2, "{read_by_decree:?}");
     let unknown: Vec<String> = named_environment()
         .into_iter()
-        .filter(|(name, _)| !table.contains(name))
+        .filter(|(name, _)| !table.contains(name) && !read_by_decree.contains(name))
         .map(|(name, at)| format!("{at}: {name}"))
         .collect();
     assert!(

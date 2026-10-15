@@ -115,6 +115,11 @@ const QA: BuiltinMachine = BuiltinMachine {
 /// The built-in machines besides the router.
 const BUILTIN_MACHINES: [&BuiltinMachine; 3] = [&DEVELOP, &INFRA, &QA];
 
+/// Whether `name` is a machine `init` writes: the router or a built-in machine.
+pub(crate) fn is_builtin_machine(name: &str) -> bool {
+    name == "router" || BUILTIN_MACHINES.iter().any(|m| m.name == name)
+}
+
 /// The built-in machines' files in `lib/`, besides `ai.sh`: path, template, and whether it is
 /// executable. `infra/` is the declared environment, which `infra` changes and `develop`'s
 /// `precheck` checks: the declaration, the loop that checks or applies it, and the one kind

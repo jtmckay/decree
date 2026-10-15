@@ -155,6 +155,11 @@ fn resolve<'t>(runs_dir: &Path, to: &'t str) -> Option<(&'t str, Option<&'t str>
     (numeric && is_run(run_id)).then_some((run_id, Some(to)))
 }
 
+/// The run a reply's `to` names, its wait id or run id; `None` when it names no run.
+pub fn target_run(runs_dir: &Path, to: &str) -> Option<String> {
+    resolve(runs_dir, to).map(|(run_id, _)| run_id.to_string())
+}
+
 /// What delivering a reply did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Delivery {
@@ -225,16 +230,21 @@ pub fn deliver(
 
 /// docs/reference/messages.md, Replies, step 5: every run waiting past its `timeout_at` gets a `received`
 /// event for `error` with `timed_out: true`. Returns those runs, in `id` order, now
-/// `pending`. A run another process holds is skipped.
+/// `pending`. A run another process holds is skipped, as is one `owns` is false for: a run
+/// of a machine this process does not run.
 pub fn deliver_timeouts(
     ctx: &Context,
     now: DateTime<Utc>,
+    owns: impl Fn(&str) -> bool,
 ) -> Result<Vec<String>, InterpreterError> {
     let runs_dir = ctx.runs_dir();
     let mut timed_out = Vec::new();
     for id in run_ids(&runs_dir).map_err(io_err(&runs_dir))? {
         let run_dir = runs_dir.join(&id);
-        if ctx.run_finished(&id)?.is_some() || !past_deadline(ctx.events(&id)?.last(), now) {
+        if ctx.run_finished(&id)?.is_some()
+            || !past_deadline(ctx.events(&id)?.last(), now)
+            || !owns(&id)
+        {
             continue;
         }
         let Some(_lock) = RunLock::acquire(&run_dir).map_err(io_err(&run_dir.join(LOCK_FILE)))?

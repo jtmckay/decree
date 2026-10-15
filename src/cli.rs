@@ -54,6 +54,24 @@ pub enum Command {
         #[arg(long, short = 'q', conflicts_with = "dry_run")]
         quiet: bool,
 
+        /// Run only these machines: repeatable, comma-separated [env: DECREE_MACHINES]
+        #[arg(
+            long = "machine",
+            value_name = "MACHINE",
+            value_delimiter = ',',
+            conflicts_with = "exclude_machines"
+        )]
+        machines: Vec<String>,
+
+        /// Run every machine but these: repeatable, comma-separated [env:
+        /// DECREE_EXCLUDE_MACHINES]
+        #[arg(
+            long = "exclude-machine",
+            value_name = "MACHINE",
+            value_delimiter = ','
+        )]
+        exclude_machines: Vec<String>,
+
         /// Output format of --dry-run
         #[arg(
             long,
@@ -150,6 +168,24 @@ pub enum Command {
         /// Print no run output, status line or run summaries: only what needs attention
         #[arg(long, short = 'q')]
         quiet: bool,
+
+        /// Run only these machines: repeatable, comma-separated [env: DECREE_MACHINES]
+        #[arg(
+            long = "machine",
+            value_name = "MACHINE",
+            value_delimiter = ',',
+            conflicts_with = "exclude_machines"
+        )]
+        machines: Vec<String>,
+
+        /// Run every machine but these: repeatable, comma-separated [env:
+        /// DECREE_EXCLUDE_MACHINES]
+        #[arg(
+            long = "exclude-machine",
+            value_name = "MACHINE",
+            value_delimiter = ','
+        )]
+        exclude_machines: Vec<String>,
     },
 
     /// Hold the queue: runs going now finish, no new run starts until

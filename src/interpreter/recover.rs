@@ -34,12 +34,13 @@ pub struct Recovery {
 /// rewritten if it disagrees with `events.jsonl` (docs/reference/messages.md, Source of truth). Runs with
 /// no events yet (never claimed past the folder), or of a machine that no longer exists,
 /// are skipped: there is no state to record or continue. So are finished runs, from their
-/// last line alone.
-pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
+/// last line alone, and runs `owns` is false for: those of machines this process does not
+/// run, which it leaves untouched.
+pub fn recover(ctx: &Context, owns: impl Fn(&str) -> bool) -> Result<Recovery, InterpreterError> {
     let runs = ctx.runs_dir();
     let mut found = Recovery::default();
     for id in run_ids(&runs).map_err(io_err(&runs))? {
-        if ctx.run_finished(&id)?.is_some() {
+        if ctx.run_finished(&id)?.is_some() || !owns(&id) {
             continue;
         }
         let run_dir = runs.join(&id);

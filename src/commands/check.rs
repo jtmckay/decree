@@ -17,6 +17,7 @@ use crate::commands::{graph, print_json, schema};
 use crate::cron;
 use crate::dotenv;
 use crate::error::DecreeError;
+use crate::filter;
 use crate::layout::{self, DECREE_DIR};
 use crate::machine::validate::CheckEnv;
 use crate::machine::{self, LoadedMachine, MACHINES_DIR};
@@ -285,6 +286,22 @@ type ParsedEnv = Result<Vec<dotenv::Entry>, dotenv::LineErrors>;
 fn env_problems(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
     let mut out = Vec::new();
     for (file, parsed) in env_files(project)? {
+        // decree reads the machine filter from `.decree/.env` only.
+        let own = file != layout::ENV_FILE;
+        for entry in parsed.as_ref().ok().into_iter().flatten() {
+            if own && filter::is_filter_var(&entry.key) {
+                out.push(CheckError {
+                    rule: Some("E1".to_string()),
+                    file: file.clone(),
+                    line: Some(entry.line),
+                    state: None,
+                    message: format!(
+                        "key `{}` is reserved: only `.decree/.env` sets it",
+                        entry.key
+                    ),
+                });
+            }
+        }
         for (line, message) in parsed.err().unwrap_or_default() {
             out.push(CheckError {
                 rule: Some("E1".to_string()),
@@ -311,7 +328,11 @@ fn resolve_env(project: &Project) -> Result<(dotenv::ProjectEnv, Vec<CheckWarnin
         let Ok(entries) = parsed else { continue };
         let resolved = if file == layout::ENV_FILE {
             let resolved = dotenv::resolve(entries, dotenv::process_var);
-            env.base.clone_from(&resolved.vars);
+            (env.decree, env.base) = resolved
+                .vars
+                .iter()
+                .cloned()
+                .partition(|(key, _)| filter::is_filter_var(key));
             resolved
         } else {
             // A machine's file reads what its scripts would see without it.
