@@ -51,6 +51,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Changed
 
+- `clean_tree` names the run that left the changes it found: each run that passed `clean_tree` and is now `interrupted` or `failed` (an interrupted run never reaches `keep`, so nothing named it), read from `decree status --all --format json` with `jq`, with its id, first heading, `decree process --retry <id>` and `git stash push --include-untracked -m "decree <id>" -- .`. It writes the same lines to the run's `leftovers`, which decree includes in the run's file in `.decree/attention/`, as it does `hold`. With no such run, or no `jq`, the message is as before. decree runs no git command.
 - `decree status` starts with what stops the queue (`Held:`, `Blocked:` and the `--retry` command), leaves out statuses with no runs, counts runs finished in a state other than `failed` instead of listing them, and lists the last 5 runs of each status and the first 5 queued files; `--all` lists everything. `--format json` adds `blocked`.
 - The switch `lib/ai.sh`'s `ai` reads is `AI_CLI`, and a machine's data entry for it is `ai_cli`: beta.7's `DECREE_AI` and `agent` are gone, and `DECREE_*` is again decree's alone, in a script's environment and in `.env` files ([D66](docs/decisions.md#d66-one-ai-helper-with-every-backend-a-capped-limit-wait-and-a-nudge)). `.decree/ai-use.md`'s `agent` column is `cli`.
 - `qa`'s triage names Rust's `#[should_panic]` among the strict expected-failure markers, beside Python's, Playwright's and Jest's.

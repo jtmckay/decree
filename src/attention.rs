@@ -24,7 +24,9 @@ use serde_json::{json, Map, Value};
 use crate::events::{current_state, first_text, is_type, strings, text, waiting_child, Event};
 use crate::interpreter::recover::RunStatus;
 use crate::interpreter::{io_err, Context, InterpreterError};
-use crate::layout::{ATTENTION_DIR, DECREE_DIR, HOLD_FILE, MESSAGE_FILE, STOP_FILE};
+use crate::layout::{
+    ATTENTION_DIR, DECREE_DIR, HOLD_FILE, LEFTOVERS_FILE, MESSAGE_FILE, STOP_FILE,
+};
 use crate::machine::{Invoke, FAILED};
 use crate::message::{lock_state, run_ids, write_replace, LockState, Message};
 
@@ -570,6 +572,14 @@ fn render(
         body.push_str(&format!(
             "## Hold\n\nThis run holds the queue: no run starts or continues until it is \
              retried or this file is deleted. From `.decree/runs/{id}/{HOLD_FILE}`:\n\n{}\n\n",
+            text.trim()
+        ));
+    }
+    let leftovers = run_dir.join(LEFTOVERS_FILE);
+    if let Ok(text) = fs::read_to_string(&leftovers) {
+        body.push_str(&format!(
+            "## Leftovers\n\nThe work tree had changes when this run started. From \
+             `.decree/runs/{id}/{LEFTOVERS_FILE}`:\n\n{}\n\n",
             text.trim()
         ));
     }

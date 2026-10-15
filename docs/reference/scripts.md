@@ -205,7 +205,7 @@ printf '%s\t%s\n' "$link" "$(date +%F)" >> "$seen"
 
 ## Run-directory files
 
-Scripts that hand work to one another, or to a person, do it through files in the root run's folder, `DECREE_ROOT_RUN_DIR`: in a top-level run that is `DECREE_RUN_DIR`, and in a child run the folder of the run at the top of its chain, so a child machine whose steps are `develop`'s scripts shares their notes ([Escalation ladder](../escalation.md)). decree reads none of them but `hold`, and quotes `STOP` in the run's attention file; they are a convention the built-in `develop` machine's scripts follow, and a script of your own can too:
+Scripts that hand work to one another, or to a person, do it through files in the root run's folder, `DECREE_ROOT_RUN_DIR`: in a top-level run that is `DECREE_RUN_DIR`, and in a child run the folder of the run at the top of its chain, so a child machine whose steps are `develop`'s scripts shares their notes ([Escalation ladder](../escalation.md)). decree reads none of them but `hold`, and quotes `STOP` and `leftovers` in the run's attention file; they are a convention the built-in `develop` machine's scripts follow, and a script of your own can too:
 
 | File | Written by | Meaning |
 | --- | --- | --- |
@@ -214,7 +214,8 @@ Scripts that hand work to one another, or to a person, do it through files in th
 | `gate.log` | The `gate` script | The output of the project's own checks, which the step that fixes them reads. The gate names `pass` or `fail` from the checks; a missing tool, or anything else that stops them from running, is a non-zero exit (`error`) with its message here. |
 | `plan.md` | Any step, or a person | A plan for later steps to follow, and a person's answer to a `STOP`. |
 | `gaps.md` | `verify`, on `fail` | What is still missing, one line per unmet requirement or failing test. A retry's `implement` closes each first. `verify` sets the last one aside before asking the AI and puts it back if the attempt ends without a verdict; a `pass` removes it. |
-| `hold` | A script whose failure must stop every run (the built-in `keep`), in its own `DECREE_RUN_DIR` | The only one decree reads: when it writes the run's file in `.decree/attention/`, it sets `holds: true` and includes this text, and nothing runs until the run is retried or the file deleted ([Attention](cli.md#attention)). |
+| `hold` | A script whose failure must stop every run (the built-in `keep`), in its own `DECREE_RUN_DIR` | The only one that holds the queue: when decree writes the run's file in `.decree/attention/`, it sets `holds: true` and includes this text, and nothing runs until the run is retried or the file deleted ([Attention](cli.md#attention)). |
+| `leftovers` | The built-in `clean_tree`, in its own `DECREE_RUN_DIR`, when it finds uncommitted changes | The runs that may have left them: each run that passed `clean_tree` and is now `interrupted` or `failed` (an interrupted run never reaches `keep`, so nothing else names it), found with `"${DECREE}" status --all --format json` read by `jq` (without `jq` on `PATH` it names none), each with its id and first heading, `decree process --retry <id>` to continue it on the changes, and `git stash push --include-untracked -m "decree <id>" -- .` to set them aside. `clean_tree` prints the same lines, after at most 20 of the paths, and still names `.decree/attention/`; with no such run it writes no file. decree includes the text in the run's file in `.decree/attention/`, as it does `hold`, and runs no git command itself. |
 
 ## Events from an invoke
 

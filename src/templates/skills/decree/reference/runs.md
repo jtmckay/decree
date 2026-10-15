@@ -57,9 +57,9 @@ child, and `--retry` alone continues it. `decree status` shows the blocker under
 interrupted child (naming the child). Frontmatter `kind: run`, `run`, `machine`, `message`,
 `status`, `state`, `since`, `holds` (`.decree/schema/v1/attention.schema.json`), then what
 happened, the exact command (`decree process --retry <id>`, or one `decree event <wait id>
-<option>` per option), the run's `hold` text and its `STOP` question. decree writes and deletes
-the files as each run's status changes; a file a person deleted stays deleted until it changes
-again. `decree process` ends with `<n> run(s) need attention: .decree/attention/`, and
+<option>` per option), the run's `hold` text, its `leftovers` and its `STOP` question. decree
+writes and deletes the files as each run's status changes; a file a person deleted stays deleted
+until it changes again. `decree process` ends with `<n> run(s) need attention: .decree/attention/`, and
 `decree status` starts with `Attention:` (`attention` in `--format json`).
 
 - Read-only: answer with `decree event` or a reply, continue with `decree process --retry`;

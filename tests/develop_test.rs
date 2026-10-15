@@ -1366,20 +1366,126 @@ fn a_dirty_tree_fails_the_run_before_the_agent() {
         path(&p, &id),
         ["null -claimed-> precheck", "precheck -error-> failed"]
     );
-    let events = p.events(&id);
-    let clean = events
-        .iter()
-        .find(|e| e["type"] == "script" && e["script"] == "clean_tree")
-        .unwrap();
-    let log = fs::read_to_string(p.run_dir(&id).join(clean["log"].as_str().unwrap())).unwrap();
     assert_eq!(
-        log,
+        clean_tree_log(&p, &id),
         "clean_tree: uncommitted changes; commit or stash them, then run the message again:\n\
          ?? stray.txt\n\
          if a failed run left them, its file in .decree/attention/ names it; continue it with \
          `decree process --retry <id>`\n"
     );
     assert!(p.calls().is_empty());
+}
+
+/// A run interrupted after its agent changed files never reaches `keep`; the next run's
+/// `clean_tree` names it, with the command that continues it and the one that stashes its
+/// changes, and writes the same lines to its `leftovers`, which its attention file quotes.
+/// Once the changes are stashed, that run passes `clean_tree`.
+#[test]
+fn clean_tree_names_the_interrupted_run_that_left_changes() {
+    let p = Project::init();
+    p.commit_all("test setup");
+    let first = p.emit_only();
+    // The agent writes a file, then signals decree (the parent of the script's process
+    // group), as Ctrl-C would.
+    let interrupt = "case \"$prompt\" in *senior*) echo hi > hello.txt; \
+         leader=$(ps -o pgid= -p $$ | tr -d ' '); \
+         kill -INT \"$(ps -o ppid= -p \"$leader\" | tr -d ' ')\"; sleep 5 ;; esac";
+    p.decree(&["process"])
+        .env("PATH", p.path())
+        .env("CLAUDE_DO", interrupt)
+        .output()
+        .unwrap();
+    assert_eq!(p.events(&first).last().unwrap()["type"], "interrupted");
+    assert_eq!(p.git(&["status", "--porcelain"]), "?? hello.txt\n");
+
+    let calls = p.calls().len();
+    let second = p.emit_only();
+    p.decree(&["process"])
+        .env("PATH", p.path())
+        .output()
+        .unwrap();
+    assert_eq!(p.outcome(&second), "failed");
+    let named = format!(
+        "run {first} (Add a greeting) started from a clean tree and is interrupted; it may \
+         have left them:\n  \
+         to continue it on them: `decree process --retry {first}`\n  \
+         to set them aside: `git stash push --include-untracked -m \"decree {first}\" -- .`\n"
+    );
+    assert_eq!(
+        clean_tree_log(&p, &second),
+        format!(
+            "clean_tree: uncommitted changes; commit or stash them, then run the message \
+             again:\n\
+             ?? hello.txt\n\
+             {named}\
+             if a failed run left them, its file in .decree/attention/ names it; continue it \
+             with `decree process --retry <id>`\n"
+        )
+    );
+    assert_eq!(
+        fs::read_to_string(p.run_dir(&second).join("leftovers")).unwrap(),
+        named
+    );
+    let attention = fs::read_to_string(p.attention(&second)).unwrap();
+    assert!(attention.contains(named.trim_end()), "{attention}");
+    assert_eq!(p.calls().len(), calls, "no agent ran");
+
+    // The person runs the printed stash command; the second run passes `clean_tree` now.
+    p.git(&[
+        "stash",
+        "push",
+        "--include-untracked",
+        "-m",
+        &format!("decree {first}"),
+        "--",
+        ".",
+    ]);
+    p.decree(&["process", "--retry", &second])
+        .env("PATH", p.path())
+        .output()
+        .unwrap();
+    assert_eq!(p.outcome(&second), "done");
+    assert!(p.run_dir(&second).join("clean_tree").exists());
+    assert!(!p.run_dir(&second).join("leftovers").exists());
+    assert!(p
+        .git(&["stash", "list"])
+        .contains(&format!("decree {first}")));
+}
+
+/// A failed run whose attention file a person deleted (so it holds nothing) is named too;
+/// a run that failed at `clean_tree` itself never started on the tree, and is not.
+#[test]
+fn clean_tree_names_a_failed_run_and_not_one_that_never_started() {
+    let p = Project::init();
+    let (first, _) = p.fail_with_changes();
+    assert_eq!(p.outcome(&first), "failed");
+    fs::remove_file(p.attention(&first)).unwrap();
+    let second = p.run_on_dirty(&[]);
+    let third = p.run_on_dirty(&[]);
+    for id in [&second, &third] {
+        assert_eq!(p.outcome(id), "failed");
+        let log = clean_tree_log(&p, id);
+        assert!(
+            log.contains(&format!(
+                "run {first} (Add a greeting) started from a clean tree and is failed; it may \
+                 have left them:\n"
+            )),
+            "{log}"
+        );
+        assert!(log.contains(&format!("--retry {first}`")), "{log}");
+        assert!(!log.contains(&format!("run {second}")), "{log}");
+    }
+}
+
+/// The output of run `id`'s `clean_tree`.
+fn clean_tree_log(p: &Project, id: &str) -> String {
+    let events = p.events(id);
+    let clean = events
+        .iter()
+        .rev()
+        .find(|e| e["type"] == "script" && e["script"] == "clean_tree")
+        .unwrap();
+    fs::read_to_string(p.run_dir(id).join(clean["log"].as_str().unwrap())).unwrap()
 }
 
 /// Each machine's `done` commits the run's work, titled with the message's heading; a run that

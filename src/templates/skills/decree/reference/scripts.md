@@ -99,8 +99,8 @@ EOF
 
 Scripts hand work to one another, and to a person, through files in `$DECREE_ROOT_RUN_DIR`
 (the run's own folder, or in a child run the top run's, so a child machine whose steps are
-develop's scripts shares them). decree reads none of them but `hold`, and quotes `STOP` in the
-run's attention file; the built-in `develop` machine's scripts follow this convention:
+develop's scripts shares them). decree reads none of them but `hold`, and quotes `STOP` and
+`leftovers` in the run's attention file; the built-in `develop` machine's scripts follow this convention:
 
 - `progress.md`: the step log, one line per step, what is done and what is next. A retry
   reads it and continues.
@@ -117,6 +117,11 @@ run's attention file; the built-in `develop` machine's scripts follow this conve
   run (the built-in `keep`, in `failed`). decree puts its text in the run's file in
   `.decree/attention/` with `holds: true`, and nothing runs until `decree process --retry <id>`
   removes both or a person deletes the attention file.
+- `leftovers`, in the run's own `$DECREE_RUN_DIR`: written by the built-in `clean_tree` when it
+  finds uncommitted changes. It names each run that passed `clean_tree` and is now
+  `interrupted` or `failed` (from `"${DECREE}" status --all --format json`, read with `jq`),
+  with `decree process --retry <id>` and `git stash push --include-untracked -m "decree <id>"
+  -- .`; `clean_tree` prints the same lines. decree quotes it in the run's attention file.
 
 ## Environment
 

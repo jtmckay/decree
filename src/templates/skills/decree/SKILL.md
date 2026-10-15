@@ -158,8 +158,10 @@ until fixed (the old machines keep running and the errors are printed).
 
 `decree init` writes three working machines besides the router. Start from them before writing
 a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
-unless the git work tree is clean) and ends with `commit` (`done`'s `onentry`: the run's work
-as one commit, titled with the message's first heading), or, in `failed`, with `keep` (the
+unless the git work tree is clean, naming each `interrupted` or `failed` run that may have left
+the changes, with its `--retry` and `git stash push` commands, also in its attention file) and
+ends with `commit` (`done`'s `onentry`: the run's work as one commit, titled with the message's
+first heading), or, in `failed`, with `keep` (the
 run's changes stay in the work tree, and `keep` writes the run's `hold`, so its attention file
 in `.decree/attention/` holds every run until the run is retried). All three touch only the
 project folder. Before queuing work for them, commit or stash any changes. To continue: answer

@@ -18,6 +18,11 @@ pub const ATTENTION_DIR: &str = "attention";
 /// attention file hold the queue (docs/reference/scripts.md, Run directory).
 pub const HOLD_FILE: &str = "hold";
 
+/// `runs/<id>/leftovers`: written by a script (the built-in `clean_tree`), it names the
+/// runs that may have left the changes this run found; the run's attention file quotes it
+/// (docs/reference/scripts.md, Run directory).
+pub const LEFTOVERS_FILE: &str = "leftovers";
+
 /// `runs/<id>/STOP`: an agent's question, which the run's attention file quotes
 /// (docs/reference/scripts.md).
 pub const STOP_FILE: &str = "STOP";
