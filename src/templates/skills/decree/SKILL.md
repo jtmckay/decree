@@ -50,6 +50,10 @@ appear only where a machine invokes `model` or `person`.
 - **Never edit a migration.** Files in `.decree/migrations/` are immutable; the ones listed in
   `.decree/processed.md` have run. To change something, write a new migration with the next
   number.
+- **Name migrations so they keep their order.** They run in byte order of filename, so `100-`
+  sorts before `99-`: pad the number to the width the project will need (`001-`), and when a
+  project outgrows it, continue with a letter prefix (`A01-`, then `B01-`), because letters sort
+  after digits. `decree check` warns when a new name sorts before one that already ran.
 - **One concern per migration**, day-sized, with Given / When / Then acceptance criteria whose
   outcomes are observable (exit codes, file contents, output).
 - **Describe the outcome, not the steps.** A message says what is true when it is done and

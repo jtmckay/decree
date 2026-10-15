@@ -37,8 +37,11 @@ Any other key is kept as written and ignored.
 `.decree/migrations/*.md` is the queue for work that must happen exactly once, in order, with its
 history in git.
 
-- **Name** them with a numeric prefix: `01-add-login.md`, `02-rate-limit-upload.md`. They run in
-  byte order of filename. Use the next free number.
+- **Name** them with a numeric prefix padded to the width the project will need:
+  `001-add-login.md`, `002-rate-limit-upload.md`. They run in byte order of filename, so `100-`
+  sorts before `99-`. Use the next free number. A project that outgrows the width continues with
+  a letter prefix (`A01-`, then `B01-`), because letters sort after digits. `decree check` warns
+  when a new name sorts before one that already ran.
 - **Immutable.** decree never edits, moves or renames a migration; neither do you. A run works on
   a copy in `runs/<stem>/message.md`. To fix a processed migration, write a new one that says
   what it fixes.

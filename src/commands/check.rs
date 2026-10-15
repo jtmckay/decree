@@ -170,7 +170,8 @@ fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>,
 
 /// Each pending migration whose filename sorts before the last one in `processed.md`, in
 /// the byte order `process` runs them (docs/reference/messages.md, Migrations): it runs
-/// next, after work that sorts later. Inserting one is allowed, so this only warns.
+/// next, after work that sorts later. Inserting one is allowed, so this only warns, and says
+/// how names keep their order: `100-` sorts before `99-`, a letter after any digit.
 fn inserted_migrations(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
     let Some(last) = read_processed(&project.decree_dir)?.pop_last() else {
         return Ok(Vec::new());
@@ -182,7 +183,9 @@ fn inserted_migrations(project: &Project) -> Result<Vec<CheckWarning>, DecreeErr
         .map(|name| CheckWarning {
             file: format!("{}/{name}", layout::MIGRATIONS_DIR),
             message: format!(
-                "migration {name} sorts before {last}, which already ran; it runs next"
+                "migration {name} sorts before {last}, which already ran; it runs next. \
+                 To keep the order, pad numbers to the width the project needs (`001-`) or \
+                 continue with a letter prefix (`A01-`), which sorts after digits"
             ),
         })
         .collect())

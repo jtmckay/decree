@@ -200,7 +200,9 @@ fn check_inserted_migration(format: &str) -> (i32, String) {
     )
 }
 
-const INSERTED: &str = "migration 02-b.md sorts before 03-c.md, which already ran; it runs next";
+const INSERTED: &str = "migration 02-b.md sorts before 03-c.md, which already ran; it runs next. \
+     To keep the order, pad numbers to the width the project needs (`001-`) or continue with a \
+     letter prefix (`A01-`), which sorts after digits";
 
 /// A pending migration that sorts before one that ran is a warning, not an error
 /// (docs/reference/messages.md, Migrations): it runs next, after work that sorts later.
@@ -248,6 +250,59 @@ fn check_sarif_lists_a_migration_inserted_before_ones_that_ran() {
         w["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
         ".decree/migrations/02-b.md"
     );
+}
+
+/// `100-b.md` sorts before `99-a.md` in byte order: the warning says how to name
+/// migrations so they keep their order (docs/reference/messages.md, Migrations).
+#[test]
+fn check_warns_that_100_sorts_before_99_and_says_how_to_keep_the_order() {
+    let (code, stdout, stderr) = check_project(PROJECT, |decree| {
+        queue_migrations(decree, &["99-a.md", "100-b.md"], &["99-a.md"]);
+    });
+    assert_eq!((code, stdout.as_str()), (0, ""));
+    assert_eq!(
+        stderr,
+        "warning: migrations/100-b.md: migration 100-b.md sorts before 99-a.md, which already \
+         ran; it runs next. To keep the order, pad numbers to the width the project needs \
+         (`001-`) or continue with a letter prefix (`A01-`), which sorts after digits\n",
+        "{stderr}"
+    );
+}
+
+/// A letter prefix sorts after any digits: `A01-b.md` after `99-a.md` draws no warning,
+/// and `decree process --dry-run` lists it next.
+#[test]
+fn a_letter_prefix_continues_after_numbered_migrations() {
+    let tmp = TempDir::new().unwrap();
+    copy_dir(&decree_dir(PROJECT), &tmp.path().join(".decree"));
+    queue_migrations(
+        &tmp.path().join(".decree"),
+        &["99-a.md", "A01-b.md"],
+        &["99-a.md"],
+    );
+    let check = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("check")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(check.stderr).unwrap();
+    assert_eq!(check.status.code(), Some(0), "{stderr}");
+    assert_eq!(stderr, "", "no inserted-migration warning");
+    let dry = cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .args(["process", "--dry-run"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(dry.stdout).unwrap();
+    assert_eq!(dry.status.code(), Some(0), "{stdout}");
+    let next = stdout
+        .lines()
+        .find(|line| line.contains(".md"))
+        .unwrap_or_default();
+    assert!(next.contains("A01-b.md"), "{stdout}");
+    assert!(!stdout.contains("99-a.md"), "{stdout}");
 }
 
 /// A pending migration after every one that ran is the normal case: no warning.
