@@ -120,8 +120,8 @@ fn test_readme_mentions_no_removed_concept() {
 
 /// Every command in the README runs as written on a fresh
 /// project. All ```bash blocks run in order in one shell, in an empty temp
-/// directory, with this build of decree first on PATH. `cargo install` is the one
-/// line skipped: it needs the network, and the build under test stands in for it.
+/// directory, with this build of decree first on PATH. The install line (`install.sh`,
+/// or `cargo install`) is skipped: it needs the network, and the build under test stands in for it.
 #[test]
 fn test_every_readme_command_runs_as_written() {
     let blocks = readme_bash_blocks();
@@ -132,7 +132,7 @@ fn test_every_readme_command_runs_as_written() {
     let mut script = String::from("set -euo pipefail\n");
     for block in &blocks {
         for line in block.lines() {
-            if !line.starts_with("cargo install ") {
+            if !line.starts_with("cargo install ") && !line.ends_with("/install.sh | sh") {
                 script.push_str(line);
                 script.push('\n');
             }

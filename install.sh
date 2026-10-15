@@ -2,7 +2,7 @@
 # Install decree from a GitHub release:
 #   curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh
 # The newest release by default (betas included); a version with `| sh -s -- v0.5.0-beta.11`.
-# Installs to $DECREE_INSTALL_DIR, default ~/.local/bin, with no sudo. Run it again to update.
+# Installs to $XDG_BIN_HOME, default ~/.local/bin (as uv does), with no sudo. Run it again to update.
 set -eu
 repo=jtmckay/decree
 asset=decree-x86_64-linux
@@ -17,7 +17,7 @@ tag=${1:-$(curl -fsSL "https://api.github.com/repos/${repo}/releases?per_page=1"
   sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)}
 [ -n "${tag}" ] || fail "no release found"
 
-dir=${DECREE_INSTALL_DIR:-${HOME}/.local/bin}
+dir=${XDG_BIN_HOME:-${HOME}/.local/bin}
 tmp=$(mktemp -d)
 trap 'rm -rf "${tmp}"' EXIT
 base="https://github.com/${repo}/releases/download/${tag}"
