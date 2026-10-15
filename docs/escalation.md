@@ -80,7 +80,7 @@ states:
       retry: { target: claude_round, description: Give Claude another round; put any guidance in plan.md first. }
       fail: { target: failed, description: Stop here and keep the changes for a person. }
   done:   { final: true, onentry: [commit] }   # one commit per run
-  failed: { final: true, onentry: [keep] }     # the run's changes stay in the tree; HOLD stops the queue
+  failed: { final: true, onentry: [keep] }     # the run's changes stay in the tree; its attention file holds the queue
 ```
 
 `.decree/machines/gaps.yml`, one round. Set `ai_cli`'s default to the backend your cheap rounds use:

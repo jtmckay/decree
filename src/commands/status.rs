@@ -1,8 +1,8 @@
 //! `decree status [<id>] [--cron]` (docs/reference/cli.md). Reads runs and queues; never touches
 //! a run.
 //!
-//! - No id: first what stops the queue, `.decree/HOLD` or the migration that blocks it, with
-//!   the command that continues it; then the runs by status, with the script each `active`
+//! - No id: first `.decree/attention/`, its files, those that hold the queue first, then the
+//!   migration that blocks the queue, with the command that continues it; then the runs by status, with the script each `active`
 //!   run is running now (from `.running`, docs/reference/scripts.md) and the wait of each
 //!   `waiting` run; then the queued messages. Runs finished in a state other than `failed`
 //!   are counted, not listed, and each list shows its last `SHOWN` entries, unless `--all`.
@@ -21,17 +21,18 @@ use chrono::{DateTime, Local, Utc};
 use colored::Colorize;
 use serde_json::{json, Value};
 
+use crate::attention;
 use crate::cli::Format;
 use crate::commands::check::{md_files, Project};
 use crate::commands::print_json;
-use crate::commands::process::{blocking_migration, context, held, held_back};
+use crate::commands::process::{blocking_migration, context, held_back};
 use crate::cron;
 use crate::error::DecreeError;
 use crate::events::{current_state, strings, text, Event};
 use crate::interpreter::recover::RunStatus;
 use crate::interpreter::Context;
 use crate::layout::MESSAGE_FILE;
-use crate::layout::{DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
+use crate::layout::{ATTENTION_DIR, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
 use crate::machine::FAILED;
 use crate::message::{run_ids, Message};
 use crate::runtime::Running;
@@ -204,6 +205,9 @@ fn overview(
 
     let inbox = md_files(&project.decree_dir.join(INBOX_DIR))?;
     let pending = project.pending_migrations()?;
+    // The files that hold the queue first, each group by name.
+    let mut attention = attention::list(&ctx.project_root)?;
+    attention.sort_by_key(|e| !e.holds());
     let unfinished = [
         RunStatus::Active,
         RunStatus::Waiting,
@@ -232,6 +236,7 @@ fn overview(
             .collect::<serde_json::Map<String, Value>>()
             .into();
         let mut out = json!({
+            "attention": attention.iter().map(attention::Entry::json).collect::<Vec<_>>(),
             "counts": counts,
             "runs": runs,
             "queued": { "inbox": inbox, "migrations": pending },
@@ -260,8 +265,15 @@ fn overview(
         return print_json(&out);
     }
 
-    if let Some(message) = held(&ctx.project_root) {
-        println!("{} {message}", "Held:".bold());
+    if !attention.is_empty() {
+        println!(
+            "{} {DECREE_DIR}/{ATTENTION_DIR}/: {} file(s)",
+            "Attention:".bold(),
+            attention.len()
+        );
+    }
+    for entry in &attention {
+        println!("  {}", entry.summary());
     }
     if let Some(b) = &blocking {
         println!(

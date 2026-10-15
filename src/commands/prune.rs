@@ -184,6 +184,7 @@ fn prune(rule: &Rule, id: &str, dry_run: bool) -> Result<Option<(Finished, u64)>
         return Ok(None);
     };
     let size = dir_size(&run_dir)?;
+    crate::attention::remove(&rule.ctx.project_root, id)?;
     remove_run(&run_dir, lock)?;
     Ok(Some((run, size)))
 }

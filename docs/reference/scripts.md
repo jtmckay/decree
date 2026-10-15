@@ -205,15 +205,16 @@ printf '%s\t%s\n' "$link" "$(date +%F)" >> "$seen"
 
 ## Run-directory files
 
-Scripts that hand work to one another, or to a person, do it through files in the root run's folder, `DECREE_ROOT_RUN_DIR`: in a top-level run that is `DECREE_RUN_DIR`, and in a child run the folder of the run at the top of its chain, so a child machine whose steps are `develop`'s scripts shares their notes ([Escalation ladder](../escalation.md)). decree reads none of them; they are a convention the built-in `develop` machine's scripts follow, and a script of your own can too:
+Scripts that hand work to one another, or to a person, do it through files in the root run's folder, `DECREE_ROOT_RUN_DIR`: in a top-level run that is `DECREE_RUN_DIR`, and in a child run the folder of the run at the top of its chain, so a child machine whose steps are `develop`'s scripts shares their notes ([Escalation ladder](../escalation.md)). decree reads none of them but `hold`, and quotes `STOP` in the run's attention file; they are a convention the built-in `develop` machine's scripts follow, and a script of your own can too:
 
 | File | Written by | Meaning |
 | --- | --- | --- |
 | `progress.md` | The AI, one line per step | The step log: what is done and what is next. A retry reads it and continues where the last attempt stopped. |
-| `STOP` | The AI, instead of guessing | A question the message does not answer. A script that finds it prints it and names the event `stop`, before asking the AI and after; it stops every later attempt and retry until a person answers in `plan.md`, deletes it and runs `decree process --retry`. |
+| `STOP` | The AI, instead of guessing | A question the message does not answer. A script that finds it prints it and names the event `stop`, before asking the AI and after; it stops every later attempt and retry until a person answers in `plan.md`, deletes it and runs `decree process --retry`. The run's file in `.decree/attention/` quotes it. |
 | `gate.log` | The `gate` script | The output of the project's own checks, which the step that fixes them reads. The gate names `pass` or `fail` from the checks; a missing tool, or anything else that stops them from running, is a non-zero exit (`error`) with its message here. |
 | `plan.md` | Any step, or a person | A plan for later steps to follow, and a person's answer to a `STOP`. |
 | `gaps.md` | `verify`, on `fail` | What is still missing, one line per unmet requirement or failing test. A retry's `implement` closes each first. `verify` sets the last one aside before asking the AI and puts it back if the attempt ends without a verdict; a `pass` removes it. |
+| `hold` | A script whose failure must stop every run (the built-in `keep`), in its own `DECREE_RUN_DIR` | The only one decree reads: when it writes the run's file in `.decree/attention/`, it sets `holds: true` and includes this text, and nothing runs until the run is retried or the file deleted ([Attention](cli.md#attention)). |
 
 ## Events from an invoke
 

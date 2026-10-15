@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 mod common;
+#[path = "common/schema.rs"]
+mod schema;
 use common::write_script;
 
 const MESSAGE: &str =
@@ -245,6 +247,31 @@ impl Project {
         }
         cmd.output().unwrap();
         id
+    }
+
+    /// A `develop` run whose agent writes `hello.txt` and whose verify fails: its id and
+    /// the output of the `process` that ran it.
+    fn fail_with_changes(&self) -> (String, std::process::Output) {
+        self.commit_all("test setup");
+        let id = self.emit_only();
+        let out = self
+            .decree(&["process"])
+            .env("PATH", self.path())
+            .env(
+                "CLAUDE_DO",
+                "case \"$prompt\" in *senior*) echo hi > hello.txt ;; esac",
+            )
+            .env("CLAUDE_REPLY", "VERDICT: fail")
+            .output()
+            .unwrap();
+        (id, out)
+    }
+
+    /// `.decree/attention/<id>.md`.
+    fn attention(&self, id: &str) -> PathBuf {
+        self.root()
+            .join(".decree/attention")
+            .join(format!("{id}.md"))
     }
 
     fn run_dir(&self, id: &str) -> PathBuf {
@@ -1126,12 +1153,12 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
          not_a_tool_xyz is not on PATH: install it, then continue the run\n\
          FAILED   command not_a_tool_xyz\n"
     );
-    // The declaration stays in the tree with the rest of the failed run, and HOLD stops the
-    // queue; the person commits it and releases the hold.
+    // The declaration stays in the tree with the rest of the failed run, and its attention
+    // file holds the queue; the person commits it and deletes the file.
     assert!(p
         .log(&id, "failed")
         .contains(&format!("`decree process --retry {id}`")));
-    fs::remove_file(p.root().join(".decree/HOLD")).unwrap();
+    fs::remove_file(p.attention(&id)).unwrap();
     let id = p.run(&[]);
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(
@@ -1349,7 +1376,7 @@ fn a_dirty_tree_fails_the_run_before_the_agent() {
         log,
         "clean_tree: uncommitted changes; commit or stash them, then run the message again:\n\
          ?? stray.txt\n\
-         if a failed run left them, `decree status` names it; continue it with \
+         if a failed run left them, its file in .decree/attention/ names it; continue it with \
          `decree process --retry <id>`\n"
     );
     assert!(p.calls().is_empty());
@@ -1387,31 +1414,43 @@ fn done_commits_the_runs_work() {
     );
 }
 
-/// A failed run keeps its changes in the work tree and holds the queue with `.decree/HOLD`:
-/// the next run waits, and a retry continues on the kept changes and releases the hold.
+/// A failed run keeps its changes in the work tree and writes its `hold`, so its file in
+/// `.decree/attention/` holds the queue: the next run waits, and a retry removes both before
+/// the run continues on the kept changes.
 #[test]
 fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     let p = Project::init();
-    let id = p.run(&[
-        (
-            "CLAUDE_DO",
-            "case \"$prompt\" in *senior*) echo hi > hello.txt ;; esac",
-        ),
-        ("CLAUDE_REPLY", "VERDICT: fail"),
-    ]);
+    let (id, out) = p.fail_with_changes();
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(p.git(&["status", "--porcelain"]), "?? hello.txt\n", "kept");
     assert_eq!(p.git(&["stash", "list"]), "");
-    let hold = fs::read_to_string(p.root().join(".decree/HOLD")).unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        hold.starts_with(&format!("{id}\nrun {id} (Add a greeting) failed")),
-        "{hold}"
+        err.contains("\n1 run(s) need attention: .decree/attention/\n"),
+        "{err}"
     );
+    let file = fs::read_to_string(p.attention(&id)).unwrap();
+    let frontmatter = schema::frontmatter_to_json(&file).unwrap();
+    let validator = schema::validator(schema::ATTENTION_SCHEMA);
+    assert_eq!(
+        schema::errors(&validator, &frontmatter),
+        Vec::<String>::new()
+    );
+    assert_eq!(frontmatter["holds"], true, "{file}");
+    assert_eq!(frontmatter["status"], "failed", "{file}");
+    assert_eq!(frontmatter["message"], "inbox", "{file}");
+    assert!(file.contains("\n# Add a greeting\n"), "{file}");
+    assert!(file.contains("?? hello.txt"), "the kept changes: {file}");
+    assert!(
+        file.contains(&format!("    decree process --retry {id}\n")),
+        "{file}"
+    );
+    assert!(p.run_dir(&id).join("hold").is_file());
     assert!(p
         .log(&id, "failed")
         .contains(&format!("`decree process --retry {id}`")));
 
-    // The next run waits: process says why and exits 1.
+    // The next run waits: process names the file, starts nothing and exits 1.
     let next = p.emit_only();
     let out = p
         .decree(&["process"])
@@ -1421,29 +1460,68 @@ fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("nothing runs while .decree/HOLD exists"),
+        err.contains("nothing runs while a file in .decree/attention/ holds the queue"),
         "{err}"
     );
     assert!(
-        err.contains(&format!("run {id} (Add a greeting) failed")),
+        err.contains(&format!(".decree/attention/{id}.md:\n# Add a greeting")),
         "{err}"
     );
     assert!(!p.run_dir(&next).exists(), "not claimed");
 
-    // A retry continues on the kept changes, releases the hold, and the queue goes on.
+    // A retry removes the hold and the attention file before the run continues on the kept
+    // changes, and the queue goes on.
     let out = p
         .decree(&["process", "--retry", &id, "--state", "verify"])
         .env("PATH", p.path())
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    assert!(String::from_utf8_lossy(&out.stdout).contains("removed .decree/HOLD"));
-    assert!(!p.root().join(".decree/HOLD").exists());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let removed = stdout
+        .find(&format!("removed .decree/runs/{id}/hold\n"))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    let started = stdout
+        .find(&format!("▶ {id}"))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(removed < started, "{stdout}");
+    assert!(!p.run_dir(&id).join("hold").exists());
+    assert!(!p.attention(&id).exists());
     assert_eq!(p.outcome(&id), "done");
     assert_eq!(p.commits()[0], "Add a greeting");
     assert_eq!(p.git(&["show", "HEAD:hello.txt"]), "hi\n");
     assert_eq!(p.outcome(&next), "done");
     assert_eq!(p.git(&["status", "--porcelain"]), "");
+    assert_eq!(
+        fs::read_dir(p.root().join(".decree/attention"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+/// To drop a held run instead, a person stashes its changes and deletes its attention file:
+/// decree deletes the run's `hold` and the queue goes on.
+#[test]
+fn deleting_the_attention_file_of_a_held_run_releases_the_queue() {
+    let p = Project::init();
+    let (id, _) = p.fail_with_changes();
+    assert!(p.run_dir(&id).join("hold").is_file());
+    p.git(&["stash", "push", "--include-untracked", "--", "."]);
+    fs::remove_file(p.attention(&id)).unwrap();
+
+    let next = p.emit_only();
+    let out = p
+        .decree(&["process"])
+        .env("PATH", p.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(!p.run_dir(&id).join("hold").exists());
+    assert_eq!(p.outcome(&next), "done");
+    // The run is still failed; its file stays deleted until its status changes.
+    assert_eq!(p.outcome(&id), "failed");
+    assert!(!p.attention(&id).exists());
 }
 
 /// A run that fails because the person's own changes are uncommitted leaves them alone.
@@ -1463,7 +1541,9 @@ fn a_run_that_never_started_clean_keeps_and_holds_nothing() {
         .unwrap();
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(p.git(&["status", "--porcelain"]), "?? mine.txt\n");
-    assert!(!p.root().join(".decree/HOLD").exists());
+    assert!(!p.run_dir(&id).join("hold").exists());
+    let file = fs::read_to_string(p.attention(&id)).unwrap();
+    assert!(file.contains("\nholds: false\n"), "{file}");
 }
 
 /// A project in a subfolder of a larger repository touches only its own folder: changes in a

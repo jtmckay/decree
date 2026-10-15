@@ -10,10 +10,17 @@ pub const MIGRATIONS_DIR: &str = "migrations";
 pub const PROCESSED_FILE: &str = "processed.md";
 pub const GITIGNORE_FILE: &str = ".gitignore";
 
-/// `.decree/HOLD`: while it exists, `process` and `daemon` start and continue no runs. Its
-/// first line names the run that wrote it, whose `--retry` removes it
-/// (docs/reference/cli.md, Hold).
-pub const HOLD_FILE: &str = "HOLD";
+/// `.decree/attention/`: one file per run that needs a person; a file with `holds: true`, or
+/// one decree cannot read, stops `process` and `daemon` (docs/reference/cli.md, Attention).
+pub const ATTENTION_DIR: &str = "attention";
+
+/// `runs/<id>/hold`: written by a script (the built-in `keep`), it makes the run's
+/// attention file hold the queue (docs/reference/scripts.md, Run directory).
+pub const HOLD_FILE: &str = "hold";
+
+/// `runs/<id>/STOP`: an agent's question, which the run's attention file quotes
+/// (docs/reference/scripts.md).
+pub const STOP_FILE: &str = "STOP";
 
 /// `.decree/process.log`: what `process` and `daemon` print as runs go, kept even with
 /// `--quiet`, its last 2 MiB (docs/reference/cli.md, Output).

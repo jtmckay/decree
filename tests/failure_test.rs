@@ -400,9 +400,34 @@ fn a_migration_waiting_for_an_interrupted_child_blocks_and_retry_continues_the_c
         .stdout
         .clone();
     let status = String::from_utf8(status).unwrap();
+    // The child and the migration that waits for it each have an attention file; the
+    // migration's names the child.
     assert!(
-        status.starts_with(&format!(
-            "Blocked: migration 01-call.md waits for child run {child}, interrupted in `work`; \
+        status.starts_with("Attention: .decree/attention/: 2 file(s)\n"),
+        "{status}"
+    );
+    let file = fs::read_to_string(p.root().join(".decree").join("attention/01-call.md")).unwrap();
+    assert!(file.contains("\nstatus: waiting\n"), "{file}");
+    assert!(file.contains("\nmessage: 01-call.md\n"), "{file}");
+    assert!(file.contains(&format!("child run `{child}`")), "{file}");
+    assert!(
+        file.contains(&format!("    decree process --retry {child}\n")),
+        "{file}"
+    );
+    assert!(
+        file.contains("later migrations are blocked until it finishes"),
+        "{file}"
+    );
+    let file = fs::read_to_string(
+        p.root()
+            .join(".decree")
+            .join(format!("attention/{child}.md")),
+    )
+    .unwrap();
+    assert!(file.contains("\nstatus: interrupted\n"), "{file}");
+    assert!(
+        status.contains(&format!(
+            "\nBlocked: migration 01-call.md waits for child run {child}, interrupted in `work`; \
              later migrations wait\n  continue with `decree process --retry`\n"
         )),
         "{status}"
@@ -413,6 +438,13 @@ fn a_migration_waiting_for_an_interrupted_child_blocks_and_retry_continues_the_c
     assert_eq!(
         fs::read_to_string(p.root().join(".decree/processed.md")).unwrap(),
         "01-call.md\n02-next.md\n"
+    );
+    // Both finished: neither needs anyone now.
+    assert_eq!(
+        fs::read_dir(p.root().join(".decree").join("attention"))
+            .unwrap()
+            .count(),
+        0
     );
 }
 

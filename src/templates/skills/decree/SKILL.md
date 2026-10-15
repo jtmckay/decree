@@ -116,6 +116,13 @@ appear only where a machine invokes `model` or `person`.
 - **A step that waits for a shared resource is an invoked state with a `timeout`** (ComfyUI's
   queue, a model unloading), not an `onentry` script, which has none. Keep `onentry` for quick
   steps.
+- **What needs a person is in `.decree/attention/`.** Read it first when a run is failed,
+  waiting or stuck, and do what each file says: `decree event <wait id> <option>` for a wait,
+  `decree process --retry <id>` for a failed or interrupted run. Never edit an attention file
+  to answer; never write one from a machine's script. A step whose failure must stop every
+  run writes `$DECREE_RUN_DIR/hold` (what `keep` does), and decree turns it into a holding
+  attention file. Any `.md` file a person or another tool puts in the folder halts the queue
+  until it is deleted.
 - **Never delete run folders to clean up**; they are the record. Use
   `decree prune --older-than <age>`.
 - Do not commit `.decree/inbox/`, `.decree/runs/`, `.decree/store/` or `.decree/cache/`.
@@ -133,7 +140,7 @@ appear only where a machine invokes `model` or `person`.
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>] [--retry [<id>]]` | The same, in a loop, with cron, every `2s` by default. |
 
-| `decree status [<id>] [--cron] [--all] [--format json]` | What blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; cron schedule (text only). |
+| `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then what blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
 | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
@@ -150,11 +157,12 @@ until fixed (the old machines keep running and the errors are printed).
 a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
 unless the git work tree is clean) and ends with `commit` (`done`'s `onentry`: the run's work
 as one commit, titled with the message's first heading), or, in `failed`, with `keep` (the
-run's changes stay in the work tree, and `.decree/HOLD` stops every other run until the run is
-retried). All three touch only the project folder. Before queuing work for them, commit or
-stash any changes. To continue a failed run: answer any `STOP` in `plan.md` and delete it, then
-`decree process --retry <id>`, which builds on the kept changes and removes `HOLD`. To drop
-the run instead: stash or discard its changes and delete `.decree/HOLD`. For divergent work,
+run's changes stay in the work tree, and `keep` writes the run's `hold`, so its attention file
+in `.decree/attention/` holds every run until the run is retried). All three touch only the
+project folder. Before queuing work for them, commit or stash any changes. To continue: answer
+any `STOP` in `plan.md`, delete `STOP`, `decree process --retry <id>`, which builds on the
+kept changes and removes the hold. To drop the run: stash its changes and delete its
+attention file. For divergent work,
 or to keep editing while runs go on, suggest a
 git worktree the user makes and runs decree in (`git worktree add ../app-exp -b exp`, then
 `decree process` there): each checkout has its own runs and inbox, and its branch its own

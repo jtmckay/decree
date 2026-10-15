@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::attention;
 use crate::cli::Format;
 use crate::commands::check::{self, md_files, Project};
 use crate::commands::print_json;
@@ -40,7 +41,7 @@ use crate::interpreter::child::continue_run;
 use crate::interpreter::recover::{self, mirror_state, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
 use crate::layout::MESSAGE_FILE;
-use crate::layout::{self, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
+use crate::layout::{self, ATTENTION_DIR, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
 use crate::machine::FAILED;
 use crate::message::{self, is_valid_id, Claim, LockState, Message, RunLock};
 use crate::reply::{self, Delivery};
@@ -95,6 +96,7 @@ pub fn run(
     }
     let failed = pipeline.take_failed();
     print_failed(&failed);
+    print_attention(project_root)?;
     result.map_err(Stop::into_error)?;
     match failed.len() {
         0 => Ok(()),
@@ -131,7 +133,8 @@ pub(crate) enum Stop {
     Blocked(String),
     /// SIGINT or SIGTERM: the current run is `interrupted`.
     Interrupted,
-    /// `.decree/HOLD` exists: nothing runs until it is gone. Holds what to print.
+    /// A file in `.decree/attention/` holds the queue: nothing runs until it is gone. Holds
+    /// what to print.
     Held(String),
     /// Anything else: an I/O error, or a run that cannot be stepped.
     Error(DecreeError),
@@ -306,12 +309,13 @@ impl Pipeline {
         self.ctx.shutdown.load(Ordering::Relaxed)
     }
 
-    /// Stop for a signal, or for `.decree/HOLD`, before a run starts or continues.
+    /// Stop for a signal, or for a file in `.decree/attention/` that holds the queue, before
+    /// a run starts or continues.
     fn may_run(&self) -> Result<(), Stop> {
         if self.shutdown() {
             return Err(Stop::Interrupted);
         }
-        match held(&self.ctx.project_root) {
+        match attention::held(&self.ctx)? {
             Some(message) => Err(Stop::Held(message)),
             None => Ok(()),
         }
@@ -540,6 +544,15 @@ fn print_failed(failed: &[String]) {
     }
 }
 
+/// `<n> run(s) need attention: .decree/attention/`, when the folder has files.
+fn print_attention(project_root: &Path) -> Result<(), DecreeError> {
+    let n = attention::list(project_root)?.len();
+    if n > 0 {
+        eprintln!("{n} run(s) need attention: {DECREE_DIR}/{ATTENTION_DIR}/");
+    }
+    Ok(())
+}
+
 /// docs/reference/messages.md, Migrations, rule 6: parse every pending migration (frontmatter, machine,
 /// `params` against the machine's `data`) before any runs. Prints every error.
 fn validate_migrations(project: &Project) -> Result<(), DecreeError> {
@@ -581,7 +594,7 @@ fn run_claim(
     let mut message = match message {
         Ok(message) => message,
         // The frontmatter did not parse: leave message.md unchanged.
-        Err(e) => return reject(&run_dir, &id, "", "inbox", &file, &e.to_string(), false),
+        Err(e) => return reject(ctx, &id, "", "inbox", &file, &e.to_string(), false),
     };
     let trigger = message.text("trigger").unwrap_or("inbox").to_string();
     if message.frontmatter.get("id").is_none() || id_problem.is_some() {
@@ -594,14 +607,14 @@ fn run_claim(
 
     let name = message.machine().unwrap_or_default().to_string();
     if let Some(problem) = id_problem {
-        return reject(&run_dir, &id, &name, &trigger, &file, &problem, true);
+        return reject(ctx, &id, &name, &trigger, &file, &problem, true);
     }
     if message.frontmatter.contains_key("to") {
         let reason = reply_problem.map_or_else(
             || "a reply (`to:`) was not delivered".to_string(),
             |p| format!("reply not delivered: {p}"),
         );
-        return reject(&run_dir, &id, &name, &trigger, &file, &reason, true);
+        return reject(ctx, &id, &name, &trigger, &file, &reason, true);
     }
     start(ctx, project, &id, &trigger, &file, &message)
 }
@@ -616,7 +629,6 @@ fn start(
     file: &str,
     message: &Message,
 ) -> Result<Outcome, DecreeError> {
-    let run_dir = ctx.runs_dir().join(id);
     let name = match message::validate(message, &project.machines, &project.machine_ids) {
         Ok(name) => name,
         Err(errors) => {
@@ -626,7 +638,7 @@ fn start(
                 .collect::<Vec<_>>()
                 .join("; ");
             let name = message.machine().unwrap_or_default();
-            return reject(&run_dir, id, name, trigger, file, &reason, true);
+            return reject(ctx, id, name, trigger, file, &reason, true);
         }
     };
     // `Pipeline::new` refuses a project with a machine that does not load.
@@ -642,7 +654,7 @@ fn start(
 /// Fail a run at its claim with `invalid_message` and `reason`: one `transition` event to
 /// `failed`, and `state: failed` mirrored unless the frontmatter did not parse.
 fn reject(
-    run_dir: &Path,
+    ctx: &Context,
     id: &str,
     machine: &str,
     trigger: &str,
@@ -650,8 +662,10 @@ fn reject(
     reason: &str,
     mirror: bool,
 ) -> Result<Outcome, DecreeError> {
-    let mut events = EventLog::open(run_dir, id, machine, trigger)?;
-    recover::reject(&mut events, run_dir, file, reason, mirror)?;
+    let run_dir = ctx.runs_dir().join(id);
+    let mut events = EventLog::open(&run_dir, id, machine, trigger)?;
+    recover::reject(&mut events, &run_dir, file, reason, mirror)?;
+    attention::record(ctx, id)?;
     report::notice(format!("{file}: invalid message: {reason}"));
     Ok(Outcome::Finished(FAILED.to_string()))
 }
@@ -684,7 +698,7 @@ fn step_migration(
             }
             RunStatus::Waiting => {
                 // A child that was interrupted never continues its parent by itself.
-                return match stalled_child(ctx, &events)? {
+                return match ctx.stalled_child(&events)? {
                     Some((child, state)) => Err(blocked(
                         file,
                         &format!("waits for child run {child}, interrupted in `{state}`"),
@@ -801,7 +815,7 @@ pub(crate) fn blocking_migration(
                 let state = current_state(&events).unwrap_or("no state").to_string();
                 (id, state, status)
             }
-            RunStatus::Waiting => match stalled_child(ctx, &events)? {
+            RunStatus::Waiting => match ctx.stalled_child(&events)? {
                 Some((child, state)) => (child, state, RunStatus::Interrupted),
                 None => continue,
             },
@@ -871,28 +885,6 @@ pub(crate) fn held_back(ctx: &Context, project: &Project) -> Result<Option<Strin
     } else {
         format!("migration {file} waits for child run {run}, which {reason}{behind}")
     }))
-}
-
-/// The `interrupted` run, and its state, at the end of the child runs a run with `events`
-/// waits for, child after child; `None` if the last one is not `interrupted`.
-fn stalled_child(ctx: &Context, events: &[Event]) -> Result<Option<(String, String)>, DecreeError> {
-    let mut seen = HashSet::new();
-    let mut next = waiting_child(events).map(String::from);
-    while let Some(id) = next {
-        if !seen.insert(id.clone()) || !ctx.runs_dir().join(&id).is_dir() {
-            break;
-        }
-        let (status, events) = ctx.status_of(&id)?;
-        match status {
-            RunStatus::Interrupted => {
-                let state = current_state(&events).unwrap_or("no state").to_string();
-                return Ok(Some((id, state)));
-            }
-            RunStatus::Waiting => next = waiting_child(&events).map(String::from),
-            _ => break,
-        }
-    }
-    Ok(None)
 }
 
 /// `--retry` (docs/reference/cli.md): make an `interrupted` or finished run `pending` again,
@@ -983,33 +975,8 @@ fn retry_run(
     )?;
     mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
     println!("run {id} continues in `{target}`");
-    release_hold(&ctx.project_root, id)?;
-    Ok(())
-}
-
-/// What to print while `.decree/HOLD` exists, or `None` (docs/reference/cli.md, Hold).
-pub(crate) fn held(project_root: &Path) -> Option<String> {
-    let path = project_root.join(DECREE_DIR).join(layout::HOLD_FILE);
-    let text = std::fs::read_to_string(&path).ok().or_else(|| {
-        // A HOLD that cannot be read (a folder, no permission) holds all the same.
-        path.exists().then(String::new)
-    })?;
-    Some(format!(
-        "nothing runs while .decree/HOLD exists; delete it, or retry the run it names:\n{}",
-        text.trim_end()
-    ))
-}
-
-/// Remove `.decree/HOLD` if its first line is run `id`, which `--retry` continues.
-fn release_hold(project_root: &Path, id: &str) -> Result<(), DecreeError> {
-    let path = project_root.join(DECREE_DIR).join(layout::HOLD_FILE);
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Ok(());
-    };
-    if text.lines().next().map(str::trim) == Some(id) {
-        std::fs::remove_file(&path)?;
-        println!("removed .decree/HOLD, which run {id} wrote");
-    }
+    attention::release(ctx, id)?;
+    attention::record(ctx, id)?;
     Ok(())
 }
 

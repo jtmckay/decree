@@ -1,3 +1,4 @@
+pub(crate) mod attention;
 pub(crate) mod cli;
 pub(crate) mod commands;
 pub(crate) mod cond;

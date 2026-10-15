@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/attention.schema.json",
+  "title": "decree attention file frontmatter",
+  "description": "The YAML frontmatter of .decree/attention/<id>.md, the file decree writes when run <id> needs a person: it failed, was interrupted, waits in a `person` state, or is a migration waiting for an interrupted child run. A markdown body follows: what happened and the exact command that continues the run. The files are read-only: answer with `decree event` or a reply, continue with `decree process --retry`. A `.md` file in the folder whose frontmatter is missing or does not match this schema holds the queue as if it had `holds: true`. Reference: docs/reference/cli.md, Attention.",
+  "type": "object",
+  "required": ["kind", "run", "machine", "message", "status", "state", "since", "holds"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "run",
+      "description": "What the file is about: `run`, a run that needs a person."
+    },
+    "run": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The run's id; the file is `<run>.md`."
+    },
+    "machine": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The run's machine."
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The migration's file name for a migration run, else `inbox`."
+    },
+    "status": {
+      "enum": ["failed", "interrupted", "waiting"],
+      "description": "`failed`: finished in `failed`. `interrupted`: stopped by a signal, or by a crash found later from a stale lock. `waiting`: waits in a `person` state for a reply, or is a migration waiting for an interrupted child run, which the body names."
+    },
+    "state": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The state the run is in; for a failed run, the state it failed from, which `decree process --retry` continues in."
+    },
+    "since": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the run's status changed, RFC 3339 UTC: the `ts` of its last event."
+    },
+    "holds": {
+      "type": "boolean",
+      "description": "Whether the file holds the queue: the run has a `hold` file (written by the built-in `keep` script). While any file holds, `process` and `daemon` start and continue no runs."
+    }
+  },
+  "examples": [
+    {
+      "kind": "run",
+      "run": "106-attention-directory",
+      "machine": "develop",
+      "message": "106-attention-directory.md",
+      "status": "failed",
+      "state": "implement",
+      "since": "2026-10-15T08:09:00.000Z",
+      "holds": true
+    }
+  ]
+}

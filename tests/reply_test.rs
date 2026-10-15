@@ -206,7 +206,13 @@ fn a_migration_held_back_by_a_child_waiting_for_a_reply_is_named() {
         .get_output()
         .stdout
         .clone();
-    assert!(String::from_utf8(status).unwrap().starts_with(&why));
+    // The child waits for a person: its attention file comes first.
+    let status = String::from_utf8(status).unwrap();
+    assert!(
+        status.starts_with("Attention: .decree/attention/: 1 file(s)\n"),
+        "{status}"
+    );
+    assert!(status.contains(&format!("\n{why}")), "{status}");
 }
 
 #[test]

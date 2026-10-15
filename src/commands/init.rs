@@ -151,8 +151,8 @@ const LIB_FILES: &[(&str, &str, bool)] = &[
 /// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution;
 /// docs/decisions.md, D15). Every built-in machine starts with `clean_tree` (a root `onentry`:
 /// a clean git work tree) and ends with `commit` (`done`'s `onentry`: one commit per run) or
-/// `keep` (`failed`'s `onentry`: the run's changes stay in the tree, and `.decree/HOLD` stops
-/// the queue until the run is retried).
+/// `keep` (`failed`'s `onentry`: the run's changes stay in the tree, and its `hold` makes its
+/// attention file hold the queue until the run is retried).
 const SHARED_SCRIPTS: &[(&str, &str)] = &[
     (
         "clean_tree",

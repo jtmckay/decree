@@ -216,6 +216,7 @@ pub fn deliver(
     }
     fs::remove_file(&source).map_err(io_err(&source))?;
     append_received(
+        ctx,
         &wait,
         json!({ "wait_id": wait.wait_id, "event": event, "file": file }),
     )?;
@@ -250,6 +251,7 @@ pub fn deliver_timeouts(
             continue;
         };
         append_received(
+            ctx,
             &wait,
             json!({ "wait_id": wait_id, "event": "error", "timed_out": true }),
         )?;
@@ -268,10 +270,11 @@ fn past_deadline(last: Option<&Event>, now: DateTime<Utc>) -> bool {
             .is_some_and(|deadline| deadline <= now)
 }
 
-fn append_received(wait: &Wait, fields: Value) -> Result<(), InterpreterError> {
+fn append_received(ctx: &Context, wait: &Wait, fields: Value) -> Result<(), InterpreterError> {
     let path = wait.run_dir.join(EVENTS_FILE);
     let mut log = EventLog::open(&wait.run_dir, &wait.run_id, &wait.machine, &wait.trigger)
         .map_err(io_err(&path))?;
     log.append("received", fields).map_err(io_err(&path))?;
-    Ok(())
+    // The run is `pending`: it needs no one now.
+    crate::attention::remove(&ctx.project_root, &wait.run_id)
 }

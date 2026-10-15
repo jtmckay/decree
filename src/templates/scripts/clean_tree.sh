@@ -18,7 +18,7 @@ if [ -n "${changes}" ]; then
   echo "${changes}" | head -n 20 >&2
   n=$(echo "${changes}" | wc -l)
   [ "${n}" -le 20 ] || echo "… and $((n - 20)) more" >&2
-  echo "if a failed run left them, \`decree status\` names it; continue it with \`decree process --retry <id>\`" >&2
+  echo "if a failed run left them, its file in .decree/attention/ names it; continue it with \`decree process --retry <id>\`" >&2
   exit 1
 fi
 git rev-parse HEAD > "${mark}"

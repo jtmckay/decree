@@ -17,6 +17,9 @@ pub const MACHINE_SCHEMA: &str = include_str!("../../schema/v1/machine.schema.js
 /// The message frontmatter schema, as `decree schema` writes it.
 pub const MESSAGE_SCHEMA: &str = include_str!("../../schema/v1/message.schema.json");
 
+/// The frontmatter of a file in `.decree/attention/`.
+pub const ATTENTION_SCHEMA: &str = include_str!("../../schema/v1/attention.schema.json");
+
 /// The schema of one line of `events.jsonl`.
 pub const EVENTS_SCHEMA: &str = include_str!("../../schema/v1/events.schema.json");
 
@@ -55,7 +58,8 @@ pub const CLI_STATUS_SCHEMA: &str = include_str!("../../schema/v1/cli/status.sch
 
 /// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
 /// `.schema.json`.
-pub const ALL: [(&str, &str); 14] = [
+pub const ALL: [(&str, &str); 15] = [
+    ("attention", ATTENTION_SCHEMA),
     ("cli/check", CLI_CHECK_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
     ("cli/event", CLI_EVENT_SCHEMA),

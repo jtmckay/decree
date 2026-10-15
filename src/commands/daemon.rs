@@ -56,7 +56,7 @@ fn poll(
 ) -> Result<(), DecreeError> {
     let mut cron_tracker = CronTracker::new();
     // The last message a blocked migration printed, so each block is reported once; the
-    // same for `.decree/HOLD`.
+    // same for a file in `.decree/attention/` that holds the queue.
     let mut blocked = None;
     let mut held = None;
     let mut result = report(pipeline.recover());

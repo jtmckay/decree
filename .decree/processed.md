@@ -103,3 +103,4 @@
 103-env-interpolation.md
 104-decree-skill.md
 105-hosted-schemas.md
+106-attention-directory.md

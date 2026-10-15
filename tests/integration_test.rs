@@ -430,7 +430,7 @@ fn test_init_gitignore_content() {
     let gitignore = fs::read_to_string(dir.path().join(".decree/.gitignore")).unwrap();
     assert_eq!(
         gitignore,
-        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nHOLD\nprocess.log\ncache/\nai-use.md\n"
+        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nattention/\nprocess.log\ncache/\nai-use.md\n"
     );
 }
 

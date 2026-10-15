@@ -10,6 +10,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Added
 
+- `.decree/attention/`: one file per run that needs a person (`failed`, `interrupted`, `waiting` in a `person` state, or a migration waiting for an interrupted child), with what happened and the command that continues it, written as the run's status changes and deleted when it no longer needs anyone. A file with `holds: true`, or any `.md` file there decree cannot read, stops `process` and `daemon`. `process` ends with `<n> run(s) need attention: .decree/attention/`, `decree status` starts with `Attention:`, and `status --format json` gains `attention` (`cli/status.schema.json`). New schema `v1/attention.schema.json`, written by `decree schema` ([D67](docs/decisions.md#d67-the-attention-folder-says-what-needs-a-person)).
 - [docs/escalation.md](docs/escalation.md): an escalation ladder for `develop`, a recipe from a beta project: rounds on what `verify` found missing with a cheap agent, one with Claude, then a person. A test installs it from the page and runs it.
 - `verify` writes `gaps.md` on `fail`, keeping the last one if an attempt dies, and a retry's `implement` closes each gap first.
 - `.decree/process.log`: `process` and `daemon` append what they print, without the status line, with `--quiet` too, kept to its last 2 MiB. `.decree/cache/` is for project-wide files no machine owns, such as a test tool's browsers; git ignores it and `decree check` does not warn about it.
@@ -86,6 +87,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 
 ### Removed
 
+- `.decree/HOLD`: the `keep` script writes the run's `hold` instead, and the run's file in `.decree/attention/` holds the queue; `.decree/.gitignore` lists `attention/` in its place ([D67](docs/decisions.md#d67-the-attention-folder-says-what-needs-a-person)).
 - `decree init` no longer writes `git_baseline` and `snapshot`. No built-in machine used them, `clean_tree` already records the commit a run started from, and `snapshot`'s stashes were easy to confuse with a failed run's work. Projects keep the copies they have.
 - The Docker image (`Dockerfile`, `.dockerignore`, its GHCR workflow) and `examples/docker/`: the image did not carry the tools machines need (it had no Rust toolchain), and projects that want decree in a container can build their own.
 - Everything 0.4: the upgrade script and its fixtures, the `config.yml` error, and the `routine:` alias for `machine:` (migration 73, [D46](docs/decisions.md#d46-no-04-compatibility-and-examples-by-topic)).

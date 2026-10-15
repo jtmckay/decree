@@ -1218,21 +1218,23 @@ fn daemon_retry_continues_a_failed_run() {
     );
 }
 
-/// `.decree/HOLD` pauses `decree daemon`: nothing is claimed while it exists, and the queue
-/// goes on once it is deleted, without a restart.
+/// A `.md` file a person puts in `.decree/attention/` pauses `decree daemon`: nothing is
+/// claimed while it exists, and the queue goes on once it is deleted, without a restart.
 #[test]
-fn daemon_runs_nothing_while_hold_exists() {
+fn daemon_runs_nothing_while_an_attention_file_holds() {
     let p = Project::init();
     p.machine("flaky", FLAKY);
     p.script("work", FLAKY_WORK);
     fs::write(p.root().join("ok.flag"), "").unwrap();
-    fs::write(p.decree_dir().join("HOLD"), "paused by hand\n").unwrap();
+    let note = p.decree_dir().join("attention/paused.md");
+    fs::create_dir_all(note.parent().unwrap()).unwrap();
+    fs::write(&note, "paused by hand\n").unwrap();
     let id = p.emit("flaky", "Works.\n");
 
     let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
     thread::sleep(Duration::from_millis(1500));
     assert!(!p.run_dir(&id).exists(), "claimed while held");
-    fs::remove_file(p.decree_dir().join("HOLD")).unwrap();
+    fs::remove_file(&note).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     while !p.run_dir(&id).join("events.jsonl").exists()
         || p.events(&id).last().unwrap()["state"] != "done"

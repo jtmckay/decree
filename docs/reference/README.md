@@ -76,7 +76,7 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, HOLD, process.log and cache/
+  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, attention/, process.log and cache/
   migrations/                       # ordered run-once messages, committed, never edited (messages.md)
   processed.md                      # committed ledger: one migration filename per line
   inbox/                            # queued messages: *.md; files starting with "." are ignored
@@ -88,6 +88,7 @@ Each building block has its own directory in `.decree/`:
     .lock                           # pid of the process stepping this run (messages.md, Run lock)
     .running                        # the script running now: pid, state, phase, script, started_at, log (scripts.md)
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
+    hold                            # written by a script (keep): the run's attention file holds the queue (cli.md, Attention)
   cron/                             # *.md cron templates (messages.md, Cron files)
   machines/<machine name>.yml         # statecharts (machines.md)
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
@@ -101,10 +102,10 @@ Each building block has its own directory in `.decree/`:
   store/<machine name>/             # what the machine keeps between runs: $DECREE_STORE, declared under `store:`; never deleted by decree (scripts.md, Store)
   cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree never reads or checks it (scripts.md, Store)
   process.log                       # what `process` and `daemon` print as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
-  HOLD                              # while it exists, no run starts or continues (cli.md, Hold)
+  attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops every run (cli.md, Attention)
 ```
 
-`migrations/` and `processed.md` are committed to git; `inbox/`, `runs/`, `store/`, `cache/`, `process.log`, `HOLD` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
+`migrations/` and `processed.md` are committed to git; `inbox/`, `runs/`, `store/`, `cache/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
 
 ### No configuration file
 
@@ -131,6 +132,7 @@ Every file decree reads or writes, and every document a command prints with `--f
 | `message.schema.json` | The frontmatter of a migration, inbox message, cron file or reply. | [messages.md](messages.md#frontmatter-keys) |
 | `events.schema.json` | One line of `runs/<id>/events.jsonl`: the common fields, then one branch per `type`. | [runs.md](runs.md#eventsjsonl) |
 | `request.schema.json` | A router run's `request.json`, including `reply_schema`. | [runs.md](runs.md#model) |
+| `attention.schema.json` | The frontmatter of a file decree writes in `.decree/attention/`, for a run that needs a person. A `.md` file there that does not match it holds the queue. | [cli.md](cli.md#attention) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
 | `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema` and `process` (`--dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 

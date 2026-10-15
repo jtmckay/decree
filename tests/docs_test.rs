@@ -435,3 +435,44 @@ fn nothing_mentions_the_removed_statement_of_work() {
         .collect();
     assert!(hits.is_empty(), "files that mention it: {hits:?}");
 }
+
+/// The hold file `.decree/attention/` replaced is gone (docs/decisions.md, D67): no file git
+/// tracks or would track names it as a word, as `rg '\bHOLD\b'` would find it, but the
+/// migrations and runs that record its history, the changelog and the decision log.
+#[test]
+fn hold_is_named_only_in_history() {
+    let out = std::process::Command::new("git")
+        .args([
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+        .current_dir(repo())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let word = regex::Regex::new(r"\bHOLD\b").unwrap();
+    let history = |f: &str| {
+        f.starts_with(".decree/migrations/")
+            || f.starts_with(".decree/runs/")
+            || f == "CHANGELOG.md"
+            || f == "docs/decisions.md"
+    };
+    let mut named = Vec::new();
+    for file in String::from_utf8(out.stdout).unwrap().split('\0') {
+        if file.is_empty() || history(file) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(repo().join(file)) else {
+            continue;
+        };
+        for (n, line) in text.lines().enumerate() {
+            if word.is_match(line) {
+                named.push(format!("{file}:{}", n + 1));
+            }
+        }
+    }
+    assert_eq!(named, Vec::<String>::new());
+}

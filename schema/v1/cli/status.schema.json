@@ -13,6 +13,19 @@
   ],
   "examples": [
     {
+      "attention": [
+        {
+          "path": ".decree/attention/D0006-1100-review-0.md",
+          "kind": "run",
+          "run": "D0006-1100-review-0",
+          "machine": "review",
+          "message": "inbox",
+          "status": "waiting",
+          "state": "approval",
+          "since": "2026-10-15T08:09:00.000Z",
+          "holds": false
+        }
+      ],
       "counts": {
         "total": 2,
         "active": 0,
@@ -58,14 +71,36 @@
   "$defs": {
     "overview": {
       "type": "object",
-      "description": "`decree status`: every run by status, then the queued messages.",
+      "description": "`decree status`: the files in .decree/attention/, every run by status, then the queued messages.",
       "required": [
+        "attention",
         "counts",
         "runs",
         "queued"
       ],
       "additionalProperties": false,
       "properties": {
+        "attention": {
+          "type": "array",
+          "description": "Each `.md` file directly in .decree/attention/ (docs/reference/cli.md, Attention), those that hold the queue first, each group by name: its frontmatter (attention.schema.json) plus `path`. A file decree cannot read as one has `path`, `holds: true` and `error`, why it holds.",
+          "items": {
+            "type": "object",
+            "required": ["path", "holds"],
+            "properties": {
+              "path": { "type": "string", "description": "The file, from the project root: `.decree/attention/<name>.md`." },
+              "holds": { "type": "boolean", "description": "Whether the file holds the queue." },
+              "error": { "type": "string", "description": "Why a file decree cannot read holds: `no frontmatter`, `invalid frontmatter: <error>` or `cannot be read: <error>`." },
+              "kind": { "const": "run", "description": "As in attention.schema.json: the file is about a run." },
+              "run": { "type": "string", "description": "The run's id." },
+              "machine": { "type": "string", "description": "The run's machine." },
+              "message": { "type": "string", "description": "The migration's file name, or `inbox`." },
+              "status": { "enum": ["failed", "interrupted", "waiting"], "description": "Why the run needs a person." },
+              "state": { "type": "string", "description": "The state the run is in." },
+              "since": { "type": "string", "description": "When the run's status changed, RFC 3339 UTC." }
+            },
+            "additionalProperties": false
+          }
+        },
         "blocked": {
           "type": "object",
           "description": "The migration that blocks the queue (docs/reference/messages.md, Migrations, rule 4), and the run `decree process --retry` continues for it: the migration's own, or the interrupted child run it waits for. Absent when none blocks.",

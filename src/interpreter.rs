@@ -234,7 +234,9 @@ impl<'a> Interpreter<'a> {
     pub fn start(&mut self) -> Result<Outcome, InterpreterError> {
         let _lock = self.lock()?;
         let result = self.claim_and_run();
-        self.interrupt_on_signal(result)
+        let outcome = self.interrupt_on_signal(result)?;
+        self.record_attention()?;
+        Ok(outcome)
     }
 
     /// Continue a `pending` run (step 1), under its run lock. After `decree process --retry` (the
@@ -247,8 +249,17 @@ impl<'a> Interpreter<'a> {
     /// model says. Nothing is re-run then, because the run only paused.
     fn resume(&mut self) -> Result<Outcome, InterpreterError> {
         let _lock = self.lock()?;
+        crate::attention::remove(&self.ctx.project_root, &self.executor.info().run_id)?;
         let result = self.continue_pending();
-        self.interrupt_on_signal(result)
+        let outcome = self.interrupt_on_signal(result)?;
+        self.record_attention()?;
+        Ok(outcome)
+    }
+
+    /// Write or delete the run's attention file for the status it stopped in, while the
+    /// lock is still held (docs/reference/cli.md, Attention).
+    fn record_attention(&self) -> Result<(), InterpreterError> {
+        crate::attention::record(self.ctx, &self.executor.info().run_id)
     }
 
     /// Take the run lock, which is deleted when the returned guard drops: when the run

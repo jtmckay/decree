@@ -21,7 +21,11 @@ pub const SCHEMA_DIR: &str = "schema";
 /// compiled into the binary from `schema/` at the repository root, their single source and the published copy. The first
 /// path segment is the contract version (docs/reference/README.md, Versioning); `cli/` holds
 /// the documents commands print with `--format json` (docs/reference/cli.md).
-const SCHEMAS: [(&str, &str); 14] = [
+const SCHEMAS: [(&str, &str); 15] = [
+    (
+        "v1/attention.schema.json",
+        include_str!("../../schema/v1/attention.schema.json"),
+    ),
     (
         "v1/cli/check.schema.json",
         include_str!("../../schema/v1/cli/check.schema.json"),

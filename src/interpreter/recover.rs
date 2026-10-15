@@ -68,6 +68,7 @@ pub fn recover(ctx: &Context) -> Result<Recovery, InterpreterError> {
                 }
                 log.append("interrupted", fields).map_err(io_err(&path))?;
                 Running::remove(&run_dir).map_err(io_err(&running_path))?;
+                crate::attention::record(ctx, &id)?;
                 found.crashed.push((id, state));
             }
             RunStatus::Pending => found.pending.push(id),
@@ -246,5 +247,30 @@ impl Context {
         Ok(current_state(&events)
             .filter(|_| finished)
             .map(String::from))
+    }
+
+    /// The `interrupted` run, and its state, at the end of the child runs a run with `events`
+    /// waits for, child after child; `None` if the last one is not `interrupted`.
+    pub fn stalled_child(
+        &self,
+        events: &[Event],
+    ) -> Result<Option<(String, String)>, InterpreterError> {
+        let mut seen = std::collections::HashSet::new();
+        let mut next = waiting_child(events).map(String::from);
+        while let Some(id) = next {
+            if !seen.insert(id.clone()) || !self.runs_dir().join(&id).is_dir() {
+                break;
+            }
+            let (status, events) = self.status_of(&id)?;
+            match status {
+                RunStatus::Interrupted => {
+                    let state = current_state(&events).unwrap_or("no state").to_string();
+                    return Ok(Some((id, state)));
+                }
+                RunStatus::Waiting => next = waiting_child(&events).map(String::from),
+                _ => break,
+            }
+        }
+        Ok(None)
     }
 }
