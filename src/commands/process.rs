@@ -44,7 +44,7 @@ use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInp
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{self, ATTENTION_DIR, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
 use crate::machine::FAILED;
-use crate::message::{self, is_valid_id, Claim, LockState, Message, RunLock};
+use crate::message::{self, is_valid_id, Claim, LockState, Message, RunLock, ARRIVED_AS};
 use crate::reply::{self, Delivery};
 use crate::runtime::{self};
 
@@ -457,16 +457,18 @@ impl Pipeline {
         self.continue_runs(&timed_out)
     }
 
-    /// Take the next `inbox/` file in filename order that is for a machine this process
-    /// runs: deliver a reply and continue its run, or claim a message and run it
+    /// Give each new `inbox/` file an id (`message::arrive`), then take the next queued file
+    /// in filename order that is for a machine this process runs: deliver a reply and continue its run, or claim a message and run it
     /// (docs/reference/messages.md, Lifecycle). Returns `false` when there is none.
     pub(crate) fn next_inbox(&mut self) -> Result<bool, Stop> {
         self.may_run()?;
         self.refresh();
         let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let inbox = decree_dir.join(INBOX_DIR);
+        message::arrive(&decree_dir)?;
         let next = md_files(&inbox)?.into_iter().find(|f| {
             !self.lost.contains(f)
+                && message::is_queued(&decree_dir, f)
                 && (self.filter.is_all()
                     || self
                         .filter
@@ -476,7 +478,9 @@ impl Pipeline {
             return Ok(false);
         };
         let mut problem = None;
+        let mut arrived_as = None;
         if let Ok(m) = Message::read(&inbox.join(&file)) {
+            arrived_as = m.text(ARRIVED_AS).map(String::from);
             if m.frontmatter.contains_key("to") {
                 let (to, event) = (m.text("to"), m.text("event"));
                 match reply::deliver(&self.ctx, &inbox, &file, to, event)? {
@@ -502,7 +506,7 @@ impl Pipeline {
             run_claim(&self.ctx, &self.project, claim, problem)
         })? {
             Outcome::Finished(state) if state == FAILED => {
-                self.fail(&id, Some(&file));
+                self.fail(&id, Some(arrived_as.as_deref().unwrap_or(&file)));
                 Ok(true)
             }
             ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
@@ -660,6 +664,8 @@ fn run_claim(
         // The frontmatter did not parse: leave message.md unchanged.
         Err(e) => return reject(ctx, &id, "", "inbox", &file, &e.to_string(), false),
     };
+    // The name the person or tool gave the file, before it got its id.
+    let file = message.text(ARRIVED_AS).map_or(file, String::from);
     let trigger = message.text("trigger").unwrap_or("inbox").to_string();
     if message.frontmatter.get("id").is_none() || id_problem.is_some() {
         message.set("id", id.as_str());

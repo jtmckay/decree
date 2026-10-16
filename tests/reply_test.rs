@@ -43,14 +43,14 @@ const SHIP: &str = r#"#!/usr/bin/env bash
 echo "$DECREE_RECEIVED" > "$DECREE_RUN_DIR/shipped.txt"
 "#;
 
-const RUN: &str = "run-a";
+const RUN: &str = "20260101T000000.000000Z-00000a";
 
 struct Project {
     tmp: TempDir,
 }
 
 impl Project {
-    /// A project with one `deploy` message queued as run `run-a`.
+    /// A project with one `deploy` message queued as run `RUN`.
     fn new(timeout: &str) -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
@@ -65,7 +65,7 @@ impl Project {
         }
         let p = Project { tmp };
         p.write(
-            "inbox/a.md",
+            &format!("inbox/{RUN}.md"),
             &format!("---\nid: {RUN}\nmachine: deploy\n---\nShip it.\n"),
         );
         p
@@ -123,7 +123,7 @@ impl Project {
         cmd
     }
 
-    /// Run `process` until `run-a` waits; returns its wait id.
+    /// Run `process` until `RUN` waits; returns its wait id.
     fn wait(&self) -> String {
         let out = self.process().assert().code(0).get_output().clone();
         let last = self.events(RUN).last().unwrap().clone();
@@ -137,7 +137,7 @@ impl Project {
         wait_id
     }
 
-    /// The one run other than `run-a`.
+    /// The one run other than `RUN`.
     fn other_run(&self) -> String {
         let runs = self.runs();
         assert_eq!(runs.len(), 2, "{runs:?}");
@@ -177,7 +177,7 @@ fn invalid_message(events: &[Value]) -> String {
 #[test]
 fn a_migration_held_back_by_a_child_waiting_for_a_reply_is_named() {
     let p = Project::new("1h");
-    fs::remove_file(p.decree().join("inbox/a.md")).unwrap();
+    fs::remove_file(p.decree().join(format!("inbox/{RUN}.md"))).unwrap();
     p.write(
         "machines/release.yml",
         "name: release\ndescription: Deploy as a child run.\ninitial: call\nstates:\n  \
@@ -229,10 +229,16 @@ fn reply_with_wait_id_and_option_continues_with_source_person() {
     let received = events.iter().find(|e| e["type"] == "received").unwrap();
     assert_eq!(received["wait_id"], json!(wait_id));
     assert_eq!(received["event"], "approve");
-    assert_eq!(received["file"], "reply.md");
+    // The reply got an id when it arrived; `received/` holds it under that name.
+    let file = received["file"].as_str().unwrap().to_string();
+    let reply_id = file.strip_suffix(".md").unwrap();
+    assert!(
+        reply_id.len() == 30 && reply_id.as_bytes()[8] == b'T',
+        "{file}"
+    );
     let decision = events.iter().find(|e| e["type"] == "decision").unwrap();
     assert_eq!(decision["kind"], "person");
-    assert_eq!(decision["reply"], "reply.md");
+    assert_eq!(decision["reply"], json!(file));
     let taken = events
         .iter()
         .find(|e| e["type"] == "transition" && e["from"] == "approval")
@@ -242,10 +248,15 @@ fn reply_with_wait_id_and_option_continues_with_source_person() {
     assert_eq!(last_transition(&events)["to"], "done");
 
     // The reply is in `received/`, not a run of its own, and later scripts see it.
-    let received = p.decree().join("runs").join(RUN).join("received/reply.md");
+    let received = p
+        .decree()
+        .join("runs")
+        .join(RUN)
+        .join("received")
+        .join(&file);
     assert_eq!(
         fs::read_to_string(&received).unwrap(),
-        format!("---\nto: {wait_id}\nevent: approve\n---\nLooks good.\n")
+        format!("---\nid: {reply_id}\narrived_as: reply.md\nto: {wait_id}\nevent: approve\n---\nLooks good.\n")
     );
     assert_eq!(p.runs(), [RUN]);
     assert!(p.inbox().is_empty());
@@ -273,7 +284,7 @@ fn reply_naming_the_run_id_answers_its_current_wait() {
 // Rejection (docs/reference/messages.md, Replies, step 4)
 // ---------------------------------------------------------------
 
-/// A reply that fails a check: `process` exits 1, `run-a` stays waiting, and the reply
+/// A reply that fails a check: `process` exits 1, `RUN` stays waiting, and the reply
 /// is a failed `invalid_message` run whose reason contains `expected`.
 fn assert_rejected(p: &Project, reply: &str, expected: &str) {
     let before = p.events(RUN);
@@ -341,27 +352,48 @@ fn reply_to_a_finished_run_is_rejected() {
 fn reply_never_replaces_an_earlier_reply_of_the_same_name() {
     let p = Project::new("1h");
     p.wait();
+    let name = "20260101T000000.000001Z-00000b.md";
     let received = p.decree().join("runs").join(RUN).join("received");
     fs::create_dir_all(&received).unwrap();
-    fs::write(received.join("reply.md"), "earlier\n").unwrap();
-    assert_rejected_keeping(&p, "already received a reply named reply.md");
-    assert_eq!(
-        fs::read_to_string(received.join("reply.md")).unwrap(),
-        "earlier\n"
-    );
-}
-
-/// `assert_rejected` for a project whose `received/` already exists.
-fn assert_rejected_keeping(p: &Project, expected: &str) {
+    fs::write(received.join(name), "earlier\n").unwrap();
     let before = p.events(RUN);
+    // Queued as `decree event` writes it, so it keeps its name.
     p.write(
-        "inbox/reply.md",
-        &format!("---\nto: {RUN}\nevent: approve\n---\n"),
+        &format!("inbox/{name}"),
+        &format!(
+            "---\nid: {}\nto: {RUN}\nevent: approve\n---\n",
+            name.strip_suffix(".md").unwrap()
+        ),
     );
     p.process().assert().code(1);
     assert_eq!(p.events(RUN), before);
     let reason = invalid_message(&p.events(&p.other_run()));
-    assert!(reason.contains(expected), "{reason}");
+    let expected = format!("already received a reply named {name}");
+    assert!(reason.contains(&expected), "{reason}");
+    assert_eq!(
+        fs::read_to_string(received.join(name)).unwrap(),
+        "earlier\n"
+    );
+}
+
+/// Replies are ordered as other messages: one written by hand as `01-reply.md` after
+/// `decree event` queued one runs after it, though its name sorts first.
+#[test]
+fn a_reply_written_after_a_queued_one_is_delivered_after_it() {
+    let p = Project::new("1h");
+    let wait_id = p.wait();
+    p.event(&[&wait_id, "reject"]).assert().code(0);
+    p.write(
+        "inbox/01-reply.md",
+        &format!("---\nto: {RUN}\nevent: approve\n---\n"),
+    );
+    p.process().assert().code(1);
+    let events = p.events(RUN);
+    assert_eq!(last_transition(&events)["to"], "rejected");
+    let id = p.other_run();
+    assert!(invalid_message(&p.events(&id)).contains("is not waiting: it is finished"));
+    let message = fs::read_to_string(p.decree().join("runs").join(&id).join("message.md")).unwrap();
+    assert!(message.contains("arrived_as: 01-reply.md\n"), "{message}");
 }
 
 // ---------------------------------------------------------------
@@ -449,7 +481,7 @@ fn event_with_an_unaccepted_event_or_stale_or_unknown_target_exits_1() {
     let wait_id = p.wait();
     for (args, expected) in [
         (vec![wait_id.as_str(), "maybe"], "is not an option"),
-        (vec!["run-a.w999", "approve"], "stale wait id"),
+        (vec![&format!("{RUN}.w999"), "approve"], "stale wait id"),
         (vec!["nope", "approve"], "names no run"),
     ] {
         let out = p.event(&args).assert().code(1).get_output().clone();

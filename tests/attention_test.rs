@@ -135,25 +135,31 @@ fn frontmatter(path: &PathBuf) -> Value {
 fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
     let p = Project::new();
     p.write(
-        "inbox/a.md",
-        "---\nid: run-a\nmachine: ask\n---\n# Release 1.2\n",
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: ask\n---\n# Release 1.2\n",
     );
     let (code, stdout, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(0), "{stderr}");
-    assert!(stdout.contains("Waiting: run run-a"), "{stdout}");
+    assert!(
+        stdout.contains("Waiting: run 20260101T000000.000000Z-000000"),
+        "{stdout}"
+    );
     assert!(
         stderr.ends_with("1 run(s) need attention: .decree/attention/\n"),
         "{stderr}"
     );
 
-    let path = p.attention("run-a");
+    let path = p.attention("20260101T000000.000000Z-000000");
     let fm = frontmatter(&path);
     assert_eq!(fm["holds"], false);
     assert_eq!(fm["status"], "waiting");
     assert_eq!(fm["state"], "approval");
     assert_eq!(fm["message"], "inbox");
-    assert_eq!(fm["since"], p.last_event("run-a")["ts"]);
-    let wait_id = p.last_event("run-a")["wait_id"]
+    assert_eq!(
+        fm["since"],
+        p.last_event("20260101T000000.000000Z-000000")["ts"]
+    );
+    let wait_id = p.last_event("20260101T000000.000000Z-000000")["wait_id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -176,14 +182,20 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
         ]
     );
     // It holds nothing: other runs go on.
-    p.write("inbox/b.md", "---\nid: run-b\nmachine: hello\n---\n");
+    p.write(
+        "inbox/20260101T000000.000001Z-000001.md",
+        "---\nid: 20260101T000000.000001Z-000001\nmachine: hello\n---\n",
+    );
     assert_eq!(p.output(&["process"]).0, Some(0));
-    assert_eq!(p.last_event("run-b")["state"], "done");
+    assert_eq!(
+        p.last_event("20260101T000000.000001Z-000001")["state"],
+        "done"
+    );
     // `decree status` lists it first.
     let (_, status, _) = p.output(&["status"]);
     assert!(
         status.starts_with(
-            "Attention: .decree/attention/: 1 file(s)\n  .decree/attention/run-a.md: run run-a \
+            "Attention: .decree/attention/: 1 file(s)\n  .decree/attention/20260101T000000.000000Z-000000.md: run 20260101T000000.000000Z-000000 \
              (ask) waiting in `approval` since "
         ),
         "{status}"
@@ -194,7 +206,10 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
     assert!(path.exists(), "a queued reply is not delivered yet");
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(p.last_event("run-a")["state"], "done");
+    assert_eq!(
+        p.last_event("20260101T000000.000000Z-000000")["state"],
+        "done"
+    );
     assert!(!path.exists());
     assert!(!stderr.contains("need attention"), "{stderr}");
 }
@@ -222,8 +237,11 @@ fn sleeping(p: &Project, id: &str) -> Child {
 #[test]
 fn a_run_interrupted_by_sigint_has_a_file_and_status_starts_with_attention() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: hello\n---\n");
-    let mut decree = sleeping(&p, "run-a");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
+    );
+    let mut decree = sleeping(&p, "20260101T000000.000000Z-000000");
     // SAFETY: sends SIGINT to the decree process.
     unsafe { libc::kill(decree.id() as i32, libc::SIGINT) };
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -236,41 +254,47 @@ fn a_run_interrupted_by_sigint_has_a_file_and_status_starts_with_attention() {
     let (code, status, _) = p.output(&["status"]);
     assert_eq!(code, Some(0));
     assert!(status.starts_with("Attention: "), "{status}");
-    let fm = frontmatter(&p.attention("run-a"));
+    let fm = frontmatter(&p.attention("20260101T000000.000000Z-000000"));
     assert_eq!(fm["status"], "interrupted");
     assert_eq!(fm["state"], "work");
     assert_eq!(fm["holds"], false);
-    let text = fs::read_to_string(p.attention("run-a")).unwrap();
+    let text = fs::read_to_string(p.attention("20260101T000000.000000Z-000000")).unwrap();
     assert!(
-        text.contains("    decree process --retry run-a\n"),
+        text.contains("    decree process --retry 20260101T000000.000000Z-000000\n"),
         "{text}"
     );
 
     // The retry continues it; the file goes as it starts, and it ends in `done`.
-    let (code, _, stderr) = p.output(&["process", "--retry", "run-a"]);
+    let (code, _, stderr) = p.output(&["process", "--retry", "20260101T000000.000000Z-000000"]);
     assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(p.last_event("run-a")["state"], "done");
-    assert!(!p.attention("run-a").exists());
+    assert_eq!(
+        p.last_event("20260101T000000.000000Z-000000")["state"],
+        "done"
+    );
+    assert!(!p.attention("20260101T000000.000000Z-000000").exists());
 }
 
 #[test]
 fn a_run_killed_and_found_later_has_a_file_naming_the_crash() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: hello\n---\n");
-    let mut decree = sleeping(&p, "run-a");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
+    );
+    let mut decree = sleeping(&p, "20260101T000000.000000Z-000000");
     decree.kill().unwrap();
     decree.wait().unwrap();
     // The script is left sleeping; the flag going lets nothing restart it.
     fs::remove_file(p.tmp.path().join("sleep.flag")).unwrap();
     assert!(
-        !p.attention("run-a").exists(),
+        !p.attention("20260101T000000.000000Z-000000").exists(),
         "a killed run writes nothing"
     );
 
     p.output(&["process"]);
-    let fm = frontmatter(&p.attention("run-a"));
+    let fm = frontmatter(&p.attention("20260101T000000.000000Z-000000"));
     assert_eq!(fm["status"], "interrupted");
-    let text = fs::read_to_string(p.attention("run-a")).unwrap();
+    let text = fs::read_to_string(p.attention("20260101T000000.000000Z-000000")).unwrap();
     assert!(
         text.contains("decree stopped without recording it"),
         "{text}"
@@ -288,7 +312,10 @@ fn md_files_decree_cannot_read_hold_the_queue_until_deleted() {
         "attention/bad.md",
         "---\nkind: run\nholds: maybe\n---\n# Mine\n",
     );
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: hello\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
+    );
 
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(1), "{stderr}");
@@ -338,7 +365,10 @@ fn md_files_decree_cannot_read_hold_the_queue_until_deleted() {
     fs::remove_file(p.path("attention/bad.md")).unwrap();
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(p.last_event("run-a")["state"], "done");
+    assert_eq!(
+        p.last_event("20260101T000000.000000Z-000000")["state"],
+        "done"
+    );
 }
 
 #[test]
@@ -346,10 +376,16 @@ fn other_files_and_folders_in_attention_are_ignored() {
     let p = Project::new();
     p.write("attention/.notes.md.swp", "swap\n");
     p.write("attention/old/x.md", "no frontmatter\n");
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: hello\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
+    );
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(p.last_event("run-a")["state"], "done");
+    assert_eq!(
+        p.last_event("20260101T000000.000000Z-000000")["state"],
+        "done"
+    );
     assert!(!stderr.contains("need attention"), "{stderr}");
     let (_, status, _) = p.output(&["status"]);
     assert!(!status.contains("Attention:"), "{status}");
@@ -358,11 +394,17 @@ fn other_files_and_folders_in_attention_are_ignored() {
 #[test]
 fn a_run_that_ends_in_done_has_no_file() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: hello\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
+    );
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(p.last_event("run-a")["state"], "done");
-    assert!(!p.attention("run-a").exists());
+    assert_eq!(
+        p.last_event("20260101T000000.000000Z-000000")["state"],
+        "done"
+    );
+    assert!(!p.attention("20260101T000000.000000Z-000000").exists());
     assert!(!stderr.contains("need attention"), "{stderr}");
 }
 
@@ -370,12 +412,18 @@ fn a_run_that_ends_in_done_has_no_file() {
 fn prune_deletes_the_file_of_the_run_it_deletes() {
     let p = Project::new();
     // An invalid message fails at its claim, with nothing to hold.
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: nope\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: nope\n---\n",
+    );
     p.output(&["process"]);
-    assert_eq!(frontmatter(&p.attention("run-a"))["status"], "failed");
+    assert_eq!(
+        frontmatter(&p.attention("20260101T000000.000000Z-000000"))["status"],
+        "failed"
+    );
     p.cmd(&["prune", "--older-than", "0s"]).assert().success();
-    assert!(!p.path("runs/run-a").exists());
-    assert!(!p.attention("run-a").exists());
+    assert!(!p.path("runs/20260101T000000.000000Z-000000").exists());
+    assert!(!p.attention("20260101T000000.000000Z-000000").exists());
 }
 
 /// Runs `decree stop` from inside its run, as a person would while it goes.
@@ -399,17 +447,26 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
         &p.path("scripts/stop_queue"),
         "#!/bin/sh\n\"${DECREE}\" stop -m \"release freeze\"\n",
     );
-    p.write("inbox/1-a.md", "---\nid: run-a\nmachine: stopper\n---\n");
-    p.write("inbox/2-b.md", "---\nid: run-b\nmachine: hello\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: stopper\n---\n",
+    );
+    p.write(
+        "inbox/20260101T000000.000001Z-000001.md",
+        "---\nid: 20260101T000000.000001Z-000001\nmachine: hello\n---\n",
+    );
 
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(
-        p.last_event("run-a")["state"],
+        p.last_event("20260101T000000.000000Z-000000")["state"],
         "done",
         "the run is not interrupted"
     );
-    assert!(p.path("inbox/2-b.md").exists(), "no new run starts");
+    assert!(
+        p.path("inbox/20260101T000000.000001Z-000001.md").exists(),
+        "no new run starts"
+    );
     assert_eq!(p.runs(), 1);
     assert!(
         stderr.contains(
@@ -448,25 +505,40 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(p.runs(), 1);
-    let (code, stdout, stderr) = p.output(&["process", "--retry", "run-a"]);
+    let (code, stdout, stderr) =
+        p.output(&["process", "--retry", "20260101T000000.000000Z-000000"]);
     assert_eq!(code, Some(1), "{stderr}");
-    assert!(stdout.contains("run run-a continues in `work`"), "{stdout}");
+    assert!(
+        stdout.contains("run 20260101T000000.000000Z-000000 continues in `work`"),
+        "{stdout}"
+    );
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
-    let (_, status, _) = p.output(&["status", "run-a", "--format", "json"]);
+    let (_, status, _) = p.output(&[
+        "status",
+        "20260101T000000.000000Z-000000",
+        "--format",
+        "json",
+    ]);
     let doc: Value = serde_json::from_str(&status).unwrap();
     assert_eq!(doc["status"], "pending");
 
     // Deleting it resumes: the next `process` runs the queue.
     fs::remove_file(&path).unwrap();
     let (code, _, stderr) = p.output(&["process"]);
-    // run-a stops the queue again as it is retried; it ends in `done` first.
+    // 20260101T000000.000000Z-000000 stops the queue again as it is retried; it ends in `done` first.
     assert_eq!(code, Some(1), "{stderr}");
-    assert_eq!(p.last_event("run-a")["state"], "done");
+    assert_eq!(
+        p.last_event("20260101T000000.000000Z-000000")["state"],
+        "done"
+    );
     fs::remove_file(&path).unwrap();
     let (code, _, stderr) = p.output(&["process"]);
     assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(p.last_event("run-b")["state"], "done");
-    assert!(!p.path("inbox/2-b.md").exists());
+    assert_eq!(
+        p.last_event("20260101T000000.000001Z-000001")["state"],
+        "done"
+    );
+    assert!(!p.path("inbox/20260101T000000.000001Z-000001.md").exists());
 }
 
 #[test]

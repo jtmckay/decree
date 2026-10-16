@@ -126,16 +126,35 @@ fn stdout(cmd: &mut Command) -> String {
 #[test]
 fn machine_runs_only_its_machines_and_exclude_machine_the_rest() {
     let p = Project::new();
-    p.queue("m1", "a", "");
-    p.queue("m2", "b", "");
-    p.queue("m3", "a", "");
+    p.queue("20260101T000000.000000Z-000000", "a", "");
+    p.queue("20260101T000000.000001Z-000001", "b", "");
+    p.queue("20260101T000000.000002Z-000002", "a", "");
     p.process(&["--machine", "a"]).assert().success();
-    assert_eq!(p.order(), ["a m1", "a m3"]);
-    assert_eq!(p.inbox(), ["m2.md"]);
-    assert_eq!(p.runs(), ["m1", "m3"]);
+    assert_eq!(
+        p.order(),
+        [
+            "a 20260101T000000.000000Z-000000",
+            "a 20260101T000000.000002Z-000002"
+        ]
+    );
+    assert_eq!(p.inbox(), ["20260101T000000.000001Z-000001.md"]);
+    assert_eq!(
+        p.runs(),
+        [
+            "20260101T000000.000000Z-000000",
+            "20260101T000000.000002Z-000002"
+        ]
+    );
 
     p.process(&["--exclude-machine", "a"]).assert().success();
-    assert_eq!(p.order(), ["a m1", "a m3", "b m2"]);
+    assert_eq!(
+        p.order(),
+        [
+            "a 20260101T000000.000000Z-000000",
+            "a 20260101T000000.000002Z-000002",
+            "b 20260101T000000.000001Z-000001"
+        ]
+    );
     assert!(p.inbox().is_empty());
 }
 
@@ -143,16 +162,28 @@ fn machine_runs_only_its_machines_and_exclude_machine_the_rest() {
 #[test]
 fn flags_repeat_and_take_lists() {
     let p = Project::new();
-    p.queue("m1", "a", "");
-    p.queue("m2", "b", "");
+    p.queue("20260101T000000.000000Z-000000", "a", "");
+    p.queue("20260101T000000.000001Z-000001", "b", "");
     p.process(&["--machine", "a,b"]).assert().success();
-    assert_eq!(p.order(), ["a m1", "b m2"]);
-    p.queue("m3", "a", "");
-    p.queue("m4", "b", "");
+    assert_eq!(
+        p.order(),
+        [
+            "a 20260101T000000.000000Z-000000",
+            "b 20260101T000000.000001Z-000001"
+        ]
+    );
+    p.queue("20260101T000000.000002Z-000002", "a", "");
+    p.queue("20260101T000000.000003Z-000003", "b", "");
     p.process(&["--exclude-machine", "a", "--exclude-machine", "b"])
         .assert()
         .success();
-    assert_eq!(p.inbox(), ["m3.md", "m4.md"]);
+    assert_eq!(
+        p.inbox(),
+        [
+            "20260101T000000.000002Z-000002.md",
+            "20260101T000000.000003Z-000003.md"
+        ]
+    );
 }
 
 /// AC: `DECREE_MACHINES=a` in `.decree/.env` makes `process` run only `a`, `--machine b`
@@ -161,15 +192,24 @@ fn flags_repeat_and_take_lists() {
 fn dotenv_sets_the_filter_a_flag_beats_it_and_scripts_never_see_it() {
     let p = Project::new();
     p.write(".env", "DECREE_MACHINES=a\nOTHER=1\n");
-    p.queue("m1", "a", "");
-    p.queue("m2", "b", "");
+    p.queue("20260101T000000.000000Z-000000", "a", "");
+    p.queue("20260101T000000.000001Z-000001", "b", "");
     p.process(&[]).assert().success();
-    assert_eq!(p.order(), ["a m1"]);
-    assert_eq!(p.inbox(), ["m2.md"]);
+    assert_eq!(p.order(), ["a 20260101T000000.000000Z-000000"]);
+    assert_eq!(p.inbox(), ["20260101T000000.000001Z-000001.md"]);
 
     p.process(&["--machine", "b"]).assert().success();
-    assert_eq!(p.order(), ["a m1", "b m2"]);
-    for id in ["m1", "m2"] {
+    assert_eq!(
+        p.order(),
+        [
+            "a 20260101T000000.000000Z-000000",
+            "b 20260101T000000.000001Z-000001"
+        ]
+    );
+    for id in [
+        "20260101T000000.000000Z-000000",
+        "20260101T000000.000001Z-000001",
+    ] {
         let env = fs::read_to_string(p.tmp.path().join(format!("env-{id}.txt"))).unwrap();
         assert!(env.contains("OTHER=1\n"), "{env}");
         assert!(!env.contains("DECREE_MACHINES"), "{env}");
@@ -181,14 +221,15 @@ fn dotenv_sets_the_filter_a_flag_beats_it_and_scripts_never_see_it() {
 fn the_shell_beats_dotenv() {
     let p = Project::new();
     p.write(".env", "DECREE_MACHINES=a\n");
-    p.queue("m1", "a", "");
-    p.queue("m2", "b", "");
+    p.queue("20260101T000000.000000Z-000000", "a", "");
+    p.queue("20260101T000000.000001Z-000001", "b", "");
     p.process(&[])
         .env("DECREE_EXCLUDE_MACHINES", "a")
         .assert()
         .success();
-    assert_eq!(p.order(), ["b m2"]);
-    let env = fs::read_to_string(p.tmp.path().join("env-m2.txt")).unwrap();
+    assert_eq!(p.order(), ["b 20260101T000000.000001Z-000001"]);
+    let env =
+        fs::read_to_string(p.tmp.path().join("env-20260101T000000.000001Z-000001.txt")).unwrap();
     assert!(!env.contains("DECREE_EXCLUDE_MACHINES"), "{env}");
     assert!(!env.contains("DECREE_MACHINES"), "{env}");
 }
@@ -197,7 +238,7 @@ fn the_shell_beats_dotenv() {
 #[test]
 fn both_lists_exit_2_and_run_nothing() {
     let p = Project::new();
-    p.queue("m1", "a", "");
+    p.queue("20260101T000000.000000Z-000000", "a", "");
     p.process(&["--machine", "a", "--exclude-machine", "b"])
         .assert()
         .code(2);
@@ -213,14 +254,14 @@ fn both_lists_exit_2_and_run_nothing() {
     p.process(&[]).assert().code(2);
     assert!(p.order().is_empty());
     assert!(p.runs().is_empty());
-    assert_eq!(p.inbox(), ["m1.md"]);
+    assert_eq!(p.inbox(), ["20260101T000000.000000Z-000000.md"]);
 }
 
 /// A name that is not a machine is an error naming it; a built-in's name is not.
 #[test]
 fn an_unknown_machine_is_an_error_naming_it() {
     let p = Project::new();
-    p.queue("m1", "a", "");
+    p.queue("20260101T000000.000000Z-000000", "a", "");
     let out = p.process(&["--machine", "a,nope"]).assert().code(1);
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
     assert!(
@@ -239,7 +280,7 @@ fn an_unknown_machine_is_an_error_naming_it() {
     p.process(&["--exclude-machine", "develop"])
         .assert()
         .success();
-    assert_eq!(p.order(), ["a m1"]);
+    assert_eq!(p.order(), ["a 20260101T000000.000000Z-000000"]);
 }
 
 /// AC: migrations keep one order for every process. With `01` for `b` first, a process
@@ -279,14 +320,14 @@ fn dry_run_honours_the_filter() {
     p.write("migrations/01-first.md", "---\nmachine: a\n---\n");
     p.write("migrations/02-second.md", "---\nmachine: b\n---\n");
     p.write("migrations/03-third.md", "---\nmachine: a\n---\n");
-    p.queue("m1", "a", "");
-    p.queue("m2", "b", "");
+    p.queue("20260101T000000.000000Z-000000", "a", "");
+    p.queue("20260101T000000.000001Z-000001", "b", "");
     let out = stdout(&mut p.process(&["--dry-run", "--machine", "a"]));
     assert!(out.contains("01-first.md"), "{out}");
     assert!(!out.contains("02-second.md  "), "{out}");
     assert!(!out.contains("03-third.md"), "{out}");
-    assert!(out.contains("m1.md"), "{out}");
-    assert!(!out.contains("m2.md"), "{out}");
+    assert!(out.contains("20260101T000000.000000Z-000000.md"), "{out}");
+    assert!(!out.contains("20260101T000000.000001Z-000001.md"), "{out}");
     assert!(
         out.contains("Held back: migration 02-second.md is for machine `b`"),
         "{out}"
@@ -294,7 +335,10 @@ fn dry_run_honours_the_filter() {
     let json = stdout(&mut p.process(&["--dry-run", "--format", "json", "--exclude-machine", "a"]));
     let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(doc["migrations"].as_array().unwrap().len(), 0, "{doc}");
-    assert_eq!(doc["inbox"][0]["file"], "m2.md", "{doc}");
+    assert_eq!(
+        doc["inbox"][0]["file"], "20260101T000000.000001Z-000001.md",
+        "{doc}"
+    );
     assert_eq!(doc["inbox"].as_array().unwrap().len(), 1, "{doc}");
     assert!(p.runs().is_empty());
 }
@@ -303,18 +347,31 @@ fn dry_run_honours_the_filter() {
 #[test]
 fn retry_of_another_machines_run_is_refused() {
     let p = Project::new();
-    p.queue("m1", "b", "params: { fail: true }\n");
+    p.queue(
+        "20260101T000000.000000Z-000000",
+        "b",
+        "params: { fail: true }\n",
+    );
     p.process(&[]).assert().code(1);
     let out = p
-        .process(&["--machine", "a", "--retry", "m1"])
+        .process(&[
+            "--machine",
+            "a",
+            "--retry",
+            "20260101T000000.000000Z-000000",
+        ])
         .assert()
         .code(1);
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("run m1 is for machine `b`, which this process does not run"),
+        stderr.contains("run 20260101T000000.000000Z-000000 is for machine `b`, which this process does not run"),
         "{stderr}"
     );
-    let events = fs::read_to_string(p.decree().join("runs/m1/events.jsonl")).unwrap();
+    let events = fs::read_to_string(
+        p.decree()
+            .join("runs/20260101T000000.000000Z-000000/events.jsonl"),
+    )
+    .unwrap();
     assert!(!events.contains("\"retry\""), "{events}");
 }
 
@@ -323,15 +380,15 @@ fn retry_of_another_machines_run_is_refused() {
 #[test]
 fn a_child_run_goes_with_its_parent() {
     let p = Project::new();
-    p.queue("m1", "p", "");
-    p.queue("m2", "b", "");
+    p.queue("20260101T000000.000000Z-000000", "p", "");
+    p.queue("20260101T000000.000001Z-000001", "b", "");
     p.process(&["--machine", "p"]).assert().success();
     let order = p.order();
     assert_eq!(order.len(), 2, "{order:?}");
-    assert_eq!(order[0], "p m1");
+    assert_eq!(order[0], "p 20260101T000000.000000Z-000000");
     assert!(order[1].starts_with("b "), "{order:?}");
-    assert_eq!(p.inbox(), ["m2.md"]);
-    let status = stdout(&mut p.decree_cmd(&["status", "m1"]));
+    assert_eq!(p.inbox(), ["20260101T000000.000001Z-000001.md"]);
+    let status = stdout(&mut p.decree_cmd(&["status", "20260101T000000.000000Z-000000"]));
     assert!(status.contains("done"), "{status}");
 }
 

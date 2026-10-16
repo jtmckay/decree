@@ -279,14 +279,21 @@ fn transitions(events: &[Value]) -> Vec<String> {
 #[test]
 fn sigterm_during_a_script_interrupts_the_run_and_decree_retry_reruns_the_script() {
     let p = Project::new(&[("slow", SLOW)], &[("record", RECORD), ("work", WORK)]);
-    p.queue("a.md", "---\nid: run-a\nmachine: slow\n---\n");
-    let (mut decree, pgid) = p.working("run-a");
+    p.queue(
+        "20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\n---\n",
+    );
+    let (mut decree, pgid) = p.working("20260101T000000.000000Z-000000");
     // SAFETY: sends SIGTERM to the decree process.
     unsafe { libc::kill(decree.id() as i32, libc::SIGTERM) };
     let status = wait_with_timeout(&mut decree, Duration::from_secs(15));
     assert_eq!(status.code(), Some(130));
 
-    let last = p.events("run-a").last().unwrap().clone();
+    let last = p
+        .events("20260101T000000.000000Z-000000")
+        .last()
+        .unwrap()
+        .clone();
     assert_eq!(last["type"], "interrupted");
     assert_eq!(last["cause"], "signal");
     assert_eq!(last["state"], "work");
@@ -307,7 +314,9 @@ fn sigterm_during_a_script_interrupts_the_run_and_decree_retry_reruns_the_script
     );
 
     fs::remove_file(p.root().join("wait.flag")).unwrap();
-    p.cmd(&["process", "--retry", "run-a"]).assert().code(0);
+    p.cmd(&["process", "--retry", "20260101T000000.000000Z-000000"])
+        .assert()
+        .code(0);
     // Root and state `onentry` run again, then the invoke, then the exits.
     assert_eq!(
         p.order(),
@@ -323,7 +332,7 @@ fn sigterm_during_a_script_interrupts_the_run_and_decree_retry_reruns_the_script
         ]
     );
     assert_eq!(
-        transitions(&p.events("run-a")),
+        transitions(&p.events("20260101T000000.000000Z-000000")),
         [
             r#"null "claimed" "work" "claim""#,
             r#""work" "retry" "work" "retry""#,
@@ -478,13 +487,16 @@ fn a_second_process_says_the_migration_is_active_in_the_first() {
 #[test]
 fn two_processes_at_once_the_second_skips_the_active_run() {
     let p = Project::new(&[("slow", SLOW)], &[("record", RECORD), ("work", WORK)]);
-    p.queue("a.md", "---\nid: run-a\nmachine: slow\n---\n");
-    let (mut first, _) = p.working("run-a");
-    let before = p.events("run-a");
+    p.queue(
+        "20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\n---\n",
+    );
+    let (mut first, _) = p.working("20260101T000000.000000Z-000000");
+    let before = p.events("20260101T000000.000000Z-000000");
 
     p.cmd(&["process"]).assert().code(0);
     assert_eq!(
-        p.events("run-a"),
+        p.events("20260101T000000.000000Z-000000"),
         before,
         "the second process left it alone"
     );
@@ -501,7 +513,7 @@ fn two_processes_at_once_the_second_skips_the_active_run() {
     let status = wait_with_timeout(&mut first, Duration::from_secs(15));
     assert_eq!(status.code(), Some(0));
     assert_eq!(
-        transitions(&p.events("run-a")),
+        transitions(&p.events("20260101T000000.000000Z-000000")),
         [
             r#"null "claimed" "work" "claim""#,
             r#""work" "done" "done" "exit_code""#
@@ -519,10 +531,19 @@ fn two_processes_at_once_the_second_skips_the_active_run() {
 fn pick_with(reply: Value) -> (Project, Value, Value) {
     let p = Project::new(&[("pick", PICK), ("router", ROUTER)], &[("reply", REPLY)]);
     fs::write(p.root().join("reply.json"), reply.to_string()).unwrap();
-    p.queue("a.md", "---\nid: run-a\nmachine: pick\n---\nShip it?\n");
+    p.queue(
+        "20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: pick\n---\nShip it?\n",
+    );
     let process = p.cmd(&["process"]).assert();
-    let decision = p.of_type("run-a", "decision").pop().unwrap();
-    let last = p.of_type("run-a", "transition").pop().unwrap();
+    let decision = p
+        .of_type("20260101T000000.000000Z-000000", "decision")
+        .pop()
+        .unwrap();
+    let last = p
+        .of_type("20260101T000000.000000Z-000000", "transition")
+        .pop()
+        .unwrap();
     // `process` exits 1 when it stops on a failed run.
     process.code(if last["to"] == "failed" { 1 } else { 0 });
     (p, decision, last)
@@ -537,7 +558,11 @@ fn router_reply_that_is_not_an_option_gives_error_with_router_error() {
     assert_eq!(last["event"], "error");
     assert_eq!(last["to"], "failed");
     // Validated once: one router run, and it finished `done`.
-    let children: Vec<String> = p.runs().into_iter().filter(|r| r != "run-a").collect();
+    let children: Vec<String> = p
+        .runs()
+        .into_iter()
+        .filter(|r| r != "20260101T000000.000000Z-000000")
+        .collect();
     assert_eq!(children.len(), 1, "{children:?}");
     assert_eq!(decision["child_run"], json!(children[0]));
     let child = p.of_type(&children[0], "run_finished");
@@ -575,27 +600,44 @@ fn missing_confidence_with_min_confidence_gives_unsure() {
 #[test]
 fn machine_invoke_past_max_depth_gives_error_without_a_child() {
     let p = Project::new(&[("nest", NEST), ("leaf", LEAF)], &[("record", RECORD)]);
-    p.queue("a.md", "---\nid: run-a\nmachine: nest\ndepth: 10\n---\n");
+    p.queue(
+        "20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: nest\ndepth: 10\n---\n",
+    );
     p.cmd(&["process"]).assert().code(0);
-    let last = p.of_type("run-a", "transition").pop().unwrap();
+    let last = p
+        .of_type("20260101T000000.000000Z-000000", "transition")
+        .pop()
+        .unwrap();
     assert_eq!(last["from"], "sub");
     assert_eq!(last["event"], "error");
     assert_eq!(last["to"], "errored");
     assert_eq!(last["source"], "machine");
     assert_eq!(last["error"], "max_depth 10 reached");
-    assert_eq!(p.runs(), ["run-a"]);
-    assert!(p.of_type("run-a", "waiting").is_empty());
+    assert_eq!(p.runs(), ["20260101T000000.000000Z-000000"]);
+    assert!(p
+        .of_type("20260101T000000.000000Z-000000", "waiting")
+        .is_empty());
     assert!(p.order().is_empty());
 
     // One level less: the child runs at depth 10.
     let p = Project::new(&[("nest", NEST), ("leaf", LEAF)], &[("record", RECORD)]);
-    p.queue("a.md", "---\nid: run-a\nmachine: nest\ndepth: 9\n---\n");
+    p.queue(
+        "20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: nest\ndepth: 9\n---\n",
+    );
     p.cmd(&["process"]).assert().code(0);
     assert_eq!(
-        p.of_type("run-a", "transition").pop().unwrap()["to"],
+        p.of_type("20260101T000000.000000Z-000000", "transition")
+            .pop()
+            .unwrap()["to"],
         "done"
     );
-    let child = p.runs().into_iter().find(|r| r != "run-a").unwrap();
+    let child = p
+        .runs()
+        .into_iter()
+        .find(|r| r != "20260101T000000.000000Z-000000")
+        .unwrap();
     let message = fs::read_to_string(p.run_dir(&child).join("message.md")).unwrap();
     assert!(message.contains("\ndepth: 10\n"), "{message}");
 }
@@ -604,16 +646,24 @@ fn machine_invoke_past_max_depth_gives_error_without_a_child() {
 fn model_past_max_depth_gives_error_without_a_router_run() {
     let p = Project::new(&[("pick", PICK), ("router", ROUTER)], &[("reply", REPLY)]);
     fs::write(p.root().join("reply.json"), r#"{"event":"ship"}"#).unwrap();
-    p.queue("a.md", "---\nid: run-a\nmachine: pick\ndepth: 10\n---\n");
+    p.queue(
+        "20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: pick\ndepth: 10\n---\n",
+    );
     p.cmd(&["process"]).assert().code(1);
-    let decision = p.of_type("run-a", "decision").pop().unwrap();
+    let decision = p
+        .of_type("20260101T000000.000000Z-000000", "decision")
+        .pop()
+        .unwrap();
     assert_eq!(decision["event"], "error");
     assert_eq!(decision["router_error"], "max_depth 10 reached");
     assert_eq!(
-        p.of_type("run-a", "transition").pop().unwrap()["to"],
+        p.of_type("20260101T000000.000000Z-000000", "transition")
+            .pop()
+            .unwrap()["to"],
         "failed"
     );
-    assert_eq!(p.runs(), ["run-a"]);
+    assert_eq!(p.runs(), ["20260101T000000.000000Z-000000"]);
 }
 
 // ---------------------------------------------------------------
@@ -626,9 +676,12 @@ fn onexit_failure_is_recorded_in_exit_failures_and_the_target_is_unchanged() {
         &[("exits", EXITS)],
         &[("record", RECORD), ("fail_exit", FAIL_EXIT)],
     );
-    p.queue("a.md", "---\nid: run-a\nmachine: exits\n---\n");
+    p.queue(
+        "20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: exits\n---\n",
+    );
     p.cmd(&["process"]).assert().code(0);
-    let events = p.events("run-a");
+    let events = p.events("20260101T000000.000000Z-000000");
     let left = events
         .iter()
         .find(|e| e["type"] == "transition" && e["from"] == "work")
@@ -667,13 +720,17 @@ const CAP: usize = 2_097_152;
 fn loud(lines: usize) -> (Vec<u8>, Vec<u8>) {
     let p = Project::new(&[("loud", LOUD)], &[("big", BIG)]);
     p.queue(
-        "a.md",
-        &format!("---\nid: run-a\nmachine: loud\nparams: {{ lines: {lines} }}\n---\n"),
+        "20260101T000000.000000Z-000000.md",
+        &format!("---\nid: 20260101T000000.000000Z-000000\nmachine: loud\nparams: {{ lines: {lines} }}\n---\n"),
     );
     p.cmd(&["process"]).assert().code(0);
-    let script = &p.of_type("run-a", "script")[0];
+    let script = &p.of_type("20260101T000000.000000Z-000000", "script")[0];
     assert_eq!(script["exit_code"], 0);
-    let log = fs::read(p.run_dir("run-a").join(script["log"].as_str().unwrap())).unwrap();
+    let log = fs::read(
+        p.run_dir("20260101T000000.000000Z-000000")
+            .join(script["log"].as_str().unwrap()),
+    )
+    .unwrap();
     (b"0123456789abcde\n".repeat(lines), log)
 }
 

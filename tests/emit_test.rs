@@ -294,6 +294,9 @@ fn emit_takes_an_enum_value_and_a_number() {
     );
 }
 
+/// The run id of the message a test queues, in the form decree makes it.
+const A: &str = "20260101T000000.000000Z-00000a";
+
 /// The events of run `id`.
 fn events(p: &Project, id: &str) -> Vec<serde_json::Value> {
     fs::read_to_string(p.decree().join("runs").join(id).join("events.jsonl"))
@@ -309,8 +312,8 @@ fn events(p: &Project, id: &str) -> Vec<serde_json::Value> {
 fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
     let p = Project::new();
     fs::write(
-        p.decree().join("inbox/a.md"),
-        "---\nid: a\nmachine: flow\n---\nstart\n",
+        p.decree().join(format!("inbox/{A}.md")),
+        format!("---\nid: {A}\nmachine: flow\n---\nstart\n"),
     )
     .unwrap();
     let bin = PathBuf::from(env!("CARGO_BIN_EXE_decree"));
@@ -332,11 +335,11 @@ fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
     let mut runs: Vec<String> = fs::read_dir(p.decree().join("runs"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .filter(|id| id != "a")
+        .filter(|id| id != A)
         .collect();
     assert_eq!(runs.len(), 1, "{runs:?}");
     let child = runs.pop().unwrap();
-    let a = events(&p, "a");
+    let a = events(&p, A);
     let trace = a[0]["trace_id"].as_str().unwrap();
     let script = a.iter().find(|e| e["type"] == "script").unwrap();
     let span = script["span_id"].as_str().unwrap();
@@ -344,9 +347,9 @@ fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
     assert_eq!(
         text,
         format!(
-            "---\nid: {child}\nmachine: other\nparent: a\ndepth: 1\ntrigger: emit\n\
+            "---\nid: {child}\nmachine: other\nparent: {A}\ndepth: 1\ntrigger: emit\n\
              params:\n  n: 7\ntraceparent: 00-{trace}-{span}-01\nstate: done\n---\n\
-             Follow-up from a\n"
+             Follow-up from {A}\n"
         )
     );
     let claim = &events(&p, &child)[0];

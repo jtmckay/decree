@@ -488,8 +488,8 @@ fn run_case(spec: &Spec) -> Outcome {
         }
     }
     fs::write(
-        decree.join("inbox/a.md"),
-        "---\nid: run-a\nmachine: prop\n---\n",
+        decree.join("inbox/20260101T000000.000000Z-000000.md"),
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: prop\n---\n",
     )
     .unwrap();
 
@@ -503,7 +503,7 @@ fn run_case(spec: &Spec) -> Outcome {
     };
     let check = decree_cmd("check");
     let process = decree_cmd("process");
-    let run = decree.join("runs/run-a");
+    let run = decree.join("runs/20260101T000000.000000Z-000000");
     let log = fs::read_to_string(run.join("events.jsonl")).unwrap_or_default();
     let schema_errors = schema::events_errors(events_validator(), &log);
     let traces_error = std::panic::catch_unwind(|| traces::agree_with_events(&run))

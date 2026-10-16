@@ -131,6 +131,9 @@ struct Replay {
     /// The project's `.decree/`.
     recorded: PathBuf,
     run: String,
+    /// The run's id in the replay: the recorded one for a migration; for an inbox message,
+    /// the recorded id in the form decree makes ids now, so the queued file keeps it.
+    id: String,
 }
 
 impl Replay {
@@ -153,10 +156,17 @@ impl Replay {
             write_script(&script, STUB);
         }
 
+        let id = match run.split_once('Z') {
+            Some((time, rest)) if !time.contains('.') && time.len() == 15 => {
+                format!("{time}.000000Z{rest}")
+            }
+            _ => run.to_string(),
+        };
         let r = Replay {
             tmp,
             recorded,
             run: run.to_string(),
+            id,
         };
         r.write_plan();
         r.queue();
@@ -213,7 +223,9 @@ impl Replay {
     }
 
     /// Queue the run's message as the project received it: a migration from `migrations/`,
-    /// anything else in `inbox/` under the claim event's `file`, without the `state` mirror.
+    /// anything else in `inbox/` as it was queued, `<id>.md` with `id` the replay's id,
+    /// without the `state` mirror. A file a person wrote is queued as decree left it when
+    /// it arrived: its `arrived_as`, recorded in `message.md`, is kept.
     fn queue(&self) {
         let claim = &read_events(&self.recorded_run(&self.run))[0];
         let file = claim["file"].as_str().unwrap();
@@ -229,8 +241,12 @@ impl Replay {
             let message: String = message
                 .lines()
                 .filter(|l| !l.starts_with("state: "))
-                .map(|l| format!("{l}\n"))
+                .map(|l| match l.strip_prefix("id: ") {
+                    Some(_) => format!("id: {}\n", self.id),
+                    None => format!("{l}\n"),
+                })
                 .collect();
+            let file = format!("{}.md", self.id);
             fs::write(self.decree().join("inbox").join(file), message).unwrap();
         }
     }
@@ -272,7 +288,9 @@ impl Replay {
                 .to_string()
         };
         let note = body.trim_end_matches('\n');
-        self.cmd(&["event", &key("to"), &key("event"), "-m", note])
+        // The reply names the run by its id in the replay.
+        let to = key("to").replace(&self.run, &self.id);
+        self.cmd(&["event", &to, &key("event"), "-m", note])
             .assert()
             .code(0);
     }
@@ -283,7 +301,7 @@ impl Replay {
         let recorded_runs = self.recorded.join("runs");
         let runs = self.decree().join("runs");
         let recorded_tree = run_tree(&recorded_runs, &self.run);
-        let tree = run_tree(&runs, &self.run);
+        let tree = run_tree(&runs, &self.id);
         assert_eq!(
             tree.len(),
             recorded_tree.len(),
@@ -302,7 +320,7 @@ impl Replay {
                 .collect()
         };
         ids.extend(
-            names(&runs.join(&self.run))
+            names(&runs.join(&self.id))
                 .into_iter()
                 .zip(names(&recorded_runs.join(&self.run))),
         );

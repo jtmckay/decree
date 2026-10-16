@@ -154,7 +154,10 @@ fn stderr(output: &std::process::Output) -> String {
 #[test]
 fn unknown_machine_ends_failed_with_invalid_message() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: nope\n---\nbody\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: nope\n---\nbody\n",
+    );
     let out = p.process().assert().code(1).get_output().clone();
     assert!(
         stderr(&out).contains("unknown machine `nope`"),
@@ -162,9 +165,12 @@ fn unknown_machine_ends_failed_with_invalid_message() {
         stderr(&out)
     );
 
-    assert_eq!(p.runs(), ["run-a"]);
-    assert!(!p.decree().join("inbox/a.md").exists());
-    let events = p.events("run-a");
+    assert_eq!(p.runs(), ["20260101T000000.000000Z-000000"]);
+    assert!(!p
+        .decree()
+        .join("inbox/20260101T000000.000000Z-000000.md")
+        .exists());
+    let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(events.len(), 2, "{events:?}");
     assert_eq!(events[1]["type"], "run_finished");
     assert_eq!(events[1]["state"], "failed");
@@ -173,12 +179,14 @@ fn unknown_machine_ends_failed_with_invalid_message() {
     assert_eq!(e["to"], "failed");
     assert_eq!(e["source"], "invalid_message");
     assert_eq!(e["decree_version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(e["file"], "a.md");
+    assert_eq!(e["file"], "20260101T000000.000000Z-000000.md");
     assert!(e["error"]
         .as_str()
         .unwrap()
         .contains("unknown machine `nope`"));
-    assert!(p.read("runs/run-a/message.md").contains("state: failed"));
+    assert!(p
+        .read("runs/20260101T000000.000000Z-000000/message.md")
+        .contains("state: failed"));
     assert!(p.order().is_empty());
 }
 
@@ -210,12 +218,12 @@ fn message_md_keeps_unknown_keys() {
     let events = p.events(run);
     assert_eq!(events[0]["machine"], "flow");
     assert_eq!(last_state(&events), "done");
-    // decree added `id` and `trigger`, mirrored `state`, and kept the rest.
+    // decree added `id`, `arrived_as` and `trigger`, mirrored `state`, and kept the rest.
     let message = p.read(&format!("runs/{run}/message.md"));
     assert_eq!(
         message,
         format!(
-            "---\nmachine: flow\nkeep: me\nid: {run}\ntrigger: inbox\nstate: done\n---\nbody\r\n"
+            "---\nid: {run}\narrived_as: a.md\nmachine: flow\nkeep: me\ntrigger: inbox\nstate: done\n---\nbody\r\n"
         )
     );
 }
@@ -223,13 +231,24 @@ fn message_md_keeps_unknown_keys() {
 #[test]
 fn inbox_runs_in_filename_order() {
     let p = Project::new();
-    p.write("inbox/b.md", "---\nid: run-b\nmachine: flow\n---\n");
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: flow\n---\n");
+    p.write(
+        "inbox/20260101T000000.000001Z-000001.md",
+        "---\nid: 20260101T000000.000001Z-000001\nmachine: flow\n---\n",
+    );
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: flow\n---\n",
+    );
     p.write("inbox/.hidden.md", "---\nmachine: flow\n---\n");
     p.process().assert().success();
     assert_eq!(
         p.order(),
-        ["start run-a", "end run-a", "start run-b", "end run-b"]
+        [
+            "start 20260101T000000.000000Z-000000",
+            "end 20260101T000000.000000Z-000000",
+            "start 20260101T000000.000001Z-000001",
+            "end 20260101T000000.000001Z-000001"
+        ]
     );
     assert!(p.decree().join("inbox/.hidden.md").exists());
 }
@@ -237,42 +256,68 @@ fn inbox_runs_in_filename_order() {
 #[test]
 fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: flow\n---\n");
     p.write(
-        "inbox/b.md",
-        "---\nid: run-b\nmachine: flow\nparams: { fail: true }\n---\n",
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: flow\n---\n",
     );
-    p.write("inbox/c.md", "---\nid: run-c\nmachine: flow\n---\n");
+    p.write(
+        "inbox/20260101T000000.000001Z-000001.md",
+        "---\nid: 20260101T000000.000001Z-000001\nmachine: flow\nparams: { fail: true }\n---\n",
+    );
+    p.write(
+        "inbox/20260101T000000.000002Z-000002.md",
+        "---\nid: 20260101T000000.000002Z-000002\nmachine: flow\n---\n",
+    );
     let out = p.process().assert().code(1).get_output().clone();
     let err = stderr(&out);
-    assert!(err.contains("run run-b (b.md) ended in `failed`"), "{err}");
-    assert!(err.contains("`decree process --retry run-b`"), "{err}");
+    assert!(err.contains("run 20260101T000000.000001Z-000001 (20260101T000000.000001Z-000001.md) ended in `failed`"), "{err}");
+    assert!(
+        err.contains("`decree process --retry 20260101T000000.000001Z-000001`"),
+        "{err}"
+    );
     // After the queue is empty: every run that failed in the pass, with its retry command.
     let summary = err
         .split_once("1 run(s) ended in `failed` in this pass:")
         .unwrap_or_else(|| panic!("{err}"))
         .1;
     assert!(
-        summary.contains("run run-b: decree process --retry run-b"),
+        summary.contains("run 20260101T000000.000001Z-000001: decree process --retry 20260101T000000.000001Z-000001"),
         "{err}"
     );
     assert!(
-        !summary.contains("run-a") && !summary.contains("run-c"),
+        !summary.contains("20260101T000000.000000Z-000000")
+            && !summary.contains("20260101T000000.000002Z-000002"),
         "{err}"
     );
 
-    assert_eq!(p.runs(), ["run-a", "run-b", "run-c"]);
-    assert_eq!(last_state(&p.events("run-a")), "done");
-    assert_eq!(last_state(&p.events("run-b")), "failed");
-    assert_eq!(last_state(&p.events("run-c")), "done");
+    assert_eq!(
+        p.runs(),
+        [
+            "20260101T000000.000000Z-000000",
+            "20260101T000000.000001Z-000001",
+            "20260101T000000.000002Z-000002"
+        ]
+    );
+    assert_eq!(
+        last_state(&p.events("20260101T000000.000000Z-000000")),
+        "done"
+    );
+    assert_eq!(
+        last_state(&p.events("20260101T000000.000001Z-000001")),
+        "failed"
+    );
+    assert_eq!(
+        last_state(&p.events("20260101T000000.000002Z-000002")),
+        "done"
+    );
     assert_eq!(
         p.order(),
         [
-            "start run-a",
-            "end run-a",
-            "start run-b",
-            "start run-c",
-            "end run-c"
+            "start 20260101T000000.000000Z-000000",
+            "end 20260101T000000.000000Z-000000",
+            "start 20260101T000000.000001Z-000001",
+            "start 20260101T000000.000002Z-000002",
+            "end 20260101T000000.000002Z-000002"
         ]
     );
     assert!(p
@@ -285,14 +330,25 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
 
     // `--retry <id>` continues the failed inbox run in its folder, then the pass goes on.
     p.fix();
-    p.write("inbox/d.md", "---\nid: run-d\nmachine: flow\n---\n");
-    p.process().args(["--retry", "run-b"]).assert().success();
+    p.write(
+        "inbox/20260101T000000.000003Z-000003.md",
+        "---\nid: 20260101T000000.000003Z-000003\nmachine: flow\n---\n",
+    );
+    p.process()
+        .args(["--retry", "20260101T000000.000001Z-000001"])
+        .assert()
+        .success();
     assert_eq!(
         p.order()[5..],
-        ["start run-b", "end run-b", "start run-d", "end run-d"]
+        [
+            "start 20260101T000000.000001Z-000001",
+            "end 20260101T000000.000001Z-000001",
+            "start 20260101T000000.000003Z-000003",
+            "end 20260101T000000.000003Z-000003"
+        ]
     );
     assert_eq!(
-        transitions(&p.events("run-b")),
+        transitions(&p.events("20260101T000000.000001Z-000001")),
         [
             t("-", "work", "claim"),
             t("work", "failed", "exit_code"),
@@ -306,19 +362,223 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
 fn a_failed_inbox_run_does_not_block_migrations() {
     let p = Project::new();
     p.write(
-        "inbox/a.md",
-        "---\nid: run-a\nmachine: flow\nparams: { fail: true }\n---\n",
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: flow\nparams: { fail: true }\n---\n",
     );
     p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
     p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
     let out = p.process().assert().code(1).get_output().clone();
     let err = stderr(&out);
     assert!(
-        err.contains("run run-a: decree process --retry run-a"),
+        err.contains("run 20260101T000000.000000Z-000000: decree process --retry 20260101T000000.000000Z-000000"),
         "{err}"
     );
-    assert_eq!(p.runs(), ["01-a", "02-b", "run-a"]);
+    assert_eq!(p.runs(), ["01-a", "02-b", "20260101T000000.000000Z-000000"]);
     assert_eq!(p.read("processed.md"), "01-a.md\n02-b.md\n");
+}
+
+// ---------------------------------------------------------------
+// Ids on arrival (docs/reference/messages.md, Lifecycle step 1)
+// ---------------------------------------------------------------
+
+/// Set the modification time of `.decree/<rel>` to `secs` after the epoch.
+fn set_mtime(p: &Project, rel: &str, secs: u64) {
+    let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    fs::File::options()
+        .write(true)
+        .open(p.decree().join(rel))
+        .unwrap()
+        .set_modified(time)
+        .unwrap();
+}
+
+/// Whether `id` has the form of an id decree makes: `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`.
+fn is_time_id(id: &str) -> bool {
+    id.len() == 30 && id.as_bytes()[8] == b'T' && id[16..22].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// AC: an emitted message, then `01-hi.md` written after it: the emitted message runs
+/// first, then `01-hi.md` with a time id, its `message.md` recording `01-hi.md`.
+#[test]
+fn a_file_written_after_an_emitted_message_runs_after_it_with_a_time_id() {
+    let p = Project::new();
+    let emitted = cargo_bin_cmd!("decree")
+        .current_dir(p.tmp.path())
+        .env("NO_COLOR", "1")
+        .args(["emit", "--machine", "flow"])
+        .write_stdin("emitted\n")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let emitted = String::from_utf8(emitted).unwrap().trim().to_string();
+    p.write("inbox/01-hi.md", "---\nmachine: flow\n---\nhi\n");
+    p.process().assert().success();
+
+    let runs = p.runs();
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    assert_eq!(runs[0], emitted);
+    let hi = &runs[1];
+    assert!(is_time_id(hi), "{hi}");
+    assert_eq!(
+        p.order(),
+        [
+            format!("start {emitted}"),
+            format!("end {emitted}"),
+            format!("start {hi}"),
+            format!("end {hi}"),
+        ]
+    );
+    assert_eq!(
+        p.read(&format!("runs/{hi}/message.md")),
+        format!("---\nid: {hi}\narrived_as: 01-hi.md\nmachine: flow\ntrigger: inbox\nstate: done\n---\nhi\n")
+    );
+    assert_eq!(p.events(hi)[0]["file"], "01-hi.md");
+}
+
+/// AC: `b.md` modified before `a.md`, both written while no process ran: `b.md` runs
+/// first. Files modified at the same time run in name order.
+#[test]
+fn files_first_seen_together_run_in_modification_time_then_name_order() {
+    let p = Project::new();
+    for name in ["a", "b", "c"] {
+        p.write(
+            &format!("inbox/{name}.md"),
+            &format!("---\nmachine: flow\nname: {name}\n---\n"),
+        );
+    }
+    set_mtime(&p, "inbox/a.md", 2_000_000_000);
+    set_mtime(&p, "inbox/b.md", 1_000_000_000);
+    set_mtime(&p, "inbox/c.md", 2_000_000_000);
+    p.process().assert().success();
+    let arrived: Vec<String> = p
+        .runs()
+        .iter()
+        .map(|run| {
+            let message = p.read(&format!("runs/{run}/message.md"));
+            let line = message.lines().find(|l| l.starts_with("arrived_as: "));
+            line.unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(
+        arrived,
+        ["arrived_as: b.md", "arrived_as: a.md", "arrived_as: c.md"]
+    );
+    let started: Vec<String> = p
+        .order()
+        .iter()
+        .filter_map(|l| l.strip_prefix("start ").map(String::from))
+        .collect();
+    assert_eq!(started, p.runs(), "runs start in id order");
+}
+
+/// AC: a copy of a finished run's `message.md`, with its `id:`, runs as a new run with a
+/// new id; the old run is unchanged. Under any name, its own `<id>.md` included.
+#[test]
+fn a_copy_of_a_finished_runs_message_runs_again_as_a_new_run() {
+    let p = Project::new();
+    p.write(
+        "inbox/task.md",
+        "---\nmachine: flow\nnote: kept\n---\n# Task\n",
+    );
+    p.process().assert().success();
+    let old = p.runs()[0].clone();
+    let old_dir = p.decree().join("runs").join(&old);
+    let snapshot = |dir: &Path| -> Vec<(String, String)> {
+        let mut files: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .filter(|e| e.path().is_file())
+            .map(|e| {
+                let name = e.file_name().into_string().unwrap();
+                (name, fs::read_to_string(e.path()).unwrap())
+            })
+            .collect();
+        files.sort();
+        files
+    };
+    let before = snapshot(&old_dir);
+    let copy = p.read(&format!("runs/{old}/message.md"));
+    assert!(copy.contains(&format!("id: {old}\n")) && copy.contains("state: done"));
+    p.write("inbox/copy.md", &copy);
+    p.write(&format!("inbox/{old}.md"), &copy);
+    p.process().assert().success();
+
+    assert_eq!(snapshot(&old_dir), before, "the old run is unchanged");
+    let runs = p.runs();
+    assert_eq!(runs.len(), 3, "{runs:?}");
+    for run in runs.iter().filter(|r| **r != old) {
+        assert!(is_time_id(run), "{run}");
+        let events = p.events(run);
+        assert_eq!(last_state(&events), "done", "{events:?}");
+        assert_eq!(events[0]["trigger"], "inbox");
+        let message = p.read(&format!("runs/{run}/message.md"));
+        assert!(
+            message.starts_with(&format!("---\nid: {run}\n")),
+            "{message}"
+        );
+        assert!(message.contains("note: kept\n"), "{message}");
+        assert!(message.ends_with("state: done\n---\n# Task\n"), "{message}");
+    }
+    assert!(p
+        .decree()
+        .join("inbox")
+        .read_dir()
+        .unwrap()
+        .next()
+        .is_none());
+}
+
+/// AC: `.draft.md` in `inbox/` is neither renamed nor run.
+#[test]
+fn a_dot_file_in_the_inbox_is_neither_renamed_nor_run() {
+    let p = Project::new();
+    let text = "---\nmachine: flow\n---\ndraft\n";
+    p.write("inbox/.draft.md", text);
+    p.process().assert().success();
+    assert!(p.runs().is_empty());
+    let names: Vec<String> = fs::read_dir(p.decree().join("inbox"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names, [".draft.md"]);
+    assert_eq!(p.read("inbox/.draft.md"), text);
+}
+
+/// `decree status` lists a file that arrived by its new name once a pass has seen it, here
+/// one that excludes its machine, so it stays queued.
+#[test]
+fn status_lists_an_arrived_file_by_its_new_name() {
+    let p = Project::new();
+    p.write("inbox/zz.md", "---\nmachine: flow\n---\n");
+    p.process()
+        .args(["--exclude-machine", "flow"])
+        .assert()
+        .success();
+    assert!(p.runs().is_empty());
+    let names: Vec<String> = fs::read_dir(p.decree().join("inbox"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names.len(), 1);
+    let name = &names[0];
+    assert!(is_time_id(name.strip_suffix(".md").unwrap()), "{name}");
+    assert!(p
+        .read(&format!("inbox/{name}"))
+        .contains("arrived_as: zz.md\n"));
+    let status = cargo_bin_cmd!("decree")
+        .current_dir(p.tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("status")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let status = String::from_utf8(status).unwrap();
+    assert!(status.contains(&format!("    {name}\n")), "{status}");
+    assert!(!status.contains("zz.md"), "{status}");
 }
 
 // ---------------------------------------------------------------
@@ -492,7 +752,10 @@ fn process_retry_state_resumes_at_the_named_state() {
     let p = Project::new();
     p.write("machines/two.yml", TWO);
     write_script(&p.decree().join("scripts/step"), STEP);
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: two\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: two\n---\n",
+    );
     p.process().assert().code(1);
     assert_eq!(p.order(), ["first", "second"]);
 
@@ -500,12 +763,17 @@ fn process_retry_state_resumes_at_the_named_state() {
     // `--state first` starts that state again instead.
     p.fix();
     p.process()
-        .args(["--retry", "run-a", "--state", "first"])
+        .args([
+            "--retry",
+            "20260101T000000.000000Z-000000",
+            "--state",
+            "first",
+        ])
         .assert()
         .success();
     assert_eq!(p.order(), ["first", "second", "first", "second"]);
     assert_eq!(
-        transitions(&p.events("run-a"))[3..],
+        transitions(&p.events("20260101T000000.000000Z-000000"))[3..],
         [
             t("failed", "first", "retry"),
             t("first", "second", "exit_code"),

@@ -88,6 +88,10 @@ appear only where a machine invokes `model` or `person`.
   (a router machine, no new decision kind).
 - **Queue follow-up work with `decree emit`**, never by writing into `.decree/inbox/` by hand
   from a script. The emitting state must list the target in `emits:`.
+- **A file a person writes into `.decree/inbox/` runs in the order it arrived**: the first
+  `process` or `daemon` to see it gives it a fresh id, renames it `<id>.md` and records its old
+  name as `arrived_as`. decree replaces `id`, `state` and `trigger` there, so to run a message
+  again, copy it (a migration, a run's `message.md`) into `inbox/`.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and
   `decree graph` after changing a machine. Commit `.decree/graph/`.
 - **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,

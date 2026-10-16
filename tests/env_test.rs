@@ -26,8 +26,8 @@ fn a_script_sees_only_the_decree_variables_its_own_run_sets() {
         "#!/usr/bin/env bash\nenv | grep -E '^(DECREE_|TRACESTATE=)' | sort > \"$DECREE_PROJECT_ROOT/env.txt\"\n",
     );
     fs::write(
-        decree.join("inbox/a.md"),
-        "---\nid: a\nmachine: m\n---\nbody\n",
+        decree.join(format!("inbox/{A}.md")),
+        format!("---\nid: {A}\nmachine: m\n---\nbody\n"),
     )
     .unwrap();
     cargo_bin_cmd!("decree")
@@ -44,7 +44,7 @@ fn a_script_sees_only_the_decree_variables_its_own_run_sets() {
     let env = fs::read_to_string(tmp.path().join("env.txt")).unwrap();
     assert!(!env.contains("DECREE_DATA_OUTER"), "{env}");
     assert!(!env.contains("outer"), "{env}");
-    assert!(env.contains("DECREE_MESSAGE_ID=a\n"), "{env}");
+    assert!(env.contains(&format!("DECREE_MESSAGE_ID={A}\n")), "{env}");
     assert!(env.contains("DECREE_PARENT=\n"), "{env}");
 }
 
@@ -61,10 +61,15 @@ fn project(work: &str) -> TempDir {
     )
     .unwrap();
     write_script(&decree.join("scripts/work"), work);
-    queue(&tmp, "a");
+    queue(&tmp, A);
     tmp
 }
 
+/// Run ids of the messages tests queue, in the form decree makes them.
+const A: &str = "20260101T000000.000000Z-00000a";
+const B: &str = "20260101T000000.000001Z-00000b";
+
+/// Queue `inbox/<id>.md` as `decree emit` writes it.
 fn queue(tmp: &TempDir, id: &str) {
     fs::write(
         tmp.path().join(format!(".decree/inbox/{id}.md")),
@@ -91,7 +96,7 @@ fn dotenv_values_reach_scripts_and_the_process_environment_wins() {
         .env_remove("COMFY_URL")
         .assert()
         .success();
-    queue(&tmp, "b");
+    queue(&tmp, B);
     cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
         .arg("process")
@@ -145,7 +150,7 @@ fn dotenv_values_are_interpolated_and_the_process_environment_wins() {
         .env_remove("URL")
         .assert()
         .success();
-    queue(&tmp, "b");
+    queue(&tmp, B);
     cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
         .arg("process")
@@ -265,7 +270,7 @@ fn a_malformed_dotenv_fails_check_and_process() {
         let stderr = String::from_utf8(out.stderr).unwrap();
         assert!(stderr.contains(stdout.trim_end()), "{stderr}");
         assert!(
-            tmp.path().join(".decree/inbox/a.md").exists(),
+            tmp.path().join(format!(".decree/inbox/{A}.md")).exists(),
             "nothing ran"
         );
         assert!(!tmp.path().join("out.txt").exists());
@@ -480,7 +485,7 @@ fn run_dir_variables_in_a_parent_a_child_and_a_grandchild() {
         ("m", "child", "grandchild")
     );
     let runs = decree.join("runs");
-    assert_eq!(parent[1], runs.join("a").to_str().unwrap());
+    assert_eq!(parent[1], runs.join(A).to_str().unwrap());
     // The parent: no parent, and its own folder is the root.
     assert_eq!(parent[2], "");
     assert_eq!(parent[3], parent[1]);

@@ -855,8 +855,8 @@ fn a_model_run_writes_files_that_validate() {
          printf '%s' '{\"event\": \"left\", \"reason\": \"Left is shorter.\", \"confidence\": 0.9, \"probabilities\": {\"left\": 0.9, \"right\": 0.1}}' > \"$DECREE_REPLY\"\n",
     );
     fs::write(
-        decree_dir.join("inbox/go.md"),
-        "---\nid: go\nmachine: ask\n---\nPick a way.\n",
+        decree_dir.join("inbox/20260101T000000.000000Z-000000.md"),
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: ask\n---\nPick a way.\n",
     )
     .unwrap();
     let (code, stdout, stderr) = decree(tmp.path(), "process");
@@ -874,7 +874,10 @@ fn a_model_run_writes_files_that_validate() {
     assert!(found.is_empty(), "{found}");
     let found = json_rejects(schema::REPLY_SCHEMA, &read(&[child.join("reply.json")]));
     assert!(found.is_empty(), "{found}");
-    let logs = [runs.join("go/events.jsonl"), child.join("events.jsonl")];
+    let logs = [
+        runs.join("20260101T000000.000000Z-000000/events.jsonl"),
+        child.join("events.jsonl"),
+    ];
     let found = events_rejects(&read(&logs));
     assert!(found.is_empty(), "{found}");
     let parent = fs::read_to_string(&logs[0]).unwrap();

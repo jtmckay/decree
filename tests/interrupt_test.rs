@@ -245,10 +245,16 @@ fn exists(path: &Path) -> bool {
 #[test]
 fn sigterm_stops_the_child_appends_interrupted_and_exits_130() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: slow\n---\n");
-    let (mut decree, script, child) = p.sleeping("run-a");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\n---\n",
+    );
+    let (mut decree, script, child) = p.sleeping("20260101T000000.000000Z-000000");
     // The lock holds decree's pid while the run is stepped.
-    assert_eq!(p.read("runs/run-a/.lock"), decree.id().to_string());
+    assert_eq!(
+        p.read("runs/20260101T000000.000000Z-000000/.lock"),
+        decree.id().to_string()
+    );
 
     let sent = Instant::now();
     // SAFETY: sends SIGTERM to the decree process.
@@ -263,7 +269,7 @@ fn sigterm_stops_the_child_appends_interrupted_and_exits_130() {
         thread::sleep(Duration::from_millis(20));
     }
 
-    let events = p.events("run-a");
+    let events = p.events("20260101T000000.000000Z-000000");
     let last = events.last().unwrap();
     assert_eq!(last["type"], "interrupted");
     assert_eq!(last["cause"], "signal");
@@ -271,32 +277,46 @@ fn sigterm_stops_the_child_appends_interrupted_and_exits_130() {
     assert_eq!(last["script"], "work");
     // No `onexit` script ran, and the lock and `.running` are gone.
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
-    assert!(!exists(&p.run_dir("run-a").join(".lock")));
-    assert!(!exists(&p.run_dir("run-a").join(".running")));
+    assert!(!exists(
+        &p.run_dir("20260101T000000.000000Z-000000").join(".lock")
+    ));
+    assert!(!exists(
+        &p.run_dir("20260101T000000.000000Z-000000").join(".running")
+    ));
 
     // A later pass leaves the interrupted run alone.
     p.process().assert().success();
-    assert_eq!(p.events("run-a").len(), events.len());
+    assert_eq!(
+        p.events("20260101T000000.000000Z-000000").len(),
+        events.len()
+    );
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
 }
 
 #[test]
 fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: slow\n---\n");
-    p.crash_during_sleep("run-a");
-    let before = p.events("run-a").len();
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\n---\n",
+    );
+    p.crash_during_sleep("20260101T000000.000000Z-000000");
+    let before = p.events("20260101T000000.000000Z-000000").len();
     // A stale lock and `.running` are left behind.
-    assert!(exists(&p.run_dir("run-a").join(".lock")));
-    assert!(p.read("runs/run-a/.running").contains(r#""script":"work""#));
+    assert!(exists(
+        &p.run_dir("20260101T000000.000000Z-000000").join(".lock")
+    ));
+    assert!(p
+        .read("runs/20260101T000000.000000Z-000000/.running")
+        .contains(r#""script":"work""#));
 
     let out = p.process().output().unwrap();
     assert!(
-        stderr(&out).contains("`decree process --retry run-a`"),
+        stderr(&out).contains("`decree process --retry 20260101T000000.000000Z-000000`"),
         "{}",
         stderr(&out)
     );
-    let events = p.events("run-a");
+    let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(events.len(), before + 1);
     let last = events.last().unwrap();
     assert_eq!(last["type"], "interrupted");
@@ -304,18 +324,23 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     assert_eq!(last["state"], "work");
     // The leftover `.running` names the script, and is gone.
     assert_eq!(last["script"], "work");
-    assert!(!exists(&p.run_dir("run-a").join(".running")));
+    assert!(!exists(
+        &p.run_dir("20260101T000000.000000Z-000000").join(".running")
+    ));
     // Not continued: no script ran again.
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
 
     // Marked once only.
     p.process().output().unwrap();
-    assert_eq!(p.events("run-a").len(), before + 1);
+    assert_eq!(p.events("20260101T000000.000000Z-000000").len(), before + 1);
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
 
-    // `decree process --retry run-a`: root `onentry` and the state's `onentry` run again,
+    // `decree process --retry 20260101T000000.000000Z-000000`: root `onentry` and the state's `onentry` run again,
     // then the invoke, and the run finishes.
-    p.process().args(["--retry", "run-a"]).assert().success();
+    p.process()
+        .args(["--retry", "20260101T000000.000000Z-000000"])
+        .assert()
+        .success();
     assert_eq!(
         p.order(),
         [
@@ -329,7 +354,7 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
             "root_exit"
         ]
     );
-    let events = p.events("run-a");
+    let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(last_state(&events), "done");
     assert_eq!(events.last().unwrap()["type"], "run_finished");
     let transitions: Vec<_> = events
@@ -345,8 +370,12 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
             r#""work" "done" "exit_code""#
         ]
     );
-    assert!(p.read("runs/run-a/message.md").contains("state: done"));
-    assert!(!exists(&p.run_dir("run-a").join(".lock")));
+    assert!(p
+        .read("runs/20260101T000000.000000Z-000000/message.md")
+        .contains("state: done"));
+    assert!(!exists(
+        &p.run_dir("20260101T000000.000000Z-000000").join(".lock")
+    ));
 }
 
 #[test]
@@ -377,51 +406,68 @@ fn interrupted_migration_blocks_the_next_and_exits_1_naming_retry() {
 fn run_with_a_live_lock_is_active_and_skipped() {
     let p = Project::new();
     p.write(
-        "runs/run-a/message.md",
-        "---\nid: run-a\nmachine: slow\ntrigger: inbox\nstate: work\n---\n",
+        "runs/20260101T000000.000000Z-000000/message.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\ntrigger: inbox\nstate: work\n---\n",
     );
     let claim = json!({
         "type": "transition", "from": null, "event": "claimed", "to": "work",
         "source": "claim", "exit_code": null, "file": "a.md",
     });
-    p.append("run-a", "slow", "inbox", claim);
+    p.append("20260101T000000.000000Z-000000", "slow", "inbox", claim);
     let mut holder = std::process::Command::new("sleep")
         .arg("30")
         .spawn()
         .unwrap();
-    p.write("runs/run-a/.lock", &holder.id().to_string());
+    p.write(
+        "runs/20260101T000000.000000Z-000000/.lock",
+        &holder.id().to_string(),
+    );
 
     // Neither marked as a crash nor continued, even once it is pending.
     p.process().assert().success();
-    assert_eq!(p.events("run-a").len(), 1);
-    p.retry("run-a", "slow", "inbox", "work");
+    assert_eq!(p.events("20260101T000000.000000Z-000000").len(), 1);
+    p.retry("20260101T000000.000000Z-000000", "slow", "inbox", "work");
     p.process().assert().success();
-    assert_eq!(p.events("run-a").len(), 2);
+    assert_eq!(p.events("20260101T000000.000000Z-000000").len(), 2);
     assert!(p.order().is_empty());
-    assert_eq!(p.read("runs/run-a/.lock"), holder.id().to_string());
+    assert_eq!(
+        p.read("runs/20260101T000000.000000Z-000000/.lock"),
+        holder.id().to_string()
+    );
 
     // Once the holder is gone, the lock is stale and the pending run continues.
     holder.kill().unwrap();
     holder.wait().unwrap();
     fs::remove_file(p.tmp.path().join("sleep.flag")).unwrap();
     p.process().assert().success();
-    assert_eq!(last_state(&p.events("run-a")), "done");
+    assert_eq!(
+        last_state(&p.events("20260101T000000.000000Z-000000")),
+        "done"
+    );
 }
 
 #[test]
 fn waiting_run_without_a_lock_is_waiting_not_a_crash() {
     let p = Project::new();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: ask\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: ask\n---\n",
+    );
     let out = p.process().assert().success().get_output().clone();
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(stdout.contains("Waiting: run run-a"), "{stdout}");
-    assert!(!exists(&p.run_dir("run-a").join(".lock")));
-    let events = p.events("run-a");
+    assert!(
+        stdout.contains("Waiting: run 20260101T000000.000000Z-000000"),
+        "{stdout}"
+    );
+    assert!(!exists(
+        &p.run_dir("20260101T000000.000000Z-000000").join(".lock")
+    ));
+    let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(events.last().unwrap()["type"], "waiting");
 
     let out = p.process().assert().success().get_output().clone();
     assert!(!stderr(&out).contains("interrupted"), "{}", stderr(&out));
-    assert_eq!(p.events("run-a"), events);
+    assert_eq!(p.events("20260101T000000.000000Z-000000"), events);
 }
 
 #[test]
@@ -430,20 +476,23 @@ fn mirror_that_disagrees_with_the_events_is_rewritten() {
     // A crash between the `transition` event and the mirror write: events say `work`,
     // message.md still says `done`.
     p.write(
-        "runs/run-a/message.md",
-        "---\nid: run-a\nmachine: slow\ncustom: kept\ntrigger: inbox\nstate: done\n---\n# Body\r\n",
+        "runs/20260101T000000.000000Z-000000/message.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\ncustom: kept\ntrigger: inbox\nstate: done\n---\n# Body\r\n",
     );
     let claim = json!({
         "type": "transition", "from": null, "event": "claimed", "to": "work",
         "source": "claim", "exit_code": null, "file": "a.md",
     });
-    p.append("run-a", "slow", "inbox", claim);
+    p.append("20260101T000000.000000Z-000000", "slow", "inbox", claim);
     p.process().output().unwrap();
     assert_eq!(
-        p.read("runs/run-a/message.md"),
-        "---\nid: run-a\nmachine: slow\ncustom: kept\ntrigger: inbox\nstate: work\n---\n# Body\r\n"
+        p.read("runs/20260101T000000.000000Z-000000/message.md"),
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\ncustom: kept\ntrigger: inbox\nstate: work\n---\n# Body\r\n"
     );
-    assert_eq!(p.events("run-a").last().unwrap()["cause"], "crash");
+    assert_eq!(
+        p.events("20260101T000000.000000Z-000000").last().unwrap()["cause"],
+        "crash"
+    );
 }
 
 /// `decree <args>` in the project.
@@ -455,12 +504,18 @@ fn decree(p: &Project, args: &[&str]) -> Command {
     cmd
 }
 
-/// Run `run-a` of `slow` to `done`.
+/// Run `20260101T000000.000000Z-000000` of `slow` to `done`.
 fn finished_run(p: &Project) {
     fs::remove_file(p.tmp.path().join("sleep.flag")).unwrap();
-    p.write("inbox/a.md", "---\nid: run-a\nmachine: slow\n---\n");
+    p.write(
+        "inbox/20260101T000000.000000Z-000000.md",
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\n---\n",
+    );
     p.process().assert().success();
-    assert_eq!(p.events("run-a").last().unwrap()["type"], "run_finished");
+    assert_eq!(
+        p.events("20260101T000000.000000Z-000000").last().unwrap()["type"],
+        "run_finished"
+    );
 }
 
 #[test]
@@ -468,7 +523,9 @@ fn finished_run_is_read_from_its_last_line_only() {
     let p = Project::new();
     finished_run(&p);
     // A line in the middle that is not JSON: only the last line of a finished run is read.
-    let path = p.run_dir("run-a").join("events.jsonl");
+    let path = p
+        .run_dir("20260101T000000.000000Z-000000")
+        .join("events.jsonl");
     let text = fs::read_to_string(&path).unwrap();
     let (first, rest) = text.split_once('\n').unwrap();
     let corrupt = format!("{first}\nnot json\n{rest}");
@@ -481,7 +538,10 @@ fn finished_run_is_read_from_its_last_line_only() {
         .clone();
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(stdout.contains("  finished: 1\n    done: 1\n"), "{stdout}");
-    assert!(stdout.contains("run-a  slow  `done`"), "{stdout}");
+    assert!(
+        stdout.contains("20260101T000000.000000Z-000000  slow  `done`"),
+        "{stdout}"
+    );
     assert!(!stdout.contains("interrupted"), "{stdout}");
 
     p.process().assert().success();
@@ -492,12 +552,21 @@ fn finished_run_is_read_from_its_last_line_only() {
 fn finished_run_retried_continues_after_run_finished() {
     let p = Project::new();
     finished_run(&p);
-    let before_events = p.events("run-a");
+    let before_events = p.events("20260101T000000.000000Z-000000");
     let before = p.order().len();
-    decree(&p, &["process", "--retry", "run-a", "--state", "work"])
-        .assert()
-        .success();
-    let events = p.events("run-a");
+    decree(
+        &p,
+        &[
+            "process",
+            "--retry",
+            "20260101T000000.000000Z-000000",
+            "--state",
+            "work",
+        ],
+    )
+    .assert()
+    .success();
+    let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(events[..before_events.len()], before_events[..]);
     assert_eq!(events[before_events.len() - 1]["type"], "run_finished");
     assert_eq!(events[before_events.len()]["source"], "retry");

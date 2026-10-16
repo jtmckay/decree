@@ -1120,12 +1120,12 @@ fn a_param_outside_the_enum_fails_at_claim() {
     p.machine("sized", SIZED);
     p.script("render", "#!/usr/bin/env bash\nexit 0\n");
     fs::write(
-        p.decree_dir().join("inbox/a.md"),
-        "---\nid: run-a\nmachine: sized\nparams: { need: review }\n---\nbody\n",
+        p.decree_dir().join("inbox/20260101T000000.000000Z-000000.md"),
+        "---\nid: 20260101T000000.000000Z-000000\nmachine: sized\nparams: { need: review }\n---\nbody\n",
     )
     .unwrap();
     p.decree(&["process"]).assert().code(1);
-    let events = p.events("run-a");
+    let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(events[0]["source"], "invalid_message");
     let error = events[0]["error"].as_str().unwrap();
     assert!(

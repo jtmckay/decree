@@ -23,10 +23,11 @@ params:
 | --- | --- | --- |
 | `machine` | Author, `decree emit`, cron | Machine name (`machines/<name>.yml`). Required: there is no default machine. |
 | `params` | Author, `decree emit --param` | Values for the machine's `data` (string, int, number or bool), one of the `enum` values if the entry has one. Unknown names, wrong types and values outside the `enum` fail validation. |
-| `id` | decree, at claim | `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`, UTC to the microsecond, so ids sort in queue order; a migration's id is its file stem. Names the run folder. |
+| `id` | decree only | `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`, UTC to the microsecond, so ids sort in the order messages arrived; a migration's id is its file stem. Names the queued file and the run folder. |
 | `state` | decree only | Mirror of the run's current state, in `runs/<id>/message.md`. Never set it. |
 | `parent`, `depth` | `decree emit`, decree | The run that emitted this message (or invoked this child run), and the chain depth. |
-| `trigger` | decree | `migration`, `cron`, `emit`, `inbox` or `invoke`. |
+| `trigger` | decree only | `migration`, `cron`, `emit`, `inbox` or `invoke`. |
+| `arrived_as` | decree only | The name a file written into `inbox/` had before it got its id. |
 | `traceparent`, `tracestate` | decree, `decree emit`, any tool | W3C Trace Context: the run joins this trace, under this span. An invalid `traceparent` is ignored and the run starts a new trace. |
 | `to`, `event` | `decree event`, any tool | Only in a reply to a waiting run (below). |
 
@@ -115,8 +116,14 @@ history in git.
 
 ## Inbox: first in, first out
 
-`.decree/inbox/*.md` holds queued messages, run in filename order. Not committed.
+`.decree/inbox/*.md` holds queued messages, run in the order they arrived. Not committed.
 
+- Each is named `<id>.md`. A file written under any other name (`01-hi.md`) gets a fresh id
+  the first time `process` or `daemon` sees it, as `decree emit` would have given it, so it runs
+  after everything queued before; files first seen together go by modification time, then
+  name. Its old name is kept as `arrived_as`, in `runs/<id>/message.md` too.
+- `id`, `state`, `trigger` and `arrived_as` are decree's alone: a file placed in `inbox/` gets
+  decree's own, so a copy of a migration or of a run's `message.md` runs again as a new run.
 - A failed inbox run does not stop `decree process`: it prints the run with
   `decree process --retry <id>` and goes on with the next file. When the inbox is empty it lists
   every run that failed in the pass and exits 1.

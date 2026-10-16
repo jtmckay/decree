@@ -163,7 +163,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `attempt_value` | string | `source: "attempt"`, when the state's `attempts` is a list | The value of the attempt about to run: its `DECREE_ATTEMPT_VALUE`. |
 | `invalid_event` | string | [Events from an invoke](scripts.md#events-from-an-invoke), step 4 | The undeclared event the invoke named. |
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
-| `file` | string | A claim from the inbox or migrations | Original inbox or migration filename. Absent for a child run, which has none. |
+| `file` | string | A claim from the inbox or migrations | Original inbox or migration filename: for a file written into `inbox/` under another name, the name it arrived with (`arrived_as`, [Lifecycle](messages.md#lifecycle) step 1). Absent for a child run, which has none. |
 | `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
 | `run_attempt` | integer | `retry` | The run attempt this retry starts: 2 for the first retry ([Step loop](#step-loop), Run attempts). |
 | `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree process --retry` starts a new run span, linked to the previous one. |

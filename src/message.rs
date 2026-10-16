@@ -278,6 +278,140 @@ fn write_queued(inbox: &Path, id: &str, message: &mut Message) -> Result<(), Mes
     message.write(&inbox.join(format!("{id}.md")))
 }
 
+/// The frontmatter key that records the name a file had when it arrived in `inbox/`, set
+/// when decree gives it an id (`arrive`).
+pub const ARRIVED_AS: &str = "arrived_as";
+
+/// The keys only decree sets: a file placed in `inbox/` loses them when it gets its id.
+const DECREE_KEYS: [&str; 4] = ["id", "state", "trigger", ARRIVED_AS];
+
+/// Whether `s` has the form of an id decree makes (`new_id`):
+/// `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`.
+pub fn is_message_id(s: &str) -> bool {
+    let b = s.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+    b.len() == 30
+        && digits(0..8)
+        && b[8] == b'T'
+        && digits(9..15)
+        && b[15] == b'.'
+        && digits(16..22)
+        && b[22] == b'Z'
+        && b[23] == b'-'
+        && b[24..]
+            .iter()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
+}
+
+/// Whether `inbox/<file>` is queued: named `<id>.md` by an id decree made that has no run
+/// yet, its frontmatter `id` (if it parses) that same id. Only queued files are claimed;
+/// `arrive` gives every other one an id. A run folder without `message.md` is a claim in
+/// progress, so the file stays queued.
+pub fn is_queued(decree_dir: &Path, file: &str) -> bool {
+    let Some(stem) = file.strip_suffix(".md").filter(|s| is_message_id(s)) else {
+        return false;
+    };
+    if decree_dir
+        .join(RUNS_DIR)
+        .join(stem)
+        .join(MESSAGE_FILE)
+        .exists()
+    {
+        return false;
+    }
+    match Message::read(&decree_dir.join(INBOX_DIR).join(file)) {
+        Ok(message) => message.text("id") == Some(stem),
+        Err(_) => true,
+    }
+}
+
+/// Give every file in `inbox/` that is not queued (`is_queued`) an id, as Maildir names a
+/// message on delivery (docs/reference/messages.md, Lifecycle step 1): a new id from now,
+/// in order of modification time, then name. Its `id`, `state` and `trigger` are dropped,
+/// `id` set first and `arrived_as` set to its name; then it is renamed to `inbox/<id>.md`.
+/// A file whose frontmatter does not parse is renamed unchanged. Only one process does
+/// this at a time, holding `inbox/.lock`; while another holds it, nothing is renamed.
+/// Returns (old name, new name) for each file renamed.
+pub fn arrive(decree_dir: &Path) -> Result<Vec<(String, String)>, MessageError> {
+    let inbox = decree_dir.join(INBOX_DIR);
+    let names = md_names(&inbox)?;
+    if names.iter().all(|n| is_queued(decree_dir, n)) {
+        return Ok(Vec::new());
+    }
+    let Some(_lock) = RunLock::acquire(&inbox).map_err(io_err(&inbox))? else {
+        return Ok(Vec::new());
+    };
+    // Listed again under the lock: another process may have renamed some meanwhile.
+    let mut arrivals = Vec::new();
+    for name in md_names(&inbox)? {
+        if is_queued(decree_dir, &name) {
+            continue;
+        }
+        let path = inbox.join(&name);
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => {
+                arrivals.push((meta.modified().map_err(io_err(&path))?, name));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err(&path)(e)),
+        }
+    }
+    arrivals.sort();
+    let mut renamed = Vec::new();
+    for (_, name) in arrivals {
+        let path = inbox.join(&name);
+        let id = new_id(decree_dir, |_| Ok(true))?;
+        let target = inbox.join(format!("{id}.md"));
+        // Rewritten in place first: a crash before the rename leaves a file that is not
+        // queued, so the next pass gives it an id again.
+        match Message::read(&path) {
+            Ok(mut message) => {
+                let mut frontmatter = Mapping::new();
+                frontmatter.insert("id".into(), id.as_str().into());
+                frontmatter.insert(ARRIVED_AS.into(), name.as_str().into());
+                for (key, value) in std::mem::take(&mut message.frontmatter) {
+                    if !key.as_str().is_some_and(|k| DECREE_KEYS.contains(&k)) {
+                        frontmatter.insert(key, value);
+                    }
+                }
+                message.frontmatter = frontmatter;
+                message.write(&path)?;
+            }
+            Err(MessageError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+                continue
+            }
+            Err(MessageError::Io { path, source }) => {
+                return Err(MessageError::Io { path, source })
+            }
+            Err(MessageError::Parse { .. }) => {}
+        }
+        match std::fs::rename(&path, &target) {
+            Ok(()) => renamed.push((name, format!("{id}.md"))),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err(&path)(e)),
+        }
+    }
+    Ok(renamed)
+}
+
+/// The `*.md` files in `inbox`, not starting with `.`, in filename order. A missing `inbox`
+/// holds none.
+fn md_names(inbox: &Path) -> Result<Vec<String>, MessageError> {
+    let entries = match std::fs::read_dir(inbox) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(io_err(inbox)(e)),
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".md") && !n.starts_with('.'))
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
 /// A message claimed from `inbox/` (docs/reference/messages.md, Lifecycle step 2): it was renamed to
 /// `runs/<id>/message.md`.
 #[derive(Debug)]
@@ -904,6 +1038,130 @@ mod tests {
             })
             .count();
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn is_message_id_accepts_only_ids_decree_makes() {
+        assert!(is_message_id("20261001T143005.218734Z-3fa9c1"));
+        for bad in [
+            "01-hi",
+            "20261001T143005Z-3fa9c1",
+            "20261001T143005.218734Z-3FA9C1",
+            "20261001X143005.218734Z-3fa9c1",
+            "20261001T143005.218734Z-3fa9c1x",
+        ] {
+            assert!(!is_message_id(bad), "{bad}");
+        }
+    }
+
+    fn set_mtime(path: &Path, secs: u64) {
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+    }
+
+    #[test]
+    fn arrive_names_files_by_a_new_id_in_mtime_then_name_order() {
+        let dir = TempDir::new().unwrap();
+        let decree = inbox(&dir, "a.md", "---\nmachine: x\n---\na\n");
+        inbox(&dir, "b.md", "---\nmachine: x\n---\nb\n");
+        inbox(&dir, "c.md", "---\nmachine: x\n---\nc\n");
+        set_mtime(&decree.join("inbox/a.md"), 2000);
+        set_mtime(&decree.join("inbox/b.md"), 1000);
+        set_mtime(&decree.join("inbox/c.md"), 2000);
+        let queued = queue(&decree, &mut Message::new("emitted")).unwrap();
+        let renamed = arrive(&decree).unwrap();
+        let old: Vec<&str> = renamed.iter().map(|(o, _)| o.as_str()).collect();
+        assert_eq!(old, ["b.md", "a.md", "c.md"]);
+        let mut names = md_names(&decree.join("inbox")).unwrap();
+        let new: Vec<String> = renamed.iter().map(|(_, n)| n.clone()).collect();
+        assert_eq!(names.remove(0), format!("{queued}.md"));
+        assert_eq!(names, new, "the new names sort in arrival order");
+        for name in &names {
+            assert!(is_queued(&decree, name), "{name}");
+        }
+        assert!(arrive(&decree).unwrap().is_empty());
+    }
+
+    #[test]
+    fn arrive_replaces_decree_keys_and_keeps_the_rest() {
+        let dir = TempDir::new().unwrap();
+        let text = "---\nid: old-run\nmachine: x\nstate: done\ntrigger: migration\narrived_as: x.md\nparams:\n  a: 1\nnote: kept\n---\nbody\r\n";
+        let decree = inbox(&dir, "copy.md", text);
+        let renamed = arrive(&decree).unwrap();
+        let (old, new) = &renamed[0];
+        assert_eq!(old, "copy.md");
+        let id = new.strip_suffix(".md").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(decree.join("inbox").join(new)).unwrap(),
+            format!("---\nid: {id}\narrived_as: copy.md\nmachine: x\nparams:\n  a: 1\nnote: kept\n---\nbody\r\n")
+        );
+    }
+
+    #[test]
+    fn arrive_gives_an_id_named_file_a_new_id_when_it_is_not_queued() {
+        let dir = TempDir::new().unwrap();
+        let ran = "20261001T143005.218734Z-3fa9c1";
+        // A copy of a run's message, under the run's own name.
+        let decree = inbox(
+            &dir,
+            &format!("{ran}.md"),
+            &format!("---\nid: {ran}\n---\n"),
+        );
+        std::fs::create_dir_all(decree.join("runs").join(ran)).unwrap();
+        std::fs::write(decree.join("runs").join(ran).join(MESSAGE_FILE), "x").unwrap();
+        // An id name with another `id`, and one with none.
+        let other = "20261001T143005.218735Z-3fa9c1";
+        inbox(&dir, &format!("{other}.md"), "---\nid: else\n---\n");
+        let bare = "20261001T143005.218736Z-3fa9c1";
+        inbox(&dir, &format!("{bare}.md"), "---\nmachine: x\n---\n");
+        assert_eq!(arrive(&decree).unwrap().len(), 3);
+        // A claim in progress (folder, no message.md yet) keeps its file.
+        let claiming = "20261001T143005.218737Z-3fa9c1";
+        inbox(
+            &dir,
+            &format!("{claiming}.md"),
+            &format!("---\nid: {claiming}\n---\n"),
+        );
+        std::fs::create_dir_all(decree.join("runs").join(claiming)).unwrap();
+        assert!(arrive(&decree).unwrap().is_empty());
+    }
+
+    #[test]
+    fn arrive_renames_an_unparsable_file_unchanged_and_ignores_dot_files() {
+        let dir = TempDir::new().unwrap();
+        let decree = inbox(&dir, "bad.md", "---\nmachine: x\n");
+        inbox(&dir, ".draft.md", "---\nmachine: x\n---\n");
+        let renamed = arrive(&decree).unwrap();
+        assert_eq!(renamed.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(decree.join("inbox").join(&renamed[0].1)).unwrap(),
+            "---\nmachine: x\n"
+        );
+        assert!(decree.join("inbox/.draft.md").exists());
+    }
+
+    #[test]
+    fn arrive_renames_nothing_while_another_process_holds_the_inbox() {
+        let dir = TempDir::new().unwrap();
+        let decree = inbox(&dir, "a.md", "---\nmachine: x\n---\n");
+        let mut sleeper = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        std::fs::write(
+            decree.join("inbox").join(LOCK_FILE),
+            sleeper.id().to_string(),
+        )
+        .unwrap();
+        assert!(arrive(&decree).unwrap().is_empty());
+        assert!(decree.join("inbox/a.md").exists());
+        sleeper.kill().unwrap();
+        sleeper.wait().unwrap();
     }
 
     #[test]

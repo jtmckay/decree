@@ -7,7 +7,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "description": "Names the run folder, runs/<id>/. decree sets it at claim if missing: YYYYMMDDTHHMMSS.ffffffZ-xxxxxx, the UTC time to the microsecond plus 6 lowercase hex chars, so ids sort in the order messages were queued. A migration's id is its file stem.",
+      "description": "Names the queued file, inbox/<id>.md, and the run folder, runs/<id>/. Written by decree only: `decree emit`, `decree event` and cron set it as they queue, and decree replaces it as a file written into inbox/ arrives: YYYYMMDDTHHMMSS.ffffffZ-xxxxxx, the UTC time to the microsecond plus 6 lowercase hex chars, so ids sort in the order messages arrived. A migration's id is its file stem.",
       "examples": ["20261001T143005.218734Z-3fa9c1"]
     },
     "machine": {
@@ -31,7 +31,12 @@
     },
     "trigger": {
       "enum": ["migration", "cron", "emit", "inbox", "invoke"],
-      "description": "Written by decree: how the run started. `migration`, `cron`, `emit`, `inbox`, or `invoke` (a child run). Scripts read it as DECREE_TRIGGER."
+      "description": "Written by decree only: how the run started. `migration`, `cron`, `emit`, `inbox`, or `invoke` (a child run). Scripts read it as DECREE_TRIGGER."
+    },
+    "arrived_as": {
+      "type": "string",
+      "description": "Written by decree only: the name a file written into inbox/ had when it arrived, before decree gave it its id, kept in the queued file and in runs/<id>/message.md.",
+      "examples": ["01-hi.md"]
     },
     "params": {
       "type": "object",

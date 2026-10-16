@@ -94,6 +94,18 @@ echo '{"event": "ship", "confidence": 0.9}' > "$DECREE_REPLY"
 /// The W3C Trace Context example `traceparent`.
 const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
+/// The id of the run a test queues as `name`, in the form decree makes ids: a fixed time
+/// and a hash of `name`. A run id decree made (a child run's) is returned as it is.
+fn run_id(name: &str) -> String {
+    if name.len() == 30 && name.as_bytes()[8] == b'T' {
+        return name.to_string();
+    }
+    let hash = name.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    format!("20260101T000000.000000Z-{:06x}", hash & 0xff_ffff)
+}
+
 struct Project {
     tmp: TempDir,
 }
@@ -118,11 +130,14 @@ impl Project {
         self.tmp.path()
     }
 
-    fn run_dir(&self, id: &str) -> PathBuf {
-        self.root().join(".decree/runs").join(id)
+    /// The folder of the run queued as `name`.
+    fn run_dir(&self, name: &str) -> PathBuf {
+        self.root().join(".decree/runs").join(run_id(name))
     }
 
-    fn queue(&self, id: &str, frontmatter: &str) {
+    /// Queue a message as `decree emit` writes it, with the id `run_id(name)`.
+    fn queue(&self, name: &str, frontmatter: &str) {
+        let id = run_id(name);
         let text = format!("---\nid: {id}\n{frontmatter}---\nDo it.\n");
         fs::write(self.root().join(format!(".decree/inbox/{id}.md")), text).unwrap();
     }
@@ -214,7 +229,7 @@ fn a_run_its_router_run_and_its_child_run_share_one_trace_with_the_documented_pa
         .filter(|s| s["spanId"] != run["spanId"])
         .map(|s| {
             assert_eq!(s["parentSpanId"], run["spanId"], "{s}");
-            assert_eq!(attr(s, "decree.run_id"), Some("top"));
+            assert_eq!(attr(s, "decree.run_id"), Some(run_id("top").as_str()));
             assert_eq!(attr(s, "decree.machine"), Some("flow"));
             s["name"].as_str().unwrap()
         })
@@ -418,7 +433,9 @@ fn a_crashed_runs_span_is_written_on_recovery_with_error_and_retry_links_a_new_o
 
     // `decree process --retry` starts a new run span in the same trace, linked to the
     // previous one.
-    p.cmd(&["process", "--retry", "crash"]).assert().success();
+    p.cmd(&["process", "--retry", &run_id("crash")])
+        .assert()
+        .success();
     let events = p.events("crash");
     let retry = events.iter().find(|e| e["source"] == "retry").unwrap();
     let spans = agree_with_events(&p.run_dir("crash"));

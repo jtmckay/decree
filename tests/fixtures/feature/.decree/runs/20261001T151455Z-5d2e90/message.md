@@ -1,6 +1,7 @@
 ---
-machine: triage
 id: 20261001T151455Z-5d2e90
+arrived_as: dark-mode.md
+machine: triage
 trigger: inbox
 state: done
 ---

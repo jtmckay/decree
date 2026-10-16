@@ -329,18 +329,19 @@ fn a_pruned_migration_does_not_run_again() {
 /// A message rejected at claim ends with `run_finished`, so prune can delete its run.
 #[test]
 fn a_rejected_message_is_pruned() {
+    const BAD: &str = "20260101T000000.000000Z-00000b";
     let p = Project::new();
     fs::write(
-        p.decree().join("inbox/bad.md"),
-        "---\nid: bad\nmachine: nope\n---\nTask.\n",
+        p.decree().join(format!("inbox/{BAD}.md")),
+        format!("---\nid: {BAD}\nmachine: nope\n---\nTask.\n"),
     )
     .unwrap();
     p.cmd(&["process"]).assert().code(1);
-    assert_eq!(p.runs(), ["bad"]);
+    assert_eq!(p.runs(), [BAD]);
     let (code, stdout) = p.run(&["prune", "--older-than", "0m"]);
     assert_eq!(code, 0, "{stdout}");
     assert!(
-        stdout.starts_with("pruned bad  nope  failed  finished "),
+        stdout.starts_with(&format!("pruned {BAD}  nope  failed  finished ")),
         "{stdout}"
     );
     assert!(p.runs().is_empty());
