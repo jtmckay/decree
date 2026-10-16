@@ -35,7 +35,7 @@ Decisions are states of their own, cheapest first: a deterministic `check`, then
 curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh
 ```
 
-This installs the newest stable release from 0.5.0 on (while there is none, the newest beta) as a static Linux x86-64 binary in `$XDG_BIN_HOME` (default `~/.local/bin`), with no sudo, after checking its sha256; run it again to update, or pin a version with `| sh -s -- v0.5.0-beta.12`. Elsewhere (macOS, ARM), build from a tag: `cargo install --git https://github.com/jtmckay/decree --tag v0.5.0-beta.12`. crates.io has only an older decree until 0.5.0 is published there, so `cargo install decree` is not this version.
+This installs the newest stable release from 0.5.0 on (while there is none, the newest beta) as a static Linux x86-64 binary in `$XDG_BIN_HOME` (default `~/.local/bin`), with no sudo, after checking its sha256; run it again to update, or pin a version with `| sh -s -- v0.5.0-beta.13`. Elsewhere (macOS, ARM), build from a tag: `cargo install --git https://github.com/jtmckay/decree --tag v0.5.0-beta.13`. crates.io has only an older decree until 0.5.0 is published there, so `cargo install decree` is not this version.
 
 decree runs on Linux and macOS.
 
