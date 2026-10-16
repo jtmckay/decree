@@ -45,7 +45,8 @@ pub fn run() -> i32 {
 
 fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     let root = error::require_project_root;
-    // Bare `decree` runs `decree process`; every command but `init` and `help` needs a project.
+    // Bare `decree` runs `decree process`; every command but `init`, `upgrade` and `help` needs a
+    // project.
     match command.unwrap_or(Command::Process {
         dry_run: false,
         retry: None,
@@ -57,6 +58,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     }) {
         Command::Init { ai, permissions } => commands::init::run(ai, permissions),
         Command::Help => commands::help(),
+        Command::Upgrade { format } => commands::upgrade::run(format),
         Command::Process {
             dry_run,
             retry,

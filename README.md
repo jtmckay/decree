@@ -260,10 +260,11 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
 | `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`, `90s`); ship them to Loki first if you keep history |
+| `decree upgrade` | Print how to upgrade decree: the install line, pinned to a release, and for a `cargo install` copy; then `decree skill` (and `decree schema`) in each project. It runs nothing itself |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree --version` | Print the version |
 
-`--format json` on `check`, `status`, `emit`, `event`, `stop`, `prune`, `graph`, `schema`, `skill` and `process --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
+`--format json` on `check`, `status`, `emit`, `event`, `stop`, `prune`, `graph`, `schema`, `skill`, `upgrade` and `process --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
 decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree process --retry`, because a kill may be deliberate. A failed migration blocks the ones after it the same way, and `decree process` prints the exact command that continues it.
 

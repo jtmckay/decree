@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/upgrade.schema.json",
+  "title": "decree upgrade --format json",
+  "description": "What `decree upgrade --format json` prints on stdout: how to upgrade decree. decree runs none of it and makes no network call; the person runs the lines. Reference: docs/reference/cli.md, Upgrading decree.",
+  "type": "object",
+  "required": [
+    "version",
+    "install",
+    "pinned",
+    "cargo",
+    "cargo_note",
+    "releases",
+    "after"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "The version of the decree running, as `decree --version` prints it without the name."
+    },
+    "install": {
+      "type": "string",
+      "description": "The install line of the README, which installs the newest release."
+    },
+    "pinned": {
+      "type": "string",
+      "description": "The install line pinned to a release: `| sh -s -- <tag>`, with `<tag>` standing for the release tag."
+    },
+    "cargo": {
+      "type": "string",
+      "description": "For a copy installed with `cargo install`, which the install line does not replace: `cargo install --git <repository> --tag <tag> --force`."
+    },
+    "cargo_note": {
+      "type": "string",
+      "description": "That when `which -a decree` lists two copies, the one first on PATH runs, so the other is removed (`cargo uninstall decree`)."
+    },
+    "releases": {
+      "type": "string",
+      "description": "The page that lists the release tags."
+    },
+    "after": {
+      "type": "array",
+      "description": "What to run in each project after upgrading, in order.",
+      "items": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The command, such as `decree skill`."
+          },
+          "when": {
+            "type": "string",
+            "description": "When it is needed; absent when always."
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "version": "0.5.0-beta.13",
+      "install": "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh",
+      "pinned": "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh -s -- <tag>",
+      "cargo": "cargo install --git https://github.com/jtmckay/decree --tag <tag> --force",
+      "cargo_note": "If `which -a decree` lists two copies, the one first on PATH runs, so remove the other (`cargo uninstall decree`).",
+      "releases": "https://github.com/jtmckay/decree/releases",
+      "after": [
+        {
+          "command": "decree skill"
+        },
+        {
+          "command": "decree schema",
+          "when": "the project has .decree/schema/"
+        }
+      ]
+    }
+  ]
+}

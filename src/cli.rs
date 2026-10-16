@@ -240,6 +240,13 @@ pub enum Command {
         format: Format,
     },
 
+    /// Print how to upgrade decree: the install line, pinned and `cargo install` forms, and what to run in each project after
+    Upgrade {
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
     /// Verbose help
     Help,
 }

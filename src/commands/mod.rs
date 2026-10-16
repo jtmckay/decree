@@ -12,6 +12,7 @@ pub mod skill;
 pub mod status;
 pub mod stop;
 pub mod tail;
+pub mod upgrade;
 
 use crate::error::DecreeError;
 

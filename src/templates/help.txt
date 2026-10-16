@@ -65,11 +65,14 @@ Commands:
   decree prune --older-than AGE [--dry-run]
                               Delete finished runs older than AGE (30d, 12h,
                               90m, 90s); --dry-run lists them
+  decree upgrade              Print how to upgrade decree (install line, pinned
+                              and cargo install forms) and what to run in
+                              each project after; runs nothing
   decree help                 This help text
   decree --version            Print the version
 
-  --format json on check, status, emit, event, stop, prune, graph, schema, skill
-  and process --dry-run prints one JSON document instead of text, described by
+  --format json on check, status, emit, event, stop, prune, graph, schema, skill,
+  upgrade and process --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 
 Files (.decree/):

@@ -59,9 +59,12 @@ pub const CLI_STATUS_SCHEMA: &str = include_str!("../../schema/v1/cli/status.sch
 /// The schema of `decree stop --format json`.
 pub const CLI_STOP_SCHEMA: &str = include_str!("../../schema/v1/cli/stop.schema.json");
 
+/// The schema of `decree upgrade --format json`.
+pub const CLI_UPGRADE_SCHEMA: &str = include_str!("../../schema/v1/cli/upgrade.schema.json");
+
 /// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
 /// `.schema.json`.
-pub const ALL: [(&str, &str); 16] = [
+pub const ALL: [(&str, &str); 17] = [
     ("attention", ATTENTION_SCHEMA),
     ("cli/check", CLI_CHECK_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
@@ -73,6 +76,7 @@ pub const ALL: [(&str, &str); 16] = [
     ("cli/skill", CLI_SKILL_SCHEMA),
     ("cli/status", CLI_STATUS_SCHEMA),
     ("cli/stop", CLI_STOP_SCHEMA),
+    ("cli/upgrade", CLI_UPGRADE_SCHEMA),
     ("events", EVENTS_SCHEMA),
     ("machine", MACHINE_SCHEMA),
     ("message", MESSAGE_SCHEMA),
