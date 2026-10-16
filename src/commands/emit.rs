@@ -1,5 +1,5 @@
-//! `decree emit --machine <id> [--param k=v]...` (docs/reference/cli.md): queue a new message for
-//! `<id>` in `inbox/`, with the body read from stdin. Called by scripts: the emitting run
+//! `decree emit [--machine <id>] [--param k=v]...` (docs/reference/cli.md): queue a new message
+//! in `inbox/` from stdin: a body, or a whole message whose frontmatter the flags override. Called by scripts: the emitting run
 //! is named by `DECREE_MESSAGE_ID`, its state by `DECREE_MACHINE` and `DECREE_STATE`, and its
 //! span by `TRACEPARENT`.
 
@@ -20,21 +20,47 @@ use crate::trace::{
     Incoming, TraceParent, TRACEPARENT_ENV, TRACEPARENT_KEY, TRACESTATE_ENV, TRACESTATE_KEY,
 };
 
-/// Run `decree emit`: check the emit against the emitting state's `emits`, `max_depth` and
-/// the target machine's `data`, then read stdin and queue the message. Prints the new id.
+/// Run `decree emit`: read stdin as a message, check the emit against the emitting state's
+/// `emits`, `max_depth` and the target machine's `data`, then queue it. Stdin that starts
+/// with frontmatter is a whole message: its frontmatter, less the keys decree sets, is the new
+/// message's, and `--machine` and `--param` override it. Otherwise stdin is the body. Prints
+/// the new id.
 pub fn run(
     project_root: &Path,
-    machine: &str,
+    machine: Option<&str>,
     params: &[String],
     format: Format,
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
+    let mut text = String::new();
+    std::io::stdin().read_to_string(&mut text)?;
+    let (mut message, from_stdin) = read_message(text)?;
     let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+
+    // The machine: `--machine`, else the frontmatter's, checked as `decree check` does.
+    if let Some(machine) = machine {
+        target(&project, machine)?;
+        message.set("machine", machine);
+    } else if !from_stdin {
+        return Err(DecreeError::Other(
+            "no machine: pass --machine, or give a whole message on stdin whose frontmatter \
+             names one"
+                .into(),
+        ));
+    } else if !message.frontmatter.contains_key("machine") {
+        return Err(DecreeError::Other(
+            "stdin: line 1: no `machine` key: name one in the frontmatter or pass --machine".into(),
+        ));
+    }
+    let mut named = message.clone();
+    named.frontmatter.shift_remove("params");
+    let machine = message::validate(&named, &project.machines, &project.machine_ids)
+        .map_err(|errors| invalid(errors, from_stdin && machine.is_none()))?;
+    let machine = machine.as_str();
+
     if let (Some(from), Some(state)) = (var("DECREE_MACHINE"), var("DECREE_STATE")) {
         check_emits(&project, &from, &state, machine)?;
     }
-    let mut message = Message::new(String::new());
-    message.set("machine", machine);
     if let Some(parent) = var("DECREE_MESSAGE_ID") {
         let depth = parent_depth(&project, &parent)? + 1;
         if depth > MAX_DEPTH {
@@ -48,8 +74,13 @@ pub fn run(
     }
     message.set("trigger", "emit");
     let target = target(&project, machine)?;
-    let params = parse_params(target, params)?;
-    if !params.is_empty() {
+    let flags = parse_params(target, params)?;
+    if !flags.is_empty() {
+        let mut params = match message.frontmatter.get("params") {
+            Some(Value::Mapping(params)) => params.clone(),
+            _ => Mapping::new(),
+        };
+        params.extend(flags);
         message.set("params", Value::Mapping(params));
     }
     // A script's `TRACEPARENT` names its span: the new message's run joins the trace under
@@ -68,13 +99,45 @@ pub fn run(
         message.set(TRACESTATE_KEY, tracestate);
     }
     if let Err(errors) = message::validate(&message, &project.machines, &project.machine_ids) {
-        let errors: Vec<String> = errors.into_iter().map(|(_, e)| e).collect();
-        return Err(DecreeError::Other(errors.join("; ")));
+        return Err(invalid(errors, from_stdin && params.is_empty()));
     }
 
-    std::io::stdin().read_to_string(&mut message.body)?;
     let id = message::queue(&project.decree_dir, &mut message)?;
     print_queued(&id, format)
+}
+
+/// Stdin as a message, and whether it starts with frontmatter. With frontmatter, the keys
+/// decree sets are dropped, as for a file placed in `inbox/` (docs/reference/messages.md,
+/// Lifecycle step 1); frontmatter that does not parse is refused with the error
+/// `decree check` gives. Without, the whole text is the body, byte for byte.
+fn read_message(text: String) -> Result<(Message, bool), DecreeError> {
+    let message = Message::parse(&text)
+        .map_err(|(line, e)| DecreeError::Other(format!("stdin: line {line}: {e}")))?;
+    let unmarked = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    if message.body.len() == unmarked.len() {
+        return Ok((Message::new(text), false));
+    }
+    let mut message = message;
+    for key in message::DECREE_KEYS {
+        message.frontmatter.shift_remove(key);
+    }
+    Ok((message, true))
+}
+
+/// `message::validate` errors as one error: each at its stdin line, as `decree check` gives
+/// them, when `at_lines` (the keys checked came from stdin), else without lines.
+fn invalid(errors: Vec<(usize, String)>, at_lines: bool) -> DecreeError {
+    let errors: Vec<String> = errors
+        .into_iter()
+        .map(|(line, e)| {
+            if at_lines {
+                format!("stdin: line {line}: {e}")
+            } else {
+                e
+            }
+        })
+        .collect();
+    DecreeError::Other(errors.join("; "))
 }
 
 /// Print the id of a message just queued in `inbox/`: alone as text, or as

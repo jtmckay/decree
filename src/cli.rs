@@ -117,11 +117,11 @@ pub enum Command {
         format: Format,
     },
 
-    /// Queue a message for a machine in inbox/; the body is read from stdin. Prints its id
+    /// Queue a message in inbox/ from stdin: a body, or a whole message with frontmatter. Prints its id
     Emit {
-        /// Machine the message names
+        /// Machine the message names; may be left out when stdin's frontmatter names one
         #[arg(long)]
-        machine: String,
+        machine: Option<String>,
 
         /// Sets the machine's data for this run (repeatable)
         #[arg(long = "param", value_name = "NAME=VALUE")]

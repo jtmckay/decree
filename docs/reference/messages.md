@@ -137,6 +137,16 @@ Before stepping a run, decree creates `runs/<id>/.lock` exclusively (`O_EXCL`) a
 
 **Committing.** decree never runs git. Because the ledger is written before the final state's `onentry` scripts, put the commit there: `done: { final: true, onentry: [commit] }`. The commit then includes the code and the `processed.md` line, and a fresh clone knows which migrations ran. Do not commit `runs/`.
 
+## Run a message again
+
+To run a message again (a migration, a run's `message.md`, any saved message), queue a copy as a new inbox run:
+
+```bash
+decree emit < .decree/migrations/01-a.md
+```
+
+or copy the file into `inbox/`. Either way the copy keeps its frontmatter and body, and gets decree's own `id`, `state`, `trigger` and `migration` ([Lifecycle](#lifecycle) step 1), so it is a new run and never a run of that migration: the migration file and `processed.md` are untouched. `decree emit --machine <m>` runs it on another machine, and `--param` overrides one param ([decree emit](cli.md)).
+
 ## Cron files
 
 `.decree/cron/*.md` are message templates with a `cron:` key in their frontmatter, a standard cron expression. On each `decree daemon` pass, every cron file that is due is written to `inbox/` through the same writer as `decree emit`: the new message has the cron file's `machine`, `trigger: cron`, the cron file's other keys and its body; the `cron` key is not copied. A cron file must name its machine. `decree check` validates every cron file (M3, [Validation](machines.md#validation)), and `decree status --cron` lists them with their next fire time.

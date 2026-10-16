@@ -128,7 +128,7 @@ decree status 01-hello
 
 The reply is a message too: `decree event` writes it to `inbox/`, and the next `process` delivers it. `decree status 01-hello` shows the run's events: transitions, scripts with durations, the wait and the reply. `01-hello.md` is now in `.decree/processed.md`, so it never runs again.
 
-**7. Queue more work.** Any script (or you) can queue a message with `decree emit`; the body comes from stdin.
+**7. Queue more work.** Any script (or you) can queue a message with `decree emit`; the body comes from stdin, or a whole message (`decree emit < .decree/migrations/01-a.md` runs one again).
 
 ```bash
 echo "# Greet again" | decree emit --machine hello
@@ -253,7 +253,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree process [--dry-run] [--machine M \| --exclude-machine M]` | Deliver replies, continue pending runs, drain `inbox/`, then run pending migrations in order; `--machine` runs only those machines, `--exclude-machine` all but those, so several processes can share one folder |
 | `decree process --retry [ID] [--state S]` | First continue a failed or interrupted run: `ID`, or the migration blocking the queue |
 | `decree daemon [--interval D] [--retry [ID]] [--machine M \| --exclude-machine M]` | The same passes plus cron, every `D` (default `2s`), until stopped: what unattended work runs under, since `process` exits while a run waits for a person |
-| `decree emit --machine M [--param K=V]...` | Queue a message for `M`, body from stdin; prints its id |
+| `decree emit [--machine M] [--param K=V]...` | Queue a message from stdin, a body for `M` or a whole message; prints its id |
 | `decree event ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
 | `decree stop [-m NOTE]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the run instead |
 | `decree status [ID]` | What needs attention, runs by status and queued messages; one run's events |

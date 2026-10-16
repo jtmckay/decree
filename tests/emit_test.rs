@@ -356,3 +356,202 @@ fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
     assert_eq!(claim["trace_id"], trace);
     assert_eq!(claim["parent_span_id"], span);
 }
+
+// --- A whole message on stdin (docs/reference/cli.md, decree emit) ---
+
+/// A migration for `m`, as `decree process` leaves it once it has run.
+const MIGRATION: &str = "---\nmachine: m\nnote: kept\n---\n# A\n\nDo the work.\n";
+
+/// One step, then `done`: a migration writes its `processed.md` line on entering a final state.
+const M: &str = "\
+name: m
+description: Takes one step.
+initial: step
+states:
+  step:
+    invoke: step
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+impl Project {
+    /// `decree process` with no `DECREE_*` variables.
+    fn process(&self) {
+        let mut cmd = cargo_bin_cmd!("decree");
+        cmd.current_dir(self.tmp.path()).env("NO_COLOR", "1");
+        for var in ["DECREE_MESSAGE_ID", "DECREE_MACHINE", "DECREE_STATE"] {
+            cmd.env_remove(var);
+        }
+        cmd.arg("process").assert().success();
+    }
+
+    /// The text of `inbox/<id>.md`.
+    fn queued(&self, id: &str) -> String {
+        fs::read_to_string(self.decree().join("inbox").join(format!("{id}.md"))).unwrap()
+    }
+}
+
+fn id_of(output: &std::process::Output) -> String {
+    String::from_utf8(output.stdout.clone())
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn emit_of_a_processed_migration_queues_its_work_again() {
+    let p = Project::new();
+    fs::write(p.decree().join("machines/m.yml"), M).unwrap();
+    write_script(&p.decree().join("scripts/step"), "#!/usr/bin/env bash\n");
+    let migration = p.decree().join("migrations/01-a.md");
+    fs::write(&migration, MIGRATION).unwrap();
+    p.process();
+    let processed = fs::read_to_string(p.decree().join("processed.md")).unwrap();
+    assert_eq!(processed.trim(), "01-a.md");
+    let before: Vec<String> = fs::read_dir(p.decree().join("runs"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+
+    let output = p
+        .emit(&[], &[])
+        .write_stdin(fs::read_to_string(&migration).unwrap())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let id = id_of(&output);
+    p.process();
+
+    assert!(!before.contains(&id));
+    let text = fs::read_to_string(p.decree().join("runs").join(&id).join("message.md")).unwrap();
+    assert_eq!(
+        text,
+        format!(
+            "---\nid: {id}\nmachine: m\nnote: kept\ntrigger: emit\nstate: done\n---\n\
+             # A\n\nDo the work.\n"
+        )
+    );
+    assert_eq!(text.matches("Do the work.").count(), 1);
+    assert_eq!(fs::read_to_string(&migration).unwrap(), MIGRATION);
+    assert_eq!(
+        fs::read_to_string(p.decree().join("processed.md")).unwrap(),
+        processed
+    );
+}
+
+#[test]
+fn emit_with_machine_overrides_the_frontmatter() {
+    let p = Project::new();
+    let output = p
+        .emit(&[], &["--machine", "flow"])
+        .write_stdin(MIGRATION)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let id = id_of(&output);
+    assert_eq!(
+        p.queued(&id),
+        format!(
+            "---\nid: {id}\nmachine: flow\nnote: kept\ntrigger: emit\n---\n# A\n\nDo the work.\n"
+        )
+    );
+}
+
+/// A saved run's message loses the keys decree sets; `--param` overrides one param and keeps
+/// the rest; an emitting run's `parent` and `depth` replace the saved ones.
+#[test]
+fn emit_of_a_saved_message_replaces_the_keys_decree_sets() {
+    let p = Project::new();
+    p.parent("p1", Some(1));
+    let saved = format!(
+        "---\nid: {A}\nmachine: other\nstate: done\ntrigger: migration\nmigration: 01-a.md\n\
+         arrived_as: a.md\nparent: old\ndepth: 5\nparams:\n  n: 2\n  label: y\n---\nBody\n"
+    );
+    let env = [
+        ("DECREE_MESSAGE_ID", "p1"),
+        ("DECREE_MACHINE", "flow"),
+        ("DECREE_STATE", "work"),
+    ];
+    let output = p
+        .emit(&env, &["--param", "n=9"])
+        .write_stdin(saved)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let id = id_of(&output);
+    assert_ne!(id, A);
+    assert_eq!(
+        p.queued(&id),
+        format!(
+            "---\nid: {id}\nmachine: other\nparent: p1\ndepth: 2\nparams:\n  n: 9\n  label: y\n\
+             trigger: emit\n---\nBody\n"
+        )
+    );
+}
+
+#[test]
+fn emit_of_frontmatter_naming_no_machine_exits_1_and_queues_nothing() {
+    let p = Project::new();
+    let output = p
+        .emit(&[], &[])
+        .write_stdin("---\nnote: x\n---\nbody\n")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("stdin: line 1: no `machine` key"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(p.inbox().is_empty());
+}
+
+#[test]
+fn emit_of_a_body_without_machine_exits_1() {
+    let p = Project::new();
+    let output = p.emit(&[], &[]).write_stdin("body\n").output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("--machine"), "{}", stderr(&output));
+    assert!(p.inbox().is_empty());
+}
+
+/// Frontmatter that is not valid is refused with the error `decree check` gives for the
+/// same file in `inbox/`, at the same line, and nothing is queued.
+#[test]
+fn emit_of_invalid_frontmatter_gives_the_errors_check_gives() {
+    let cases = [
+        "---\nmachine: other\n",
+        "---\nmachine: [x\n---\nbody\n",
+        "---\nmachine: ghost\n---\nbody\n",
+        "---\nmachine: other\nparams:\n  n: x\n---\nbody\n",
+        "---\nmachine: other\nparams:\n  nope: 1\n---\nbody\n",
+        "---\n- a\n---\nbody\n",
+    ];
+    for input in cases {
+        let p = Project::new();
+        let output = p.emit(&[], &[]).write_stdin(input).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{input:?}");
+        assert!(p.inbox().is_empty(), "{input:?}");
+        let got = stderr(&output);
+
+        fs::write(p.decree().join("inbox/x.md"), input).unwrap();
+        let check = cargo_bin_cmd!("decree")
+            .current_dir(p.tmp.path())
+            .env("NO_COLOR", "1")
+            .arg("check")
+            .output()
+            .unwrap();
+        let report = String::from_utf8_lossy(&check.stdout).into_owned()
+            + &String::from_utf8_lossy(&check.stderr);
+        let line = report
+            .lines()
+            .find_map(|l| l.split_once("inbox/x.md: ").map(|(_, rest)| rest))
+            .unwrap_or_else(|| panic!("{input:?}: {report}"));
+        let want = line.strip_suffix(" (M2)").unwrap_or(line);
+        assert!(
+            got.contains(&format!("stdin: {want}")),
+            "{input:?}: emit said {got}, check said {want}"
+        );
+    }
+}

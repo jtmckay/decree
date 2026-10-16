@@ -284,7 +284,7 @@ fn write_queued(inbox: &Path, id: &str, message: &mut Message) -> Result<(), Mes
 pub const ARRIVED_AS: &str = "arrived_as";
 
 /// The keys only decree sets: a file placed in `inbox/` loses them when it gets its id.
-const DECREE_KEYS: [&str; 5] = ["id", "state", "trigger", ARRIVED_AS, MIGRATION_KEY];
+pub(crate) const DECREE_KEYS: [&str; 5] = ["id", "state", "trigger", ARRIVED_AS, MIGRATION_KEY];
 
 /// Whether `s` has the form of an id decree makes (`new_id`):
 /// `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`.

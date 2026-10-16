@@ -152,6 +152,19 @@ history in git.
 
 - Inside a run, the emitting state must list the target machine in its `emits:`; otherwise
   `decree emit` exits 1. `decree graph` draws these edges in `system.md`.
+- Stdin that starts with frontmatter is a whole message: `decree emit` keeps its frontmatter
+  (less the keys decree sets), `--machine` and `--param` override it, and `--machine` may be
+  left out when it names a machine. Frontmatter that is not valid is refused, as
+  `decree check` would, and nothing is queued.
+
+### Run a message again
+
+```bash
+decree emit < .decree/migrations/01-a.md
+```
+
+or copy the file into `inbox/`. Either way it is a new inbox run with the same frontmatter and
+body; the migration file and `processed.md` are untouched.
 
 ## Cron
 

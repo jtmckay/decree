@@ -78,7 +78,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             machine,
             params,
             format,
-        } => commands::emit::run(&root()?, &machine, &params, format),
+        } => commands::emit::run(&root()?, machine.as_deref(), &params, format),
         Command::Event {
             target,
             event,

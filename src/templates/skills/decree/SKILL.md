@@ -91,7 +91,8 @@ appear only where a machine invokes `model` or `person`.
 - **A file a person writes into `.decree/inbox/` runs in the order it arrived**: the first
   `process` or `daemon` to see it gives it a fresh id, renames it `<id>.md` and records its old
   name as `arrived_as`. decree replaces `id`, `state`, `trigger` and `migration` there, so to
-  run a message again, copy it (a migration, a run's `message.md`) into `inbox/`.
+  run a message again (a migration, a run's `message.md`), run `decree emit < <file>` or copy
+  it into `inbox/`.
 - **Name a migration's run by its file.** A migration's run has a time id like every other run;
   `decree status 01-a`, `decree process --retry 01-a.md`, `decree tail 01-a` and `decree event
   01-a <event>` take the migration's file name or stem and mean its newest run.
@@ -163,7 +164,7 @@ appear only where a machine invokes `model` or `person`.
 | `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
 | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
-| `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
+| `decree emit [--machine <m>] [--param k=v]...` | Queue a message from stdin: a body for machine `m`, or a whole message whose frontmatter the flags override (`decree emit < <file>` runs a message again). Prints the new id. |
 | `decree process [--dry-run] [--quiet] [--machine <m> \| --exclude-machine <m>]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order, printing each run's output. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
 | `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>` (or a migration's file name or stem, meaning its newest run), or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>] [--retry [<id>]] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with cron, every `2s` by default; `--machine` and `--exclude-machine` as for `process`. |
