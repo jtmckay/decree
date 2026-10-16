@@ -31,6 +31,7 @@ use crate::layout::MESSAGE_FILE;
 use crate::message::{
     is_valid_id, lock_state, run_ids, LockState, Message, MessageError, RunLock, LOCK_FILE,
 };
+use crate::migration;
 
 /// A finished run old enough to prune, as its `run_finished` event names it.
 struct Finished {
@@ -63,19 +64,30 @@ pub fn run(
     let (mut count, mut bytes, mut errors) = (0, 0, 0);
     let mut runs = Vec::new();
     for id in run_ids(&ctx.runs_dir())? {
+        // Read before the folder is gone.
+        let file = migration::of_run(&ctx.runs_dir(), &id);
         match prune(&rule, &id, dry_run) {
             Ok(Some((run, size))) => {
                 match format {
                     Format::Text => println!(
-                        "{verb} {id}  {}  {}  finished {}",
-                        run.machine, run.state, run.ts
+                        "{verb} {id}{}  {}  {}  finished {}",
+                        file.as_ref().map(|f| format!(" ({f})")).unwrap_or_default(),
+                        run.machine,
+                        run.state,
+                        run.ts
                     ),
-                    Format::Json => runs.push(json!({
-                        "id": id,
-                        "machine": run.machine,
-                        "state": run.state,
-                        "finished": run.ts,
-                    })),
+                    Format::Json => {
+                        let mut out = json!({
+                            "id": id,
+                            "machine": run.machine,
+                            "state": run.state,
+                            "finished": run.ts,
+                        });
+                        if let Some(file) = file {
+                            out["migration"] = file.into();
+                        }
+                        runs.push(out);
+                    }
                 }
                 count += 1;
                 bytes += size;
@@ -127,8 +139,11 @@ impl Rule<'_> {
         }
         // A migration that ended in `failed` is not in the ledger; its folder is what keeps
         // `process` from starting it again (docs/reference/messages.md, Migrations).
-        if field("trigger") == "migration" && !self.processed.contains(&format!("{id}.md")) {
-            return Ok(None);
+        if field("trigger") == "migration" {
+            let file = migration::of_run(&self.ctx.runs_dir(), id);
+            if !file.is_some_and(|f| self.processed.contains(&f)) {
+                return Ok(None);
+            }
         }
         // The parent may still read its child's results (docs/reference/runs.md,
         // Sub-machines).

@@ -264,6 +264,10 @@
           "type": "string",
           "description": "The run id."
         },
+        "migration": {
+          "type": "string",
+          "description": "For a migration's run: the migration's file name, from `migration:` in its message.md."
+        },
         "machine": {
           "type": "string",
           "description": "The run's machine."
@@ -348,6 +352,10 @@
         "id": {
           "type": "string",
           "description": "The run id."
+        },
+        "migration": {
+          "type": "string",
+          "description": "For a migration's run: the migration's file name, from `migration:` in its message.md. `<id>` may be that file name or its stem, meaning the migration's newest run."
         },
         "machine": {
           "type": "string",

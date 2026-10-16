@@ -45,6 +45,7 @@ use crate::layout::MESSAGE_FILE;
 use crate::layout::{self, ATTENTION_DIR, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
 use crate::machine::FAILED;
 use crate::message::{self, is_valid_id, Claim, LockState, Message, RunLock, ARRIVED_AS};
+use crate::migration::{self, MIGRATION_KEY};
 use crate::reply::{self, Delivery};
 use crate::runtime::{self};
 
@@ -434,12 +435,8 @@ impl Pipeline {
         };
         match outcome {
             Outcome::Finished(state) if state == FAILED => {
-                let events = self.ctx.events(id)?;
-                if first_text(&events, "trigger") == Some("migration") {
-                    return Err(blocked(
-                        &format!("{id}.md"),
-                        &format!("ended in `{FAILED}`"),
-                    ));
+                if let Some(file) = migration::of_run(&self.ctx.runs_dir(), id) {
+                    return Err(blocked(&file, &format!("ended in `{FAILED}`")));
                 }
                 self.fail(id, None);
                 Ok(())
@@ -580,9 +577,10 @@ fn reported<E>(
 fn queued(ctx: &Context, project: &Project, id: &str) -> usize {
     let inbox = md_files(&ctx.project_root.join(DECREE_DIR).join(INBOX_DIR)).map_or(0, |f| f.len());
     let migrations = project.pending_migrations().unwrap_or_default();
+    let own = migration::of_run(&ctx.runs_dir(), id);
     let others = migrations
         .iter()
-        .filter(|m| m.strip_suffix(".md").unwrap_or(m) != id)
+        .filter(|m| own.as_ref() != Some(*m))
         .count();
     inbox + others
 }
@@ -673,6 +671,8 @@ fn run_claim(
     if !message.frontmatter.contains_key("trigger") {
         message.set("trigger", trigger.as_str());
     }
+    // Only decree marks a migration's run: a queued copy is a run of its own.
+    message.frontmatter.remove(MIGRATION_KEY);
     message.write(&run_dir.join(MESSAGE_FILE))?;
 
     let name = message.machine().unwrap_or_default().to_string();
@@ -749,10 +749,10 @@ fn step_migration(
     file: &str,
     report: Option<&Reporter>,
 ) -> Result<bool, Stop> {
-    let id = file.strip_suffix(".md").unwrap_or(file);
-    let run_dir = ctx.runs_dir().join(id);
-    let outcome = if run_dir.exists() {
+    let outcome = if let Some(id) = migration::newest_run(&ctx.runs_dir(), file)? {
         // Rule 4: the migration has a run already.
+        let id = id.as_str();
+        let run_dir = ctx.runs_dir().join(id);
         let events = ctx.events(id)?;
         let alive = matches!(message::lock_state(&run_dir)?, LockState::Live(_));
         let status = ctx
@@ -786,8 +786,9 @@ fn step_migration(
             }
         }
     } else {
-        reported(report, ctx, project, id, || {
-            start_migration(ctx, project, file, id)
+        let (id, _) = message::create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
+        reported(report, ctx, project, &id, || {
+            start_migration(ctx, project, file, &id)
         })?
     };
     match outcome {
@@ -811,8 +812,8 @@ fn interrupted(outcome: &Outcome) -> bool {
     }
 }
 
-/// Rule 1: create `runs/<id>/` and copy the migration to `runs/<id>/message.md`, adding
-/// `id` and `trigger: migration`, then start the run.
+/// Rule 1: copy the migration to `runs/<id>/message.md`, `runs/<id>/` just made with a time
+/// id, setting `id`, `trigger: migration` and `migration: <file>`, then start the run.
 fn start_migration(
     ctx: &Context,
     project: &Project,
@@ -820,8 +821,6 @@ fn start_migration(
     id: &str,
 ) -> Result<Outcome, DecreeError> {
     let runs = ctx.runs_dir();
-    std::fs::create_dir_all(&runs)?;
-    std::fs::create_dir(runs.join(id))?;
     let source = ctx
         .project_root
         .join(DECREE_DIR)
@@ -830,6 +829,7 @@ fn start_migration(
     let mut message = Message::read(&source)?;
     message.set("id", id);
     message.set("trigger", "migration");
+    message.set(MIGRATION_KEY, file);
     message.write(&runs.join(id).join(MESSAGE_FILE))?;
     start(ctx, project, id, "migration", file, &message)
 }
@@ -848,6 +848,8 @@ pub(crate) struct Blocker {
     pub(crate) file: String,
     /// The migration's run, or the interrupted child run it waits for.
     pub(crate) run: String,
+    /// Whether `run` is a child run the migration's run waits for.
+    pub(crate) child: bool,
     /// The state `run` is in.
     pub(crate) state: String,
     pub(crate) status: RunStatus,
@@ -858,10 +860,10 @@ impl Blocker {
     /// interrupted in `work``.
     pub(crate) fn what(&self) -> String {
         let (status, state) = (self.status.as_str(), &self.state);
-        if self.file.strip_suffix(".md") == Some(self.run.as_str()) {
-            format!("is {status} in `{state}`")
-        } else {
+        if self.child {
             format!("waits for child run {}, {status} in `{state}`", self.run)
+        } else {
+            format!("is {status} in `{state}`")
         }
     }
 }
@@ -874,19 +876,19 @@ pub(crate) fn blocking_migration(
     ctx: &Context,
     project: &Project,
 ) -> Result<Option<Blocker>, DecreeError> {
+    let mut runs = migration::newest_runs(&ctx.runs_dir())?;
     for file in project.pending_migrations()? {
-        let id = file.strip_suffix(".md").unwrap_or(&file).to_string();
-        if !ctx.runs_dir().join(&id).is_dir() {
+        let Some(id) = runs.remove(&file) else {
             continue;
-        }
+        };
         let (status, events) = ctx.status_of(&id)?;
-        let (run, state, status) = match status {
+        let (run, child, state, status) = match status {
             RunStatus::Finished | RunStatus::Interrupted => {
                 let state = current_state(&events).unwrap_or("no state").to_string();
-                (id, state, status)
+                (id, false, state, status)
             }
             RunStatus::Waiting => match ctx.stalled_child(&events)? {
-                Some((child, state)) => (child, state, RunStatus::Interrupted),
+                Some((child, state)) => (child, true, state, RunStatus::Interrupted),
                 None => continue,
             },
             RunStatus::Active | RunStatus::Pending => continue,
@@ -894,6 +896,7 @@ pub(crate) fn blocking_migration(
         return Ok(Some(Blocker {
             file,
             run,
+            child,
             state,
             status,
         }));
@@ -926,14 +929,13 @@ pub(crate) fn held_back(
         0 => String::new(),
         n => format!("; {n} later migration(s) wait behind it"),
     };
-    let id = file.strip_suffix(".md").unwrap_or(file);
-    if !ctx.runs_dir().join(id).is_dir() {
+    let Some(id) = migration::newest_run(&ctx.runs_dir(), file)? else {
         let inbox = md_files(&ctx.project_root.join(DECREE_DIR).join(INBOX_DIR))?.len();
         return Ok((inbox > 0).then(|| {
             format!("migration {file} starts once the {inbox} file(s) in inbox/ have run{behind}")
         }));
-    }
-    let mut run = id.to_string();
+    };
+    let mut run = id.clone();
     let mut seen = HashSet::new();
     let reason = loop {
         let (status, events) = ctx.status_of(&run)?;
@@ -980,7 +982,9 @@ fn retry_run(
     state: Option<&str>,
 ) -> Result<(), DecreeError> {
     let id = match id {
-        Some(id) => id.to_string(),
+        // A migration's file name or stem means its newest run.
+        Some(name) => migration::resolve(&ctx.runs_dir(), name)?
+            .ok_or_else(|| DecreeError::MessageNotFound(name.to_string()))?,
         None => {
             blocking_migration(ctx, project)?
                 .ok_or_else(|| {
@@ -1063,7 +1067,10 @@ fn retry_run(
         }),
     )?;
     mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
-    println!("run {id} continues in `{target}`");
+    println!(
+        "run {} continues in `{target}`",
+        migration::label(&ctx.runs_dir(), id)
+    );
     attention::release(ctx, id)?;
     attention::record(ctx, id)?;
     Ok(())
@@ -1108,7 +1115,8 @@ fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeErro
             .and_then(|node| node.description.as_deref())
             .unwrap_or(state);
         let options = strings(last, "options");
-        println!("Waiting: run {id} in `{state}`: {question}");
+        let run = migration::label(&ctx.runs_dir(), &id);
+        println!("Waiting: run {run} in `{state}`: {question}");
         println!("  wait id {wait_id}, options: {}", options.join(", "));
         for option in options {
             println!("  decree event {wait_id} {option}");

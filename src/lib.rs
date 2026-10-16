@@ -14,6 +14,7 @@ pub(crate) mod interpreter;
 pub(crate) mod layout;
 pub(crate) mod machine;
 pub(crate) mod message;
+pub(crate) mod migration;
 pub(crate) mod reply;
 pub(crate) mod runtime;
 pub(crate) mod trace;

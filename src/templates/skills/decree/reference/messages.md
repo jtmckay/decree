@@ -23,11 +23,12 @@ params:
 | --- | --- | --- |
 | `machine` | Author, `decree emit`, cron | Machine name (`machines/<name>.yml`). Required: there is no default machine. |
 | `params` | Author, `decree emit --param` | Values for the machine's `data` (string, int, number or bool), one of the `enum` values if the entry has one. Unknown names, wrong types and values outside the `enum` fail validation. |
-| `id` | decree only | `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`, UTC to the microsecond, so ids sort in the order messages arrived; a migration's id is its file stem. Names the queued file and the run folder. |
+| `id` | decree only | `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`, UTC to the microsecond, so ids sort in the order messages arrived, a migration's run included. Names the queued file and the run folder. |
 | `state` | decree only | Mirror of the run's current state, in `runs/<id>/message.md`. Never set it. |
 | `parent`, `depth` | `decree emit`, decree | The run that emitted this message (or invoked this child run), and the chain depth. |
 | `trigger` | decree only | `migration`, `cron`, `emit`, `inbox` or `invoke`. |
 | `arrived_as` | decree only | The name a file written into `inbox/` had before it got its id. |
+| `migration` | decree only | In a migration's `runs/<id>/message.md`: the file it came from (`01-a.md`). |
 | `traceparent`, `tracestate` | decree, `decree emit`, any tool | W3C Trace Context: the run joins this trace, under this span. An invalid `traceparent` is ignored and the run starts a new trace. |
 | `to`, `event` | `decree event`, any tool | Only in a reply to a waiting run (below). |
 
@@ -44,8 +45,13 @@ history in git.
   a letter prefix (`A01-`, then `B01-`), because letters sort after digits. `decree check` warns
   when a new name sorts before one that already ran.
 - **Immutable.** decree never edits, moves or renames a migration; neither do you. A run works on
-  a copy in `runs/<stem>/message.md`. To fix a processed migration, write a new one that says
-  what it fixes.
+  a copy in `runs/<id>/message.md`, with a time id like every other run and
+  `migration: <file>`. A migration that has a run is never started again. To fix a processed
+  migration, write a new one that says what it fixes.
+- **Named by its file.** Wherever you name a run (`decree process --retry`, `decree daemon
+  --retry`, `decree status <id>`, `decree tail <id>`, `decree event`), the migration's file
+  name or stem (`01-a.md`, `01-a`) works too and means its newest run. Status lines, `process`
+  notices and the built-in `commit`'s title show the file beside the run id.
 - **Ledger.** `.decree/processed.md` (committed) lists one filename per line. When a migration's
   run reaches a final state other than `failed`, decree appends its filename *before* that final
   state's `onentry` scripts run, so `done: { final: true, onentry: [commit] }` commits the code
@@ -122,8 +128,9 @@ history in git.
   the first time `process` or `daemon` sees it, as `decree emit` would have given it, so it runs
   after everything queued before; files first seen together go by modification time, then
   name. Its old name is kept as `arrived_as`, in `runs/<id>/message.md` too.
-- `id`, `state`, `trigger` and `arrived_as` are decree's alone: a file placed in `inbox/` gets
-  decree's own, so a copy of a migration or of a run's `message.md` runs again as a new run.
+- `id`, `state`, `trigger`, `arrived_as` and `migration` are decree's alone: a file placed in
+  `inbox/` gets decree's own, so a copy of a migration or of a run's `message.md` runs again as
+  a new run, never as a run of that migration.
 - A failed inbox run does not stop `decree process`: it prints the run with
   `decree process --retry <id>` and goes on with the next file. When the inbox is empty it lists
   every run that failed in the pass and exits 1.
@@ -188,7 +195,7 @@ inbox message with `to:` (the wait id, or the run id meaning "its current wait")
 `DECREE_RECEIVED`.
 
 ```bash
-decree event 02-upload-quota-per-plan.w15 retry -m "plans.toml lives in config/."
+decree event 20261001T145120.000000Z-9c2e57.w15 retry -m "plans.toml lives in config/."
 ```
 
 writes:
@@ -196,7 +203,7 @@ writes:
 ```markdown
 ---
 id: 20261001T160301.482113Z-9be210
-to: 02-upload-quota-per-plan.w15
+to: 20261001T145120.000000Z-9c2e57.w15
 event: retry
 ---
 plans.toml lives in config/.

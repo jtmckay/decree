@@ -784,7 +784,8 @@ fn test_message_with_requirements_heading_checks_and_runs() {
         fs::read_to_string(decree.join("processed.md")).unwrap(),
         "01-old-shape.md\n"
     );
-    let events = fs::read_to_string(decree.join("runs/01-old-shape/events.jsonl")).unwrap();
+    let run = common::migration_run(&decree, "01-old-shape.md");
+    let events = fs::read_to_string(decree.join("runs").join(run).join("events.jsonl")).unwrap();
     assert!(events.contains("\"to\":\"done\""), "{events}");
 }
 

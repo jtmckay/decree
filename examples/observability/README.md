@@ -46,7 +46,7 @@ sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | s
 topk(10, max_over_time({job="decree", type="script", machine="develop"} | json | script="implement" | unwrap duration_ms [7d]) by (run_id))
 
 # one run's script output, in order
-{job="decree_script"} | run_id="01-rate-limit-upload"
+{job="decree_script"} | run_id="20261001T143005.000000Z-189ed2"
 ```
 
 `run_id` and `machine` on every event, and the state an event names (`state`, or a transition's `from` and `to`), are also what a UI built outside decree needs to link each node of a [graph](../../docs/reference/graph.md) to its logs here.

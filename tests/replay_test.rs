@@ -131,9 +131,12 @@ struct Replay {
     /// The project's `.decree/`.
     recorded: PathBuf,
     run: String,
-    /// The run's id in the replay: the recorded one for a migration; for an inbox message,
-    /// the recorded id in the form decree makes ids now, so the queued file keeps it.
+    /// The run's id in the replay, for an inbox message: the recorded id in the form decree
+    /// makes ids now, so the queued file keeps it. A migration's run gets a new time id as
+    /// it starts (`id`).
     id: String,
+    /// The recorded run's migration file, for a migration's run.
+    migration: Option<String>,
 }
 
 impl Replay {
@@ -162,15 +165,27 @@ impl Replay {
             }
             _ => run.to_string(),
         };
+        let claim = &read_events(&recorded.join("runs").join(run))[0];
+        let migration =
+            (claim["trigger"] == "migration").then(|| claim["file"].as_str().unwrap().to_string());
         let r = Replay {
             tmp,
             recorded,
             run: run.to_string(),
             id,
+            migration,
         };
         r.write_plan();
         r.queue();
         r
+    }
+
+    /// The run's id in the replay, once it has started.
+    fn id(&self) -> String {
+        match &self.migration {
+            Some(file) => common::migration_run(&self.decree(), file),
+            None => self.id.clone(),
+        }
     }
 
     fn recorded_run(&self, id: &str) -> PathBuf {
@@ -227,9 +242,7 @@ impl Replay {
     /// without the `state` mirror. A file a person wrote is queued as decree left it when
     /// it arrived: its `arrived_as`, recorded in `message.md`, is kept.
     fn queue(&self) {
-        let claim = &read_events(&self.recorded_run(&self.run))[0];
-        let file = claim["file"].as_str().unwrap();
-        if claim["trigger"] == "migration" {
+        if let Some(file) = &self.migration {
             fs::copy(
                 self.recorded.join("migrations").join(file),
                 self.decree().join("migrations").join(file),
@@ -289,7 +302,7 @@ impl Replay {
         };
         let note = body.trim_end_matches('\n');
         // The reply names the run by its id in the replay.
-        let to = key("to").replace(&self.run, &self.id);
+        let to = key("to").replace(&self.run, &self.id());
         self.cmd(&["event", &to, &key("event"), "-m", note])
             .assert()
             .code(0);
@@ -301,7 +314,8 @@ impl Replay {
         let recorded_runs = self.recorded.join("runs");
         let runs = self.decree().join("runs");
         let recorded_tree = run_tree(&recorded_runs, &self.run);
-        let tree = run_tree(&runs, &self.id);
+        let id = self.id();
+        let tree = run_tree(&runs, &id);
         assert_eq!(
             tree.len(),
             recorded_tree.len(),
@@ -320,7 +334,7 @@ impl Replay {
                 .collect()
         };
         ids.extend(
-            names(&runs.join(&self.id))
+            names(&runs.join(&id))
                 .into_iter()
                 .zip(names(&recorded_runs.join(&self.run))),
         );
@@ -460,7 +474,7 @@ fn normalise_span(mut line: Value, ids: &BTreeMap<String, String>) -> String {
 
 #[test]
 fn project_migration_01_tries_claude_after_local_and_finishes_done_as_recorded() {
-    let r = Replay::new("examples/project", "01-rate-limit-upload");
+    let r = Replay::new("examples/project", "20261001T143005.000000Z-189ed2");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     process.code(0);
@@ -507,7 +521,7 @@ fn project_cron_run_interrupted_by_sigint_as_recorded() {
 
 #[test]
 fn feature_migration_01_finishes_done_as_recorded() {
-    let r = Replay::new("tests/fixtures/feature", "01-rate-limit-upload");
+    let r = Replay::new("tests/fixtures/feature", "20261001T143005.000000Z-4b7d10");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     process.code(0);
@@ -519,12 +533,12 @@ fn feature_migration_01_finishes_done_as_recorded() {
 
 #[test]
 fn feature_migration_02_waits_for_a_person_as_recorded() {
-    let r = Replay::new("tests/fixtures/feature", "02-upload-quota-per-plan");
+    let r = Replay::new("tests/fixtures/feature", "20261001T145120.000000Z-9c2e57");
     let process = r.cmd(&["process"]).assert();
     r.assert_matches_recorded();
     let stdout = String::from_utf8_lossy(&process.code(0).get_output().stdout).into_owned();
     assert!(
-        stdout.contains("decree event 02-upload-quota-per-plan.w15 retry"),
+        stdout.contains(&format!("decree event {}.w15 retry", r.id())),
         "{stdout}"
     );
 }

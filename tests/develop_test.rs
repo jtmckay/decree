@@ -1520,6 +1520,41 @@ fn done_commits_the_runs_work() {
     );
 }
 
+/// A migration's commit title ends with its file name, since its run id is a time id; the
+/// body names the run.
+#[test]
+fn a_migrations_commit_names_its_file() {
+    let p = Project::init();
+    fs::write(
+        p.root().join(".decree/migrations/01-greet.md"),
+        format!("---\nmachine: develop\n---\n{MESSAGE}"),
+    )
+    .unwrap();
+    p.commit_all("test setup");
+    let out = p
+        .decree(&["process"])
+        .env("PATH", p.path())
+        .env(
+            "CLAUDE_DO",
+            "case \"$prompt\" in *senior*) echo hi > hello.txt ;; esac",
+        )
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let id = common::migration_run(&p.root().join(".decree"), "01-greet.md");
+    assert_eq!(p.outcome(&id), "done");
+    assert_eq!(p.commits()[0], "Add a greeting (01-greet.md)");
+    assert_eq!(
+        p.git(&["show", "--format=%b", "--name-only", "HEAD"]),
+        format!("decree run {id} (develop)\n\n\n.decree/processed.md\nhello.txt\n")
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!("▶ {id} (01-greet.md) · develop")),
+        "{stdout}"
+    );
+}
+
 /// A failed run keeps its changes in the work tree and writes its `hold`, so its file in
 /// `.decree/attention/` holds the queue: the next run waits, and a retry removes both before
 /// the run continues on the kept changes.

@@ -17,6 +17,7 @@ use crate::commands::tail::{machine_and_state, Follower, POLL};
 use crate::console::{self, Console};
 use crate::interpreter::{Context, Outcome};
 use crate::machine::FAILED;
+use crate::migration;
 
 /// What the pipeline tells the thread.
 pub(crate) enum Note {
@@ -126,6 +127,9 @@ impl Drop for Reporter {
 /// The run being printed.
 struct Current {
     follower: Follower,
+    /// How the run is shown: `<id>`, or `<id> (<file>)` for a migration's run, known once
+    /// its header is printed.
+    label: String,
     started: Instant,
     position: usize,
     total: usize,
@@ -173,6 +177,7 @@ pub(crate) fn observe(ctx: &Context, rx: Receiver<Note>, quiet: bool) {
                     finish(ctx, &mut console, run, None);
                 }
                 current = Some(Current {
+                    label: id.clone(),
                     follower: Follower::from_log(&id, first_log),
                     started: Instant::now(),
                     position,
@@ -213,19 +218,24 @@ fn print_header(ctx: &Context, console: &mut Console, run: &mut Current, now: bo
         .ok()
         .and_then(|(machine, _)| machine);
     if machine.is_some() || now {
-        let id = run.follower.root();
-        let _ = console.run_line(&format!("▶ {id} · {}", machine.as_deref().unwrap_or("?")));
+        run.label = migration::label(&ctx.runs_dir(), run.follower.root());
+        let _ = console.run_line(&format!(
+            "▶ {} · {}",
+            run.label,
+            machine.as_deref().unwrap_or("?")
+        ));
         run.header = true;
     }
 }
 
 /// `▶ <run> · <machine> · <state> · <elapsed> · <position>/<total>`: the innermost run's
-/// machine and state, so a child run shows where the work is.
+/// machine and state, so a child run shows where the work is. A migration's run is
+/// `<id> (<file>)`.
 fn status_line(ctx: &Context, run: &Current) -> String {
     let (machine, state) = machine_and_state(ctx, run.follower.current()).unwrap_or_default();
     format!(
         "▶ {} · {} · {} · {} · {}/{}",
-        run.follower.root(),
+        run.label,
         machine.as_deref().unwrap_or("?"),
         state.as_deref().unwrap_or("starting"),
         console::duration(run.started.elapsed()),
@@ -239,7 +249,7 @@ fn finish(ctx: &Context, console: &mut Console, mut run: Current, outcome: Optio
     print_header(ctx, console, &mut run, true);
     let _ = run.follower.finish(ctx, console);
     let _ = console.set_status(None);
-    let id = run.follower.root();
+    let id = &run.label;
     let took = console::duration(run.started.elapsed());
     let line = match outcome {
         Some(Outcome::Finished(state)) if state == FAILED => format!("✗ {id} {FAILED} in {took}"),

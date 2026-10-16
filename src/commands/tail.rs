@@ -23,6 +23,7 @@ use crate::interpreter::recover::RunStatus;
 use crate::interpreter::Context;
 use crate::layout::MESSAGE_FILE;
 use crate::message::{is_valid_id, run_ids, Message};
+use crate::migration;
 use crate::runtime::Running;
 
 /// How often the run folder is read again.
@@ -34,10 +35,11 @@ pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
     let mut out = io::stdout().lock();
     let result = match id {
-        Some(id) if is_valid_id(id) && ctx.runs_dir().join(id).is_dir() => {
-            follow(&ctx, Follower::join(&ctx, id)?, &mut out)
-        }
-        Some(id) => return Err(DecreeError::MessageNotFound(id.to_string())),
+        // A migration's file name or stem means its newest run.
+        Some(name) => match migration::resolve(&ctx.runs_dir(), name)? {
+            Some(id) if is_valid_id(&id) => follow(&ctx, Follower::join(&ctx, &id)?, &mut out),
+            _ => return Err(DecreeError::MessageNotFound(name.to_string())),
+        },
         None => follow_all(&ctx, &mut out),
     };
     match result {
@@ -93,10 +95,15 @@ fn next_run(ctx: &Context, seen: &mut HashSet<String>) -> Result<Option<Follower
     })
 }
 
-/// `▶ <id> · <machine>`, the line `tail` prints as it moves to a run.
+/// `▶ <id> · <machine>`, the line `tail` prints as it moves to a run; `<id> (<file>)` for a
+/// migration's run.
 pub(crate) fn run_header(ctx: &Context, id: &str) -> Result<String, DecreeError> {
     let (machine, _) = machine_and_state(ctx, id)?;
-    Ok(format!("▶ {id} · {}", machine.as_deref().unwrap_or("?")))
+    Ok(format!(
+        "▶ {} · {}",
+        migration::label(&ctx.runs_dir(), id),
+        machine.as_deref().unwrap_or("?")
+    ))
 }
 
 /// The machine of run `id`, from its events or else its message, and its current state.

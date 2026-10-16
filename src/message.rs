@@ -2,6 +2,7 @@ use crate::layout;
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{INBOX_DIR, RUNS_DIR};
 use crate::machine::LoadedMachine;
+use crate::migration::MIGRATION_KEY;
 use chrono::{DateTime, Utc};
 use serde_norway::{Mapping, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -283,7 +284,7 @@ fn write_queued(inbox: &Path, id: &str, message: &mut Message) -> Result<(), Mes
 pub const ARRIVED_AS: &str = "arrived_as";
 
 /// The keys only decree sets: a file placed in `inbox/` loses them when it gets its id.
-const DECREE_KEYS: [&str; 4] = ["id", "state", "trigger", ARRIVED_AS];
+const DECREE_KEYS: [&str; 5] = ["id", "state", "trigger", ARRIVED_AS, MIGRATION_KEY];
 
 /// Whether `s` has the form of an id decree makes (`new_id`):
 /// `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`.
@@ -327,8 +328,9 @@ pub fn is_queued(decree_dir: &Path, file: &str) -> bool {
 
 /// Give every file in `inbox/` that is not queued (`is_queued`) an id, as Maildir names a
 /// message on delivery (docs/reference/messages.md, Lifecycle step 1): a new id from now,
-/// in order of modification time, then name. Its `id`, `state` and `trigger` are dropped,
-/// `id` set first and `arrived_as` set to its name; then it is renamed to `inbox/<id>.md`.
+/// in order of modification time, then name. Its `id`, `state`, `trigger`, `arrived_as` and
+/// `migration` are dropped, `id` set first and `arrived_as` set to its name; then it is
+/// renamed to `inbox/<id>.md`.
 /// A file whose frontmatter does not parse is renamed unchanged. Only one process does
 /// this at a time, holding `inbox/.lock`; while another holds it, nothing is renamed.
 /// Returns (old name, new name) for each file renamed.
@@ -1090,7 +1092,7 @@ mod tests {
     #[test]
     fn arrive_replaces_decree_keys_and_keeps_the_rest() {
         let dir = TempDir::new().unwrap();
-        let text = "---\nid: old-run\nmachine: x\nstate: done\ntrigger: migration\narrived_as: x.md\nparams:\n  a: 1\nnote: kept\n---\nbody\r\n";
+        let text = "---\nid: old-run\nmachine: x\nstate: done\ntrigger: migration\nmigration: 01-a.md\narrived_as: x.md\nparams:\n  a: 1\nnote: kept\n---\nbody\r\n";
         let decree = inbox(&dir, "copy.md", text);
         let renamed = arrive(&decree).unwrap();
         let (old, new) = &renamed[0];

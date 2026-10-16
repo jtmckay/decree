@@ -314,8 +314,9 @@ fn a_pruned_migration_does_not_run_again() {
     );
     let (code, stdout) = p.run(&["prune", "--older-than", "0m"]);
     assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.starts_with("pruned 2026"), "{stdout}");
     assert!(
-        stdout.starts_with("pruned 01-a  m  done  finished "),
+        stdout.contains(" (01-a.md)  m  done  finished "),
         "{stdout}"
     );
     assert!(p.runs().is_empty());
@@ -323,7 +324,39 @@ fn a_pruned_migration_does_not_run_again() {
     p.cmd(&["process"]).assert().success();
     assert!(p.runs().is_empty());
     let order = fs::read_to_string(p.tmp.path().join("order.log")).unwrap();
-    assert_eq!(order, "01-a\n");
+    assert_eq!(order.lines().count(), 1, "{order}");
+}
+
+/// A migration's run with a time id: kept while its file is not in `processed.md` (it
+/// failed), pruned once it is; a run named by the stem, from before, the same.
+#[test]
+fn a_failed_migrations_run_is_kept_whatever_its_id() {
+    let p = Project::new();
+    let failed = "20260101T000000.000000Z-000001";
+    let done = "20260101T000000.000000Z-000002";
+    for (id, file, state) in [(failed, "01-a.md", "failed"), (done, "02-b.md", "done")] {
+        p.finished(id, "migration", "", state, OLD);
+        let path = p.run_dir(id).join("message.md");
+        let text = fs::read_to_string(&path).unwrap().replace(
+            "trigger: migration\n",
+            &format!("trigger: migration\nmigration: {file}\n"),
+        );
+        fs::write(path, text).unwrap();
+    }
+    p.finished("03-c", "migration", "", "failed", OLD);
+    p.finished("04-d", "migration", "", "done", OLD);
+    fs::write(p.decree().join("processed.md"), "02-b.md\n04-d.md\n").unwrap();
+    let (code, stdout) = p.run(&["prune", "--older-than", "0m"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains(&format!("pruned {done} (02-b.md)  m  done")),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("pruned 04-d (04-d.md)  m  done"),
+        "{stdout}"
+    );
+    assert_eq!(p.runs(), ["03-c", failed]);
 }
 
 /// A message rejected at claim ends with `run_finished`, so prune can delete its run.

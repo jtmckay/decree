@@ -36,6 +36,7 @@ use crate::layout::MESSAGE_FILE;
 use crate::layout::{ATTENTION_DIR, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
 use crate::machine::FAILED;
 use crate::message::{run_ids, Message};
+use crate::migration;
 use crate::runtime::Running;
 
 /// How deep below a folder `decree status` looks for nested projects.
@@ -87,16 +88,26 @@ pub fn run(
     }
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
-    match (id, format) {
-        (Some(id), Format::Text) => show_run(&ctx, &project, id),
-        (Some(id), Format::Json) => run_json(&ctx, id),
-        (None, format) => overview(&ctx, &project, all, format),
+    let Some(name) = id else {
+        return overview(&ctx, &project, all, format);
+    };
+    // A migration's file name or stem means its newest run.
+    let id = migration::resolve(&ctx.runs_dir(), name)?.ok_or_else(|| no_run(name))?;
+    match format {
+        Format::Text => show_run(&ctx, &project, &id),
+        Format::Json => run_json(&ctx, &id),
     }
+}
+
+fn no_run(id: &str) -> DecreeError {
+    DecreeError::Other(format!("no run {id} in {DECREE_DIR}/{RUNS_DIR}/"))
 }
 
 /// One run, as the overview lists it.
 struct Row {
     id: String,
+    /// The migration file, for a migration's run.
+    migration: Option<String>,
     machine: String,
     state: String,
     detail: Option<Detail>,
@@ -128,6 +139,9 @@ impl Row {
     /// or `child`, where they apply.
     fn json(&self) -> Value {
         let mut out = json!({ "id": self.id, "machine": self.machine, "state": self.state });
+        if let Some(file) = &self.migration {
+            out["migration"] = file.as_str().into();
+        }
         match &self.detail {
             Some(Detail::Running(r)) => {
                 out["running"] = json!({
@@ -175,6 +189,7 @@ fn overview(
             let state = field(Some(&last), "state").to_string();
             let row = Row {
                 id: id.clone(),
+                migration: migration::of_run(&ctx.runs_dir(), id),
                 machine: field(Some(&last), "machine").to_string(),
                 detail: (state == FAILED).then(|| retry(id)),
                 state,
@@ -194,6 +209,7 @@ fn overview(
         };
         let row = Row {
             id: id.clone(),
+            migration: migration::of_run(&ctx.runs_dir(), id),
             machine: field(events.first(), "machine").to_string(),
             state: state.clone(),
             detail,
@@ -409,6 +425,7 @@ fn active_rows(root: &Path) -> Result<Vec<Row>, DecreeError> {
             continue;
         }
         rows.push(Row {
+            migration: migration::of_run(&ctx.runs_dir(), &id),
             machine: field(events.first(), "machine").to_string(),
             state: current_state(&events).unwrap_or("-").to_string(),
             detail: Running::read(&ctx.runs_dir().join(&id))?.map(Detail::Running),
@@ -457,8 +474,13 @@ fn shown<'r>(rows: &[&'r Row], all: bool, indent: &str) -> Vec<&'r Row> {
 
 fn print_rows(rows: &[&Row], indent: &str) {
     for row in rows {
+        let file = row
+            .migration
+            .as_ref()
+            .map(|f| format!(" ({f})"))
+            .unwrap_or_default();
         println!(
-            "{indent}{}  {}  `{}`",
+            "{indent}{}{file}  {}  `{}`",
             row.id.dimmed(),
             row.machine,
             row.state
@@ -513,30 +535,33 @@ fn wait_line(last: &Event) -> String {
 fn run_json(ctx: &Context, id: &str) -> Result<(), DecreeError> {
     let run_dir = ctx.runs_dir().join(id);
     if id.is_empty() || id.contains('/') || !run_dir.is_dir() {
-        return Err(DecreeError::Other(format!(
-            "no run {id} in {DECREE_DIR}/{RUNS_DIR}/"
-        )));
+        return Err(no_run(id));
     }
     let (status, events) = ctx.status_of(id)?;
-    print_json(&json!({
+    let mut out = json!({
         "id": id,
         "machine": field(events.first(), "machine"),
         "status": status.as_str(),
         "state": current_state(&events),
         "events": events,
-    }))
+    });
+    if let Some(file) = migration::of_run(&ctx.runs_dir(), id) {
+        out["migration"] = file.into();
+    }
+    print_json(&out)
 }
 
 /// One run: frontmatter, status, and the events as a table.
 fn show_run(ctx: &Context, project: &Project, id: &str) -> Result<(), DecreeError> {
     let run_dir = ctx.runs_dir().join(id);
     if id.is_empty() || id.contains('/') || !run_dir.is_dir() {
-        return Err(DecreeError::Other(format!(
-            "no run {id} in {DECREE_DIR}/{RUNS_DIR}/"
-        )));
+        return Err(no_run(id));
     }
     let (status, events) = ctx.status_of(id)?;
     println!("{} {id}", "Run".bold());
+    if let Some(file) = migration::of_run(&ctx.runs_dir(), id) {
+        println!("  migration: {file}");
+    }
     println!("  machine: {}", field(events.first(), "machine"));
     let state = current_state(&events).unwrap_or("-");
     println!("  status: {} in `{state}`", status.as_str());

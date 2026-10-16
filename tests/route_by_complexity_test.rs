@@ -16,7 +16,8 @@ use tempfile::TempDir;
 mod common;
 use common::write_script;
 
-const RUN: &str = "01-raise-upload-limit";
+/// The example's migration.
+const MIGRATION: &str = "01-raise-upload-limit.md";
 
 /// Writes the reply the test chose (`stub/reply.json`), as the real script writes the
 /// server's answer, and ends with a plain line.
@@ -125,6 +126,11 @@ impl Project {
             .code(code);
     }
 
+    /// The migration's run.
+    fn run(&self) -> String {
+        common::migration_run(&self.root().join(".decree"), MIGRATION)
+    }
+
     fn run_dir(&self, id: &str) -> PathBuf {
         self.root().join(".decree/runs").join(id)
     }
@@ -139,7 +145,7 @@ impl Project {
 
     /// The run's path: `<from> <event> <to>` for each transition after the claim.
     fn path(&self) -> Vec<String> {
-        self.events(RUN)
+        self.events(&self.run())
             .iter()
             .filter(|e| e["type"] == "transition" && e["source"] != "claim")
             .map(|e| format!("{} {} {}", e["from"], e["event"], e["to"]).replace('"', ""))
@@ -147,7 +153,7 @@ impl Project {
     }
 
     fn final_state(&self) -> String {
-        let message = fs::read_to_string(self.run_dir(RUN).join("message.md")).unwrap();
+        let message = fs::read_to_string(self.run_dir(&self.run()).join("message.md")).unwrap();
         message
             .lines()
             .find_map(|l| l.strip_prefix("state: "))
@@ -166,7 +172,7 @@ impl Project {
 
     /// The `attempt_value` of each `implement` script event, in order.
     fn script_values(&self) -> Vec<String> {
-        self.events(RUN)
+        self.events(&self.run())
             .iter()
             .filter(|e| e["type"] == "script" && e["script"] == "implement")
             .map(|e| e["attempt_value"].as_str().unwrap().to_string())
@@ -175,7 +181,7 @@ impl Project {
 
     /// The `attempt_value` of each `source: "attempt"` transition: the attempt it starts.
     fn attempt_transitions(&self) -> Vec<String> {
-        self.events(RUN)
+        self.events(&self.run())
             .iter()
             .filter(|e| e["type"] == "transition" && e["source"] == "attempt")
             .map(|e| e["attempt_value"].as_str().unwrap().to_string())
@@ -185,7 +191,7 @@ impl Project {
     /// The `request.json` of the router run `size_up` waited for.
     fn request(&self) -> Value {
         let child = self
-            .events(RUN)
+            .events(&self.run())
             .into_iter()
             .find(|e| e["type"] == "waiting")
             .unwrap()["child"]
@@ -337,7 +343,7 @@ fn a_stop_from_an_attempt_ends_the_run_in_failed() {
         p.calls(),
         ["opencode", "tests", "opencode", "tests", "claude"]
     );
-    let logs: String = fs::read_dir(p.run_dir(RUN))
+    let logs: String = fs::read_dir(p.run_dir(&p.run()))
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|path| path.to_string_lossy().ends_with("-implement.log"))

@@ -90,8 +90,11 @@ appear only where a machine invokes `model` or `person`.
   from a script. The emitting state must list the target in `emits:`.
 - **A file a person writes into `.decree/inbox/` runs in the order it arrived**: the first
   `process` or `daemon` to see it gives it a fresh id, renames it `<id>.md` and records its old
-  name as `arrived_as`. decree replaces `id`, `state` and `trigger` there, so to run a message
-  again, copy it (a migration, a run's `message.md`) into `inbox/`.
+  name as `arrived_as`. decree replaces `id`, `state`, `trigger` and `migration` there, so to
+  run a message again, copy it (a migration, a run's `message.md`) into `inbox/`.
+- **Name a migration's run by its file.** A migration's run has a time id like every other run;
+  `decree status 01-a`, `decree process --retry 01-a.md`, `decree tail 01-a` and `decree event
+  01-a <event>` take the migration's file name or stem and mean its newest run.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and
   `decree graph` after changing a machine. Commit `.decree/graph/`.
 - **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,
@@ -162,11 +165,11 @@ appear only where a machine invokes `model` or `person`.
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
 | `decree emit --machine <m> [--param k=v]...` | Queue a message for machine `m`; the body comes from stdin. Prints the new id. |
 | `decree process [--dry-run] [--quiet] [--machine <m> \| --exclude-machine <m>]` | Run everything queued: replies, pending runs, the inbox (FIFO), then migrations in order, printing each run's output. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
-| `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>`, or the migration blocking the queue. The failure message prints the exact command. |
+| `decree process --retry [<id>] [--state <s>]` | Continue a failed or interrupted run first: `<id>` (or a migration's file name or stem, meaning its newest run), or the migration blocking the queue. The failure message prints the exact command. |
 | `decree daemon [--interval <duration>] [--retry [<id>]] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with cron, every `2s` by default; `--machine` and `--exclude-machine` as for `process`. |
 | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then what blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; cron schedule (text only). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
-| `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state. |
+| `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state; a run id or a migration's name means its current wait. |
 | `decree stop [-m <note>]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted (no restart needed). Ctrl-C interrupts the run instead. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 
@@ -183,7 +186,7 @@ a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it 
 unless the git work tree is clean, naming each `interrupted` or `failed` run that may have left
 the changes, with its `--retry` and `git stash push` commands, also in its attention file) and
 ends with `commit` (`done`'s `onentry`: the run's work as one commit, titled with the message's
-first heading), or, in `failed`, with `keep` (the
+first heading, and the file for a migration's run), or, in `failed`, with `keep` (the
 run's changes stay in the work tree, and `keep` writes the run's `hold`, so its attention file
 in `.decree/attention/` holds every run until the run is retried). All three touch only the
 project folder. Before queuing work for them, commit or stash any changes. To continue: answer

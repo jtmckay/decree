@@ -396,9 +396,14 @@ fn text_to_media_readme_commands_run() {
             "{render}"
         );
     }
-    let payload =
-        fs::read_to_string(project.join(".decree/runs/04-animate-character/comfy-payload.json"))
-            .unwrap();
+    let run = common::migration_run(&project.join(".decree"), "04-animate-character.md");
+    let payload = fs::read_to_string(
+        project
+            .join(".decree/runs")
+            .join(run)
+            .join("comfy-payload.json"),
+    )
+    .unwrap();
     assert!(payload.contains("The character gently waves"), "{payload}");
 }
 

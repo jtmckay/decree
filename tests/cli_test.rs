@@ -1254,6 +1254,39 @@ fn daemon_retry_continues_a_failed_run() {
     );
 }
 
+/// `decree daemon --retry <file>`: a migration's file name means its run, as for `process`.
+#[test]
+fn daemon_retry_takes_a_migrations_file_name() {
+    let p = Project::init();
+    p.machine("flaky", FLAKY);
+    p.script("work", FLAKY_WORK);
+    fs::write(
+        p.decree_dir().join("migrations/01-flaky.md"),
+        "---\nmachine: flaky\n---\nFails, then works.\n",
+    )
+    .unwrap();
+    p.decree(&["process"]).assert().code(1);
+    let id = common::migration_run(&p.decree_dir(), "01-flaky.md");
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+
+    let mut daemon = p.spawn(&["daemon", "--interval", "1s", "--retry", "01-flaky.md"]);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while p.events(&id).last().unwrap()["state"] != "done" {
+        assert!(Instant::now() < deadline, "run {id} was never continued");
+        thread::sleep(Duration::from_millis(50));
+    }
+    // SAFETY: sends SIGTERM to the daemon.
+    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+    assert_eq!(
+        wait_exit(&mut daemon, Duration::from_secs(15)).code(),
+        Some(0)
+    );
+    assert_eq!(
+        fs::read_to_string(p.decree_dir().join("processed.md")).unwrap(),
+        "01-flaky.md\n"
+    );
+}
+
 /// A `.md` file a person puts in `.decree/attention/` pauses `decree daemon`: nothing is
 /// claimed while it exists, and the queue goes on once it is deleted, without a restart.
 #[test]

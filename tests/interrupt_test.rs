@@ -103,6 +103,16 @@ impl Project {
         self.decree().join("runs").join(id)
     }
 
+    /// The run folders, in id order.
+    fn runs(&self) -> Vec<String> {
+        let mut runs: Vec<String> = fs::read_dir(self.decree().join("runs"))
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .collect();
+        runs.sort();
+        runs
+    }
+
     fn write(&self, rel: &str, text: &str) {
         let path = self.decree().join(rel);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -181,14 +191,28 @@ impl Project {
     /// script's pid and the sleeping child's pid.
     fn sleeping(&self, id: &str) -> (Child, i32, i32) {
         let decree = self.spawn_process();
-        let child_pid = self.run_dir(id).join("child.pid");
         let deadline = Instant::now() + Duration::from_secs(30);
-        while !fs::read_to_string(&child_pid).is_ok_and(|t| t.ends_with('\n')) {
+        // A migration (`<file>.md`) gets its run's id as it starts.
+        let id = loop {
+            let id = match id.strip_suffix(".md") {
+                Some(_) => self.runs().into_iter().find(|run| {
+                    fs::read_to_string(self.run_dir(run).join("message.md"))
+                        .is_ok_and(|m| m.contains(&format!("\nmigration: {id}\n")))
+                }),
+                None => Some(id.to_string()),
+            };
+            let started = id.as_ref().is_some_and(|id| {
+                fs::read_to_string(self.run_dir(id).join("child.pid"))
+                    .is_ok_and(|t| t.ends_with('\n'))
+            });
+            if started {
+                break id.unwrap();
+            }
             assert!(Instant::now() < deadline, "the invoke never started");
             thread::sleep(Duration::from_millis(20));
-        }
+        };
         let pid = |name: &str| -> i32 {
-            fs::read_to_string(self.run_dir(id).join(name))
+            fs::read_to_string(self.run_dir(&id).join(name))
                 .unwrap()
                 .trim()
                 .parse()
@@ -197,8 +221,8 @@ impl Project {
         (decree, pid("script.pid"), pid("child.pid"))
     }
 
-    /// Kill decree with SIGKILL during run `id`'s sleeping invoke, as a crash would, then
-    /// clean up the script it leaves behind.
+    /// Kill decree with SIGKILL during run `id`'s sleeping invoke (or that of migration `id`,
+    /// a `.md` file), as a crash would, then clean up the script it leaves behind.
     fn crash_during_sleep(&self, id: &str) {
         let (mut decree, script, _) = self.sleeping(id);
         decree.kill().unwrap();
@@ -383,7 +407,8 @@ fn interrupted_migration_blocks_the_next_and_exits_1_naming_retry() {
     let p = Project::new();
     p.write("migrations/01-a.md", "---\nmachine: slow\n---\n");
     p.write("migrations/02-b.md", "---\nmachine: slow\n---\n");
-    p.crash_during_sleep("01-a");
+    p.crash_during_sleep("01-a.md");
+    let a = common::migration_run(&p.tmp.path().join(".decree"), "01-a.md");
 
     let out = p.process().assert().code(1).get_output().clone();
     let err = stderr(&out);
@@ -392,14 +417,14 @@ fn interrupted_migration_blocks_the_next_and_exits_1_naming_retry() {
         err.contains("Fix the cause, then run `decree process --retry`."),
         "{err}"
     );
-    assert!(!exists(&p.run_dir("02-b")));
+    assert_eq!(p.runs(), [a.as_str()], "02-b.md has no run");
     assert_eq!(p.read("processed.md"), "");
-    let events = p.events("01-a");
+    let events = p.events(&a);
     assert_eq!(events.last().unwrap()["cause"], "crash");
 
     // Still blocked on the next pass.
     p.process().assert().code(1);
-    assert!(!exists(&p.run_dir("02-b")));
+    assert_eq!(p.runs(), [a.as_str()]);
 }
 
 #[test]

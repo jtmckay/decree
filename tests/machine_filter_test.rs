@@ -304,13 +304,16 @@ fn a_migration_for_another_machine_holds_back_the_rest() {
 
     // The process for `b` runs `01`, then is held back by `02`.
     let out = stdout(&mut p.process(&["--machine", "b"]));
-    assert_eq!(p.order(), ["b 01-first"]);
+    let decree = p.tmp.path().join(".decree");
+    let first = common::migration_run(&decree, "01-first.md");
+    assert_eq!(p.order(), [format!("b {first}")]);
     assert!(
         out.contains("Held back: migration 02-second.md is for machine `a`"),
         "{out}"
     );
     p.process(&["--machine", "a"]).assert().success();
-    assert_eq!(p.order(), ["b 01-first", "a 02-second"]);
+    let second = common::migration_run(&decree, "02-second.md");
+    assert_eq!(p.order(), [format!("b {first}"), format!("a {second}")]);
 }
 
 /// `--dry-run` lists only what this process would run.

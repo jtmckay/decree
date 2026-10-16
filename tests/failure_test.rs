@@ -246,6 +246,27 @@ impl Project {
         let pid = fs::read_to_string(pid).unwrap().trim().parse().unwrap();
         (decree, pid)
     }
+
+    /// `working`, for the one migration queued: its run's id is made as it starts.
+    fn working_migration(&self) -> (Child, i32) {
+        fs::write(self.root().join("wait.flag"), "").unwrap();
+        let decree = self.spawn_process();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let pid = loop {
+            let pid = self
+                .runs()
+                .into_iter()
+                .map(|id| self.run_dir(&id).join("work.pid"))
+                .find(|pid| pid.exists());
+            if let Some(pid) = pid {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "work never started");
+            thread::sleep(Duration::from_millis(5));
+        };
+        let pid = fs::read_to_string(pid).unwrap().trim().parse().unwrap();
+        (decree, pid)
+    }
 }
 
 fn wait_with_timeout(child: &mut Child, timeout: Duration) -> std::process::ExitStatus {
@@ -415,7 +436,13 @@ fn a_migration_waiting_for_an_interrupted_child_blocks_and_retry_continues_the_c
         status.starts_with("Attention: .decree/attention/: 2 file(s)\n"),
         "{status}"
     );
-    let file = fs::read_to_string(p.root().join(".decree").join("attention/01-call.md")).unwrap();
+    let call = common::migration_run(&p.root().join(".decree"), "01-call.md");
+    let file = fs::read_to_string(
+        p.root()
+            .join(".decree")
+            .join(format!("attention/{call}.md")),
+    )
+    .unwrap();
     assert!(file.contains("\nstatus: waiting\n"), "{file}");
     assert!(file.contains("\nmessage: 01-call.md\n"), "{file}");
     assert!(file.contains(&format!("child run `{child}`")), "{file}");
@@ -469,7 +496,7 @@ fn a_second_process_says_the_migration_is_active_in_the_first() {
         "---\nmachine: slow\n---\n",
     )
     .unwrap();
-    let (mut first, _) = p.working("01-slow");
+    let (mut first, _) = p.working_migration();
     let pid = first.id();
     p.cmd(&["process"])
         .assert()

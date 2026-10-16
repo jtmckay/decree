@@ -427,6 +427,46 @@ fn status_of_an_active_run_names_its_running_script() {
 /// `--format` where it does not apply is a usage error, exit 2: `process` without
 /// `--dry-run` and `status --cron` print text only; `daemon`, `tail`, `init` and `help`
 /// take no `--format`.
+/// A migration's run in `status` and `prune` JSON: `migration` beside `id`, valid against
+/// the schemas, and `decree status <stem>` finds it.
+#[test]
+fn a_migrations_run_has_its_file_in_status_and_prune_json() {
+    let p = Project::new();
+    fs::write(p.root().join("ok.flag"), "").unwrap();
+    fs::write(
+        p.root().join(".decree/migrations/01-first.md"),
+        "---\nmachine: flaky\n---\n",
+    )
+    .unwrap();
+    run(p.root(), &["process"], "");
+    let id = common::migration_run(&p.root().join(".decree"), "01-first.md");
+
+    let (code, doc) = p.json(&["status"], "", schema::CLI_STATUS_SCHEMA, false);
+    assert_eq!(code, 0);
+    let row = &doc["runs"]["finished"]["done"][0];
+    assert_eq!(row["id"], id.as_str(), "{doc:#}");
+    assert_eq!(row["migration"], "01-first.md", "{doc:#}");
+    let (code, doc) = p.json(
+        &["status", "01-first"],
+        "",
+        schema::CLI_STATUS_SCHEMA,
+        false,
+    );
+    assert_eq!(code, 0);
+    assert_eq!(doc["id"], id.as_str());
+    assert_eq!(doc["migration"], "01-first.md");
+
+    let (code, doc) = p.json(
+        &["prune", "--older-than", "0s"],
+        "",
+        schema::CLI_PRUNE_SCHEMA,
+        false,
+    );
+    assert_eq!(code, 0);
+    assert_eq!(doc["runs"][0]["id"], id.as_str(), "{doc:#}");
+    assert_eq!(doc["runs"][0]["migration"], "01-first.md", "{doc:#}");
+}
+
 #[test]
 fn format_where_it_does_not_apply_exits_2() {
     let p = Project::new();

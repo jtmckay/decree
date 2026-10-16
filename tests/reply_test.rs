@@ -188,7 +188,8 @@ fn a_migration_held_back_by_a_child_waiting_for_a_reply_is_named() {
     p.write("migrations/02-later.md", "---\nmachine: release\n---\n");
     let out = p.process().assert().code(0).get_output().stdout.clone();
     let out = String::from_utf8(out).unwrap();
-    let child = p.runs().into_iter().find(|r| r != "01-release").unwrap();
+    let release = common::migration_run(&p.decree(), "01-release.md");
+    let child = p.runs().into_iter().find(|r| *r != release).unwrap();
     let wait_id = p.events(&child).last().unwrap()["wait_id"]
         .as_str()
         .unwrap()

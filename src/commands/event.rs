@@ -1,4 +1,4 @@
-//! `decree event <wait id | run id> <event> [-m <note>]` (docs/reference/cli.md): queue a reply
+//! `decree event <wait id | run id | migration> <event> [-m <note>]` (docs/reference/cli.md): queue a reply
 //! for a run waiting in a `person` state (docs/reference/messages.md, Replies), through the same
 //! writer as `decree emit`. The next `process` pass delivers it.
 
@@ -13,6 +13,7 @@ use crate::commands::process::context;
 use crate::error::DecreeError;
 use crate::layout::{DECREE_DIR, INBOX_DIR};
 use crate::message::{self, Message};
+use crate::migration;
 use crate::reply;
 
 /// Run `decree event`: check that the run is waiting, accepts `event` and has no reply
@@ -30,6 +31,9 @@ pub fn run(
     // The inbox before the run: a reply gone from `inbox/` by now was delivered under the
     // run's lock, so the check below sees the run `active` or no longer waiting.
     let queued = reply::queued(&project.decree_dir.join(INBOX_DIR))?;
+    // A migration's file name or stem means its newest run.
+    let resolved = migration::resolve(&ctx.runs_dir(), target)?;
+    let target = resolved.as_deref().unwrap_or(target);
     let wait = reply::check(&ctx, target, event, false)?.map_err(DecreeError::Other)?;
     // Delivering the first reply ends the wait (docs/reference/messages.md, Replies, step 2).
     let answers = |to: &String| *to == wait.wait_id || *to == wait.run_id;

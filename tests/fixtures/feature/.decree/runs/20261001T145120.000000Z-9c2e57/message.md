@@ -2,8 +2,9 @@
 machine: feature
 params:
   max_rounds: 3
-id: 02-upload-quota-per-plan
+id: 20261001T145120.000000Z-9c2e57
 trigger: migration
+migration: 02-upload-quota-per-plan.md
 state: review
 ---
 # Per-plan upload limits

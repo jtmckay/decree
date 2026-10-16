@@ -3,6 +3,8 @@
 
 use assert_cmd::cargo::cargo_bin_cmd;
 
+mod common;
+
 /// Concepts decree no longer has, which must not appear in its help or README.
 /// (`tests/examples_test.rs` scans both for older terms.)
 const OLD_TERMS: &[&str] = &[
@@ -169,12 +171,20 @@ fn test_every_readme_command_runs_as_written() {
     let decree = dir.path().join(".decree");
     let processed = std::fs::read_to_string(decree.join("processed.md")).unwrap();
     assert!(processed.lines().any(|l| l == "01-hello.md"), "{processed}");
-    let message = std::fs::read_to_string(decree.join("runs/01-hello/message.md")).unwrap();
+    // The migration's run has a time id; `decree event 01-hello` and `decree status
+    // 01-hello` named it by the migration's stem.
+    let id = common::migration_run(&decree, "01-hello.md");
+    let message =
+        std::fs::read_to_string(decree.join("runs").join(&id).join("message.md")).unwrap();
     assert!(message.contains("state: done"), "{message}");
     assert!(decree.join("graph/hello.md").is_file());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("decree event 01-hello.w3 approve"),
+        stdout.contains(&format!("decree event {id}.w3 approve")),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("Run {id}\n  migration: 01-hello.md\n")),
         "{stdout}"
     );
 }

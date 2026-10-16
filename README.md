@@ -96,7 +96,7 @@ states:
 EOF
 ```
 
-**4. Write a message.** Migrations are messages that run once, in filename order. A migration's run id is its file stem.
+**4. Write a message.** Migrations are messages that run once, in filename order. A migration's run gets a time id like every other run; wherever you name a run, the migration's file name or stem (`01-hello`) works too.
 
 ```bash
 cat > .decree/migrations/01-hello.md <<'EOF'

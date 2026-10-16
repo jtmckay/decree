@@ -2,6 +2,6 @@ Waiting for a person: feature/review - Per-plan upload limits
 Question: Tests still fail. What next?
 Options (event: description):
 {"approve": "Good enough; commit it.", "reject": "Stop.", "retry": "Try again; see my note."}
-  decree event 02-upload-quota-per-plan.w15 approve -m "<note>"
-  decree event 02-upload-quota-per-plan.w15 reject -m "<note>"
-  decree event 02-upload-quota-per-plan.w15 retry -m "<note>"
+  decree event 20261001T145120.000000Z-9c2e57.w15 approve -m "<note>"
+  decree event 20261001T145120.000000Z-9c2e57.w15 reject -m "<note>"
+  decree event 20261001T145120.000000Z-9c2e57.w15 retry -m "<note>"
