@@ -434,18 +434,6 @@ fn test_init_gitignore_content() {
     );
 }
 
-// --- decree (bare) without .decree/ ---
-
-#[test]
-fn test_bare_decree_without_project_fails() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("not inside a decree project"));
-}
-
 // --- decree status ---
 
 #[test]

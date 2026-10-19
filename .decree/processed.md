@@ -117,3 +117,4 @@ A03-migration-runs-time-ids.md
 A04-emit-reads-frontmatter.md
 A05-decree-upgrade.md
 A06-max-depth-setting.md
+A07-bare-decree-prints-synopsis.md

@@ -262,6 +262,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree prune --older-than AGE [--dry-run]` | Delete finished runs older than `AGE` (`30d`, `12h`, `90m`, `90s`); ship them to Loki first if you keep history |
 | `decree upgrade` | Print how to upgrade decree: the install line, pinned to a release, and for a `cargo install` copy; then `decree skill` (and `decree schema`) in each project. It runs nothing itself |
 | `decree help` | Full reference: files, keys, environment variables |
+| `decree` | Print a synopsis of the quick start; it runs nothing (`decree process` runs the queue) |
 | `decree --version` | Print the version |
 
 `--format json` on `check`, `status`, `emit`, `event`, `stop`, `prune`, `graph`, `schema`, `skill`, `upgrade` and `process --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).

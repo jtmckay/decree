@@ -16,6 +16,13 @@ pub mod upgrade;
 
 use crate::error::DecreeError;
 
+/// Bare `decree`: the quick start in short, `src/templates/synopsis.md` as it is
+/// (docs/reference/cli.md). Reads, writes and runs nothing.
+pub fn synopsis() -> Result<(), DecreeError> {
+    print!("{}", include_str!("../templates/synopsis.md"));
+    Ok(())
+}
+
 pub fn help() -> Result<(), DecreeError> {
     print!("{}", include_str!("../templates/help.txt"));
     Ok(())

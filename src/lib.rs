@@ -45,17 +45,12 @@ pub fn run() -> i32 {
 
 fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     let root = error::require_project_root;
-    // Bare `decree` runs `decree process`; every command but `init`, `upgrade` and `help` needs a
-    // project.
-    match command.unwrap_or(Command::Process {
-        dry_run: false,
-        retry: None,
-        state: None,
-        format: Format::Text,
-        quiet: false,
-        machines: Vec::new(),
-        exclude_machines: Vec::new(),
-    }) {
+    // Bare `decree` prints the synopsis and touches nothing; every command but `init`, `upgrade`
+    // and `help` needs a project.
+    let Some(command) = command else {
+        return commands::synopsis();
+    };
+    match command {
         Command::Init { ai, permissions } => commands::init::run(ai, permissions),
         Command::Help => commands::help(),
         Command::Upgrade { format } => commands::upgrade::run(format),

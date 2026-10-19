@@ -69,6 +69,8 @@ Commands:
                               and cargo install forms) and what to run in
                               each project after; runs nothing
   decree help                 This help text
+  decree                      A short synopsis of the quick start; runs
+                              nothing (run the queue with decree process)
   decree --version            Print the version
 
   --format json on check, status, emit, event, stop, prune, graph, schema, skill,
