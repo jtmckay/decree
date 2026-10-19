@@ -3,7 +3,7 @@ decree: durable state-machine workflows from plain files.
 A message says what to do, a machine says in what order, scripts do the work.
 
 Install or update:
-       curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh
+       curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh
 
 1. Set up a project:
        decree init

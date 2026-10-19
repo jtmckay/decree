@@ -2,7 +2,7 @@
 
 decree's machine schema ([Schema](reference/machines.md#schema)) lets an editor complete keys, show each key's description on hover, and underline a misspelled key or a wrong value as you type. Machines carry no line for it: editors find the schema by the file's path, through SchemaStore. Until then, or offline, a setting or a line in the file does the same.
 
-The schemas live in [`schema/v1/`](../schema/v1/) in the decree repository, the same bytes decree is built from. Each one's `$id` is its URL there; the machine schema's is `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json`. That URL resolves once decree 0.5 is merged to `main`; while 0.5 is in beta, the same file is on the `v0.5` branch, `https://raw.githubusercontent.com/jtmckay/decree/v0.5/schema/v1/machine.schema.json`.
+The schemas live in [`schema/v1/`](../schema/v1/) in the decree repository, the same bytes decree is built from. Each one's `$id` is its URL there; the machine schema's is `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json`.
 
 ## SchemaStore
 
@@ -19,16 +19,16 @@ decree's entry, for [`src/api/json/catalog.json`](https://github.com/SchemaStore
 }
 ```
 
-The maintainer submits it once 0.5.0 is on `main`, so the `url` resolves when SchemaStore checks it. `docs_test.rs` holds the entry to the machine schema's `$id`.
+The `url` resolves on `main`, where SchemaStore checks it. `docs_test.rs` holds the entry to the machine schema's `$id`.
 
 ## Until then, or offline
 
-**VS Code.** With Red Hat's YAML extension, map the schema to the machines in the project's `.vscode/settings.json`. While 0.5 is in beta, use the `v0.5` branch's URL:
+**VS Code.** With Red Hat's YAML extension, map the schema to the machines in the project's `.vscode/settings.json`:
 
 ```json
 {
   "yaml.schemas": {
-    "https://raw.githubusercontent.com/jtmckay/decree/v0.5/schema/v1/machine.schema.json": [
+    "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json": [
       ".decree/machines/*.yml",
       ".decree/machines/*.yaml"
     ]

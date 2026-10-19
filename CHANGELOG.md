@@ -2,7 +2,7 @@
 
 All notable changes to decree are listed here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and decree follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). The files decree reads and writes are versioned separately, in their schema path (`v1`), as [Versioning](docs/reference/README.md#versioning) states: within `v1` changes are additive only, and while decree is 0.x every change to `v1` is listed here.
 
-## [0.5.0] - Unreleased
+## [0.5.0] - 2026-10-19
 
 decree 0.5 is a rewrite. A project is three building blocks: **messages** (markdown with YAML frontmatter), **machines** (YAML statecharts that follow W3C SCXML) and **scripts** (executables). A message names its machine, the machine names scripts and decisions, and every run is recorded in `.decree/runs/<id>/events.jsonl`. A `model` decision is answered by a router machine through `request.json` and `reply.json`, and a `person` decision by a reply message. The contract is described in the [reference](docs/reference/README.md), with the reasoning in the [decision log](docs/decisions.md). There is no upgrade path from 0.4.
 
@@ -126,4 +126,4 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 - The documents and examples agree with decree 0.5 again, and `tests/docs_api_test.rs` keeps them so (migration 87): the reference's settings table names "Retries" instead of 0.4's `max_retries`; `docs/services.md`'s systemd example uses `use_comfy` and `use_ollama`, as `examples/tmux-services/` does; a claimed message gains `id` and `trigger`, not `parent` (README, `decree help`); `events.jsonl` puts `run_id` and `machine` on every line, but `state` only on events about a state (README, `examples/feature/` and `examples/observability/`, which also named a `router` event type that does not exist); `decree graph` takes no machine argument (`examples/feature/`, `graph.md`); a script names its event in `$DECREE_EVENT_FILE` rather than printing it (the `feature` machine's comment, the skill); the skill lists V1–V21 and warns about stale schemas too; `decree graph` and `decree tail` document their exit code 1; three error messages in `cli.md` and `graph.md` render as code again; `docs/routers.md`'s `local_model` fragment shows its options; and `runs.md` shows four recorded `events.jsonl` lines.
 - `develop`'s `verify` can fail: it asks the AI to end its reply with `VERDICT: pass` or `VERDICT: fail` and names that event, and a reply without one fails the attempt. It asked the AI to exit 1, but `claude -p` exits 0 whatever the model concludes, so `verify` always passed (migration 96).
 
-[0.5.0]: https://github.com/jtmckay/decree/tree/v0.5
+[0.5.0]: https://github.com/jtmckay/decree/releases/tag/v0.5.0

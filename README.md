@@ -32,14 +32,14 @@ Decisions are states of their own, cheapest first: a deterministic `check`, then
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh
 ```
 
-This installs the newest stable release from 0.5.0 on (while there is none, the newest beta) as a static Linux x86-64 binary in `$XDG_BIN_HOME` (default `~/.local/bin`), with no sudo, after checking its sha256; run it again to update, or pin a version with `| sh -s -- v0.5.0-beta.15`. Elsewhere (macOS, ARM), build from a tag: `cargo install --git https://github.com/jtmckay/decree --tag v0.5.0-beta.15`. crates.io has only an older decree until 0.5.0 is published there, so `cargo install decree` is not this version.
+This installs the newest stable release from 0.5.0 on (while there is none, the newest beta) as a static Linux x86-64 binary in `$XDG_BIN_HOME` (default `~/.local/bin`), with no sudo, after checking its sha256; run it again to update, or pin a version with `| sh -s -- v0.5.0`. Elsewhere (macOS, ARM), build from a tag: `cargo install --git https://github.com/jtmckay/decree --tag v0.5.0`. crates.io has only an older decree until 0.5.0 is published there, so `cargo install decree` is not this version.
 
 decree runs on Linux and macOS.
 
-**Coming from 0.4?** 0.5 is a rewrite, and there is no upgrade path or upgrade tool: finish pending 0.4 work with 0.4 first. 0.5 does not read a 0.4 `.decree/`; what changed is in the [changelog's 0.5.0 entry](CHANGELOG.md#050---unreleased).
+**Coming from 0.4?** 0.5 is a rewrite, and there is no upgrade path or upgrade tool: finish pending 0.4 work with 0.4 first. 0.5 does not read a 0.4 `.decree/`; what changed is in the [changelog's 0.5.0 entry](CHANGELOG.md#050---2026-10-19).
 
 ## Quick start
 

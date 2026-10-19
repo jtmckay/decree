@@ -97,7 +97,7 @@ fn prints_the_same_inside_a_project() {
 }
 
 /// The README's install line appears verbatim in the output, so the two change together
-/// (when `v0.5` becomes `main` in the URL).
+/// (the URL names the branch the install script is read from).
 #[test]
 fn prints_the_readmes_install_line() {
     let (_, stdout, _) = run(dir(false).path(), &["upgrade"]);

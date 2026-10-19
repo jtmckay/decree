@@ -63,9 +63,9 @@
   },
   "examples": [
     {
-      "version": "0.5.0-beta.13",
-      "install": "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh",
-      "pinned": "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh -s -- <tag>",
+      "version": "0.5.0",
+      "install": "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh",
+      "pinned": "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh -s -- <tag>",
       "cargo": "cargo install --git https://github.com/jtmckay/decree --tag <tag> --force",
       "cargo_note": "If `which -a decree` lists two copies, the one first on PATH runs, so remove the other (`cargo uninstall decree`).",
       "releases": "https://github.com/jtmckay/decree/releases",

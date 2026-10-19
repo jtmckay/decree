@@ -1,8 +1,8 @@
 #!/bin/sh
 # Install decree from a GitHub release:
-#   curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh
 # The newest stable release by default (a beta only while there is no stable 0.5 or later);
-# a version with `| sh -s -- v0.5.0-beta.12`.
+# a version with `| sh -s -- v0.5.0`.
 # Installs to $XDG_BIN_HOME, default ~/.local/bin (as uv does), with no sudo. Run it again to update.
 set -eu
 repo=jtmckay/decree

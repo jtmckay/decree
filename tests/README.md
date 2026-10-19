@@ -1,6 +1,6 @@
 # Tests
 
-`cargo test` runs the unit tests in `src/` and the files below. CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the same gate as this repository's `develop` `gate` script, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`, on every push to `main` and `v0.5` and every pull request; `ci_test.rs` keeps the two equal. Each test builds its own `.decree/` in a temp directory (or only reads this repository), drives the built `decree` binary, and calls no model and no network.
+`cargo test` runs the unit tests in `src/` and the files below. CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the same gate as this repository's `develop` `gate` script, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`, on every push to `main` and every pull request; `ci_test.rs` keeps the two equal. Each test builds its own `.decree/` in a temp directory (or only reads this repository), drives the built `decree` binary, and calls no model and no network.
 
 | File | Covers |
 | --- | --- |

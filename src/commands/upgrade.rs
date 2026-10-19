@@ -12,7 +12,7 @@ const REPOSITORY: &str = "https://github.com/jtmckay/decree";
 /// The install line of the README, the only place in the source that names `install.sh`'s
 /// URL; `tests/upgrade_test.rs` checks the README's line is the same.
 const INSTALL: &str =
-    "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/v0.5/install.sh | sh";
+    "curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh";
 
 /// Stands for a release tag in the pinned lines.
 const TAG: &str = "<tag>";

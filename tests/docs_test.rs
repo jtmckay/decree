@@ -201,7 +201,7 @@ fn code_blocks<'a>(text: &'a str, lang: &str) -> Vec<String> {
 
 /// The SchemaStore catalog entry in `docs/editors.md` is valid JSON with the keys the catalog
 /// takes, matches machine files by path, and its `url` is the machine schema's `$id`; the VS
-/// Code setting maps the same schema, from the `v0.5` branch while 0.5 is in beta.
+/// Code setting maps the same schema.
 #[test]
 fn the_schemastore_entry_names_the_machine_schema() {
     let root = repo();
@@ -237,9 +237,8 @@ fn the_schemastore_entry_names_the_machine_schema() {
     );
     assert_eq!(entry["url"], id);
 
-    let beta = id.replace("/decree/main/", "/decree/v0.5/");
     assert_eq!(
-        blocks[1]["yaml.schemas"][&beta],
+        blocks[1]["yaml.schemas"][id],
         serde_json::json!([".decree/machines/*.yml", ".decree/machines/*.yaml"])
     );
 }

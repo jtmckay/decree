@@ -65,7 +65,7 @@ fn the_workflow_parses_and_runs_on_pushes_and_pull_requests() {
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    assert_eq!(branches, ["main", "v0.5"]);
+    assert_eq!(branches, ["main"]);
     assert!(
         wf["on"].get("pull_request").is_some(),
         "ci.yml runs on every pull_request"
