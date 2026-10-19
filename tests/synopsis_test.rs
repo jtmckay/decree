@@ -86,8 +86,8 @@ fn bare_decree_in_a_project_starts_no_run() {
     assert!(status.contains("migrations/: 1 pending"), "{status}");
 }
 
-/// The synopsis's numbered steps: (number, the indented lines under it, trimmed).
-fn steps() -> Vec<(u32, Vec<String>)> {
+/// The synopsis's numbered steps, by number: the indented lines under each, trimmed.
+fn steps() -> std::collections::BTreeMap<u32, Vec<String>> {
     let mut steps: Vec<(u32, Vec<String>)> = Vec::new();
     for line in SYNOPSIS.lines() {
         let numbered = line
@@ -103,8 +103,8 @@ fn steps() -> Vec<(u32, Vec<String>)> {
         }
     }
     let numbers: Vec<u32> = steps.iter().map(|(n, _)| *n).collect();
-    assert_eq!(numbers, [0, 1, 2, 3, 4, 5], "the synopsis's steps");
-    steps
+    assert_eq!(numbers, [1, 2, 3, 4, 5], "the synopsis's steps");
+    steps.into_iter().collect()
 }
 
 /// The first `` `…` `` span of `line`.
@@ -138,18 +138,18 @@ fn synopsis_steps_run_as_written() {
     };
 
     // 1. Set up a project.
-    assert_eq!(steps[1].1, ["decree init"]);
-    decree(&steps[1].1[0]);
+    assert_eq!(steps[&1], ["decree init"]);
+    decree(&steps[&1][0]);
 
     // 2. A script: exit 0 is `done`.
-    let script = step_file(&steps[2].1);
+    let script = step_file(&steps[&2]);
     let path = dir.path().join(&script);
     fs::write(&path, "#!/usr/bin/env bash\necho hello\n").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     let script_name = Path::new(&script).file_stem().unwrap().to_str().unwrap();
 
     // 3. A machine that runs it.
-    let machine = step_file(&steps[3].1);
+    let machine = step_file(&steps[&3]);
     let machine_name = Path::new(&machine).file_stem().unwrap().to_str().unwrap();
     assert_eq!(machine_name, "hello");
     fs::write(
@@ -163,7 +163,7 @@ fn synopsis_steps_run_as_written() {
     .unwrap();
 
     // 4. A message for that machine.
-    let message = step_file(&steps[4].1);
+    let message = step_file(&steps[&4]);
     fs::write(
         dir.path().join(&message),
         format!("---\nmachine: {machine_name}\n---\n# Say hello\n"),
@@ -172,16 +172,22 @@ fn synopsis_steps_run_as_written() {
 
     // 5. The commands, as written. `decree tail` without an id follows runs until stopped,
     // so it is the one left out.
-    let commands: Vec<&str> = steps[5].1.iter().filter_map(|l| quoted(l)).collect();
+    // Each line starts with the command, in backticks or not: `decree <command>`.
+    let commands: Vec<String> = steps[&5]
+        .iter()
+        .map(|l| l.trim_start_matches('`'))
+        .filter(|l| l.starts_with("decree "))
+        .map(|l| l.split(['`', ' ']).take(2).collect::<Vec<_>>().join(" "))
+        .collect();
     for want in [
         "decree check",
         "decree graph",
         "decree process",
         "decree status",
     ] {
-        assert!(commands.contains(&want), "step 5 has no `{want}`");
+        assert!(commands.iter().any(|c| c == want), "step 5 has no `{want}`");
     }
-    for command in commands.iter().filter(|c| **c != "decree tail") {
+    for command in commands.iter().filter(|c| *c != "decree tail") {
         decree(command);
     }
 
@@ -196,13 +202,21 @@ fn synopsis_steps_run_as_written() {
     assert_eq!(doc["id"], id.as_str());
 }
 
-/// The synopsis's step 0, the README's first ```bash block and `decree upgrade` all show one
-/// install line.
+/// The synopsis, the README's first ```bash block and `decree upgrade` all show one install
+/// line.
 #[test]
 fn synopsis_readme_and_upgrade_show_one_install_line() {
-    let steps = steps();
-    assert_eq!(steps[0].1.len(), 1, "step 0 is one line: {:?}", steps[0].1);
-    let synopsis = steps[0].1[0].as_str();
+    let lines: Vec<&str> = SYNOPSIS
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.ends_with("/install.sh | sh"))
+        .collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "the synopsis has one install line: {lines:?}"
+    );
+    let synopsis = lines[0];
 
     let readme = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
     let readme_lines: Vec<&str> = readme
