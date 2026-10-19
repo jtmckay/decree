@@ -2367,6 +2367,72 @@ fn model_invalid_reply_or_failed_router_is_error_with_router_error() {
     }
 }
 
+/// `DECREE_MAX_DEPTH=2`: a child at depth 3 never starts, and the event names the limit.
+#[test]
+fn machine_invoke_past_a_lowered_max_depth_starts_no_child() {
+    let p = parent_project("print_env");
+    let input = RunInput {
+        depth: 2,
+        ..inbox_input()
+    };
+    let mut ctx = p.ctx();
+    ctx.env.max_depth = 2;
+    let empty = serde_norway::Mapping::new();
+    let outcome = Interpreter::new(&ctx, p.machine(), p.executor("emit", &empty), input)
+        .unwrap()
+        .start()
+        .unwrap();
+    assert_eq!(outcome, Outcome::Finished("failed".into()));
+    assert!(p.events_of("waiting").is_empty());
+    assert_eq!(p.events_of("transition")[1]["error"], "max_depth 2 reached");
+}
+
+/// A raised limit lets a child start deeper than 10.
+#[test]
+fn machine_invoke_under_a_raised_max_depth_starts_the_child() {
+    let p = parent_project("print_env");
+    let input = RunInput {
+        depth: 14,
+        ..inbox_input()
+    };
+    let mut ctx = p.ctx();
+    ctx.env.max_depth = 20;
+    let empty = serde_norway::Mapping::new();
+    Interpreter::new(&ctx, p.machine(), p.executor("emit", &empty), input)
+        .unwrap()
+        .start()
+        .unwrap();
+    assert_eq!(p.events_of("waiting").len(), 1);
+    let child = p.child_id();
+    let message = fs::read_to_string(
+        p.root()
+            .join(".decree/runs")
+            .join(&child)
+            .join(MESSAGE_FILE),
+    )
+    .unwrap();
+    assert!(message.contains("depth: 15\n"), "{message}");
+}
+
+#[test]
+fn model_past_a_lowered_max_depth_starts_no_router() {
+    let p = model_project("router_retry", None);
+    let input = RunInput {
+        depth: 2,
+        ..inbox_input()
+    };
+    let mut ctx = p.ctx();
+    ctx.env.max_depth = 2;
+    let empty = serde_norway::Mapping::new();
+    let outcome = Interpreter::new(&ctx, p.machine(), p.executor("emit", &empty), input)
+        .unwrap()
+        .start()
+        .unwrap();
+    assert_eq!(outcome, Outcome::Finished("failed".into()));
+    assert!(p.events_of("waiting").is_empty());
+    assert_eq!(model_decision_of(&p)["router_error"], "max_depth 2 reached");
+}
+
 #[test]
 fn model_past_max_depth_starts_no_router_and_is_error() {
     let p = model_project("router_retry", None);

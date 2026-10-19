@@ -93,6 +93,7 @@ impl Project {
             "DECREE_MESSAGE_ID",
             "DECREE_MACHINE",
             "DECREE_STATE",
+            "DECREE_MAX_DEPTH",
             "TRACEPARENT",
             "TRACESTATE",
         ] {
@@ -203,7 +204,9 @@ fn emit_from_a_run_at_max_depth_exits_1() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("depth 11 exceeds max_depth 10"),
+        stderr(&output).contains(
+            "depth 11 exceeds max_depth 10 (set DECREE_MAX_DEPTH to change it): run at is at depth 10"
+        ),
         "{}",
         stderr(&output)
     );

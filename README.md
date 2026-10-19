@@ -289,14 +289,14 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   schema/v1/                      # optional local copy written by decree schema; not committed
 ```
 
-There is no configuration file. Each setting is a convention or a fixed limit:
+There is no configuration file. Each setting is a convention, a fixed limit or a variable:
 
 | Setting | Instead |
 | --- | --- |
 | Router for a `model` invoke | The machine named `router`, unless the invoke sets `router:` |
 | Default machine | None: every message names its `machine:` |
 | Retries | `attempts` in the script invoke, a number or a list of values (`[local, claude]`); default 1 (no retry) |
-| Emit depth | A fixed limit of 10 |
+| Emit depth | 10, unless `DECREE_MAX_DEPTH` in the shell or `.decree/.env` sets it |
 | Log size | Each script log is capped at 2 MiB |
 | Sharing across projects | Symlink shared machines and scripts into `machines/` and `scripts/` |
 

@@ -14,7 +14,7 @@ use crate::commands::print_json;
 use crate::error::DecreeError;
 use crate::layout::{DECREE_DIR, INBOX_DIR, MESSAGE_FILE, RUNS_DIR};
 use crate::machine::{DataType, LoadedMachine};
-use crate::message::{self, Message, MAX_DEPTH};
+use crate::message::{self, Message, MAX_DEPTH_VAR};
 use crate::runtime::ROOT_STATE;
 use crate::trace::{
     Incoming, TraceParent, TRACEPARENT_ENV, TRACEPARENT_KEY, TRACESTATE_ENV, TRACESTATE_KEY,
@@ -32,6 +32,7 @@ pub fn run(
     format: Format,
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
+    let max_depth = crate::commands::check::max_depth(&project)?;
     let mut text = String::new();
     std::io::stdin().read_to_string(&mut text)?;
     let (mut message, from_stdin) = read_message(text)?;
@@ -63,9 +64,10 @@ pub fn run(
     }
     if let Some(parent) = var("DECREE_MESSAGE_ID") {
         let depth = parent_depth(&project, &parent)? + 1;
-        if depth > MAX_DEPTH {
+        if depth > max_depth {
             return Err(DecreeError::Other(format!(
-                "depth {depth} exceeds max_depth {MAX_DEPTH}: run {parent} is at depth {}",
+                "depth {depth} exceeds max_depth {max_depth} (set {MAX_DEPTH_VAR} to change it): \
+                 run {parent} is at depth {}",
                 depth - 1
             )));
         }

@@ -157,6 +157,9 @@ pub struct RunInfo {
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
     /// where the reply must go (docs/reference/runs.md, Model).
     pub router: Option<RouterFiles>,
+    /// `DECREE_MAX_DEPTH`: the project's `max_depth`, which `decree emit` in the script
+    /// checks against.
+    pub max_depth: u32,
     /// From `.decree/.env`, without the variables decree's own environment sets, then from
     /// the machine's `env_file`, which wins over that environment.
     pub env: Vec<(String, String)>,
@@ -617,6 +620,7 @@ impl Executor {
             ("PHASE", run.phase.as_str().into()),
             ("VISITS", run.visits.to_string().into()),
             ("RUN_ATTEMPT", info.run_attempt.to_string().into()),
+            ("MAX_DEPTH", info.max_depth.to_string().into()),
             ("RUN_DIR", info.run_dir.as_os_str().into()),
             (
                 "STORE",
@@ -924,6 +928,7 @@ pub(crate) mod executor_tests {
                 root_run_dir: self.run_dir(),
                 run_attempt: 1,
                 router: None,
+                max_depth: 10,
                 env: Vec::new(),
             }
         }
@@ -1427,6 +1432,7 @@ pub(crate) mod executor_tests {
             ("DECREE_PHASE", "invoke".to_string()),
             ("DECREE_VISITS", "2".to_string()),
             ("DECREE_RUN_ATTEMPT", "2".to_string()),
+            ("DECREE_MAX_DEPTH", "10".to_string()),
             ("DECREE_RUN_DIR", run_dir.to_str().unwrap().to_string()),
             (
                 "DECREE_STORE",

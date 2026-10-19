@@ -37,7 +37,7 @@ use crate::events::{
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
 use crate::machine::{event_matches, Attempts, DataType, Invoke, LoadedMachine, FAILED};
-use crate::message::{Message, MessageError, RunLock, LOCK_FILE, MAX_DEPTH};
+use crate::message::{Message, MessageError, RunLock, LOCK_FILE};
 use crate::runtime::{
     data_env, Executor, InvokeEvent, Phase, RouterFiles, RunInfo, RuntimeError, ScriptRun,
     ROOT_STATE,
@@ -766,6 +766,7 @@ impl Context {
             root_run_dir: self.runs_dir().join(self.root_run(run_id, parent)?),
             parent: parent.map(String::from),
             router,
+            max_depth: self.env.max_depth,
             env: self.env.for_machine(&m.id),
         };
         Ok(Executor::open(info, Arc::clone(&self.shutdown))?)
@@ -779,11 +780,16 @@ impl Context {
     fn root_run(&self, run_id: &str, parent: Option<&str>) -> Result<String, InterpreterError> {
         let mut root = run_id.to_string();
         let mut next = parent.map(String::from);
-        // A chain is at most `MAX_DEPTH` runs deep; a longer one loops.
-        for _ in 0..=MAX_DEPTH {
-            let Some(id) = next else {
-                return Ok(root);
-            };
+        // A run met twice is a loop. No depth bounds the walk: a run recorded under a higher
+        // `max_depth` than today's still finds its root.
+        let mut seen = std::collections::HashSet::from([root.clone()]);
+        while let Some(id) = next {
+            if !seen.insert(id.clone()) {
+                return Err(InterpreterError::Message {
+                    path: self.runs_dir().join(run_id).join(MESSAGE_FILE),
+                    message: format!("its chain of `parent` runs loops at {id}"),
+                });
+            }
             let path = self.runs_dir().join(&id).join(MESSAGE_FILE);
             next = if path.is_file() {
                 Message::read(&path)?.text("parent").map(String::from)
@@ -792,10 +798,7 @@ impl Context {
             };
             root = id;
         }
-        Err(InterpreterError::Message {
-            path: self.runs_dir().join(run_id).join(MESSAGE_FILE),
-            message: format!("its chain of `parent` runs is deeper than {MAX_DEPTH}"),
-        })
+        Ok(root)
     }
 }
 

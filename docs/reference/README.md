@@ -109,14 +109,14 @@ Each building block has its own directory in `.decree/`:
 
 ### No configuration file
 
-A project is machines, scripts and messages; there is no configuration file for decree. (The `.env` files hold variables for scripts; decree reads no setting of its own from them.) Each setting is a convention or a built-in limit:
+A project is machines, scripts and messages; there is no configuration file for decree. (The `.env` files hold variables for scripts; the only settings decree reads from them are its own `DECREE_*` variables, [Environment](cli.md#environment).) Each setting is a convention, a built-in limit or a variable:
 
 | Setting | Instead |
 | --- | --- |
 | Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)). `decree init` writes it. |
 | Default machine | None: every message names its machine with `machine:`. `decree emit`, cron files and `decree init`'s examples always do. |
 | Retries | `attempts` in the script invoke, a number or a list of values; default 1 (no retry), as a Step Functions task without `Retry`. |
-| Emit depth | A fixed limit of 10 (`max_depth`). |
+| Emit depth | `max_depth`, 10 unless `DECREE_MAX_DEPTH` sets it, from the shell or `.decree/.env` ([Environment](cli.md#environment)). |
 | Log size | Each script log is capped at 2 MiB (2097152 bytes). |
 | Sharing across projects | None in decree. To share machines or scripts across projects, symlink them into `machines/` and `scripts/`. |
 

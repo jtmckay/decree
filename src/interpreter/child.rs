@@ -14,7 +14,7 @@ use crate::events::{claim_event, is_type, text, waiting_child};
 use crate::layout::DECREE_DIR;
 use crate::layout::MESSAGE_FILE;
 use crate::machine::{MachineInvoke, FAILED};
-use crate::message::{create_run_dir, Message, MAX_DEPTH};
+use crate::message::{create_run_dir, Message};
 use crate::trace::{self, TraceParent, TRACEPARENT_KEY, TRACESTATE_KEY};
 
 /// A child run this run started, and how stepping it ended.
@@ -130,8 +130,8 @@ impl Interpreter<'_> {
             .get(name)
             .ok_or_else(|| self.invalid(format!("machine `{name}` does not exist")))?;
         let depth = self.depth + 1;
-        if depth > MAX_DEPTH {
-            return Ok(Err(format!("max_depth {MAX_DEPTH} reached")));
+        if depth > ctx.env.max_depth {
+            return Ok(Err(format!("max_depth {} reached", ctx.env.max_depth)));
         }
         let (id, run_dir) = create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
         let parent = self.executor.info().run_id.clone();

@@ -152,19 +152,20 @@ Scripts:
 
   Environment: DECREE_PROJECT_ROOT, DECREE_MESSAGE, DECREE_MESSAGE_ID,
   DECREE_MACHINE, DECREE_STATE, DECREE_PHASE, DECREE_VISITS, DECREE_RUN_DIR,
-  DECREE_STORE, DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS, DECREE_FINAL_ATTEMPT,
-  DECREE_TRIGGER, DECREE_EVENTS, DECREE_EVENT_FILE, DECREE_PARENT, DECREE_RECEIVED,
-  DECREE_DATA_<NAME>; with an attempts list DECREE_ATTEMPT_VALUE and
+  DECREE_MAX_DEPTH, DECREE_STORE, DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS,
+  DECREE_FINAL_ATTEMPT, DECREE_TRIGGER, DECREE_EVENTS, DECREE_EVENT_FILE,
+  DECREE_PARENT, DECREE_RECEIVED, DECREE_DATA_<NAME>; with an attempts list DECREE_ATTEMPT_VALUE and
   DECREE_ATTEMPT_VALUES; in a router run DECREE_REQUEST and DECREE_REPLY; for an
   ask script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES; and TRACEPARENT
   (W3C Trace Context: the run's trace and the script's span), with TRACESTATE
   when the message carried one.
 
-No configuration file; conventions and fixed limits instead:
+No configuration file; conventions, fixed limits and variables instead:
   machines/router.yml             # answers every model invoke that names no router:
   attempts: 3, or [local, claude] # inside a script invoke; default 1
                                   # (no retry); a list sets DECREE_ATTEMPT_VALUE
-  max_depth                       # 10: deepest chain of emits and child runs
+  DECREE_MAX_DEPTH=20             # max_depth, default 10: deepest chain of emits
+                                  # and child runs (shell or .decree/.env)
   script logs                     # each capped at 2 MiB
   Share machines or scripts across projects by symlinking them into machines/
   and scripts/.

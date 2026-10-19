@@ -12,17 +12,32 @@ use std::path::Path;
 pub type Vars = Vec<(String, String)>;
 
 /// What scripts get from the `.env` files (docs/reference/scripts.md, Environment).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectEnv {
     /// `.decree/.env`, without the variables decree's own environment sets, which win, and
     /// without those decree reads itself.
     pub base: Vars,
     /// The variables of `.decree/.env` decree reads itself and never passes to scripts:
-    /// `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES` (`crate::filter`).
+    /// `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES` (`crate::filter`) and `DECREE_MAX_DEPTH`
+    /// (`crate::message::max_depth`).
     pub decree: Vars,
     /// Each machine's `env_file`, by machine name, which wins over decree's own
     /// environment. A machine without one, or whose file is missing, has no entry.
     pub machines: std::collections::BTreeMap<String, Vars>,
+    /// `max_depth`: `DECREE_MAX_DEPTH` from decree's own environment, else `.decree/.env`,
+    /// else 10. Scripts get it as `DECREE_MAX_DEPTH`, so `decree emit` in a run uses it.
+    pub max_depth: u32,
+}
+
+impl Default for ProjectEnv {
+    fn default() -> Self {
+        ProjectEnv {
+            base: Vars::new(),
+            decree: Vars::new(),
+            machines: Default::default(),
+            max_depth: crate::message::DEFAULT_MAX_DEPTH,
+        }
+    }
 }
 
 impl ProjectEnv {
@@ -49,11 +64,17 @@ pub fn is_key(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Whether `key` belongs to decree: `DECREE_*`, `TRACEPARENT` or `TRACESTATE`. The two
-/// variables decree reads itself, `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES`, are let
-/// through: `.decree/.env` may set them (docs/reference/cli.md, Several processes).
+/// Whether `key` is one of the variables decree reads itself, which `.decree/.env` may set:
+/// `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES` (docs/reference/cli.md, Several processes)
+/// and `DECREE_MAX_DEPTH` (docs/reference/cli.md, Environment).
+pub fn is_setting(key: &str) -> bool {
+    crate::filter::is_filter_var(key) || key == crate::message::MAX_DEPTH_VAR
+}
+
+/// Whether `key` belongs to decree: `DECREE_*`, `TRACEPARENT` or `TRACESTATE`. The variables
+/// decree reads itself (`is_setting`) are let through: `.decree/.env` may set them.
 pub fn is_reserved(key: &str) -> bool {
-    (key.starts_with("DECREE_") && !crate::filter::is_filter_var(key))
+    (key.starts_with("DECREE_") && !is_setting(key))
         || key == crate::trace::TRACEPARENT_ENV
         || key == crate::trace::TRACESTATE_ENV
 }
@@ -615,9 +636,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_machine_filter_keys_are_let_through() {
-        assert!(parse("DECREE_MACHINES=a\nDECREE_EXCLUDE_MACHINES=b\n").is_ok());
-        for key in ["DECREE_FOO", "DECREE_MACHINE", "DECREE_MACHINES_X"] {
+    fn only_decree_s_own_settings_are_let_through() {
+        assert!(
+            parse("DECREE_MACHINES=a\nDECREE_EXCLUDE_MACHINES=b\nDECREE_MAX_DEPTH=20\n").is_ok()
+        );
+        for key in [
+            "DECREE_FOO",
+            "DECREE_MACHINE",
+            "DECREE_MACHINES_X",
+            "DECREE_MAX_DEPTHS",
+        ] {
             assert!(parse(&format!("{key}=1\n")).is_err(), "{key}");
         }
     }

@@ -120,7 +120,7 @@ pub(crate) const RULES: [(&str, &str); 25] = [
     ),
     (
         "E1",
-        "`.decree/.env` and every machine's `env_file`, each if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes, and interpolated unless single-quoted: `${VAR}`, `$VAR`, `${VAR:-default}`, `${VAR-default}`, `$$`); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`, except that `.decree/.env` may set `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES` ([Several processes](cli.md#several-processes)).",
+        "`.decree/.env` and every machine's `env_file`, each if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes, and interpolated unless single-quoted: `${VAR}`, `$VAR`, `${VAR:-default}`, `${VAR-default}`, `$$`); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`, except that `.decree/.env` may set `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES` ([Several processes](cli.md#several-processes)) and `DECREE_MAX_DEPTH`, a whole number of at least 1 ([Environment](cli.md#environment)).",
     ),
 ];
 

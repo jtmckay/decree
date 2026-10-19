@@ -53,6 +53,7 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_STATE` | State the script runs for, or `_root`. |
 | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
 | `DECREE_VISITS` | `visits.<state>` for this state, including the current visit, since the run's last retry. `0` for `_root`. |
+| `DECREE_MAX_DEPTH` | The project's `max_depth` in effect: `DECREE_MAX_DEPTH` from decree's environment, else `.decree/.env`, else `10` ([Environment](cli.md#environment)). `decree emit` in the script checks against it. |
 | `DECREE_RUN_ATTEMPT` | The run's attempt: `1`, then one more for each `decree process --retry` ([Run attempts](runs.md#step-loop)). |
 | `DECREE_RUN_DIR` | Absolute path of `runs/<id>/`. |
 | `DECREE_STORE` | Absolute path of `.decree/store/<machine>/`, what this machine keeps between runs ([Store](#store)); a child machine's scripts get the child's. decree creates it before the script runs. |
@@ -108,8 +109,8 @@ They are dotenv files, read as Docker Compose's `env_file` and systemd's `Enviro
   ```
 
   `HOST=192.168.1.30 decree daemon` moves both URLs of `.decree/.env`.
-- Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors, except `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES` in `.decree/.env`, which decree reads itself and never passes to scripts ([Several processes](cli.md#several-processes)). A later line wins over an earlier one with the same key.
-- `process` and `daemon` read them at start and again before each run, so an edit applies without a restart ([Edits while running](cli.md#edits-while-running)). A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and one that finds it later prints it once and keeps the variables it read last. Commands that run no scripts read none of them, since decree reads no setting of its own from them ([No configuration file](README.md#no-configuration-file)).
+- Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors, except `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES` and `DECREE_MAX_DEPTH` in `.decree/.env`, which decree reads itself ([Environment](cli.md#environment)); the first two never reach scripts, and scripts get `DECREE_MAX_DEPTH` as decree resolves it. A later line wins over an earlier one with the same key.
+- `process` and `daemon` read them at start and again before each run, so an edit applies without a restart ([Edits while running](cli.md#edits-while-running)). A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and one that finds it later prints it once and keeps the variables it read last. Other commands that run no scripts read none of them, except `decree emit`, which reads `.decree/.env` for `DECREE_MAX_DEPTH` when its own environment does not set it ([Environment](cli.md#environment)).
 - `decree check` warns when one of them exists and `.decree/.gitignore` has no `.env*` line.
 
 ### One script, several states

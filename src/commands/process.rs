@@ -80,8 +80,10 @@ pub fn run(
 ) -> Result<(), DecreeError> {
     let project = Project::load(project_root)?;
     if dry_run {
-        // The variables are read only when no flag beats them.
+        // The machine filter's variables are read only when no flag beats them; `load_env`
+        // also refuses a bad `DECREE_MAX_DEPTH`, which no flag beats.
         let dotenv = if select.is_given() {
+            check::max_depth(&project)?;
             Vec::new()
         } else {
             check::load_env(&project)?.decree

@@ -176,9 +176,63 @@ impl Message {
     }
 }
 
-/// The deepest a message may sit in a chain of emits and child runs (docs/reference/README.md,
-/// No configuration file).
-pub const MAX_DEPTH: u32 = 10;
+/// The deepest a message may sit in a chain of emits and child runs without
+/// `DECREE_MAX_DEPTH` (docs/reference/README.md, No configuration file).
+pub const DEFAULT_MAX_DEPTH: u32 = 10;
+
+/// The variable that sets `max_depth`, from decree's own environment or `.decree/.env`.
+pub const MAX_DEPTH_VAR: &str = "DECREE_MAX_DEPTH";
+
+/// A `DECREE_MAX_DEPTH` that is not a whole number of at least 1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BadMaxDepth {
+    /// Whether it came from `.decree/.env`, not decree's own environment.
+    pub in_dotenv: bool,
+    pub value: String,
+}
+
+impl std::fmt::Display for BadMaxDepth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let place = if self.in_dotenv {
+            ".decree/.env"
+        } else {
+            "the environment"
+        };
+        write!(
+            f,
+            "{MAX_DEPTH_VAR} in {place} is `{}`: it must be a whole number of at least 1",
+            self.value
+        )
+    }
+}
+
+/// `max_depth`: `DECREE_MAX_DEPTH` from decree's own environment (`shell`), else from
+/// `.decree/.env` (`dotenv`, its resolved variables), else `DEFAULT_MAX_DEPTH`. An empty
+/// value is unset, as for `DECREE_MACHINES`.
+pub fn max_depth(
+    shell: impl Fn(&str) -> Option<String>,
+    dotenv: &[(String, String)],
+) -> Result<u32, BadMaxDepth> {
+    let from_dotenv = dotenv
+        .iter()
+        .rev()
+        .find(|(k, _)| k == MAX_DEPTH_VAR)
+        .map(|(_, v)| v.clone());
+    let (value, in_dotenv) = match shell(MAX_DEPTH_VAR).filter(|v| !v.is_empty()) {
+        Some(value) => (value, false),
+        None => match from_dotenv.filter(|v| !v.is_empty()) {
+            Some(value) => (value, true),
+            None => return Ok(DEFAULT_MAX_DEPTH),
+        },
+    };
+    let depth = value
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| value.parse::<u32>().ok())
+        .flatten()
+        .filter(|&n| n >= 1);
+    depth.ok_or(BadMaxDepth { in_dotenv, value })
+}
 
 /// The run folders in `runs_dir`, in `id` order. A missing `runs_dir` holds none.
 pub fn run_ids(runs_dir: &Path) -> io::Result<Vec<String>> {
@@ -1243,5 +1297,53 @@ mod tests {
         std::fs::write(dir.path().join(LOCK_FILE), "1").unwrap();
         drop(lock);
         assert!(dir.path().join(LOCK_FILE).exists());
+    }
+
+    // --- max_depth (docs/reference/cli.md, Environment) ---
+
+    fn depth(shell: Option<&str>, dotenv: Option<&str>) -> Result<u32, BadMaxDepth> {
+        let dotenv: Vec<(String, String)> = dotenv
+            .map(|v| (MAX_DEPTH_VAR.to_string(), v.to_string()))
+            .into_iter()
+            .collect();
+        max_depth(
+            |k| shell.filter(|_| k == MAX_DEPTH_VAR).map(String::from),
+            &dotenv,
+        )
+    }
+
+    #[test]
+    fn max_depth_is_10_without_the_variable_or_when_it_is_empty() {
+        assert_eq!(depth(None, None), Ok(10));
+        assert_eq!(depth(Some(""), Some("")), Ok(10));
+    }
+
+    #[test]
+    fn max_depth_comes_from_the_shell_over_dotenv() {
+        assert_eq!(depth(None, Some("20")), Ok(20));
+        assert_eq!(depth(Some("2"), Some("20")), Ok(2));
+        assert_eq!(depth(Some(""), Some("20")), Ok(20));
+        assert_eq!(depth(Some("1"), None), Ok(1));
+        // The shell wins even over an invalid `.decree/.env` value.
+        assert_eq!(depth(Some("3"), Some("ten")), Ok(3));
+    }
+
+    #[test]
+    fn max_depth_refuses_what_is_not_a_whole_number_of_at_least_1() {
+        for value in ["0", "ten", "-1", "+5", " 5", "1.5", "99999999999"] {
+            let err = depth(Some(value), None).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "DECREE_MAX_DEPTH in the environment is `{value}`: it must be a whole number of at least 1"
+                )
+            );
+        }
+        let err = depth(None, Some("0")).unwrap_err();
+        assert!(err.in_dotenv);
+        assert_eq!(
+            err.to_string(),
+            "DECREE_MAX_DEPTH in .decree/.env is `0`: it must be a whole number of at least 1"
+        );
     }
 }

@@ -18,11 +18,10 @@ use crate::commands::{graph, print_json, schema};
 use crate::cron;
 use crate::dotenv;
 use crate::error::DecreeError;
-use crate::filter;
 use crate::layout::{self, DECREE_DIR};
 use crate::machine::validate::CheckEnv;
 use crate::machine::{self, LoadedMachine, MACHINES_DIR};
-use crate::message::{validate, Message};
+use crate::message::{self, validate, Message};
 
 mod sarif;
 
@@ -274,8 +273,45 @@ fn check(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
     for name in md_files(&decree_dir.join(layout::CRON_DIR))? {
         project.check_file(layout::CRON_DIR, &name, "M3", true, &mut problems)?;
     }
-    problems.extend(env_problems(project)?);
+    let env_problems = env_problems(project)?;
+    if env_problems.is_empty() {
+        let (env, _) = resolve_env(project)?;
+        if let Err(bad) = message::max_depth(dotenv::process_var, &env.decree) {
+            problems.push(max_depth_problem(project, bad)?);
+        }
+    }
+    problems.extend(env_problems);
     Ok(problems)
+}
+
+/// E1 for a `DECREE_MAX_DEPTH` in `.decree/.env` that is not a whole number of at least 1,
+/// at its line. One from decree's own environment is in no file: it is the error itself.
+fn max_depth_problem(
+    project: &Project,
+    bad: message::BadMaxDepth,
+) -> Result<CheckError, DecreeError> {
+    if !bad.in_dotenv {
+        return Err(DecreeError::Other(bad.to_string()));
+    }
+    let line = match dotenv::read(&project.decree_dir.join(layout::ENV_FILE))? {
+        Some(Ok(entries)) => entries
+            .iter()
+            .rev()
+            .find(|e| e.key == message::MAX_DEPTH_VAR)
+            .map(|e| e.line),
+        _ => None,
+    };
+    Ok(CheckError {
+        rule: Some("E1".to_string()),
+        file: layout::ENV_FILE.to_string(),
+        line,
+        state: None,
+        message: format!(
+            "`{}` is `{}`: it must be a whole number of at least 1",
+            message::MAX_DEPTH_VAR,
+            bad.value
+        ),
+    })
 }
 
 /// Each machine `env_file` with a valid name (V14), to the machines that name it.
@@ -312,10 +348,10 @@ type ParsedEnv = Result<Vec<dotenv::Entry>, dotenv::LineErrors>;
 fn env_problems(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
     let mut out = Vec::new();
     for (file, parsed) in env_files(project)? {
-        // decree reads the machine filter from `.decree/.env` only.
+        // decree reads its own settings from `.decree/.env` only.
         let own = file != layout::ENV_FILE;
         for entry in parsed.as_ref().ok().into_iter().flatten() {
-            if own && filter::is_filter_var(&entry.key) {
+            if own && dotenv::is_setting(&entry.key) {
                 out.push(CheckError {
                     rule: Some("E1".to_string()),
                     file: file.clone(),
@@ -358,7 +394,7 @@ fn resolve_env(project: &Project) -> Result<(dotenv::ProjectEnv, Vec<CheckWarnin
                 .vars
                 .iter()
                 .cloned()
-                .partition(|(key, _)| filter::is_filter_var(key));
+                .partition(|(key, _)| dotenv::is_setting(key));
             resolved
         } else {
             // A machine's file reads what its scripts would see without it.
@@ -441,7 +477,22 @@ pub(crate) fn load_env(project: &Project) -> Result<dotenv::ProjectEnv, DecreeEr
             files.into_iter().collect::<Vec<_>>().join(", ")
         )));
     }
-    Ok(resolve_env(project)?.0)
+    let mut env = resolve_env(project)?.0;
+    env.max_depth = message::max_depth(dotenv::process_var, &env.decree)
+        .map_err(|bad| DecreeError::Other(bad.to_string()))?;
+    Ok(env)
+}
+
+/// `max_depth` for `decree emit`: `DECREE_MAX_DEPTH` from decree's own environment, which a
+/// script in a run gets, else `.decree/.env` (`load_env`), else 10.
+pub(crate) fn max_depth(project: &Project) -> Result<u32, DecreeError> {
+    let in_shell = dotenv::process_var(message::MAX_DEPTH_VAR).is_some_and(|v| !v.is_empty());
+    if in_shell {
+        message::max_depth(dotenv::process_var, &[])
+            .map_err(|bad| DecreeError::Other(bad.to_string()))
+    } else {
+        Ok(load_env(project)?.max_depth)
+    }
 }
 
 /// A project's machines, loaded and checked against V1–V21: where `check` and
