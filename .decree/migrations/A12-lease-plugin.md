@@ -36,7 +36,7 @@ Prior art, for the names and behaviour:
 
 ### The rules
 
-The resource's owner writes them in `scripts/lease/resources`, one resource per line, with `#` comments: `<name> <max_lease> <linger> <max_wait>`. Durations use decree's format (`15m`, `5s`). The plugin ships one line, `gpu 15m 5s 30m`.
+The resource's owner writes them in `scripts/lease/resources`, one resource per line, with `#` comments: `<name> <max_lease> <linger> <max_wait>`. Durations use decree's format (`15m`, `5s`). `max_wait` is the longest a resource stays in one mode while a lease for another mode waits; the clock starts when the mode is swapped in (Who goes next, rule 4). The plugin ships one line, `gpu 15m 5s 30m`.
 
 ### Swapping modes
 
@@ -48,7 +48,9 @@ Per resource, with at most one holder at a time:
 1. When the resource is free, a waiting lease in the current mode goes first, oldest first.
 2. If none waits, the resource lingers in its mode for `linger` (default 5s): a lease for that mode asked for during the linger is granted with no swap.
 3. After the linger, or when no mode is set yet, the oldest waiting lease's mode is swapped in, and the leases in that mode go oldest first.
-4. Once any lease in another mode has waited longer than the resource's `max_wait`, no more leases in the current mode jump ahead of it. The next grant goes to the oldest waiting lease.
+4. A mode's `max_wait` clock starts when it is swapped in. Once the resource has been in its current mode for longer than `max_wait` and a lease for another mode waits, no more leases in the current mode are granted and the resource does not linger: when it is next free, the oldest waiting lease for another mode is granted, its mode is swapped in, and that mode's clock starts. This is a time slice (the round-robin quantum of OS scheduling): a mode that has already run long gives way as soon as another mode asks, and one that was just swapped in keeps serving its own leases until its slice is used up.
+   - The lease that holds the resource when the slice is used up keeps it until it is released or expires (renewal is already refused while another lease waits). So a lease for another mode waits at most `max_wait` + `max_lease` + one swap after its mode was swapped out, and the docs say so.
+   - While no lease for another mode waits, the current mode goes on, however long it has run.
 
 ### Safety and observability
 
@@ -94,9 +96,17 @@ In each criterion, the resource is `gpu` with `max_lease 3s`, `linger 1s` and `m
   **When** A is released and no lease for `x` is asked for within the linger
   **Then** B is held once the linger has passed, after one `x -> y` swap
 
-- **Given** leases for `x` keep arriving while B waits for `y`
-  **When** B has waited longer than `max_wait`
-  **Then** the next grant goes to B, even though leases for `x` are waiting
+- **Given** `gpu` was swapped to `x` and leases for `x` keep arriving
+  **When** B asks for `y` after `gpu` has been in `x` longer than `max_wait`
+  **Then** the next grant goes to B, even though leases for `x` are waiting, and there is no linger before the `x -> y` swap
+
+- **Given** `gpu` was just swapped to `x`, leases for `x` keep arriving, and B asks for `y` at once
+  **When** `max_wait` has not yet passed since the swap
+  **Then** leases for `x` keep being granted; once `max_wait` has passed since the swap, the next grant goes to B
+
+- **Given** `gpu` has been in `x` longer than `max_wait` and only leases for `x` wait
+  **When** the holder is released
+  **Then** the next lease for `x` is held, with no swap
 
 - **Given** a held lease nobody releases
   **When** `max_lease` passes
