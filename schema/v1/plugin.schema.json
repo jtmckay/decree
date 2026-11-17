@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/plugin.schema.json",
+  "title": "decree plugin frontmatter",
+  "description": "The YAML frontmatter of a plugin, .decree/plugins/<name>.md: one machine and the files of its scripts folder, shared as one file. The markdown body below the frontmatter tells a person what the plugin is for; decree keeps it as written. decree installs a plugin into .decree/machines/<name>.yml and .decree/scripts/<name>/ before `process`, `daemon`, `check` and `graph` read machines, and never overwrites an installed copy that was edited in place. `decree check` checks the rest: that every `needs` is in plugins/ (P2), that no plugin changed over an edited copy (P3), and the installed machine itself (V1-V21). Reference: docs/reference/plugins.md.",
+  "type": "object",
+  "required": [
+    "name",
+    "machine"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "The plugin and machine name: equal to the file's stem, plugins/<name>.md, and the name of the installed machines/<name>.yml and scripts/<name>/ (P1).",
+      "examples": [
+        "develop"
+      ]
+    },
+    "needs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "description": "The other plugins this one relies on: each machine it invokes (`machine`), routes through (`router`, or the machine `router` a `model` state with no `router` uses) or emits to. Each must be in plugins/ (P2); `decree plugin import` refuses a plugin whose needs are missing.",
+      "examples": [
+        [
+          "router"
+        ]
+      ]
+    },
+    "machine": {
+      "type": "object",
+      "not": {
+        "required": [
+          "name"
+        ]
+      },
+      "description": "The machine, as .decree/machines/<name>.yml holds it, without `name`: the plugin's `name` names it. Installed with `name` first; machine.schema.json describes the rest.",
+      "examples": [
+        {
+          "description": "Says hello.",
+          "initial": "greet",
+          "states": {
+            "greet": {
+              "invoke": "greet",
+              "transitions": {
+                "done": "done"
+              }
+            },
+            "done": {
+              "final": true
+            },
+            "failed": {
+              "final": true
+            }
+          }
+        }
+      ]
+    },
+    "scripts": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)(?:/(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+))*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Every file of .decree/scripts/<name>/, by its path there, to its text. A path is plain and relative: no `..`, `.`, empty parts or leading `/` (P1). An installed file is executable when its text starts with `#!`, and otherwise not. A file in scripts/<name>/ the plugin does not ship is removed when it is installed.",
+      "examples": [
+        {
+          "greet.sh": "#!/usr/bin/env bash\necho hi\n",
+          "kinds/command.sh": "#!/usr/bin/env bash\n"
+        }
+      ]
+    }
+  }
+}

@@ -247,8 +247,52 @@ pub enum Command {
         format: Format,
     },
 
+    /// Share machines as plugins: one file per machine in .decree/plugins/, installed into machines/ and scripts/<name>/
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+
     /// Verbose help
     Help,
+}
+
+/// `decree plugin` (docs/reference/plugins.md).
+#[derive(Subcommand, Debug)]
+pub enum PluginAction {
+    /// Write .decree/plugins/<name>.md from the installed machine, scripts/<name>/ and the flat scripts it runs
+    Export {
+        /// Machine to export
+        name: String,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
+    /// Check a plugin file (- reads stdin), copy it to .decree/plugins/ and install it; decree fetches nothing
+    Import {
+        /// Plugin file, or - for stdin (`curl -fsSL <url> | decree plugin import -`)
+        file: String,
+
+        /// Replace a plugin or machine of the same name, printing what changes
+        #[arg(long)]
+        force: bool,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
+    /// Install plugins now (all, or the named ones), replacing an installed copy edited in place
+    Install {
+        /// Plugins to install [default: every plugin in .decree/plugins/]
+        names: Vec<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
 }
 
 /// How to view `decree graph` output (docs/reference/graph.md, Viewing).

@@ -15,12 +15,13 @@ pub(crate) mod layout;
 pub(crate) mod machine;
 pub(crate) mod message;
 pub(crate) mod migration;
+pub(crate) mod plugin;
 pub(crate) mod reply;
 pub(crate) mod runtime;
 pub(crate) mod trace;
 
 use clap::Parser;
-use cli::{Cli, Command, Format};
+use cli::{Cli, Command, Format, PluginAction};
 use colored::Colorize;
 use error::{DecreeError, EXIT_SUCCESS};
 
@@ -94,6 +95,19 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             let select = filter::Select::new(machines, exclude_machines);
             commands::daemon::run(&root()?, interval, retry, quiet, &select)
         }
+        Command::Plugin { action } => match action {
+            PluginAction::Export { name, format } => {
+                commands::plugin::export(&root()?, &name, format)
+            }
+            PluginAction::Import {
+                file,
+                force,
+                format,
+            } => commands::plugin::import(&root()?, &file, force, format),
+            PluginAction::Install { names, format } => {
+                commands::plugin::install(&root()?, &names, format)
+            }
+        },
         Command::Stop { note, format } => commands::stop::run(&root()?, note.as_deref(), format),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
         Command::Prune {

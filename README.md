@@ -299,7 +299,7 @@ There is no configuration file. Each setting is a convention, a fixed limit or a
 | Retries | `attempts` in the script invoke, a number or a list of values (`[local, claude]`); default 1 (no retry) |
 | Emit depth | 10, unless `DECREE_MAX_DEPTH` in the shell or `.decree/.env` sets it |
 | Log size | Each script log is capped at 2 MiB |
-| Sharing across projects | Symlink shared machines and scripts into `machines/` and `scripts/` |
+| Sharing across projects | A plugin, `.decree/plugins/<name>.md`: one file holding a machine and its scripts (`decree plugin export`, `decree plugin import`) |
 
 A cron file (`.decree/cron/<name>.md`, queued by `decree daemon`):
 

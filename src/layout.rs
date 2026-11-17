@@ -10,6 +10,10 @@ pub const MIGRATIONS_DIR: &str = "migrations";
 pub const PROCESSED_FILE: &str = "processed.md";
 pub const GITIGNORE_FILE: &str = ".gitignore";
 
+/// `.decree/cache/`: what decree and scripts keep that git ignores, such as the record of
+/// each plugin install (docs/reference/plugins.md).
+pub const CACHE_DIR: &str = "cache";
+
 /// `.decree/attention/`: one file per run that needs a person; a file with `holds: true`, or
 /// one decree cannot read, stops `process` and `daemon` (docs/reference/cli.md, Attention).
 pub const ATTENTION_DIR: &str = "attention";

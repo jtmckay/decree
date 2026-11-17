@@ -1,0 +1,550 @@
+//! Plugins (docs/reference/plugins.md): install before machines are read, export from the
+//! installed copy, import, and never overwrite an installed copy edited in place. One test
+//! per acceptance criterion of migration A09, each in its own temp project.
+
+use assert_cmd::cargo::cargo_bin_cmd;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
+
+#[path = "common/schema.rs"]
+mod schema;
+
+/// `develop`: runs its own script, which reads a data file beside it, then a flat script,
+/// then the `helper` machine.
+const DEVELOP: &str = "\
+---
+name: develop
+needs:
+- helper
+machine:
+  description: Implements, then tidies, then asks the helper.
+  initial: implement
+  states:
+    implement:
+      invoke: implement
+      transitions:
+        done: tidy
+    tidy:
+      invoke: tidy
+      transitions:
+        done: help
+    help:
+      invoke:
+        machine:
+          name: helper
+      transitions:
+        done: done
+    done:
+      final: true
+    failed:
+      final: true
+scripts:
+  data.txt: |
+    from the data file
+  implement.sh: |
+    #!/usr/bin/env bash
+    echo \"implement: $(cat .decree/scripts/develop/data.txt)\"
+  tidy: |
+    #!/usr/bin/env bash
+    echo tidy
+---
+# develop
+
+Implements, then tidies, then asks the helper.
+";
+
+const HELPER: &str = "\
+---
+name: helper
+machine:
+  description: Helps.
+  initial: help
+  states:
+    help:
+      invoke: help
+      transitions:
+        done: done
+    done:
+      final: true
+    failed:
+      final: true
+scripts:
+  help: |
+    #!/usr/bin/env bash
+    echo helped
+---
+# helper
+
+Helps.
+";
+
+const MIGRATION: &str = "---\nmachine: develop\n---\nDo the thing.\n";
+
+struct Project {
+    _tmp: TempDir,
+    root: PathBuf,
+}
+
+impl Project {
+    fn new() -> Project {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+        fs::create_dir_all(root.join(".decree")).unwrap();
+        Project { _tmp: tmp, root }
+    }
+
+    fn path(&self, rel: &str) -> PathBuf {
+        self.root.join(".decree").join(rel)
+    }
+
+    fn put(&self, rel: &str, text: &str) {
+        let path = self.path(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, text).unwrap();
+    }
+
+    fn put_exec(&self, rel: &str, text: &str) {
+        self.put(rel, text);
+        fs::set_permissions(self.path(rel), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn get(&self, rel: &str) -> String {
+        fs::read_to_string(self.path(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+    }
+
+    fn exists(&self, rel: &str) -> bool {
+        self.path(rel).exists()
+    }
+
+    /// (exit code, stdout, stderr).
+    fn decree(&self, args: &[&str], stdin: &str) -> (i32, String, String) {
+        let out = cargo_bin_cmd!("decree")
+            .current_dir(&self.root)
+            .env("NO_COLOR", "1")
+            .args(args)
+            .write_stdin(stdin)
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap(),
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+        )
+    }
+
+    /// Every file under `.decree/<dir>`, relative to `.decree/`, with its bytes.
+    fn tree(&self, dir: &str) -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        let base = self.path("");
+        let mut stack = vec![self.path(dir)];
+        while let Some(d) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&d) else {
+                continue;
+            };
+            for e in entries {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    let rel = p
+                        .strip_prefix(&base)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned();
+                    out.push((rel, fs::read(&p).unwrap()));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// The logs of the one run, by name, with their text.
+    fn run_logs(&self) -> Vec<(String, String)> {
+        let runs: Vec<PathBuf> = fs::read_dir(self.path("runs"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let mut out = Vec::new();
+        for run in runs {
+            for e in fs::read_dir(&run).unwrap() {
+                let p = e.unwrap().path();
+                let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                if name.ends_with(".log") {
+                    out.push((name, fs::read_to_string(&p).unwrap()));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+}
+
+fn mode(path: &Path) -> u32 {
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+/// The machine of a plugin file with `name` first, as hand-written YAML.
+fn machine_yaml(plugin: &str, name: &str) -> String {
+    let yaml = plugin.split("---\n").nth(1).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(yaml).unwrap();
+    let mut machine = serde_norway::Mapping::new();
+    machine.insert("name".into(), name.into());
+    for (k, v) in value["machine"].as_mapping().unwrap() {
+        machine.insert(k.clone(), v.clone());
+    }
+    serde_norway::to_string(&machine).unwrap()
+}
+
+/// A project of only plugins and a message runs as the same files written by hand do.
+#[test]
+fn process_installs_plugins_and_runs_as_if_written_by_hand() {
+    let p = Project::new();
+    p.put("plugins/develop.md", DEVELOP);
+    p.put("plugins/helper.md", HELPER);
+    p.put("migrations/01-a.md", MIGRATION);
+    let (code, out, err) = p.decree(&["process"], "");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(p.exists("machines/develop.yml") && p.exists("machines/helper.yml"));
+    assert_eq!(p.get("scripts/develop/data.txt"), "from the data file\n");
+    assert_eq!(mode(&p.path("scripts/develop/implement.sh")), 0o755);
+    assert_eq!(mode(&p.path("scripts/develop/data.txt")), 0o644);
+    assert!(out.contains("implement: from the data file"), "{out}");
+    let with_plugins = p.run_logs();
+    assert!(
+        with_plugins.iter().any(|(_, log)| log.contains("helped")),
+        "{with_plugins:?}"
+    );
+
+    let hand = Project::new();
+    hand.put("machines/develop.yml", &machine_yaml(DEVELOP, "develop"));
+    hand.put("machines/helper.yml", &machine_yaml(HELPER, "helper"));
+    hand.put("scripts/develop/data.txt", "from the data file\n");
+    hand.put_exec(
+        "scripts/develop/implement.sh",
+        "#!/usr/bin/env bash\necho \"implement: $(cat .decree/scripts/develop/data.txt)\"\n",
+    );
+    hand.put_exec("scripts/develop/tidy", "#!/usr/bin/env bash\necho tidy\n");
+    hand.put_exec("scripts/helper/help", "#!/usr/bin/env bash\necho helped\n");
+    hand.put("migrations/01-a.md", MIGRATION);
+    let (code, out, err) = hand.decree(&["process"], "");
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(with_plugins, hand.run_logs());
+}
+
+/// Export of a hand-written machine holds its folder, a data file and a flat script; once
+/// the installed files are deleted, `check` installs them again with the same bytes, and the
+/// run resolves the same scripts.
+#[test]
+fn export_takes_the_folder_and_the_flat_scripts_and_installs_them_again() {
+    let p = Project::new();
+    p.put(
+        "machines/hello.yml",
+        "\
+# Written by hand.
+name: hello
+description: Greets, then tidies.
+initial: greet
+states:
+  greet:
+    invoke: greet
+    transitions: { done: tidy }
+  tidy:
+    invoke: tidy
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+",
+    );
+    p.put_exec(
+        "scripts/hello/greet.sh",
+        "#!/usr/bin/env bash\necho \"hi $(cat .decree/scripts/hello/name.txt)\"\n",
+    );
+    p.put("scripts/hello/name.txt", "world\n");
+    p.put_exec("scripts/tidy", "#!/usr/bin/env bash\necho tidy\n");
+
+    let (code, out, err) = p.decree(&["plugin", "export", "hello"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("wrote .decree/plugins/hello.md\n"), "{out}");
+    let plugin = p.get("plugins/hello.md");
+    for needle in [
+        "greet.sh: |",
+        "name.txt: |",
+        "tidy: |",
+        "echo tidy",
+        "# hello\n\nGreets, then tidies.\n",
+    ] {
+        assert!(plugin.contains(needle), "{needle}: {plugin}");
+    }
+    let scripts = [
+        ("scripts/hello/greet.sh", p.get("scripts/hello/greet.sh")),
+        ("scripts/hello/name.txt", p.get("scripts/hello/name.txt")),
+        ("scripts/hello/tidy", p.get("scripts/tidy")),
+    ];
+
+    fs::remove_file(p.path("machines/hello.yml")).unwrap();
+    fs::remove_dir_all(p.path("scripts/hello")).unwrap();
+    fs::remove_file(p.path("scripts/tidy")).unwrap();
+    let (code, out, err) = p.decree(&["check"], "");
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+    for (rel, text) in &scripts {
+        assert_eq!(&p.get(rel), text, "{rel}");
+    }
+    assert_eq!(mode(&p.path("scripts/hello/tidy")), 0o755);
+
+    p.put("migrations/01-a.md", "---\nmachine: hello\n---\nhi\n");
+    let (code, out, err) = p.decree(&["process"], "");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("hi world") && out.contains("tidy"), "{out}");
+    // The run resolved the script in the machine's folder.
+    let events = fs::read_dir(p.path("runs"))
+        .unwrap()
+        .map(|e| fs::read_to_string(e.unwrap().path().join("events.jsonl")).unwrap())
+        .collect::<String>();
+    assert!(events.contains("scripts/hello/tidy"), "{events}");
+}
+
+/// Exporting an installed plugin twice gives the file it was installed from, byte for byte.
+#[test]
+fn export_of_an_installed_plugin_is_byte_identical() {
+    let p = Project::new();
+    p.put("plugins/develop.md", DEVELOP);
+    p.put("plugins/helper.md", HELPER);
+    let (code, _, err) = p.decree(&["check"], "");
+    assert_eq!(code, 0, "{err}");
+    for _ in 0..2 {
+        let (code, _, err) = p.decree(&["plugin", "export", "develop"], "");
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(p.get("plugins/develop.md"), DEVELOP);
+    }
+    let (code, _, _) = p.decree(&["plugin", "export", "helper"], "");
+    assert_eq!(code, 0);
+    assert_eq!(p.get("plugins/helper.md"), HELPER);
+}
+
+/// An edit to an installed script runs, and stays, while the plugin is unchanged.
+#[test]
+fn an_edited_script_runs_and_is_not_overwritten() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    assert_eq!(p.decree(&["check"], "").0, 0);
+    let edited = "#!/usr/bin/env bash\necho edited in place\n";
+    p.put_exec("scripts/helper/help", edited);
+    p.put("migrations/01-a.md", "---\nmachine: helper\n---\nhi\n");
+    let (code, out, err) = p.decree(&["process"], "");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("edited in place"), "{out}");
+    assert_eq!(p.get("scripts/helper/help"), edited);
+}
+
+/// Set up the conflict: an installed copy edited in place, and a changed plugin file.
+fn conflict() -> (Project, String) {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    assert_eq!(p.decree(&["check"], "").0, 0);
+    let edited = "#!/usr/bin/env bash\necho edited in place\n";
+    p.put_exec("scripts/helper/help", edited);
+    p.put(
+        "plugins/helper.md",
+        &HELPER.replace("echo helped", "echo helped twice"),
+    );
+    (p, edited.to_string())
+}
+
+#[test]
+fn a_changed_plugin_over_an_edit_fails_check_and_touches_nothing() {
+    let (p, edited) = conflict();
+    let (code, out, _) = p.decree(&["check"], "");
+    assert_eq!(code, 1);
+    assert!(
+        out.starts_with("plugins/helper.md: plugin `helper` changed"),
+        "{out}"
+    );
+    assert!(out.contains("`decree plugin export helper`"), "{out}");
+    assert!(out.contains("`decree plugin install helper`"), "{out}");
+    assert!(out.trim_end().ends_with("(P3)"), "{out}");
+    assert_eq!(p.get("scripts/helper/help"), edited);
+
+    // `process` keeps running the edited copy and prints the conflict once.
+    p.put("migrations/01-a.md", "---\nmachine: helper\n---\nhi\n");
+    p.put("inbox/a.md", "---\nmachine: helper\n---\nhi\n");
+    let (code, out, err) = p.decree(&["process"], "");
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("edited in place"), "{out}");
+    assert_eq!(err.matches("plugin `helper` changed").count(), 1, "{err}");
+    assert_eq!(p.get("scripts/helper/help"), edited);
+}
+
+#[test]
+fn plugin_install_takes_the_plugin_and_removes_added_files() {
+    let (p, _) = conflict();
+    p.put("scripts/helper/added.txt", "added in place\n");
+    let (code, out, err) = p.decree(&["plugin", "install", "helper"], "");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "installed .decree/plugins/helper.md\n");
+    assert_eq!(
+        p.get("scripts/helper/help"),
+        "#!/usr/bin/env bash\necho helped twice\n"
+    );
+    assert!(!p.exists("scripts/helper/added.txt"));
+    let (code, out, err) = p.decree(&["check"], "");
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+}
+
+#[test]
+fn a_deleted_plugin_removes_its_copy_and_keeps_hand_written_machines() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    p.put(
+        "machines/extra.yml",
+        "name: extra\ndescription: By hand.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
+    );
+    p.put_exec("scripts/work", "#!/usr/bin/env bash\n");
+    assert_eq!(p.decree(&["check"], "").0, 0);
+    assert!(p.exists("machines/helper.yml"));
+    fs::remove_file(p.path("plugins/helper.md")).unwrap();
+    let (code, _, err) = p.decree(&["check"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(!p.exists("machines/helper.yml"));
+    assert!(!p.exists("scripts/helper"));
+    assert!(p.exists("machines/extra.yml") && p.exists("scripts/work"));
+}
+
+#[test]
+fn import_refuses_missing_needs_and_writes_nothing() {
+    let p = Project::new();
+    let before = p.tree("");
+    let (code, out, err) = p.decree(&["plugin", "import", "-"], DEVELOP);
+    assert_eq!(code, 1);
+    assert_eq!(out, "");
+    assert!(err.contains("`helper`"), "{err}");
+    assert_eq!(p.tree(""), before);
+}
+
+#[test]
+fn import_refuses_a_taken_name_unless_forced() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    assert_eq!(p.decree(&["check"], "").0, 0);
+    let before = p.tree("");
+    let changed = HELPER.replace("echo helped", "echo helped twice");
+
+    let (code, out, err) = p.decree(&["plugin", "import", "-"], &changed);
+    assert_eq!(code, 1, "{out}");
+    assert!(err.contains("--force"), "{err}");
+    assert_eq!(p.tree(""), before);
+
+    let (code, out, err) = p.decree(&["plugin", "import", "-", "--force"], &changed);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("plugin `helper`: Helps."), "{out}");
+    assert!(
+        out.contains(".decree/scripts/helper/help (2 lines)"),
+        "{out}"
+    );
+    assert!(out.contains("needs: none"), "{out}");
+    assert!(out.contains("changed .decree/scripts/helper/help"), "{out}");
+    assert_eq!(p.get("plugins/helper.md"), changed);
+    assert_eq!(
+        p.get("scripts/helper/help"),
+        "#!/usr/bin/env bash\necho helped twice\n"
+    );
+}
+
+#[test]
+fn import_from_a_file_prints_what_it_runs_and_installs_it() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    let file = p.root.join("develop-download.md");
+    fs::write(&file, DEVELOP).unwrap();
+    let (code, out, err) = p.decree(&["plugin", "import", file.to_str().unwrap()], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with("plugin `develop`: Implements, then tidies, then asks the helper.\n"),
+        "{out}"
+    );
+    assert!(out.contains("needs: helper"), "{out}");
+    assert!(
+        out.ends_with("installed .decree/plugins/develop.md\n"),
+        "{out}"
+    );
+    assert_eq!(p.get("plugins/develop.md"), DEVELOP);
+    assert!(p.exists("scripts/develop/implement.sh"));
+}
+
+#[test]
+fn a_script_path_that_leaves_the_folder_fails_check() {
+    let p = Project::new();
+    p.put(
+        "plugins/bad.md",
+        "---\nname: bad\nmachine: { description: d }\nscripts:\n  ../x.sh: hi\n---\n",
+    );
+    let (code, out, _) = p.decree(&["check"], "");
+    assert_eq!(code, 1);
+    assert!(out.contains("`../x.sh`") && out.contains("(P1)"), "{out}");
+    assert!(!p.exists("scripts/x.sh") && !p.exists("machines/bad.yml"));
+    // import refuses it the same way.
+    let (code, _, err) = p.decree(&["plugin", "import", "-"], &p.get("plugins/bad.md"));
+    assert_eq!(code, 1);
+    assert!(err.contains("`../x.sh`"), "{err}");
+}
+
+#[test]
+fn a_hand_written_machine_beside_plugins_is_a_warning() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    p.put(
+        "machines/extra.yml",
+        "name: extra\ndescription: By hand.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
+    );
+    p.put_exec("scripts/work", "#!/usr/bin/env bash\n");
+    let (code, out, err) = p.decree(&["check"], "");
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+    assert!(err.contains("machines/extra.yml: no plugin installed this machine; run `decree plugin export extra`"), "{err}");
+    assert!(!err.contains("machines/helper.yml"), "{err}");
+}
+
+#[test]
+fn json_output_follows_the_cli_schema() {
+    let validator = schema::validator(schema::CLI_PLUGIN_SCHEMA);
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    let mut docs = Vec::new();
+    for args in [
+        vec!["plugin", "install", "--format", "json"],
+        vec!["plugin", "export", "helper", "--format", "json"],
+    ] {
+        let (code, out, err) = p.decree(&args, "");
+        assert_eq!(code, 0, "{err}");
+        docs.push(out);
+    }
+    let changed = HELPER.replace("echo helped", "echo helped twice");
+    let (code, out, err) = p.decree(
+        &["plugin", "import", "-", "--force", "--format", "json"],
+        &changed,
+    );
+    assert_eq!(code, 0, "{err}");
+    docs.push(out);
+    for doc in &docs {
+        let json: serde_json::Value = serde_json::from_str(doc).unwrap();
+        let errors = schema::errors(&validator, &json);
+        assert!(errors.is_empty(), "{doc}: {errors:?}");
+    }
+    let import: serde_json::Value = serde_json::from_str(&docs[2]).unwrap();
+    assert_eq!(import["replaced"], true);
+    assert_eq!(
+        import["changes"],
+        serde_json::json!([{ "path": ".decree/scripts/helper/help", "change": "changed" }])
+    );
+}
+
+/// Every plugin file a test writes validates against `plugin.schema.json`.
+#[test]
+fn the_test_plugins_validate() {
+    let validator = schema::plugin_validator();
+    for text in [DEVELOP, HELPER] {
+        let json = schema::frontmatter_to_json(text).unwrap();
+        assert!(schema::errors(&validator, &json).is_empty());
+    }
+}

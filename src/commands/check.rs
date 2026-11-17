@@ -22,13 +22,17 @@ use crate::layout::{self, DECREE_DIR};
 use crate::machine::validate::CheckEnv;
 use crate::machine::{self, LoadedMachine, MACHINES_DIR};
 use crate::message::{self, validate, Message};
+use crate::plugin;
 
 mod sarif;
 
 pub fn run(project_root: &Path, format: CheckFormat) -> Result<(), DecreeError> {
+    let synced = plugin::sync(&project_root.join(DECREE_DIR))?;
     let project = Project::load(project_root)?;
-    let problems = check(&project)?;
-    let warnings = warnings(project_root, &project)?;
+    let mut problems = plugin_problems(&synced);
+    problems.extend(check(&project)?);
+    let mut warnings = warnings(project_root, &project)?;
+    warnings.extend(plugin_warnings(&project)?);
     match format {
         CheckFormat::Text => {
             for problem in &problems {
@@ -140,6 +144,77 @@ impl std::fmt::Display for CheckWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.file, self.message)
     }
+}
+
+/// P1–P3 (docs/reference/plugins.md, Checks): each plugin file that fails the schema, each
+/// `needs` that is not in `plugins/`, and each plugin not installed because its installed
+/// copy was edited, by plugin name.
+fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
+    let mut out: Vec<(String, CheckError)> = Vec::new();
+    for (name, problems) in &synced.invalid {
+        for p in problems {
+            out.push((
+                name.clone(),
+                CheckError {
+                    rule: Some("P1".to_string()),
+                    file: plugin::plugin_file(name),
+                    line: p.line,
+                    state: None,
+                    message: p.message.clone(),
+                },
+            ));
+        }
+    }
+    for (name, missing) in &synced.missing_needs {
+        let list = missing
+            .iter()
+            .map(|n| format!("`{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push((
+            name.clone(),
+            CheckError {
+                rule: Some("P2".to_string()),
+                file: plugin::plugin_file(name),
+                line: None,
+                state: None,
+                message: format!(
+                    "`needs` names {list}, not in `{}/`: import it with `decree plugin import`",
+                    plugin::PLUGINS_DIR
+                ),
+            },
+        ));
+    }
+    for name in &synced.conflicts {
+        out.push((
+            name.clone(),
+            CheckError {
+                rule: Some("P3".to_string()),
+                file: plugin::plugin_file(name),
+                line: None,
+                state: None,
+                message: plugin::conflict_message(name),
+            },
+        ));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.into_iter().map(|(_, e)| e).collect()
+}
+
+/// Each machine no plugin installed, in a project with `plugins/`.
+fn plugin_warnings(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
+    Ok(
+        plugin::unplugged(&project.decree_dir, &project.machine_ids)?
+            .into_iter()
+            .map(|id| CheckWarning {
+                file: format!("{MACHINES_DIR}/{id}.yml"),
+                message: format!(
+                "no plugin installed this machine; run `decree plugin export {id}` to write `{}`",
+                plugin::plugin_file(&id)
+            ),
+            })
+            .collect(),
+    )
 }
 
 /// Every warning: stale graphs, then stale schemas, then the store, then the `.env` files,

@@ -11,7 +11,7 @@ the first directory holding a match wins:
 1. `.decree/scripts/M/`
 2. `.decree/scripts/`
 
-There is no other search path. To share a script across projects, symlink it into `scripts/`.
+There is no other search path. To share a machine and its scripts across projects, make it a plugin: `decree plugin export M` writes `.decree/plugins/M.md`.
 
 A match is a file named `X` or `X.<ext>` (`verify.sh`), executable, and the only match in its
 directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commit`, `keep`,

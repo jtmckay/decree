@@ -305,7 +305,16 @@ fn cli() -> Cli {
     let mut commands = BTreeMap::new();
     for line in section(&top, "Commands:") {
         let name = line.split_whitespace().next().unwrap();
-        commands.insert(name.to_string(), accepts(&help(&[name]), Some(name)));
+        let text = help(&[name]);
+        // A command with subcommands (`plugin`) is also each `<command> <subcommand>`.
+        for sub in section(&text, "Commands:") {
+            let sub = sub.split_whitespace().next().unwrap();
+            if sub != "help" {
+                let full = format!("{name} {sub}");
+                commands.insert(full.clone(), accepts(&help(&[name, sub]), Some(&full)));
+            }
+        }
+        commands.insert(name.to_string(), accepts(&text, Some(name)));
     }
     assert!(commands.contains_key("process"), "{top}");
     Cli {
@@ -412,6 +421,11 @@ fn check_invocation(cli: &Cli, rest: &str, usage: bool) -> Vec<String> {
     if first.starts_with('<') || first.starts_with('[') || first.starts_with('$') {
         return errors; // `decree <command> …`: a placeholder for any command
     }
+    let sub = words.get(1).map(|s| format!("{first} {s}"));
+    if let Some((sub, accepts)) = sub.and_then(|s| cli.commands.get_key_value(&s)) {
+        let name = format!("decree {sub}");
+        return check_args(accepts, &name, &words[2..], usage);
+    }
     let (accepts, args) = if first.starts_with('-') {
         (&cli.top, &words[..])
     } else {
@@ -425,6 +439,13 @@ fn check_invocation(cli: &Cli, rest: &str, usage: bool) -> Vec<String> {
     } else {
         format!("decree {first}")
     };
+    errors.extend(check_args(accepts, &name, args, usage));
+    errors
+}
+
+/// What is wrong with `args` given to command `name`, which takes `accepts`.
+fn check_args(accepts: &Accepts, name: &str, args: &[String], usage: bool) -> Vec<String> {
+    let mut errors = Vec::new();
     if usage {
         let flag = Regex::new(r"(?:^|[\[(|])(--?[A-Za-z][A-Za-z0-9-]*)").unwrap();
         for word in args {
@@ -932,6 +953,7 @@ fn every_documented_message_validates() {
     let validator = schema::message_validator();
     let mut errors = Vec::new();
     let mut checked = 0;
+    let mut checked_plugins = 0;
     for rel in documents() {
         for (line, text) in frontmatters(&rel, &read(&rel)) {
             let Some(json) = schema::frontmatter_to_json(&text) else {
@@ -940,6 +962,14 @@ fn every_documented_message_validates() {
                 }
                 continue;
             };
+            // A plugin's frontmatter: `name` and a `machine` mapping.
+            if json.get("name").is_some() && json.get("machine").is_some_and(|m| m.is_object()) {
+                checked_plugins += 1;
+                for e in schema::errors(&schema::plugin_validator(), &json) {
+                    errors.push(format!("{rel}:{line}: {e}"));
+                }
+                continue;
+            }
             let is_message = json.get("machine").is_some()
                 || (json.get("to").is_some() && json.get("event").is_some());
             if !is_message {
@@ -952,6 +982,7 @@ fn every_documented_message_validates() {
         }
     }
     assert!(checked >= 12, "only {checked} messages found");
+    assert!(checked_plugins >= 1, "no plugin found in the docs");
     assert!(errors.is_empty(), "{}", errors.join("\n"));
 }
 

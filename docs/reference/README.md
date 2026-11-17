@@ -90,6 +90,7 @@ Each building block has its own directory in `.decree/`:
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
     hold                            # written by a script (keep): the run's attention file holds the queue (cli.md, Attention)
   cron/                             # *.md cron templates (messages.md, Cron files)
+  plugins/<machine name>.md           # optional, committed: a machine and its scripts folder as one file, installed into machines/ and scripts/<machine name>/ (plugins.md)
   machines/<machine name>.yml         # statecharts (machines.md)
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
   schema/v1/*.schema.json             # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)
@@ -100,7 +101,7 @@ Each building block has its own directory in `.decree/`:
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
   store/<machine name>/             # what the machine keeps between runs: $DECREE_STORE, declared under `store:`; never deleted by decree (scripts.md, Store)
-  cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree never reads or checks it (scripts.md, Store)
+  cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree keeps only cache/plugins/ there, its record of each plugin install (plugins.md)
   process.log                       # what `process` and `daemon` print as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
   attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops every run (cli.md, Attention)
 ```
@@ -118,7 +119,7 @@ A project is machines, scripts and messages; there is no configuration file for 
 | Retries | `attempts` in the script invoke, a number or a list of values; default 1 (no retry), as a Step Functions task without `Retry`. |
 | Emit depth | `max_depth`, 10 unless `DECREE_MAX_DEPTH` sets it, from the shell or `.decree/.env` ([Environment](cli.md#environment)). |
 | Log size | Each script log is capped at 2 MiB (2097152 bytes). |
-| Sharing across projects | None in decree. To share machines or scripts across projects, symlink them into `machines/` and `scripts/`. |
+| Sharing across projects | A plugin: one file, `plugins/<name>.md`, that holds a machine and its scripts folder ([plugins.md](plugins.md)). |
 
 The daemon poll interval is the `decree daemon --interval` flag.
 
@@ -133,8 +134,9 @@ Every file decree reads or writes, and every document a command prints with `--f
 | `events.schema.json` | One line of `runs/<id>/events.jsonl`: the common fields, then one branch per `type`. | [runs.md](runs.md#eventsjsonl) |
 | `request.schema.json` | A router run's `request.json`, including `reply_schema`. | [runs.md](runs.md#model) |
 | `attention.schema.json` | The frontmatter of a file decree writes in `.decree/attention/`, for a run that needs a person. A `.md` file there that does not match it holds the queue. | [cli.md](cli.md#attention) |
+| `plugin.schema.json` | The frontmatter of a plugin, `plugins/<name>.md`. | [plugins.md](plugins.md) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
-| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema`, `upgrade` and `process` (`--dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
+| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema`, `upgrade`, `plugin` and `process` (`--dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 
 The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
 

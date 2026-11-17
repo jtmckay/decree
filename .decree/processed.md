@@ -119,3 +119,4 @@ A05-decree-upgrade.md
 A06-max-depth-setting.md
 A07-bare-decree-prints-synopsis.md
 A08-no-lib.md
+A09-plugins-export-import.md

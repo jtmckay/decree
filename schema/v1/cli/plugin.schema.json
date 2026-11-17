@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/plugin.schema.json",
+  "title": "decree plugin --format json",
+  "description": "What `decree plugin export|import|install --format json` prints on stdout, one shape per `action`. On failure (a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. Reference: docs/reference/plugins.md.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "plugin",
+        "file",
+        "files",
+        "needs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "export",
+          "description": "`decree plugin export <name>`: the plugin file written from the installed copy."
+        },
+        "plugin": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "The plugin's name."
+        },
+        "file": {
+          "type": "string",
+          "description": "The plugin file, .decree/plugins/<name>.md, relative to the project root."
+        },
+        "files": {
+          "type": "array",
+          "description": "Each file the plugin installs, relative to the project root, with its line count: the machine, then the scripts in path order.",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "lines"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "The file, relative to the project root."
+              },
+              "lines": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Its number of lines."
+              }
+            }
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "The plugin's `needs`."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "plugin",
+        "file",
+        "description",
+        "files",
+        "needs",
+        "replaced",
+        "changes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "import",
+          "description": "`decree plugin import <file|->`: the plugin copied into plugins/ and installed."
+        },
+        "plugin": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "The plugin's name."
+        },
+        "file": {
+          "type": "string",
+          "description": "The plugin file, .decree/plugins/<name>.md, relative to the project root."
+        },
+        "description": {
+          "type": "string",
+          "description": "The machine's `description`."
+        },
+        "files": {
+          "type": "array",
+          "description": "Each file the plugin installs, relative to the project root, with its line count: the machine, then the scripts in path order.",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "lines"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "The file, relative to the project root."
+              },
+              "lines": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Its number of lines."
+              }
+            }
+          }
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "The plugin's `needs`."
+        },
+        "replaced": {
+          "type": "boolean",
+          "description": "Whether a plugin of the same name was replaced (--force)."
+        },
+        "changes": {
+          "type": "array",
+          "description": "With `replaced`, what changed: each file added, changed or removed, and `needs` when it changed. Empty otherwise.",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "change"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "The file, relative to the project root, or `needs`."
+              },
+              "change": {
+                "enum": [
+                  "added",
+                  "changed",
+                  "removed"
+                ],
+                "description": "How it changed."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "installed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "install",
+          "description": "`decree plugin install [<name>...]`: the plugins installed, replacing any edited installed copy."
+        },
+        "installed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "The plugins installed, by name."
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "action": "install",
+      "installed": [
+        "develop"
+      ]
+    }
+  ]
+}

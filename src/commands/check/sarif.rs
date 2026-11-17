@@ -21,7 +21,7 @@ const HELP_URI: &str =
 
 /// Every rule of docs/reference/machines.md (Validation) with its check, as the table
 /// states it (a test holds the two equal).
-pub(crate) const RULES: [(&str, &str); 25] = [
+pub(crate) const RULES: [(&str, &str); 28] = [
     (
         "V1",
         "`name` equals the file stem and matches `^[a-z][a-z0-9_]*$`.",
@@ -122,6 +122,18 @@ pub(crate) const RULES: [(&str, &str); 25] = [
         "E1",
         "`.decree/.env` and every machine's `env_file`, each if it exists, is a dotenv file: each line is blank, a `#` comment or `KEY=value` (optionally after `export `, the value optionally in matching single or double quotes, and interpolated unless single-quoted: `${VAR}`, `$VAR`, `${VAR:-default}`, `${VAR-default}`, `$$`); each key matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not `DECREE_*`, `TRACEPARENT` or `TRACESTATE`, except that `.decree/.env` may set `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES` ([Several processes](cli.md#several-processes)) and `DECREE_MAX_DEPTH`, a whole number of at least 1 ([Environment](cli.md#environment)).",
     ),
+    (
+        "P1",
+        "Every `plugins/*.md` follows the plugin schema: `name` equals the file stem and matches `^[a-z][a-z0-9_]*$`; `machine` is a mapping without `name`; each `scripts` path is a plain relative path (no `..`, `.`, empty parts or leading `/`) to the file's text; `needs` lists distinct plugin names; no other key.",
+    ),
+    (
+        "P2",
+        "Every plugin a plugin `needs` is in `plugins/`.",
+    ),
+    (
+        "P3",
+        "No plugin changed while its installed copy (`machines/<name>.yml` or `scripts/<name>/`) was edited in place.",
+    ),
 ];
 
 /// The SARIF log: one run of the `decree` driver, a `result` per error (`level: error`,
@@ -202,7 +214,7 @@ mod tests {
             .filter_map(|line| {
                 let row = line.strip_prefix("| ")?.strip_suffix(" |")?;
                 let (id, check) = row.split_once(" | ")?;
-                let rule = id.starts_with('V') || id.starts_with('M') || id.starts_with('E');
+                let rule = id.starts_with(['V', 'M', 'E', 'P']);
                 (rule && id[1..].parse::<u32>().is_ok())
                     .then(|| (id.to_string(), check.replace("\\|", "|")))
             })

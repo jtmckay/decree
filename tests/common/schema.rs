@@ -41,6 +41,12 @@ pub const CLI_EVENT_SCHEMA: &str = include_str!("../../schema/v1/cli/event.schem
 /// The schema of `decree graph --format json`.
 pub const CLI_GRAPH_SCHEMA: &str = include_str!("../../schema/v1/cli/graph.schema.json");
 
+/// The plugin frontmatter schema, `plugins/<name>.md`.
+pub const PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/plugin.schema.json");
+
+/// The schema of `decree plugin export|import|install --format json`.
+pub const CLI_PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/cli/plugin.schema.json");
+
 /// The schema of `decree process --format json`.
 pub const CLI_PROCESS_SCHEMA: &str = include_str!("../../schema/v1/cli/process.schema.json");
 
@@ -64,12 +70,13 @@ pub const CLI_UPGRADE_SCHEMA: &str = include_str!("../../schema/v1/cli/upgrade.s
 
 /// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
 /// `.schema.json`.
-pub const ALL: [(&str, &str); 17] = [
+pub const ALL: [(&str, &str); 19] = [
     ("attention", ATTENTION_SCHEMA),
     ("cli/check", CLI_CHECK_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
     ("cli/event", CLI_EVENT_SCHEMA),
     ("cli/graph", CLI_GRAPH_SCHEMA),
+    ("cli/plugin", CLI_PLUGIN_SCHEMA),
     ("cli/process", CLI_PROCESS_SCHEMA),
     ("cli/prune", CLI_PRUNE_SCHEMA),
     ("cli/schema", CLI_SCHEMA_SCHEMA),
@@ -80,6 +87,7 @@ pub const ALL: [(&str, &str); 17] = [
     ("events", EVENTS_SCHEMA),
     ("machine", MACHINE_SCHEMA),
     ("message", MESSAGE_SCHEMA),
+    ("plugin", PLUGIN_SCHEMA),
     ("reply", REPLY_SCHEMA),
     ("request", REQUEST_SCHEMA),
 ];
@@ -118,6 +126,10 @@ impl jsonschema::Retrieve for Bundled {
 
 pub fn machine_validator() -> Validator {
     validator(MACHINE_SCHEMA)
+}
+
+pub fn plugin_validator() -> Validator {
+    validator(PLUGIN_SCHEMA)
 }
 
 pub fn message_validator() -> Validator {

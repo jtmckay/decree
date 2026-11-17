@@ -64,6 +64,73 @@ states:
   failed: { final: true }
 ";
 
+/// `BASE` as a plugin, `plugins/m.md`, with no scripts.
+const PLUGIN_BASE: &str = "\
+---
+name: m
+machine:
+  description: Base machine.
+  initial: work
+  states:
+    work:
+      invoke: work
+      transitions: { done: done }
+    done: { final: true }
+    failed: { final: true }
+---
+# m
+";
+
+/// `PLUGIN_BASE` with another description.
+const PLUGIN_CHANGED: &str = "\
+---
+name: m
+machine:
+  description: Changed machine.
+  initial: work
+  states:
+    work:
+      invoke: work
+      transitions: { done: done }
+    done: { final: true }
+    failed: { final: true }
+---
+# m
+";
+
+/// `BASE` edited in place.
+const BASE_EDITED: &str = "\
+name: m
+description: Edited in place.
+initial: work
+states:
+  work:
+    invoke: work
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// A plugin `r`, with its script.
+const PLUGIN_R: &str = "\
+---
+name: r
+machine:
+  description: Another machine.
+  initial: work
+  states:
+    work:
+      invoke: work
+      transitions: { done: done }
+    done: { final: true }
+    failed: { final: true }
+scripts:
+  work: |
+    #!/usr/bin/env bash
+    exit 0
+---
+";
+
 /// A machine with one datum of each type.
 /// An `enum` and a `number`, compared with a float, an int and an int `data` value.
 const CHOICES: &str = "\
@@ -1647,6 +1714,78 @@ cron/c.md: line 1: no `machine` key (M3)
 .env: line 5: the value of `B` opens a \" quote it does not close (E1)
 ",
     },
+    // P1
+    Case {
+        rule: "P1",
+        name: "a plugin with its script",
+        files: &[("plugins/r.md", PLUGIN_R)],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "P1",
+        name: "a script path that leaves the folder",
+        files: &[(
+            "plugins/m.md",
+            "---\nname: m\nmachine: { description: d }\nscripts:\n  ../x.sh: hi\n---\n",
+        )],
+        scripts: &[],
+        expected: "plugins/m.md: line 4: script path `../x.sh` is not a plain relative path: no `..`, `.`, empty parts or leading `/` (P1)\n",
+    },
+    Case {
+        rule: "P1",
+        name: "name differs from the file stem",
+        files: &[("plugins/n.md", PLUGIN_BASE)],
+        scripts: &[],
+        expected: "plugins/n.md: line 2: `name` is `m`, but the file is `n.md`: they must be equal (P1)\n",
+    },
+    // P2
+    Case {
+        rule: "P2",
+        name: "needs a plugin that is there",
+        files: &[
+            ("plugins/r.md", PLUGIN_R),
+            (
+                "plugins/m.md",
+                "---\nname: m\nneeds: [r]\nmachine:\n  description: Base machine.\n  initial: work\n  states:\n    work:\n      invoke: { machine: { name: r } }\n      transitions: { done: done }\n    done: { final: true }\n    failed: { final: true }\n---\n",
+            ),
+        ],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "P2",
+        name: "needs a plugin that is not there",
+        files: &[(
+            "plugins/m.md",
+            "---\nname: m\nneeds: [r]\nmachine:\n  description: Base machine.\n  initial: work\n  states:\n    work:\n      invoke: work\n      transitions: { done: done }\n    done: { final: true }\n    failed: { final: true }\nscripts:\n  work: \"#!/bin/sh\\n\"\n---\n",
+        )],
+        scripts: &[],
+        expected: "plugins/m.md: `needs` names `r`, not in `plugins/`: import it with `decree plugin import` (P2)\n",
+    },
+    // P3
+    Case {
+        rule: "P3",
+        name: "a changed plugin over an unedited copy is installed",
+        files: &[
+            ("cache/plugins/m.md", PLUGIN_BASE),
+            ("machines/m.yml", BASE),
+            ("plugins/m.md", PLUGIN_CHANGED),
+        ],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "P3",
+        name: "a changed plugin over an edited copy",
+        files: &[
+            ("cache/plugins/m.md", PLUGIN_BASE),
+            ("machines/m.yml", BASE_EDITED),
+            ("plugins/m.md", PLUGIN_CHANGED),
+        ],
+        scripts: &[],
+        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m.yml or scripts/m/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export m` and merge with git; to take the plugin's version, run `decree plugin install m` (P3)\n",
+    },
 ];
 
 /// Root and state `onentry`/`onexit` scripts (V12).
@@ -1989,9 +2128,9 @@ fn run_rule(rule: &str) {
     }
 }
 
-const RULES: [&str; 25] = [
+const RULES: [&str; 28] = [
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15",
-    "V16", "V17", "V18", "V19", "V20", "V21", "M1", "M2", "M3", "E1",
+    "V16", "V17", "V18", "V19", "V20", "V21", "M1", "M2", "M3", "E1", "P1", "P2", "P3",
 ];
 
 #[test]
@@ -2040,11 +2179,32 @@ rule_tests! {
     m1_migrations => "M1",
     m2_inbox => "M2",
     m3_cron => "M3",
+    p1_plugin_schema => "P1",
+    p2_plugin_needs => "P2",
+    p3_plugin_edit_conflict => "P3",
 }
 
 /// Files of failing cases that the schemas accept: what is wrong is beyond what a JSON Schema
 /// of one file can say, so only `decree check` catches it. (rule, case name, file, reason).
 const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
+    (
+        "P1",
+        "name differs from the file stem",
+        "plugins/n.md",
+        "a schema sees the document, not its file name",
+    ),
+    (
+        "P2",
+        "needs a plugin that is not there",
+        "plugins/m.md",
+        "which plugins exist depends on other files",
+    ),
+    (
+        "P3",
+        "a changed plugin over an edited copy",
+        "plugins/m.md",
+        "an edit conflict depends on the installed copy and the record of its install",
+    ),
     (
         "V1",
         "name differs from the file stem",
@@ -2206,6 +2366,8 @@ fn schema_errors(
     match path.split('/').next() {
         Some("machines") => schema::machine_errors(machine, text),
         Some("migrations" | "inbox" | "cron") => schema::message_errors(message, text),
+        Some("plugins") => schema::frontmatter_to_json(text)
+            .map(|json| schema::errors(&schema::plugin_validator(), &json)),
         _ => None,
     }
 }

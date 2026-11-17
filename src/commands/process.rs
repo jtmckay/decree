@@ -17,8 +17,9 @@
 //! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
 //! `timeout` deadlines that have passed (docs/reference/messages.md, Replies).
 //!
-//! Before each run it reads the machines and `.env` files again (`Pipeline::refresh`), so an
-//! edit applies to the next run without a restart.
+//! Before each run it installs plugins that are new or changed (docs/reference/plugins.md)
+//! and reads the machines and `.env` files again (`Pipeline::refresh`), so an edit applies to
+//! the next run without a restart.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
@@ -78,6 +79,8 @@ pub fn run(
     quiet: bool,
     select: &Select,
 ) -> Result<(), DecreeError> {
+    let mut plugin_notes = BTreeSet::new();
+    sync_plugins(project_root, &mut plugin_notes, "");
     let project = Project::load(project_root)?;
     if dry_run {
         // The machine filter's variables are read only when no flag beats them; `load_env`
@@ -95,6 +98,7 @@ pub fn run(
     runtime::register_signals(&shutdown)?;
     let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
     let mut pipeline = Pipeline::new(project_root, project, shutdown, "", select)?;
+    pipeline.plugin_notes = plugin_notes;
     if let Some(retry) = retry {
         pipeline.retry(&retry)?;
     }
@@ -187,6 +191,22 @@ pub(crate) struct Pipeline {
     /// The last machine or `.env` problem `refresh` printed, so each is printed once.
     machine_error: Option<String>,
     env_error: Option<String>,
+    /// The plugin problems last printed (`sync_plugins`), so each is printed once.
+    pub(crate) plugin_notes: BTreeSet<String>,
+}
+
+/// Install every plugin that is new or changed (docs/reference/plugins.md, Installing), and
+/// print each problem that stops one (a conflict, a plugin that fails its schema) once:
+/// `printed` holds the problems already printed, and keeps those still there.
+pub(crate) fn sync_plugins(project_root: &Path, printed: &mut BTreeSet<String>, prefix: &str) {
+    let now: BTreeSet<String> = match crate::plugin::sync(&project_root.join(DECREE_DIR)) {
+        Ok(synced) => synced.notices().into_iter().collect(),
+        Err(e) => BTreeSet::from([format!("cannot install plugins: {e}")]),
+    };
+    for note in now.difference(printed) {
+        report::notice(format!("{prefix}{note}"));
+    }
+    *printed = now;
 }
 
 impl Pipeline {
@@ -223,6 +243,7 @@ impl Pipeline {
             report: None,
             machine_error: None,
             env_error: None,
+            plugin_notes: BTreeSet::new(),
         })
     }
 
@@ -252,6 +273,7 @@ impl Pipeline {
     /// `.env` file the variables last read; each problem is printed once, until it changes.
     /// A run already going keeps its machine until it stops.
     pub(crate) fn refresh(&mut self) {
+        sync_plugins(&self.ctx.project_root, &mut self.plugin_notes, self.prefix);
         match self.reload_machines() {
             Ok(changed) => {
                 self.machine_error = None;

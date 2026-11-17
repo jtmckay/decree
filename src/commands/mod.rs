@@ -4,6 +4,7 @@ pub mod emit;
 pub mod event;
 pub mod graph;
 pub mod init;
+pub mod plugin;
 pub mod process;
 pub mod prune;
 pub(crate) mod report;

@@ -26,6 +26,16 @@ Commands:
   decree schema               Write .decree/schema/v1/, a local copy of the
                               JSON Schemas for machines, messages, events,
                               router files and --format json output
+  decree plugin export NAME   Share a machine as one file: write
+                              .decree/plugins/NAME.md from machines/NAME.yml
+                              and scripts/NAME/
+  decree plugin import FILE|- [--force]
+                              Check a plugin, copy it to .decree/plugins/
+                              and install it (curl -fsSL URL | decree plugin
+                              import -)
+  decree plugin install [NAME...]
+                              Install plugins now, replacing an installed
+                              copy edited in place
   decree skill [--ai AI]      Refresh the decree skill (.claude/skills/decree/
                               or .github/skills/decree/) after an upgrade;
                               your own files there are kept
@@ -169,8 +179,8 @@ No configuration file; conventions, fixed limits and variables instead:
   DECREE_MAX_DEPTH=20             # max_depth, default 10: deepest chain of emits
                                   # and child runs (shell or .decree/.env)
   script logs                     # each capped at 2 MiB
-  Share machines or scripts across projects by symlinking them into machines/
-  and scripts/.
+  Share a machine across projects as a plugin, .decree/plugins/NAME.md:
+  decree plugin export NAME, then decree plugin import FILE elsewhere.
 
 Cron (.decree/cron/<name>.md, run by `decree daemon`):
   ---

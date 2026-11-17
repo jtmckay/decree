@@ -21,7 +21,7 @@ pub const SCHEMA_DIR: &str = "schema";
 /// compiled into the binary from `schema/` at the repository root, their single source and the published copy. The first
 /// path segment is the contract version (docs/reference/README.md, Versioning); `cli/` holds
 /// the documents commands print with `--format json` (docs/reference/cli.md).
-const SCHEMAS: [(&str, &str); 17] = [
+const SCHEMAS: [(&str, &str); 19] = [
     (
         "v1/attention.schema.json",
         include_str!("../../schema/v1/attention.schema.json"),
@@ -41,6 +41,10 @@ const SCHEMAS: [(&str, &str); 17] = [
     (
         "v1/cli/graph.schema.json",
         include_str!("../../schema/v1/cli/graph.schema.json"),
+    ),
+    (
+        "v1/cli/plugin.schema.json",
+        include_str!("../../schema/v1/cli/plugin.schema.json"),
     ),
     (
         "v1/cli/process.schema.json",
@@ -81,6 +85,10 @@ const SCHEMAS: [(&str, &str); 17] = [
     (
         "v1/message.schema.json",
         include_str!("../../schema/v1/message.schema.json"),
+    ),
+    (
+        "v1/plugin.schema.json",
+        include_str!("../../schema/v1/plugin.schema.json"),
     ),
     (
         "v1/reply.schema.json",
@@ -252,7 +260,14 @@ mod tests {
             let on_disk = std::fs::read_to_string(root.join(name)).unwrap();
             assert!(on_disk == text, "{name} differs from schema/{name}");
         }
-        assert!(others(&root).unwrap().is_empty(), "{:?}", others(&root));
+        // The repository folder also holds the changelog of `v1`, which decree does not write.
+        let extra: Vec<String> = others(&root)
+            .unwrap()
+            .into_iter()
+            .filter(|name| name != "v1/CHANGELOG.md")
+            .collect();
+        assert!(extra.is_empty(), "{extra:?}");
+        assert!(root.join("v1/CHANGELOG.md").is_file());
     }
 
     fn files(dir: &Path) -> Vec<String> {

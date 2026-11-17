@@ -153,6 +153,13 @@ appear only where a machine invokes `model` or `person`.
   until it is deleted. To pause the queue, `decree stop`: the runs going now finish, and
   nothing more runs until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the
   run instead.
+- **Plugins are the source.** In a project with `.decree/plugins/`, each `plugins/<name>.md`
+  holds a machine and its `scripts/<name>/`, and decree installs it before it reads machines.
+  Edit the installed copy (`machines/<name>.yml`, `scripts/<name>/`), run it, then
+  `decree plugin export <name>` and commit the plugin file. If `decree check` reports a P3
+  conflict (the plugin changed while the copy was edited), export to keep the edit and merge
+  with git, or `decree plugin install <name>` to take the plugin's version. Never edit
+  `.decree/cache/plugins/`.
 - **Never delete run folders to clean up**; they are the record. Use
   `decree prune --older-than <age>`.
 - Do not commit `.decree/inbox/`, `.decree/runs/`, `.decree/store/` or `.decree/cache/`.
@@ -162,6 +169,7 @@ appear only where a machine invokes `model` or `person`.
 | Command | Use |
 | --- | --- |
 | `decree check [--format json\|sarif]` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
+| `decree plugin export <name>` | Write `.decree/plugins/<name>.md` from the installed machine, its `scripts/<name>/` and the flat scripts it runs. `decree plugin import <file\|->` checks one and installs it; `decree plugin install [<name>]` replaces an edited installed copy. |
 | `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
 | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
