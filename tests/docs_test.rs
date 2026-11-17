@@ -521,3 +521,52 @@ fn hold_is_named_only_in_history() {
     }
     assert_eq!(named, Vec::<String>::new());
 }
+
+/// AC (A08): no file is under a `.decree/lib/` outside `tests/fixtures/`, and the docs never
+/// mention `DECREE_LIB` or `.decree/lib`, nor `lib` at all (`lib.rs` aside) but for the one
+/// line in the scripts reference; `CHANGELOG.md` and `docs/decisions.md` keep the history.
+#[test]
+fn lib_is_gone_from_the_repository_and_the_docs() {
+    let root = repo();
+    let under_lib: Vec<String> = repository_files()
+        .iter()
+        .map(|p| {
+            p.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|p| !p.starts_with("tests/fixtures/"))
+        .filter(|p| p.starts_with(".decree/lib/") || p.contains("/.decree/lib/"))
+        .collect();
+    assert!(under_lib.is_empty(), "{under_lib:?}");
+
+    let word = regex::Regex::new(r"(^|[^\w./])lib(/|[^\w.]|$)").unwrap();
+    let mut docs = markdown_files();
+    docs.push(root.join("src/templates/help.txt"));
+    docs.push(root.join("src/templates/synopsis.md"));
+    let mut found = Vec::new();
+    for file in docs {
+        let rel = file
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        if rel == "docs/decisions.md" {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        for (n, line) in text.lines().enumerate() {
+            if line.contains("DECREE_LIB") || line.contains(".decree/lib") || word.is_match(line) {
+                found.push(format!("{rel}:{}: {line}", n + 1));
+            }
+        }
+    }
+    assert_eq!(
+        found,
+        ["docs/reference/scripts.md:140: A project may keep code its machines share in any folder \
+          it likes (`lib/`, `tools/`); decree does not look at it."],
+        "{}",
+        found.join("\n")
+    );
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""newsletter's gather: the new items of every feed in $DECREE_LIB/newsletter/feeds.txt.
+"""newsletter's gather: the new items of every feed in feeds.txt, beside this script.
 
 Reads RSS 2.0 and Atom, and writes $DECREE_RUN_DIR/items.jsonl, one JSON object per line
 (title, link, source, published, summary), newest first, at most $NEWSLETTER_MAX_ITEMS.
@@ -112,11 +112,10 @@ def fetch(url):
 
 
 def main():
-    lib = os.environ["DECREE_LIB"]
     run_dir = os.environ["DECREE_RUN_DIR"]
     max_items = int(os.environ.get("NEWSLETTER_MAX_ITEMS", "60"))
 
-    urls = feed_urls(os.path.join(lib, "newsletter", "feeds.txt"))
+    urls = feed_urls(os.path.join(os.path.dirname(os.path.abspath(__file__)), "feeds.txt"))
     if not urls:
         print("gather: feeds.txt lists no feeds", file=sys.stderr)
         return 1

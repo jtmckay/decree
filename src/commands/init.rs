@@ -56,12 +56,17 @@ const AI_BACKENDS: [Backend; 3] = [OPENCODE, CLAUDE, COPILOT];
 const ROUTER_YML: &str = include_str!("../templates/router/router.yml");
 const ROUTER_ASK_SH: &str = include_str!("../templates/router/ask.sh");
 
-/// A built-in machine `init` writes, with its scripts (`scripts/<name>/<script>.sh`).
+/// A built-in machine `init` writes, with its scripts (`scripts/<name>/<script>.sh`) and the
+/// helpers, config and data beside them, which decree never runs (docs/decisions.md, D77).
 struct BuiltinMachine {
     name: &'static str,
     yml: &'static str,
     /// Script name and template.
     scripts: &'static [(&'static str, &'static str)],
+    /// Whether its scripts source `ai.sh`, which is then written beside them.
+    uses_ai: bool,
+    /// Other files in `scripts/<name>/`: path, template, and whether it is executable.
+    files: &'static [(&'static str, &'static str, bool)],
 }
 
 /// `develop`: implement a message, gate it, verify it.
@@ -84,9 +89,14 @@ const DEVELOP: BuiltinMachine = BuiltinMachine {
             include_str!("../templates/scripts/develop/verify.sh"),
         ),
     ],
+    uses_ai: true,
+    files: &[],
 };
 
-/// `infra`: declare what the environment needs in `lib/infra/requirements`, then apply it.
+/// `infra`: declare what the environment needs in `scripts/infra/requirements`, then apply it.
+/// Its other files are the declared environment, which `infra` changes and `develop`'s
+/// `precheck` checks: the declaration, the loop that checks or applies every machine's, and the
+/// one kind decree ships.
 const INFRA: BuiltinMachine = BuiltinMachine {
     name: "infra",
     yml: include_str!("../templates/machines/infra.yml"),
@@ -97,9 +107,28 @@ const INFRA: BuiltinMachine = BuiltinMachine {
         ),
         ("apply", include_str!("../templates/scripts/infra/apply.sh")),
     ],
+    uses_ai: true,
+    files: &[
+        (
+            "requirements",
+            include_str!("../templates/scripts/infra/requirements"),
+            false,
+        ),
+        (
+            "run.sh",
+            include_str!("../templates/scripts/infra/run.sh"),
+            true,
+        ),
+        (
+            "kinds/command.sh",
+            include_str!("../templates/scripts/infra/kinds/command.sh"),
+            false,
+        ),
+    ],
 };
 
-/// `qa`: attack the project with chaos tests, and hand each real bug to `develop`.
+/// `qa`: attack the project with chaos tests, and hand each real bug to `develop`. Its other
+/// files are its settings and guard, and the invariants and wrenches it reads.
 const QA: BuiltinMachine = BuiltinMachine {
     name: "qa",
     yml: include_str!("../templates/machines/qa.yml"),
@@ -110,6 +139,24 @@ const QA: BuiltinMachine = BuiltinMachine {
         ("triage", include_str!("../templates/scripts/qa/triage.sh")),
         ("report", include_str!("../templates/scripts/qa/report.sh")),
     ],
+    uses_ai: true,
+    files: &[
+        (
+            "qa.sh",
+            include_str!("../templates/scripts/qa/qa.sh"),
+            false,
+        ),
+        (
+            "invariants.md",
+            include_str!("../templates/scripts/qa/invariants.md"),
+            false,
+        ),
+        (
+            "wrenches.md",
+            include_str!("../templates/scripts/qa/wrenches.md"),
+            false,
+        ),
+    ],
 };
 
 /// The built-in machines besides the router.
@@ -119,39 +166,6 @@ const BUILTIN_MACHINES: [&BuiltinMachine; 3] = [&DEVELOP, &INFRA, &QA];
 pub(crate) fn is_builtin_machine(name: &str) -> bool {
     name == "router" || BUILTIN_MACHINES.iter().any(|m| m.name == name)
 }
-
-/// The built-in machines' files in `lib/`, besides `ai.sh`: path, template, and whether it is
-/// executable. `infra/` is the declared environment, which `infra` changes and `develop`'s
-/// `precheck` checks: the declaration, the loop that checks or applies it, and the one kind
-/// decree ships. `qa/` is qa's settings and guard, and the invariants and wrenches it reads.
-const LIB_FILES: &[(&str, &str, bool)] = &[
-    (
-        "infra/requirements",
-        include_str!("../templates/infra/requirements"),
-        false,
-    ),
-    (
-        "infra/run.sh",
-        include_str!("../templates/infra/run.sh"),
-        true,
-    ),
-    (
-        "infra/kinds/command.sh",
-        include_str!("../templates/infra/kinds/command.sh"),
-        false,
-    ),
-    ("qa/qa.sh", include_str!("../templates/qa/qa.sh"), false),
-    (
-        "qa/invariants.md",
-        include_str!("../templates/qa/invariants.md"),
-        false,
-    ),
-    (
-        "qa/wrenches.md",
-        include_str!("../templates/qa/wrenches.md"),
-        false,
-    ),
-];
 
 /// Shared scripts `init` writes to the flat `scripts/` (docs/reference/scripts.md, Resolution;
 /// docs/decisions.md, D15). Every built-in machine starts with `clean_tree` (a root `onentry`:
@@ -167,18 +181,14 @@ const SHARED_SCRIPTS: &[(&str, &str)] = &[
     ("keep", include_str!("../templates/scripts/keep.sh")),
 ];
 
-/// `lib/ai.sh`: `ai <prompt>`, and a function for every backend, `{ai}` the one `init`
-/// chose.
+/// `ai.sh`: `ai <prompt>`, and a function for every backend, `{ai}` the one `init` chose. A
+/// copy goes in the scripts directory of each built-in machine that asks AI.
 const AI_SH: &str = include_str!("../templates/ai/ai.sh");
 
-/// The AI helper under `lib/`, which `develop`'s scripts source.
-const LIB_AI_FILE: &str = "ai.sh";
+/// The AI helper's file name in a machine's scripts directory.
+const AI_FILE: &str = "ai.sh";
 
 const DECREE_GITIGNORE: &str = include_str!("../templates/gitignore");
-
-/// `lib/README.md`: what goes in `lib/`.
-const LIB_README: &str = "Code that scripts source (`. \"$DECREE_LIB/<file>\"`), config and data. \
-                          decree never runs anything in it.\n";
 
 /// Check if a command exists on PATH.
 fn command_exists(name: &str) -> bool {
@@ -236,8 +246,8 @@ impl Backend {
         self.fill(ROUTER_ASK_SH)
     }
 
-    /// `lib/ai.sh`, with this backend as the default.
-    fn lib_ai_sh(&self) -> String {
+    /// `ai.sh`, with this backend as the default.
+    fn ai_sh(&self) -> String {
         self.fill(AI_SH)
     }
 
@@ -277,7 +287,7 @@ fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
             } else {
                 // `deny`, not OpenCode's default `ask`: `opencode run` cannot answer, so `ask`
                 // rejects a write outside the project and ends the session with no reply;
-                // `deny` rejects it and lets the agent go on (lib/ai.sh, ai_opencode).
+                // `deny` rejects it and lets the agent go on (ai.sh, ai_opencode).
                 std::fs::write(
                     settings_path,
                     "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"share\": \"manual\",\n  \"permission\": {\n    \"external_directory\": \"deny\"\n  }\n}\n",
@@ -302,8 +312,8 @@ fn write_script(path: &Path, content: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Write a built-in machine and its executable scripts (`scripts/<machine>/<name>.sh`)
-/// under `decree_dir`, for `backend`.
+/// Write a built-in machine, its executable scripts (`scripts/<machine>/<name>.sh`), its
+/// copy of `ai.sh` if it asks AI, and its other files, under `decree_dir`, for `backend`.
 fn write_machine(
     decree_dir: &Path,
     machine: &BuiltinMachine,
@@ -320,13 +330,10 @@ fn write_machine(
     for (name, script) in machine.scripts {
         write_script(&dir.join(format!("{name}.sh")), &backend.fill(script))?;
     }
-    Ok(())
-}
-
-/// Write `LIB_FILES` under `decree_dir`'s `lib/`, for `backend`.
-fn write_lib_files(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
-    let dir = decree_dir.join(layout::LIB_DIR);
-    for (name, template, executable) in LIB_FILES {
+    if machine.uses_ai {
+        std::fs::write(dir.join(AI_FILE), backend.ai_sh())?;
+    }
+    for (name, template, executable) in machine.files {
         let path = dir.join(name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -396,9 +403,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 }
 
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
-/// `processed.md`, the empty queues, `lib/` with its `README.md`, `ai.sh`, `infra/` and `qa/`, the
-/// router machine with its script, the built-in machines with their scripts, and the shared
-/// scripts.
+/// `processed.md`, the empty queues, the router machine with its script, the built-in machines
+/// with their scripts and files, and the shared scripts.
 /// `graph/` is written by `decree graph`; `schema/` only by `decree schema`, on request.
 fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> {
     for dir in [
@@ -408,21 +414,11 @@ fn write_layout(decree_dir: &Path, backend: Backend) -> Result<(), DecreeError> 
         layout::CRON_DIR,
         MACHINES_DIR,
         SCRIPTS_DIR,
-        layout::LIB_DIR,
     ] {
         std::fs::create_dir_all(decree_dir.join(dir))?;
     }
     std::fs::write(decree_dir.join(layout::GITIGNORE_FILE), DECREE_GITIGNORE)?;
-    std::fs::write(
-        decree_dir.join(layout::LIB_DIR).join("README.md"),
-        LIB_README,
-    )?;
-    std::fs::write(
-        decree_dir.join(layout::LIB_DIR).join(LIB_AI_FILE),
-        backend.lib_ai_sh(),
-    )?;
     std::fs::write(decree_dir.join(layout::PROCESSED_FILE), "")?;
-    write_lib_files(decree_dir, backend)?;
     write_router(decree_dir, backend)?;
     for machine in BUILTIN_MACHINES {
         write_machine(decree_dir, machine, backend)?;
@@ -542,7 +538,8 @@ mod tests {
     }
 
     /// Each built-in machine is written with every script executable and every placeholder
-    /// filled; the scripts that ask the AI source `lib/ai.sh` and define no `ai` function.
+    /// filled; the scripts that ask the AI source their machine's `ai.sh` by its path from the
+    /// project root, and define no `ai` function.
     #[test]
     fn test_write_machine_writes_the_machine_and_executable_scripts() {
         use std::os::unix::fs::PermissionsExt;
@@ -570,7 +567,7 @@ mod tests {
                     assert!(!text.contains("ai() {"), "{}", path.display());
                     let calls_ai = text.contains("\nai \"${prompt}\"");
                     assert_eq!(
-                        text.contains(". \"${DECREE_LIB}/ai.sh\"\n"),
+                        text.contains(&format!(". .decree/scripts/{}/ai.sh\n", machine.name)),
                         calls_ai,
                         "{}",
                         path.display()
@@ -595,35 +592,50 @@ mod tests {
         }
     }
 
-    /// `lib/infra/` declares the backend's CLI, and only `infra/run.sh` is executable.
+    /// infra's `requirements` declares the backend's CLI, and of a machine's other files only
+    /// infra's `run.sh` is executable; `ai.sh` sits beside the scripts of every machine that
+    /// asks AI.
     #[test]
-    fn test_write_lib_files_declares_the_ai_cli() {
+    fn test_write_machine_writes_the_files_beside_the_scripts() {
         use std::os::unix::fs::PermissionsExt;
         for b in AI_BACKENDS {
+            for machine in BUILTIN_MACHINES {
+                let dir = tempfile::TempDir::new().unwrap();
+                std::fs::create_dir_all(dir.path().join(MACHINES_DIR)).unwrap();
+                write_machine(dir.path(), machine, b).unwrap();
+                let scripts = dir.path().join(SCRIPTS_DIR).join(machine.name);
+                assert_eq!(
+                    std::fs::read_to_string(scripts.join(AI_FILE)).ok(),
+                    machine.uses_ai.then(|| b.ai_sh()),
+                    "{}",
+                    machine.name
+                );
+                for (name, _, executable) in machine.files {
+                    let mode = std::fs::metadata(scripts.join(name))
+                        .unwrap()
+                        .permissions()
+                        .mode();
+                    assert_eq!(mode & 0o111 != 0, *executable, "{name}");
+                }
+            }
             let dir = tempfile::TempDir::new().unwrap();
-            write_lib_files(dir.path(), b).unwrap();
-            let lib = dir.path().join("lib");
-            let requirements = std::fs::read_to_string(lib.join("infra/requirements")).unwrap();
+            std::fs::create_dir_all(dir.path().join(MACHINES_DIR)).unwrap();
+            write_machine(dir.path(), &INFRA, b).unwrap();
+            let requirements =
+                std::fs::read_to_string(dir.path().join("scripts/infra/requirements")).unwrap();
             assert!(
                 requirements.ends_with(&format!("\ncommand   {}\ncommand   git\n", b.name)),
                 "{requirements}"
             );
-            for (name, _, executable) in LIB_FILES {
-                let mode = std::fs::metadata(lib.join(name))
-                    .unwrap()
-                    .permissions()
-                    .mode();
-                assert_eq!(mode & 0o111 != 0, *executable, "{name}");
-            }
         }
     }
 
-    /// `lib/ai.sh` holds `ai` and a function for every backend, defaulting to the one `init`
+    /// `ai.sh` holds `ai` and a function for every backend, defaulting to the one `init`
     /// chose; only Claude's waits out a usage limit, and only OpenCode's nudges.
     #[test]
-    fn test_lib_ai_sh_defines_ai_for_each_backend() {
+    fn test_ai_sh_defines_ai_for_each_backend() {
         for b in AI_BACKENDS {
-            let text = b.lib_ai_sh();
+            let text = b.ai_sh();
             assert!(!text.contains("{ai"), "{}: {text}", b.name);
             assert!(
                 text.contains(&format!("\nAI_DEFAULT={}\n", b.name)),

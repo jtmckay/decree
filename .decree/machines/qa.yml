@@ -4,7 +4,7 @@ description: Attack the project to make it misbehave, and hand each real bug to 
 onentry: [clean_tree]              # the run starts from a clean git work tree
 initial: recon
 states:
-  recon:                           # lists the attack surface in surface.md; fails first if lib/qa/qa.sh has no QA_RUN
+  recon:                           # lists the attack surface in surface.md; fails first if scripts/qa/qa.sh has no QA_RUN
     invoke: recon
     transitions: { done: attack }
   attack:                          # writes chaos tests in QA_DIR, each naming its wrench and invariant

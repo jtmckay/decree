@@ -23,7 +23,7 @@ checks() {
   # npm ci && npm run lint && npm test
   # gofmt -l . | (! grep .) && go vet ./... && go test ./...
   # and, once qa has found bugs, its chaos suite:
-  # (. "${DECREE_LIB}/qa/qa.sh" && bash -c "${QA_RUN}")
+  # (. .decree/scripts/qa/qa.sh && bash -c "${QA_RUN}")
 }
 
 if checks 2>&1 | tee "${log}"; then

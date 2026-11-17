@@ -5,8 +5,8 @@
 # pass, or the step fails. A failure the docs do not settle is a question in STOP; the run
 # fails until a person answers it in plan.md, deletes STOP and runs `decree process --retry`.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
-. "${DECREE_LIB}/qa/qa.sh"
+. .decree/scripts/qa/ai.sh
+. .decree/scripts/qa/qa.sh
 
 bugs="${DECREE_RUN_DIR}/bugs"
 plan="${DECREE_RUN_DIR}/plan.md"
@@ -21,7 +21,7 @@ mkdir -p "${bugs}"
 qa_guard
 
 prompt="You are QA triage. Read ${DECREE_RUN_DIR}/chaos.log, the project's docs,
-${DECREE_LIB}/qa/invariants.md, and ${plan} if it exists. For each failing test in
+.decree/scripts/qa/invariants.md, and ${plan} if it exists. For each failing test in
 ${QA_DIR}/, decide:
 - Real bug: the project breaks an invariant or its docs. Mark the test expected to fail,
   with the framework's strict marker, so the suite passes now and fails once the bug is

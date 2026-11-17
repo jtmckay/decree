@@ -1,5 +1,5 @@
 //! The built-in `develop` machine `decree init` writes (docs/reference/cli.md, `decree init`):
-//! it passes `decree check`, its scripts source `lib/ai.sh`, the default gate runs nothing
+//! it passes `decree check`, its scripts source the `ai.sh` beside them, the default gate runs nothing
 //! and says so, `verify` names `pass` or `fail` from the AI's `VERDICT:` line, a run hands a
 //! failed gate to `fix`, ends a gate that could not run in `failed`, and stops on a `STOP`
 //! file, and Claude's usage limit is waited out and the session resumed. `claude`, `date`,
@@ -24,7 +24,7 @@ const MESSAGE: &str =
 /// the first call prints it and exits 1; a prompt containing `CLAUDE_FAIL_ON` exits 1.
 /// With `CLAUDE_STOP` set, it writes that to the run's `STOP` file, as an agent that
 /// cannot go on would. With `CLAUDE_DECLARE` set, it appends that line to
-/// `lib/infra/requirements`, as infra's `declare` asks. With `CLAUDE_DO` set, it runs that
+/// `scripts/infra/requirements`, as infra's `declare` asks. With `CLAUDE_DO` set, it runs that
 /// bash, with the prompt in `$prompt`, as an agent that edits files would. With `CLAUDE_RUNS_GATE` set, it runs the gate, as `fix` asks. A prompt asking for a verdict is answered with `CLAUDE_REPLY`,
 /// by default `VERDICT: pass`.
 const STUB_CLAUDE: &str = r#"#!/usr/bin/env bash
@@ -38,7 +38,7 @@ if [ -n "${CLAUDE_DO:-}" ]; then
   eval "$CLAUDE_DO"
 fi
 if [ -n "${CLAUDE_DECLARE:-}" ]; then
-  echo "$CLAUDE_DECLARE" >> .decree/lib/infra/requirements
+  echo "$CLAUDE_DECLARE" >> .decree/scripts/infra/requirements
 fi
 if [ -n "${CLAUDE_RUNS_GATE:-}" ]; then
   .decree/scripts/develop/gate.sh
@@ -335,12 +335,13 @@ fn files_under(dir: &Path) -> Vec<String> {
     out
 }
 
-/// AC: `decree init` writes `develop`, `infra`, `qa` and `router` only, `lib/ai.sh`, `lib/infra/`
-/// and `lib/qa/`;
-/// no script defines `ai()`; everything passes `decree check` (with every backend `init`
+/// AC: `decree init` writes `develop`, `infra`, `qa` and `router` only, each machine's helpers,
+/// config and data beside its scripts (`ai.sh` for each that asks AI, infra's declared
+/// environment, qa's settings), and no `lib/`; no script defines `ai()`; everything passes
+/// `decree check` (with every backend `init`
 /// supports).
 #[test]
-fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
+fn init_writes_develop_infra_qa_router_and_they_pass_check() {
     for ai in ["claude", "opencode", "copilot"] {
         let p = Project::empty();
         p.decree(&["init", "--ai", ai]).assert().success();
@@ -355,40 +356,42 @@ fn init_writes_develop_infra_router_and_lib_and_they_pass_check() {
             [
                 "clean_tree.sh".to_string(),
                 "commit.sh".to_string(),
+                "develop/ai.sh".to_string(),
                 "develop/fix.sh".to_string(),
                 "develop/gate.sh".to_string(),
                 "develop/implement.sh".to_string(),
                 "develop/precheck.sh".to_string(),
                 "develop/verify.sh".to_string(),
+                "infra/ai.sh".to_string(),
                 "infra/apply.sh".to_string(),
                 "infra/declare.sh".to_string(),
+                "infra/kinds/command.sh".to_string(),
+                "infra/requirements".to_string(),
+                "infra/run.sh".to_string(),
                 "keep.sh".to_string(),
+                "qa/ai.sh".to_string(),
                 "qa/attack.sh".to_string(),
+                "qa/invariants.md".to_string(),
+                "qa/qa.sh".to_string(),
                 "qa/recon.sh".to_string(),
                 "qa/report.sh".to_string(),
                 "qa/run.sh".to_string(),
                 "qa/triage.sh".to_string(),
+                "qa/wrenches.md".to_string(),
                 "router/".to_string() + &format!("ask_{ai}.sh"),
             ],
             "{ai}"
         );
-        assert_eq!(
-            files_under(&decree.join("lib")),
-            [
-                "README.md",
-                "ai.sh",
-                "infra/kinds/command.sh",
-                "infra/requirements",
-                "infra/run.sh",
-                "qa/invariants.md",
-                "qa/qa.sh",
-                "qa/wrenches.md"
-            ],
-            "{ai}"
-        );
-        let lib = fs::read_to_string(decree.join("lib/ai.sh")).unwrap();
-        assert!(lib.contains("\nai() {\n"), "{ai}: {lib}");
+        assert!(!decree.join("lib").exists(), "{ai}");
+        for machine in ["develop", "infra", "qa"] {
+            let helper =
+                fs::read_to_string(decree.join("scripts").join(machine).join("ai.sh")).unwrap();
+            assert!(helper.contains("\nai() {\n"), "{ai}: {machine}");
+        }
         for script in files_under(&decree.join("scripts")) {
+            if script.ends_with("/ai.sh") {
+                continue;
+            }
             let text = fs::read_to_string(decree.join("scripts").join(&script)).unwrap();
             assert!(!text.contains("ai()"), "{ai}: {script} defines ai()");
         }
@@ -505,7 +508,6 @@ fn verify_alone(reply: &str) -> (Option<i32>, String) {
     let out = std::process::Command::new(p.script("verify"))
         .current_dir(p.root())
         .env("PATH", p.path())
-        .env("DECREE_LIB", p.root().join(".decree/lib"))
         .env("DECREE_RUN_DIR", &run_dir)
         .env("DECREE_ROOT_RUN_DIR", &run_dir)
         .env("DECREE_MESSAGE", run_dir.join("message.md"))
@@ -573,7 +575,6 @@ fn verify_leaves_gaps_on_fail_and_keeps_the_last_through_a_dead_attempt() {
         let out = std::process::Command::new(p.script("verify"))
             .current_dir(p.root())
             .env("PATH", p.path())
-            .env("DECREE_LIB", p.root().join(".decree/lib"))
             .env("DECREE_RUN_DIR", &run_dir)
             .env("DECREE_ROOT_RUN_DIR", &run_dir)
             .env("DECREE_MESSAGE", run_dir.join("message.md"))
@@ -1003,7 +1004,7 @@ fn ai_picks_the_backend_and_logs_every_call() {
     assert_eq!(p.outcome(&id), "failed");
     assert!(
         p.log(&id, "implement")
-            .contains("ai: no ai_nobody function in lib/ai.sh (AI_CLI=nobody)"),
+            .contains("ai: no ai_nobody function in ai.sh (AI_CLI=nobody)"),
         "{}",
         p.log(&id, "implement")
     );
@@ -1034,7 +1035,7 @@ fn a_runs_ai_cli_wins_over_the_projects() {
     .unwrap();
     write_script(
         &decree.join("scripts/say.sh"),
-        "#!/usr/bin/env bash\nset -euo pipefail\n. \"$DECREE_LIB/ai.sh\"\nai \"Say hi from $DECREE_MACHINE.\"\n",
+        "#!/usr/bin/env bash\nset -euo pipefail\n. .decree/scripts/develop/ai.sh\nai \"Say hi from $DECREE_MACHINE.\"\n",
     );
     p.stub(
         "opencode",
@@ -1128,7 +1129,9 @@ fn infra_declares_a_resource_then_applies_it() {
     );
     assert_eq!(
         p.log(&id, "apply"),
-        "ok       command claude\nok       command git\nok       command ls\n"
+        "ok       command claude (scripts/infra/requirements)\n\
+         ok       command git (scripts/infra/requirements)\n\
+         ok       command ls (scripts/infra/requirements)\n"
     );
     let calls = p.calls();
     assert_eq!(calls.len(), 1, "{calls:?}");
@@ -1148,10 +1151,10 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(
         p.log(&id, "apply"),
-        "ok       command claude\n\
-         ok       command git\n\
+        "ok       command claude (scripts/infra/requirements)\n\
+         ok       command git (scripts/infra/requirements)\n\
          not_a_tool_xyz is not on PATH: install it, then continue the run\n\
-         FAILED   command not_a_tool_xyz\n"
+         FAILED   command not_a_tool_xyz (scripts/infra/requirements)\n"
     );
     // The declaration stays in the tree with the rest of the failed run, and its attention
     // file holds the queue; the person commits it and deletes the file.
@@ -1167,9 +1170,37 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
     );
     assert_eq!(
         p.log(&id, "precheck"),
-        "ok       command claude\nok       command git\nmissing  command not_a_tool_xyz\n"
+        "ok       command claude (scripts/infra/requirements)\n\
+         ok       command git (scripts/infra/requirements)\n\
+         missing  command not_a_tool_xyz (scripts/infra/requirements)\n"
     );
     assert_eq!(p.calls().len(), 1, "only infra's declare");
+}
+
+/// AC (A08): `scripts/develop/requirements` naming a command not on `PATH`, beside infra's
+/// `git`, fails develop's precheck before the agent runs, naming the command and the file.
+#[test]
+fn precheck_checks_every_machines_requirements() {
+    let p = Project::init();
+    fs::write(
+        p.root().join(".decree/scripts/develop/requirements"),
+        "command   not_a_tool_xyz\n",
+    )
+    .unwrap();
+    p.commit_all("develop's requirements");
+    let id = p.run(&[]);
+    assert_eq!(p.outcome(&id), "failed");
+    assert_eq!(
+        path(&p, &id),
+        ["null -claimed-> precheck", "precheck -error-> failed"]
+    );
+    assert_eq!(
+        p.log(&id, "precheck"),
+        "ok       command claude (scripts/infra/requirements)\n\
+         ok       command git (scripts/infra/requirements)\n\
+         missing  command not_a_tool_xyz (scripts/develop/requirements)\n"
+    );
+    assert!(p.calls().is_empty(), "{:?}", p.calls());
 }
 
 /// `CLAUDE_MODEL` picks the model for every call; without it, no `--model` is passed.
@@ -1216,7 +1247,7 @@ impl Project {
     /// `init`, then `QA_RUN` set to `CHAOS_RUN`, and an app file.
     fn init_qa() -> Project {
         let p = Project::init();
-        let qa = p.root().join(".decree/lib/qa/qa.sh");
+        let qa = p.root().join(".decree/scripts/qa/qa.sh");
         let text = fs::read_to_string(&qa).unwrap();
         let text = text.replacen("QA_RUN=\"\"\n", &format!("QA_RUN='{CHAOS_RUN}'\n"), 1);
         fs::write(&qa, text).unwrap();
@@ -1289,7 +1320,7 @@ fn qa_needs_its_chaos_suite_command_first() {
     );
     assert_eq!(
         p.log(&id, "recon"),
-        "qa: no chaos suite command; set QA_RUN in .decree/lib/qa/qa.sh\n"
+        "qa: no chaos suite command; set QA_RUN in .decree/scripts/qa/qa.sh\n"
     );
     assert!(p.calls().is_empty());
 }
@@ -1338,7 +1369,7 @@ fn a_command_line_checks_its_version() {
     assert!(
         p.log(&id, "apply").ends_with(
             "bash 0.0.0-none is not on PATH: install it, then continue the run\n\
-             FAILED   command bash 0.0.0-none\n"
+             FAILED   command bash 0.0.0-none (scripts/infra/requirements)\n"
         ),
         "{}",
         p.log(&id, "apply")
@@ -1516,7 +1547,7 @@ fn done_commits_the_runs_work() {
     assert_eq!(p.outcome(&id), "done");
     assert_eq!(
         p.git(&["show", "--format=", "--name-only", "HEAD"]),
-        ".decree/lib/infra/requirements\n"
+        ".decree/scripts/infra/requirements\n"
     );
 }
 
@@ -1924,7 +1955,7 @@ fn the_documented_consensus_router_sends_a_split_to_a_person() {
     assert_eq!(last["state"], "ask_person");
 }
 
-/// The `release` kind in docs/reference/scripts.md, run by `lib/infra/run.sh apply` from a
+/// The `release` kind in docs/reference/scripts.md, run by `scripts/infra/run.sh apply` from a
 /// local archive: installed when the sha256 in its source matches, refused when it does not
 /// or when the source has none.
 #[test]
@@ -1935,7 +1966,7 @@ fn the_documented_release_kind_checks_its_sha256() {
             .unwrap();
     let start = docs.find("```bash\n# kinds/release.sh").unwrap() + "```bash\n".len();
     let kind = &docs[start..start + docs[start..].find("```").unwrap()];
-    let infra = p.root().join(".decree/lib/infra");
+    let infra = p.root().join(".decree/scripts/infra");
     fs::write(infra.join("kinds/release.sh"), kind).unwrap();
 
     // An archive holding `mytool`, which prints its version.
@@ -1978,11 +2009,17 @@ fn the_documented_release_kind_checks_its_sha256() {
 
     let (ok, out) = apply(&format!("{url}#sha256={sum}"));
     assert!(ok, "{out}");
-    assert!(out.ends_with("changed  release mytool 1.2.3\n"), "{out}");
+    assert!(
+        out.ends_with("changed  release mytool 1.2.3 (scripts/infra/requirements)\n"),
+        "{out}"
+    );
 
     let (ok, out) = apply(&format!("{url}#sha256={}", "0".repeat(64)));
     assert!(!ok, "{out}");
-    assert!(out.ends_with("FAILED   release mytool 1.2.3\n"), "{out}");
+    assert!(
+        out.ends_with("FAILED   release mytool 1.2.3 (scripts/infra/requirements)\n"),
+        "{out}"
+    );
     assert!(!p.root().join(".tools/bin/mytool").exists());
 
     let (ok, out) = apply(&url);

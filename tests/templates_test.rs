@@ -19,7 +19,12 @@ const ROUTER: &[Pair] = &[
     ("scripts/router/ask_claude.sh", "router/ask.sh"),
 ];
 
-const AI: &[Pair] = &[("lib/ai.sh", "ai/ai.sh")];
+/// The AI helper, a copy in the scripts directory of each built-in machine that asks AI.
+const AI: &[Pair] = &[("scripts/develop/ai.sh", "ai/ai.sh")];
+const AI_INFRA_QA: &[Pair] = &[
+    ("scripts/infra/ai.sh", "ai/ai.sh"),
+    ("scripts/qa/ai.sh", "ai/ai.sh"),
+];
 
 /// The built-in `develop` and `infra` machines and what they run, but `gate.sh`, which a
 /// project fills in, and develop's machine and prompts: this repository's own `develop` is
@@ -32,11 +37,14 @@ const DEVELOP: &[Pair] = &[
     ("scripts/develop/precheck.sh", "scripts/develop/precheck.sh"),
     ("scripts/infra/declare.sh", "scripts/infra/declare.sh"),
     ("scripts/infra/apply.sh", "scripts/infra/apply.sh"),
-    ("lib/infra/run.sh", "infra/run.sh"),
-    ("lib/infra/kinds/command.sh", "infra/kinds/command.sh"),
+    ("scripts/infra/run.sh", "scripts/infra/run.sh"),
+    (
+        "scripts/infra/kinds/command.sh",
+        "scripts/infra/kinds/command.sh",
+    ),
 ];
 
-/// The built-in `qa` machine and what it runs, but `lib/qa/qa.sh`, where a project sets
+/// The built-in `qa` machine and what it runs, but `scripts/qa/qa.sh`, where a project sets
 /// `QA_RUN`.
 const QA: &[Pair] = &[
     ("machines/qa.yml", "machines/qa.yml"),
@@ -45,8 +53,8 @@ const QA: &[Pair] = &[
     ("scripts/qa/run.sh", "scripts/qa/run.sh"),
     ("scripts/qa/triage.sh", "scripts/qa/triage.sh"),
     ("scripts/qa/report.sh", "scripts/qa/report.sh"),
-    ("lib/qa/invariants.md", "qa/invariants.md"),
-    ("lib/qa/wrenches.md", "qa/wrenches.md"),
+    ("scripts/qa/invariants.md", "scripts/qa/invariants.md"),
+    ("scripts/qa/wrenches.md", "scripts/qa/wrenches.md"),
 ];
 
 /// Each project (relative to the repository) and the pairs it holds: the `feature` fixture and
@@ -56,8 +64,7 @@ const EXAMPLES: &[(&str, &[&[Pair]])] = &[
     ("tests/fixtures/feature", &[ROUTER]),
     ("tests/fixtures/escalation", &[ROUTER]),
     ("examples/project", &[AI]),
-    ("examples/route-by-complexity", &[AI]),
-    (".", &[ROUTER, AI, DEVELOP, QA]),
+    (".", &[ROUTER, AI, AI_INFRA_QA, DEVELOP, QA]),
 ];
 
 fn repo() -> PathBuf {
@@ -202,6 +209,50 @@ fn gliner_router_copies_are_identical() {
         assert!(
             read(original) == read(copy),
             "{path} differs between {original} and {copy}"
+        );
+    }
+}
+
+/// Every `ai.sh` in this repository's projects (outside `runs/` and `tests/fixtures/`), such
+/// as route-by-complexity's in `scripts/develop_by_size/`, which `init` does not write, is a
+/// byte-identical copy of the one `decree init --ai claude` writes.
+#[test]
+fn ai_sh_copies_are_identical() {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if path.is_dir() {
+                if !["runs", "target", ".git", "fixtures", "templates"].contains(&name.as_str()) {
+                    walk(&path, out);
+                }
+            } else if name == "ai.sh" {
+                out.push(path);
+            }
+        }
+    }
+    let tmp = init_claude();
+    let written = fs::read(tmp.path().join(".decree/scripts/develop/ai.sh")).unwrap();
+    let mut copies = Vec::new();
+    walk(&repo(), &mut copies);
+    copies.sort();
+    let rel: Vec<String> = copies
+        .iter()
+        .map(|p| p.strip_prefix(repo()).unwrap().display().to_string())
+        .collect();
+    for copy in [
+        ".decree/scripts/develop/ai.sh",
+        ".decree/scripts/infra/ai.sh",
+        ".decree/scripts/qa/ai.sh",
+        "examples/project/.decree/scripts/develop/ai.sh",
+        "examples/route-by-complexity/.decree/scripts/develop_by_size/ai.sh",
+    ] {
+        assert!(rel.iter().any(|r| r == copy), "{copy} missing: {rel:?}");
+    }
+    for (path, rel) in copies.iter().zip(&rel) {
+        assert!(
+            fs::read(path).unwrap() == written,
+            "{rel} differs from init's ai.sh"
         );
     }
 }

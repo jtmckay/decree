@@ -1,7 +1,8 @@
 # What this project's environment needs, one resource per line, in order: a line may rely
 # on the lines above it. `run.sh check` reports each (develop's precheck runs it);
 # `run.sh apply` installs what is missing and checks it again (the infra machine runs it,
-# and so can a fresh checkout or CI). Each kind is kinds/<kind>.sh.
+# and so can a fresh checkout or CI). Each kind is kinds/<kind>.sh. Another machine may
+# keep its own requirements beside its scripts; run.sh checks them after these.
 #
 # kind    name   version   source
 command   claude

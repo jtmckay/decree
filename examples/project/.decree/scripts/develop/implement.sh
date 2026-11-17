@@ -3,10 +3,10 @@
 # before scripts/. The machine's attempt list says which model does this
 # attempt, in $DECREE_ATTEMPT_VALUE: a choice of how, not of what runs next.
 # `local` is a model served by Ollama through OpenCode; `claude` is Claude. Both go
-# through lib/ai.sh's `ai`, which AI_CLI points at a backend.
+# through ai.sh's `ai`, which AI_CLI points at a backend.
 # A non-zero exit is error; decree then runs the next attempt in place.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
+. .decree/scripts/develop/ai.sh
 prompt="Read $DECREE_MESSAGE and make the change it asks for."
 case "$DECREE_ATTEMPT_VALUE" in
   claude) AI_CLI=claude ai "$prompt" ;;

@@ -118,7 +118,7 @@ appear only where a machine invokes `model` or `person`.
   rm -f "${out}.last"
   ```
 
-- **Call AI only through `ai`** from `lib/ai.sh`, never `claude` or `opencode` directly: it
+- **Call AI only through `ai`** from `ai.sh`, never `claude` or `opencode` directly: it
   waits out Claude's usage limit, nudges OpenCode back after a rejected write, logs every call
   in `.decree/ai-use.md` and keeps the agent from naming an event. Pick the backend with a
   data entry `ai_cli` (a message's or a parent's `params` set it per run), which wins over
@@ -126,18 +126,19 @@ appear only where a machine invokes `model` or `person`.
   (`$DECREE_RUN_DIR`): OpenCode's `external_directory` permission covers its file tools, not
   its shell, so it is no sandbox.
 - **Declare the environment.** A command, package or tool the project needs is a line in
-  `.decree/lib/infra/requirements`, added by a message for the `infra` machine, never
+  `.decree/scripts/infra/requirements`, added by a message for the `infra` machine, never
   installed by another machine's step. Nothing runs `sudo`: a step only a person can do prints
   the exact command and fails, and the person runs it, then `decree process --retry`.
 - **Check a boundary with a script, not only a prompt.** When an agent must not change
   something (QA never edits app code), a script after it checks, and fails the step if it did.
-- **Shared code, config and data go in `.decree/lib/`** (`$DECREE_LIB`); `scripts/` holds only
-  what states invoke. Variables and secrets go in `.decree/.env` (every script) or a machine's
+- **A machine's helpers, config and data go in `scripts/<machine>/`**, beside the scripts its
+  states invoke (`ai.sh`, a prompt template, a workflow file); decree runs only what a state
+  names, and scripts reach the rest by path from the project root. Variables and secrets go in `.decree/.env` (every script) or a machine's
   `env_file: .env.<name>` (that machine's scripts only); both are gitignored, and
   `.decree/.env.example` is the committed template.
 - **What a machine keeps between runs goes in `$DECREE_STORE`** (`.decree/store/<machine>/`)
   and is declared under the machine's `store:`, with what it is and which states read or write
-  it. A run's own files go in `$DECREE_RUN_DIR`; shared code and config in `$DECREE_LIB`;
+  it. A run's own files go in `$DECREE_RUN_DIR`; helpers, config and data in `scripts/<machine>/`;
   project-wide files no machine owns (a test tool's browsers) in `.decree/cache/`. Never
   `tee` decree's output: `process` and `daemon` keep it in `.decree/process.log`.
 - **A step that waits for a shared resource is an invoked state with a `timeout`** (ComfyUI's
@@ -201,34 +202,34 @@ or to keep editing while runs go on, suggest a
 git worktree the user makes and runs decree in (`git worktree add ../app-exp -b exp`, then
 `decree process` there): each checkout has its own runs and inbox, and its branch its own
 `processed.md`. A new worktree has committed files only: copy `.decree/.env` in and run
-`.decree/lib/infra/run.sh apply` there first.
+`.decree/scripts/infra/run.sh apply` there first.
 
 `develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
-source `lib/ai.sh` (`ai`, which calls `ai_<backend>`: a data entry `ai_cli`, else
+source the `ai.sh` beside them (`ai`, which calls `ai_<backend>`: a data entry `ai_cli`, else
 `AI_CLI`, else the `--ai` init chose) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and
 retries. `precheck` runs
-`lib/infra/run.sh check`. The project fills in `scripts/develop/gate.sh` with its own checks; until then it
+`scripts/infra/run.sh check`, which checks every `.decree/scripts/*/requirements`. The project fills in `scripts/develop/gate.sh` with its own checks; until then it
 runs nothing, says so and names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,
 then `final_gate`, whose `fail` ends the run); a non-zero exit means the checks could not run,
-such as a missing tool, and goes to `failed` without `fix`. `lib/ai.sh` runs the agent with
+such as a missing tool, and goes to `failed` without `fix`. `ai.sh` runs the agent with
 `DECREE_EVENT_FILE=/dev/null` and empties the caller's event file after it, so a gate the agent
 runs names no event for its caller. `verify`
 ends in `pass` or `fail` from the AI's `VERDICT:` line.
 
-`infra`: `declare` → `apply`. The AI edits `lib/infra/requirements` (`kind name version
-source`, one resource per line, in dependency order), adding a kind in `lib/infra/kinds/` only
-when none fits; `apply` runs `lib/infra/run.sh apply`, which installs what is missing and checks
+`infra`: `declare` → `apply`. The AI edits `scripts/infra/requirements` (`kind name version
+source`, one resource per line, in dependency order), adding a kind in `scripts/infra/kinds/`
+only when none fits; `apply` runs `scripts/infra/run.sh apply`, which installs what is missing and checks
 every line. The first `infra` migration builds the environment; later ones add to it.
 
 `qa`: `recon` → `attack` → `run` → `triage` → `report`. The AI writes chaos tests in
-`QA_DIR` (`tests/chaos`) against `lib/qa/invariants.md`, each naming a wrench from
-`lib/qa/wrenches.md`; triage marks each real bug's tests with the framework's strict
+`QA_DIR` (`tests/chaos`) against `scripts/qa/invariants.md`, each naming a wrench from
+`scripts/qa/wrenches.md`; triage marks each real bug's tests with the framework's strict
 expected-failure marker and writes one report per root cause (the broken invariant and the
-expected behaviour, no fix), and `report` emits each as a `develop` message. A guard (`lib/qa/qa.sh`) fails any step whose AI changed a file outside
-`QA_DIR`. It does not start until `QA_RUN` in `lib/qa/qa.sh` names the suite's command; once
+expected behaviour, no fix), and `report` emits each as a `develop` message. A guard (`scripts/qa/qa.sh`) fails any step whose AI changed a file outside
+`QA_DIR`. It does not start until `QA_RUN` in `scripts/qa/qa.sh` names the suite's command; once
 qa finds bugs, the gate should run it too.
 
 ## Worked example

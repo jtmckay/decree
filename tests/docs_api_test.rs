@@ -1281,20 +1281,22 @@ fn the_skill_writes_the_simplest_machine_first() {
     );
 }
 
-/// Rules learned running decree 0.5 (migration 97): shared files in `lib/`, variables in the
+/// Rules learned running decree 0.5 (migration 97): a machine's files beside its scripts and
+/// what it keeps in `$DECREE_STORE` (A08), variables in the
 /// gitignored `.env` files (D57),
 /// run folders kept, and waiting prep invoked with a timeout; and from the beta: a declared
 /// environment without `sudo` (D61), boundaries checked by a script, re-runs after a failure.
 #[test]
-fn the_skill_has_the_lib_env_runs_and_timeout_rules() {
+fn the_skill_has_the_files_env_runs_and_timeout_rules() {
     let skill = fs::read_to_string(repo().join("src/templates/skills/decree/SKILL.md")).unwrap();
     let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
     for rule in [
-        "Shared code, config and data go in `.decree/lib/`** (`$DECREE_LIB`); `scripts/` holds only what states invoke.",
+        "A machine's helpers, config and data go in `scripts/<machine>/`**, beside the scripts its states invoke",
+        "What a machine keeps between runs goes in `$DECREE_STORE`**",
         "Variables and secrets go in `.decree/.env` (every script) or a machine's `env_file: .env.<name>` (that machine's scripts only); both are gitignored,",
         "Never delete run folders to clean up**; they are the record. Use `decree prune --older-than <age>`.",
         "A step that waits for a shared resource is an invoked state with a `timeout`**",
-        "Declare the environment.** A command, package or tool the project needs is a line in `.decree/lib/infra/requirements`,",
+        "Declare the environment.** A command, package or tool the project needs is a line in `.decree/scripts/infra/requirements`,",
         "Nothing runs `sudo`: a step only a person can do prints the exact command and fails,",
         "Check a boundary with a script, not only a prompt.**",
         "Check that the result works (`pip --version` runs), not that a file exists.",

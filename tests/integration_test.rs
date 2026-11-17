@@ -42,7 +42,6 @@ fn test_init_creates_directory_structure() {
             "cron",
             "graph",
             "inbox",
-            "lib",
             "machines",
             "migrations",
             "processed.md",
@@ -66,13 +65,17 @@ fn test_init_creates_directory_structure() {
     }
     assert!(decree.join("graph/router.md").is_file());
     assert!(decree.join("graph/system.md").is_file());
-    // `lib/` holds its README, the AI helper the built-in scripts source, `infra/` and `qa/`.
-    let mut lib: Vec<_> = fs::read_dir(decree.join("lib"))
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    lib.sort();
-    assert_eq!(lib, ["README.md", "ai.sh", "infra", "qa"]);
+    // No `lib/`: each built-in machine's helpers, config and data sit beside its scripts.
+    for file in [
+        "scripts/develop/ai.sh",
+        "scripts/infra/ai.sh",
+        "scripts/infra/requirements",
+        "scripts/infra/run.sh",
+        "scripts/qa/ai.sh",
+        "scripts/qa/qa.sh",
+    ] {
+        assert!(decree.join(file).is_file(), "{file}");
+    }
 }
 
 #[test]

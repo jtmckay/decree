@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# comfy's build: patch $DECREE_LIB/comfy/<method>.json with the message and its
+# comfy's build: patch .decree/scripts/comfy/<method>.json with the message and its
 # params, and save it as runs/<id>/comfy-payload.json for submit. The method is
 # $METHOD when a wrapper script sets it, else the `method` param. Every workflow is
 # patched the same way, by node type, so a new method is a new workflow file:
@@ -10,7 +10,7 @@
 # input_image is required when the workflow has a LoadImage node; submit
 # uploads it and points LoadImage at it.
 set -euo pipefail
-workflows="${DECREE_LIB}/comfy"
+workflows=.decree/scripts/comfy
 method="${METHOD:-${DECREE_DATA_METHOD}}"
 
 methods() {

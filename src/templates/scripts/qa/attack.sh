@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # qa's attack: {ai_title} writes chaos tests in QA_DIR, each naming its wrench and invariant.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
-. "${DECREE_LIB}/qa/qa.sh"
+. .decree/scripts/qa/ai.sh
+. .decree/scripts/qa/qa.sh
 qa_ready
 qa_guard
 
 prompt="You are QA. Your job is to make this project misbehave. You are done when you have
-written tests that fail, or have tried every wrench in ${DECREE_LIB}/qa/wrenches.md.
-Read ${DECREE_RUN_DIR}/surface.md, ${DECREE_LIB}/qa/invariants.md and the tests already in
+written tests that fail, or have tried every wrench in .decree/scripts/qa/wrenches.md.
+Read ${DECREE_RUN_DIR}/surface.md, .decree/scripts/qa/invariants.md and the tests already in
 ${QA_DIR}/ (do not repeat a wrench and invariant pair tested there). Write new tests in
 ${QA_DIR}/, in the project's language and test framework, run by: ${QA_RUN}
 Each test names its wrench and the invariant it checks. Seed every random choice with a

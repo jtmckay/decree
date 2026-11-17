@@ -2,7 +2,7 @@
 # develop's fix: Claude fixes what the gate reported. Like implement, it
 # writes STOP instead of guessing.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
+. .decree/scripts/develop/ai.sh
 
 progress="${DECREE_ROOT_RUN_DIR}/progress.md"
 plan="${DECREE_ROOT_RUN_DIR}/plan.md"

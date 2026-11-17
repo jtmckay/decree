@@ -627,7 +627,7 @@ mod tests {
     fn reserved_keys_are_errors() {
         assert!(
             parse("DECREE_AI=opencode\n").is_err(),
-            "no DECREE_* key, not even a setting: lib/ai.sh reads AI_CLI"
+            "no DECREE_* key, not even a setting: ai.sh reads AI_CLI"
         );
         let errors = parse("DECREE_X=1\nTRACEPARENT=x\nTRACESTATE=y\nDECREEX=ok\n").unwrap_err();
         let lines: Vec<usize> = errors.iter().map(|(n, _)| *n).collect();

@@ -252,7 +252,7 @@ store:
 
 Each name is a file or folder directly in the store folder; its description says what it is and which states read or write it. `decree graph` shows the names in a note on the machine, `store: seen.tsv` ([Graph](graph.md)).
 
-What goes in the store is what the machine itself reads back in a later run: what it has seen, sent or counted. What does not: a run's own files (`$DECREE_RUN_DIR`), shared code and config (`$DECREE_LIB`), and outputs for people, such as an issue, a report or a video, which go wherever the user wants them.
+What goes in the store is what the machine itself reads back in a later run: what it has seen, sent or counted. What does not: a run's own files (`$DECREE_RUN_DIR`), a machine's helpers, config and data, which sit beside its scripts ([A machine's files](scripts.md#a-machines-files)), and outputs for people, such as an issue, a report or a video, which go wherever the user wants them.
 
 The store survives runs and `decree prune`, and is not committed. `decree check` warns, without failing, about a file or folder in `store/<machine>/` that `store:` does not declare, and about a store folder with no machine. Nothing else is enforced: a script that writes outside its store is not detectable.
 

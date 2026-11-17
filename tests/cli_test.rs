@@ -1158,32 +1158,83 @@ fn a_named_event_picks_the_transition() {
     );
 }
 
-/// AC: after `decree init`, `.decree/lib/README.md` exists, and a script sees `DECREE_LIB`,
-/// the absolute path of `.decree/lib`, and can source a file from it.
+/// AC (A08): `decree init` in an empty directory writes no `.decree/lib/`, `decree check`
+/// passes, and infra's `run.sh check` runs from `.decree/scripts/infra/`, reporting each line
+/// with the file it came from.
 #[test]
-fn init_creates_lib_and_scripts_see_decree_lib() {
+fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     let p = Project::init();
-    let readme = fs::read_to_string(p.decree_dir().join("lib/README.md")).unwrap();
-    assert!(readme.contains("never runs anything"), "{readme}");
-    fs::write(
-        p.decree_dir().join("lib/greeting.sh"),
-        "greeting() { echo \"hello from lib\"; }\n",
-    )
-    .unwrap();
+    assert!(!p.decree_dir().join("lib").exists());
+    p.decree(&["check"]).assert().success().stderr("");
+    let out = std::process::Command::new(".decree/scripts/infra/run.sh")
+        .arg("check")
+        .current_dir(p.root())
+        .env("PATH", path_with_stubs(&p.root(), &["claude"]))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        stdout,
+        "ok       command claude (scripts/infra/requirements)\n\
+         ok       command git (scripts/infra/requirements)\n"
+    );
+}
+
+/// `PATH` with a directory under `root` holding an executable stub for each of `names`.
+fn path_with_stubs(root: &std::path::Path, names: &[&str]) -> String {
+    let bin = root.join("stub-bin");
+    fs::create_dir_all(&bin).unwrap();
+    for name in names {
+        write_script(&bin.join(name), "#!/usr/bin/env bash\nexit 0\n");
+    }
+    format!("{}:{}", bin.display(), std::env::var("PATH").unwrap())
+}
+
+/// AC (A08): a script decree runs gets no `DECREE_LIB`, even when decree itself was started
+/// with one, and a `.decree/.env` `DECREE_LIB` is reserved like any other `DECREE_*` key.
+#[test]
+fn scripts_get_no_decree_lib() {
+    let p = Project::init();
     p.machine(
         "hello",
         &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
     );
     p.script(
         "greet",
-        "#!/usr/bin/env bash\n. \"$DECREE_LIB/greeting.sh\"\n\
-         { echo \"$DECREE_LIB\"; greeting; } > \"$DECREE_PROJECT_ROOT/lib.txt\"\n",
+        "#!/usr/bin/env bash\nenv > \"$DECREE_PROJECT_ROOT/env.txt\"\n",
     );
     p.emit("hello", "Say hello.\n");
-    p.decree(&["process"]).assert().success();
-    let out = fs::read_to_string(p.root().join("lib.txt")).unwrap();
-    let lib = p.decree_dir().join("lib");
-    assert_eq!(out, format!("{}\nhello from lib\n", lib.display()));
+    p.decree(&["process"])
+        .env("DECREE_LIB", p.root().join(".decree/lib"))
+        .assert()
+        .success();
+    let env = fs::read_to_string(p.root().join("env.txt")).unwrap();
+    assert!(env.contains("DECREE_PROJECT_ROOT="), "{env}");
+    assert!(!env.lines().any(|l| l.starts_with("DECREE_LIB=")), "{env}");
+    fs::write(p.decree_dir().join(".env"), "DECREE_LIB=/somewhere\n").unwrap();
+    p.decree(&["check"])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains(
+            "key `DECREE_LIB` is reserved: `DECREE_*`",
+        ));
+}
+
+/// AC (A08): `scripts/develop/` may hold `conventions.md`, `ai.sh` and `requirements` beside
+/// the scripts its states invoke; `decree check` passes with no warning about them.
+#[test]
+fn check_ignores_the_files_beside_a_machines_scripts() {
+    let p = Project::init();
+    let develop = p.decree_dir().join("scripts/develop");
+    assert!(develop.join("ai.sh").is_file());
+    fs::write(develop.join("conventions.md"), "# Conventions\n").unwrap();
+    fs::write(develop.join("requirements"), "command   git\n").unwrap();
+    p.decree(&["check"])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr("");
 }
 
 /// `decree daemon` reads `.decree/.env` again on each pass, so an edit applies without a

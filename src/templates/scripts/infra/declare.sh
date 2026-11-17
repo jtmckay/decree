@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# infra's declare: {ai_title} changes lib/infra/requirements to meet the message, and
+# infra's declare: {ai_title} changes scripts/infra/requirements to meet the message, and
 # installs nothing; apply does. If the change needs a choice the message does not make,
 # it writes the question to STOP instead of guessing; the run fails until a person
 # answers it in plan.md, deletes STOP and runs `decree process --retry`.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
+. .decree/scripts/infra/ai.sh
 
-infra="${DECREE_LIB}/infra"
+infra=.decree/scripts/infra
 plan="${DECREE_RUN_DIR}/plan.md"
 stop="${DECREE_RUN_DIR}/STOP"
 stopped() {

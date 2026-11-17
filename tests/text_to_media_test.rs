@@ -1,8 +1,8 @@
 //! `examples/text-to-media/`: the `comfy` machine run through the binary against a stub
-//! ComfyUI. The example's `.decree/`, with its workflows in `lib/comfy/`, is copied to a temp project, with a
-//! stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`, `/prompt`,
-//! `/history/<id>` and `/view` from files under `stub/`, and logs each request. No ComfyUI,
-//! no network.
+//! ComfyUI. The example's `.decree/`, with its workflows in `scripts/comfy/`, is copied to a
+//! temp project, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
+//! `/prompt`, `/history/<id>` and `/view` from files under `stub/`, and logs each request. No
+//! ComfyUI, no network.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
@@ -86,7 +86,7 @@ struct Project {
 }
 
 impl Project {
-    /// The example's `.decree/` (its workflows in `lib/comfy/`) with no messages, a stub ComfyUI that
+    /// The example's `.decree/` (its workflows in `scripts/comfy/`) with no messages, a stub ComfyUI that
     /// finishes the prompt after `polls_before_done` empty answers with `status`, and an
     /// image in `images/ref.png`.
     fn new(polls_before_done: u32, status: &str) -> Project {
@@ -278,9 +278,9 @@ fn an_image_method_uploads_input_image() {
 
 /// A `build_*` script names the method and runs `build`, as in the README's "When messages
 /// stop naming a method": `build` reads `$METHOD` before the `method` param, from
-/// `$DECREE_LIB/comfy/`.
+/// `.decree/scripts/comfy/`.
 #[test]
-fn a_wrapper_script_names_the_method_built_from_lib() {
+fn a_wrapper_script_names_the_method_built_from_its_scripts() {
     let p = Project::new(0, "success");
     let scripts = p.root().join(".decree/scripts/comfy");
     write_script(

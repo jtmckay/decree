@@ -26,8 +26,8 @@ stateDiagram-v2
 
 The machine remembers one thing between runs, declared under `store:`: `seen.tsv`, the links already sent, in `.decree/store/newsletter/` (`$DECREE_STORE`). It survives `decree prune`. In your own project it is not committed (`decree init` ignores `store/`); this example commits a sample, [`store/newsletter/seen.tsv`](.decree/store/newsletter/seen.tsv), so you can see what it holds: one link and the date it was sent, per line.
 
-1. [`gather`](.decree/scripts/newsletter/gather.py) (Python 3, standard library only: a script can be any executable) fetches every feed in `lib/newsletter/feeds.txt`, RSS 2.0 or Atom, and writes the run's `items.jsonl`: `title`, `link`, `source`, `published` and `summary` (plain text, at most 500 characters) for each item whose link is not in `seen.tsv`, in the machine's store, newest first, at most `NEWSLETTER_MAX_ITEMS`. A feed that fails is logged and skipped; every feed failing fails the run.
-2. [`write`](.decree/scripts/newsletter/write.sh) (bash, `curl` and `jq`) sends `lib/newsletter/taste.md` and `items.jsonl` to Ollama's `/api/chat`, and writes the run's `issue.md`: a title with the date, then the model's picks as markdown links. With no new items it writes an issue saying so, and does not call the model.
+1. [`gather`](.decree/scripts/newsletter/gather.py) (Python 3, standard library only: a script can be any executable) fetches every feed in [`feeds.txt`](.decree/scripts/newsletter/feeds.txt), beside it, RSS 2.0 or Atom, and writes the run's `items.jsonl`: `title`, `link`, `source`, `published` and `summary` (plain text, at most 500 characters) for each item whose link is not in `seen.tsv`, in the machine's store, newest first, at most `NEWSLETTER_MAX_ITEMS`. A feed that fails is logged and skipped; every feed failing fails the run.
+2. [`write`](.decree/scripts/newsletter/write.sh) (bash, `curl` and `jq`) sends [`taste.md`](.decree/scripts/newsletter/taste.md) and `items.jsonl` to Ollama's `/api/chat`, and writes the run's `issue.md`: a title with the date, then the model's picks as markdown links. With no new items it writes an issue saying so, and does not call the model.
 3. [`deliver`](.decree/scripts/newsletter/deliver.sh) copies `issue.md` to `newsletter/<YYYY-MM-DD>.md` (`-2`, `-3` if that day has one), records every gathered link in the store's `seen.tsv` with the date, and, if `NTFY_URL` is set, posts the issue's first three lines to `$NTFY_URL/$NTFY_TOPIC`. Without `NTFY_URL` it says it skipped the ping.
 
 `gather` does not mark items seen; `deliver` does, so items from a run that fails are gathered again next time. Each script is safe to re-run.
@@ -41,8 +41,8 @@ examples/newsletter/
     scripts/newsletter/gather.py      feeds -> items.jsonl, new links only
     scripts/newsletter/write.sh       taste.md + items.jsonl -> Ollama -> issue.md
     scripts/newsletter/deliver.sh     issue.md -> newsletter/<date>.md, seen.tsv, ntfy
-    lib/newsletter/feeds.txt          one feed URL per line, # comments
-    lib/newsletter/taste.md           what you want, what you skip, and the format, in prose
+    scripts/newsletter/feeds.txt      one feed URL per line, # comments
+    scripts/newsletter/taste.md       what you want, what you skip, and the format, in prose
     cron/newsletter.md                every Monday at 07:00
     .env.example                      OLLAMA_URL, OLLAMA_MODEL, NEWSLETTER_DIR, NEWSLETTER_MAX_ITEMS, NTFY_*; copy it to .env
     graph/  schema/                   written by `decree graph` and `decree schema`
@@ -93,7 +93,7 @@ Add each of these only once a real issue shows the need for it:
 | A poor issue from the local model | `write` checks its output (every line a link from `items.jsonl`, at most 7 items) and exits non-zero, and `write` gets `attempts: [local, claude]`. |
 | Too many items for the context | `write` scores each item first (a model held to a schema, reason before event), keeps the top 20, then writes; still one script. |
 | Summary-only feeds | `gather` fetches the full text of each new item. |
-| Several editions | An `edition` param with `enum`, choosing `lib/newsletter/<edition>/`, and one cron file each. |
+| Several editions | An `edition` param with `enum`, choosing `scripts/newsletter/<edition>/`, and one cron file each. |
 | Learning from you | Rating links in the issue, served by an HTTP front door (decree-go-rest) appending to `ratings.tsv`, which `write` reads as examples. |
 | Misbehaving feeds | A feed reader (Miniflux, FreshRSS) does the fetching, and `gather` reads its API. |
 

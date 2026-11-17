@@ -606,13 +606,6 @@ impl Executor {
         };
         let mut vars: Vec<(String, std::ffi::OsString)> = [
             ("PROJECT_ROOT", info.project_root.as_os_str().into()),
-            (
-                "LIB",
-                info.project_root
-                    .join(crate::layout::DECREE_DIR)
-                    .join(crate::layout::LIB_DIR)
-                    .into(),
-            ),
             ("MESSAGE", info.run_dir.join(MESSAGE_FILE).into()),
             ("MESSAGE_ID", info.run_id.clone().into()),
             ("MACHINE", info.machine.clone().into()),
@@ -1419,10 +1412,6 @@ pub(crate) mod executor_tests {
             ),
             ("DECREE_PROJECT_ROOT", root.to_str().unwrap().to_string()),
             (
-                "DECREE_LIB",
-                root.join(".decree/lib").to_str().unwrap().to_string(),
-            ),
-            (
                 "DECREE_MESSAGE",
                 run_dir.join("message.md").to_str().unwrap().to_string(),
             ),
@@ -1469,6 +1458,8 @@ pub(crate) mod executor_tests {
         for (name, value) in &expected {
             assert_eq!(vars.get(name), Some(&value.as_str()), "{name}\n{log}");
         }
+        // decree defines no `DECREE_LIB`: a machine's files sit beside its scripts (D77).
+        assert!(!vars.contains_key("DECREE_LIB"), "{log}");
         assert!(
             root.join(".decree/store/m").is_dir(),
             "store folder created"

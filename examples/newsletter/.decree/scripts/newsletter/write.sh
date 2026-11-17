@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# newsletter's write: a local model reads $DECREE_LIB/newsletter/taste.md and the run's
+# newsletter's write: a local model reads taste.md, beside this script, and the run's
 # items.jsonl, and picks and summarises the items worth reading. Writes
 # $DECREE_RUN_DIR/issue.md: a title with the date, then the model's picks as markdown links.
 # With no new items it says so, without calling the model.
 set -euo pipefail
 items="${DECREE_RUN_DIR}/items.jsonl"
-taste="${DECREE_LIB}/newsletter/taste.md"
+taste=.decree/scripts/newsletter/taste.md
 issue="${DECREE_RUN_DIR}/issue.md"
 today="$(date +%F)"
 

@@ -4,7 +4,7 @@ description: Implement a message with {ai_title} in small, logged steps, run the
 onentry: [clean_tree]              # the run starts from a clean git work tree
 initial: precheck
 states:
-  precheck:                        # fails fast if lib/infra/requirements is not all there
+  precheck:                        # fails fast if a scripts/*/requirements is not all there
     invoke: precheck
     transitions: { done: implement }
   implement:                       # logs each step in progress.md; writes STOP instead of guessing

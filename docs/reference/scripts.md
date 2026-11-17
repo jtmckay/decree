@@ -46,7 +46,6 @@ A variable can come from four places. When two set the same name, the first in t
 | --- | --- |
 | `DECREE` | Absolute path of the decree executable running the script, as Make's `MAKE` and Cargo's `CARGO`. A script that calls decree (`"${DECREE}" emit`) gets the same decree whether or not it is on `PATH`. |
 | `DECREE_PROJECT_ROOT` | Absolute path of the directory containing `.decree/`. |
-| `DECREE_LIB` | Absolute path of `.decree/lib/`, where scripts find shared code, config and data ([Shared code](#shared-code)). Set whether or not the directory exists. |
 | `DECREE_MESSAGE` | Absolute path of `runs/<id>/message.md`. |
 | `DECREE_MESSAGE_ID` | The message `id`. |
 | `DECREE_MACHINE` | Machine name. |
@@ -123,26 +122,28 @@ To run one script with a different value in each state, give each state a two-li
 METHOD=image_text exec "$(dirname "$0")/build.sh"
 ```
 
-## Shared code
+## A machine's files
 
-`.decree/lib/` holds what scripts share but decree never runs: bash functions they source, config and data files (a prompt template, ComfyUI workflow files). decree never resolves a script from it, and `decree check` does not look in it. A script finds it through `DECREE_LIB`:
+A machine's helpers, config and data sit beside its scripts, in `.decree/scripts/<machine>/`: bash functions its scripts source, a prompt template, ComfyUI workflow files. decree runs only a file a state names ([Resolution](#resolution)); any other file there is never run and never an error. A script reaches them by path from the project root, its working directory, or from its own location:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-. "$DECREE_LIB/ai.sh"
+. .decree/scripts/summarize/ai.sh
 ai "Summarize $DECREE_MESSAGE" > summary.md
 ```
 
 ```python
-workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD']}.json"
+workflow = Path(__file__).parent / f"{os.environ['METHOD']}.json"
 ```
 
-`decree init` creates it with a one-line `README.md`, `ai.sh`, the `ai` function the built-in machines' scripts source, and `infra/`, the project's [declared environment](#declared-environment).
+A project may keep code its machines share in any folder it likes (`lib/`, `tools/`); decree does not look at it.
+
+What a machine keeps between runs goes in its store instead ([Store](#store)).
 
 ### The AI helper
 
-`lib/ai.sh` defines `ai <prompt>`, which asks an AI agent and prints its reply, and one function per backend: `ai_claude`, `ai_opencode`, `ai_copilot`. `ai` calls, most specific first: the one the run's `data` entry `ai_cli` names (`DECREE_DATA_AI_CLI`: a message's or a parent's `params`, else the machine's default), so a child machine invoked with `params: { ai_cli: claude }` works with Claude whatever the project's setting; else the one `AI_CLI` names (`.decree/.env` or the shell); else the backend `decree init --ai` chose. A message can pick the CLI only on a machine that declares `ai_cli` under `data`. Another backend is one more `ai_<name>` function. Scripts call AI only through `ai`, never `claude` or `opencode` directly, so every call gets the same handling:
+`decree init` writes a copy of `ai.sh` in the scripts directory of each built-in machine that asks AI (`develop`, `infra`, `qa`), and its scripts source it from there (`. .decree/scripts/develop/ai.sh`). `ai.sh` defines `ai <prompt>`, which asks an AI agent and prints its reply, and one function per backend: `ai_claude`, `ai_opencode`, `ai_copilot`. `ai` calls, most specific first: the one the run's `data` entry `ai_cli` names (`DECREE_DATA_AI_CLI`: a message's or a parent's `params`, else the machine's default), so a child machine invoked with `params: { ai_cli: claude }` works with Claude whatever the project's setting; else the one `AI_CLI` names (`.decree/.env` or the shell); else the backend `decree init --ai` chose. A message can pick the CLI only on a machine that declares `ai_cli` under `data`. Another backend is one more `ai_<name>` function. Scripts call AI only through `ai`, never `claude` or `opencode` directly, so every call gets the same handling:
 
 - The agent names no event: a script it runs, such as the gate, gets `DECREE_EVENT_FILE=/dev/null`, and the caller's event file is emptied after the call. A call that leaves a `STOP` file in the run folder returns 0, so the caller's `STOP` check names `stop` instead of failing an attempt.
 - Every call adds a line to `.decree/ai-use.md` (gitignored), a Markdown table: time, run, machine and state, backend, model, `DECREE_RUN_ATTEMPT`, `DECREE_ATTEMPT`, seconds and exit code. Past 2 MiB it keeps the header and the last 10000 calls.
@@ -151,7 +152,7 @@ workflow = Path(os.environ["DECREE_LIB"]) / "workflows" / f"{os.environ['METHOD'
 
 ## Declared environment
 
-What the project's environment needs (commands, packages, tools) is declared, not scripted, as Ansible declares state: `.decree/lib/infra/requirements` lists one resource per line, in order, and `lib/infra/kinds/<kind>.sh` says how to check and install that kind.
+What the project's environment needs (commands, packages, tools) is declared, not scripted, as Ansible declares state: `.decree/scripts/infra/requirements` lists one resource per line, in order, and `scripts/infra/kinds/<kind>.sh` says how to check and install that kind. Another machine may keep its own `requirements` beside its scripts (`scripts/develop/requirements`, say, for the tools its gate runs); every `.decree/scripts/*/requirements` is one list, `infra`'s first, then the others in name order.
 
 ```text
 # kind    name         version   source
@@ -161,9 +162,9 @@ system    python3-venv
 pip       hypothesis   6.112.0
 ```
 
-`lib/infra/run.sh check` reports each line `ok` or `missing` and changes nothing; `run.sh apply` installs what is missing, checks it again (`changed`) and stops at the first line that fails, naming it. A kind is a file with two bash functions, `check` and `install`, each called with the line's name, version and source. `decree init` writes one kind, `command` (on `PATH`, at the version if the line gives one, from `<name> --version`; `install` names it for a person and fails), and a requirements file with the AI backend's command. A project adds kinds as it needs them (`pip` into a project venv, `release` for a pinned binary into `.tools/bin`).
+`scripts/infra/run.sh check` reports each line `ok` or `missing`, ending with the file it came from (`missing  command cargo (scripts/develop/requirements)`), and changes nothing; `run.sh apply` installs what is missing, checks it again (`changed`) and stops at the first line that fails, naming it. A kind is a file with two bash functions, `check` and `install`, each called with the line's name, version and source. `decree init` writes one kind, `command` (on `PATH`, at the version if the line gives one, from `<name> --version`; `install` names it for a person and fails), and a requirements file with the AI backend's command. A project adds kinds as it needs them (`pip` into a project venv, `release` for a pinned binary into `.tools/bin`).
 
-A kind installs into the project, never with `sudo`. A step only a person can do, such as a system package, prints the exact command and returns 1; the person runs it, then `decree process --retry`. The built-in `infra` machine changes the environment ([D61](../decisions.md#d61-the-environment-is-declared)): `declare`, where the AI edits only the requirements (and adds a kind only if none fits), then `apply`. The built-in `develop` machine's `precheck` runs `run.sh check`, so a run stops before the AI starts when the environment is short. A fresh checkout or CI runs `.decree/lib/infra/run.sh apply` directly.
+A kind installs into the project, never with `sudo`. A step only a person can do, such as a system package, prints the exact command and returns 1; the person runs it, then `decree process --retry`. The built-in `infra` machine changes the environment ([D61](../decisions.md#d61-the-environment-is-declared)): `declare`, where the AI edits only `scripts/infra/requirements` (and adds a kind only if none fits), then `apply`. The built-in `develop` machine's `precheck` runs `run.sh check`, so a run stops before the AI starts when the environment is short. A fresh checkout or CI runs `.decree/scripts/infra/run.sh apply` directly.
 
 A kind that downloads must check what it downloaded: its line's source carries the file's SHA-256 in the URL's fragment, `<url>#sha256=<hex>`, as pip's hash-checking and PyPI's simple index do, and `install` fails on a mismatch. The hash comes from what the project publishes (a `SHA256SUMS` file, the release page), never from downloading the file and hashing it, which proves only that the download matches itself. `infra`'s `declare` prompt says so. A `release` kind, for a pinned binary from a release archive:
 
@@ -194,7 +195,7 @@ release   shellcheck   0.10.0   https://github.com/koalaman/shellcheck/releases/
 
 `.decree/store/<machine>/` holds what a machine remembers from one run to the next: the links a newsletter already sent, the last item a feed reader saw, a counter. Every script of the machine, in every phase, finds it through `DECREE_STORE`; decree creates it before a script runs. It survives runs: `decree prune` never touches it, and nothing else in decree deletes it. It is not committed: `decree init`'s `.decree/.gitignore` lists `store/`. The idea is the *state* directory of the XDG Base Directory spec, n8n's workflow static data and Node-RED's persistent flow context; it is called the store because "state" already means a machine's state (`DECREE_STATE`).
 
-**The convention:** anything a script keeps between runs goes in `$DECREE_STORE` and is declared under the machine's `store:` ([Store](machines.md#store)), with what it is and which states read or write it. A run's own files go in `$DECREE_RUN_DIR` ([Run-directory files](#run-directory-files)); shared code and config in `$DECREE_LIB` ([Shared code](#shared-code)); outputs for people wherever the user wants them.
+**The convention:** anything a script keeps between runs goes in `$DECREE_STORE` and is declared under the machine's `store:` ([Store](machines.md#store)), with what it is and which states read or write it. A run's own files go in `$DECREE_RUN_DIR` ([Run-directory files](#run-directory-files)); a machine's helpers, config and data beside its scripts ([A machine's files](#a-machines-files)); outputs for people wherever the user wants them.
 
 ```bash
 seen="$DECREE_STORE/seen.tsv"

@@ -112,7 +112,7 @@ impl Project {
         .unwrap();
         let list: String = feeds.iter().map(|f| fixture(f) + "\n").collect();
         fs::write(
-            p.root().join(".decree/lib/newsletter/feeds.txt"),
+            p.root().join(".decree/scripts/newsletter/feeds.txt"),
             format!("# fixtures\n{list}"),
         )
         .unwrap();

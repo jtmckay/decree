@@ -80,8 +80,8 @@ Commands:
 Files (.decree/):
   machines/<name>.yml         Machines
   scripts/<name>              Scripts shared by every machine
-  scripts/<machine>/<name>    A machine's own scripts, found before scripts/
-  lib/                        Code, config and data scripts source ($DECREE_LIB)
+  scripts/<machine>/<name>    A machine's own scripts, found before scripts/, and
+                              its helpers, config and data, never run by decree
   .env  .env.<name>           KEY=value for every script, or one machine's
                               (env_file:); gitignored but .env.example
   migrations/  processed.md   Ordered, run-once messages and their ledger; commit both

@@ -2,7 +2,7 @@
 # develop_by_size's implement: one attempt. $DECREE_ATTEMPT_VALUE names the
 # tool, then the tests run: an attempt succeeds when the change passes them, so
 # a failing attempt exits non-zero and decree runs the next value. Both go through
-# lib/ai.sh's `ai`, with AI_CLI naming the backend.
+# ai.sh's `ai`, with AI_CLI naming the backend.
 #   local   a model served by Ollama, through OpenCode (`opencode run -m
 #           ollama/<model>`, https://opencode.ai/docs/cli/); the `ollama`
 #           provider and this model must be in opencode.json, as the example's
@@ -13,7 +13,7 @@
 #           is then `stop`, and the run fails until a person answers it,
 #           deletes STOP and runs `decree process --retry`.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
+. .decree/scripts/develop_by_size/ai.sh
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3-coder:30b}"
 TEST_CMD="${TEST_CMD:-cargo test}"
 progress="${DECREE_RUN_DIR}/progress.md"

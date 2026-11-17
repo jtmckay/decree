@@ -1,5 +1,6 @@
-# The AI helper the built-in machines' scripts source: `. "$DECREE_LIB/ai.sh"`,
-# then `ai "<prompt>"` asks the AI and prints its reply.
+# The AI helper the built-in machines' scripts source, a copy in each one's scripts
+# directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+# `ai "<prompt>"` asks the AI and prints its reply.
 #
 # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
 # most specific first: the one the run's data entry `ai_cli` names
@@ -24,7 +25,7 @@ AI_DEFAULT=claude
 ai() {
   local cli=${DECREE_DATA_AI_CLI:-${AI_CLI:-${AI_DEFAULT}}}
   if ! declare -F "ai_${cli}" >/dev/null; then
-    echo "ai: no ai_${cli} function in lib/ai.sh (AI_CLI=${cli})" >&2
+    echo "ai: no ai_${cli} function in ai.sh (AI_CLI=${cli})" >&2
     return 2
   fi
   local caller_event=${DECREE_EVENT_FILE:-} status=0 start=${SECONDS}

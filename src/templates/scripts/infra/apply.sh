@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# infra's apply: install what lib/infra/requirements declares and is missing.
-exec "${DECREE_LIB}/infra/run.sh" apply
+# infra's apply: install what every machine's requirements declare and is missing.
+exec .decree/scripts/infra/run.sh apply

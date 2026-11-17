@@ -31,10 +31,6 @@ pub const STOP_FILE: &str = "STOP";
 /// `--quiet`, its last 2 MiB (docs/reference/cli.md, Output).
 pub const PROCESS_LOG_FILE: &str = "process.log";
 
-/// Code that scripts source, config and data; decree never runs anything in it
-/// (docs/reference/scripts.md, Shared code).
-pub const LIB_DIR: &str = "lib";
-
 /// The dotenv file every script gets, `.decree/.env` (docs/reference/scripts.md,
 /// Environment). Never committed, as no `.env*` file but `ENV_EXAMPLE_FILE` is.
 pub const ENV_FILE: &str = ".env";

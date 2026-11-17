@@ -14,7 +14,7 @@ QA_RUN="cargo test --test chaos"
 # Fail unless QA_RUN is set and this is a git work tree (the guard needs git).
 qa_ready() {
   if [ -z "${QA_RUN}" ]; then
-    echo "qa: no chaos suite command; set QA_RUN in .decree/lib/qa/qa.sh" >&2
+    echo "qa: no chaos suite command; set QA_RUN in .decree/scripts/qa/qa.sh" >&2
     return 1
   fi
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {

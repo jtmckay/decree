@@ -5,10 +5,10 @@ store:
   seen.tsv: Links already sent, so an item is never in two issues. gather reads it; deliver appends.
 initial: gather
 states:
-  gather:     # new items from lib/newsletter/feeds.txt, by link not in seen.tsv -> items.jsonl
+  gather:     # new items from scripts/newsletter/feeds.txt, by link not in seen.tsv -> items.jsonl
     invoke: gather
     transitions: { done: write }
-  write:      # a local model reads lib/newsletter/taste.md and items.jsonl, writes issue.md
+  write:      # a local model reads scripts/newsletter/taste.md and items.jsonl, writes issue.md
     invoke: write
     transitions: { done: deliver }
   deliver:    # issue.md to newsletter/<date>.md, its links to seen.tsv; an ntfy ping if NTFY_URL is set

@@ -7,7 +7,7 @@
 # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
 # whose steps are develop's scripts shares them.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
+. .decree/scripts/develop/ai.sh
 
 progress="${DECREE_ROOT_RUN_DIR}/progress.md"
 plan="${DECREE_ROOT_RUN_DIR}/plan.md"

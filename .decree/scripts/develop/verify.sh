@@ -5,7 +5,7 @@
 # writes STOP instead of guessing. On `fail` it leaves gaps.md, what is missing, for
 # the next round or retry; an attempt that dies keeps the last one.
 set -euo pipefail
-. "${DECREE_LIB}/ai.sh"
+. .decree/scripts/develop/ai.sh
 
 progress="${DECREE_ROOT_RUN_DIR}/progress.md"
 plan="${DECREE_ROOT_RUN_DIR}/plan.md"

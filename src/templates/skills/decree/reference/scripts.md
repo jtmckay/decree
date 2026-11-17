@@ -18,14 +18,18 @@ directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commi
 `notify`) once in `scripts/`; put a machine's own version in `scripts/<machine>/`.
 `chmod +x` new scripts; `decree check` fails otherwise.
 
-Code that scripts share but decree never runs (bash functions to source, config, data such as
-workflow files) goes in `.decree/lib/`, found through `$DECREE_LIB`: `. "$DECREE_LIB/ai.sh"`.
-decree never resolves a script from `lib/`.
+A machine's helpers, config and data (bash functions to source, a prompt template, workflow
+files) sit beside its scripts in `scripts/<machine>/`; decree runs only a file a state names,
+and other files there are never an error. Scripts reach them by path from the project root,
+their working directory: `. .decree/scripts/develop/ai.sh`. What a machine keeps between runs
+goes in `$DECREE_STORE`.
 
-`lib/infra/` is the project's declared environment. `requirements` lists one resource per line
-(`kind name version source`), in dependency order; `kinds/<kind>.sh` defines `check` and
+`scripts/infra/` holds the project's declared environment. `requirements` lists one resource
+per line (`kind name version source`), in dependency order; any other machine may keep a
+`requirements` beside its scripts, and every `.decree/scripts/*/requirements` is one list,
+infra's first; `kinds/<kind>.sh` defines `check` and
 `install` for a kind, each called with the line's name, version and source; `run.sh check`
-reports each line `ok` or `missing`, and `run.sh apply` installs what is missing and checks it
+reports each line `ok` or `missing`, with the file it came from, and `run.sh apply` installs what is missing and checks it
 again. A kind installs into the project (a venv, `node_modules`, `.tools/bin`), never with
 `sudo`; a step only a person can do prints the exact command and returns 1. A kind that
 downloads checks the file against the sha256 in its line's source, `<url>#sha256=<hex>`, taken
@@ -133,7 +137,6 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
 | --- | --- |
 | `DECREE` | The decree executable running the script; call it as `"${DECREE}"`, not `decree`, which may not be on `PATH`. |
 | `DECREE_PROJECT_ROOT` | Directory containing `.decree/`. |
-| `DECREE_LIB` | `.decree/lib/`: shared code, config and data. |
 | `DECREE_MESSAGE` | `runs/<id>/message.md` (the run's copy of the message). |
 | `DECREE_MESSAGE_ID` | The message `id`. |
 | `DECREE_MACHINE`, `DECREE_STATE` | Machine and state (`_root` for root `onentry`/`onexit`). |

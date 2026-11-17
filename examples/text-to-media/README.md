@@ -29,7 +29,7 @@ stateDiagram-v2
 ```
 
 1. The root `onentry`, [`precheck`](.decree/scripts/precheck.sh), fails fast if `curl` or `jq` is missing.
-2. [`build`](.decree/scripts/comfy/build.sh) patches `.decree/lib/comfy/<method>.json`, which it reads through `$DECREE_LIB`, with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type (the positive `CLIPTextEncode`, every node with a `width`, `height`, `seed` or `noise_seed`, every `filename_prefix`), so a new method is a new workflow file. It fails, before anything is sent, on an unknown method, listing the methods, or on a missing `method`, `output` or prompt, or a missing `input_image` when the workflow loads an image.
+2. [`build`](.decree/scripts/comfy/build.sh) patches `.decree/scripts/comfy/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type (the positive `CLIPTextEncode`, every node with a `width`, `height`, `seed` or `noise_seed`, every `filename_prefix`), so a new method is a new workflow file. It fails, before anything is sent, on an unknown method, listing the methods, or on a missing `method`, `output` or prompt, or a missing `input_image` when the workflow loads an image.
 3. [`submit`](.decree/scripts/comfy/submit.sh) uploads `input_image`, if any (`POST /upload/image`), queues the workflow (`POST /prompt`) and keeps the prompt id. It is safe to repeat, so it has `attempts: 3`.
 4. [`await`](.decree/scripts/comfy/await.sh) polls `GET /history/<prompt id>` every `COMFY_POLL_S` seconds (5) until the prompt is there, which it is once it finishes, and fails if it did not succeed. It has no attempts: a render that never finishes, within its 3 h timeout, is something to look at, not to retry.
 5. [`fetch`](.decree/scripts/comfy/fetch.sh) downloads each file the prompt saved (`GET /view`) to `output` plus the file's extension, or `output-<n>` plus it when there are several. It is safe to repeat, so it has `attempts: 3`.
@@ -38,7 +38,7 @@ The scripts find ComfyUI at `COMFY_URL`, `http://127.0.0.1:8188` by default.
 
 ## Methods and messages
 
-A method is a workflow in [`.decree/lib/comfy/`](.decree/lib/comfy/), by file stem: data that scripts read, not a script, so it lives in `lib/` ([Shared code](../../docs/reference/scripts.md#shared-code)). One message per method:
+A method is a workflow in [`.decree/scripts/comfy/`](.decree/scripts/comfy/), by file stem: data that comfy's scripts read, so it sits beside them; decree runs only the scripts its states name ([Resolution](../../docs/reference/scripts.md#resolution)). One message per method:
 
 ### `image_flux2_text_landscape`: an image from text (FLUX2)
 
@@ -176,11 +176,11 @@ METHOD=image_flux2_text_landscape exec "$(dirname "$0")/build.sh"
 ```text
 examples/text-to-media/
   .decree/
-    lib/comfy/                       the methods: ComfyUI workflows in API format, by file stem
     machines/comfy.yml               build, submit, await, fetch
     scripts/
       precheck.sh                    root onentry: curl and jq are installed
-      comfy/build.sh                 patches lib/comfy/<method>.json ($METHOD, else method) into runs/<id>/comfy-payload.json
+      comfy/*.json                   the methods: ComfyUI workflows in API format, by file stem
+      comfy/build.sh                 patches scripts/comfy/<method>.json ($METHOD, else method) into runs/<id>/comfy-payload.json
       comfy/submit.sh                uploads input_image, POST /prompt, keeps the prompt id
       comfy/await.sh                 polls /history/<prompt id> until the prompt finishes
       comfy/fetch.sh                 downloads each output to `output` plus its extension
