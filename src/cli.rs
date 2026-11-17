@@ -213,7 +213,7 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["id", "cron"])]
         all: bool,
 
-        /// Output format, without --cron
+        /// Output format
         #[arg(long, value_enum, default_value_t)]
         format: Format,
     },

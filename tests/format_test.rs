@@ -430,8 +430,7 @@ fn status_of_an_active_run_names_its_running_script() {
 }
 
 /// `--format` where it does not apply is a usage error, exit 2: `process` without
-/// `--dry-run` and `status --cron` print text only; `daemon`, `tail`, `init` and `help`
-/// take no `--format`.
+/// `--dry-run` prints text only; `daemon`, `tail`, `init` and `help` take no `--format`.
 /// A migration's run in `status` and `prune` JSON: `migration` beside `id`, valid against
 /// the schemas, and `decree status <stem>` finds it.
 #[test]
@@ -477,7 +476,6 @@ fn format_where_it_does_not_apply_exits_2() {
     let p = Project::new();
     for args in [
         &["process", "--format", "json"][..],
-        &["status", "--cron", "--format", "json"],
         &["daemon", "--format", "json"],
         &["tail", "--format", "json"],
         &["help", "--format", "json"],

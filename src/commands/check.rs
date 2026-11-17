@@ -719,7 +719,7 @@ impl Project {
             match fm.frontmatter.get("cron") {
                 None => errors.push((1, "no `cron:` expression".to_string())),
                 Some(Value::String(expr)) => {
-                    if let Err(e) = cron::parse_schedule(expr) {
+                    if let Err(e) = cron::parse_when(expr) {
                         errors.push((
                             fm.line_of("cron"),
                             format!("cron `{expr}` does not parse: {e}"),

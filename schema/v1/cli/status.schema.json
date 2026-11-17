@@ -2,13 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/status.schema.json",
   "title": "decree status --format json",
-  "description": "What `decree status --format json` prints on stdout. With no id: the counts by status, the runs in each group with the facts the text shows, and the queued messages. With an id: that run's derived status and its events, each a line of events.jsonl parsed. An unknown id is an error: nothing on stdout, `error: no run <id> in .decree/runs/` on stderr, exit code 1, as text does. `--cron` prints text only. Reference: docs/reference/cli.md, Machine-readable output.",
+  "description": "What `decree status --format json` prints on stdout. With no id: the counts by status, the runs in each group with the facts the text shows, and the queued messages. With an id: that run's derived status and its events, each a line of events.jsonl parsed. An unknown id is an error: nothing on stdout, `error: no run <id> in .decree/runs/` on stderr, exit code 1, as text does. With `--cron`: each cron file and when it fires next, `@reboot` files marked as firing at daemon start. Reference: docs/reference/cli.md, Machine-readable output.",
   "oneOf": [
     {
       "$ref": "#/$defs/overview"
     },
     {
       "$ref": "#/$defs/run"
+    },
+    {
+      "$ref": "#/$defs/cron"
     }
   ],
   "examples": [
@@ -66,6 +69,12 @@
           "01-add-login.md"
         ]
       }
+    },
+    {
+      "cron": [
+        { "file": "boot.md", "cron": "@reboot", "machine": "boot", "next": null, "at_daemon_start": true },
+        { "file": "hourly.md", "cron": "0 * * * *", "machine": "develop", "next": "2026-11-17T15:00:00Z", "at_daemon_start": false }
+      ]
     }
   ],
   "$defs": {
@@ -384,6 +393,31 @@
             "$ref": "../events.schema.json"
           },
           "description": "Every line of the run's events.jsonl, parsed, in order."
+        }
+      }
+    },
+    "cron": {
+      "type": "object",
+      "description": "`decree status --cron`: the files in .decree/cron/ that parse.",
+      "required": ["cron"],
+      "additionalProperties": false,
+      "properties": {
+        "cron": {
+          "type": "array",
+          "description": "One entry per cron file, sorted by file name.",
+          "items": {
+            "type": "object",
+            "description": "One cron file.",
+            "required": ["file", "cron", "machine", "next", "at_daemon_start"],
+            "additionalProperties": false,
+            "properties": {
+              "file": { "type": "string", "description": "The file name in .decree/cron/." },
+              "cron": { "type": "string", "description": "Its `cron:` value as written: a cron expression or `@reboot`." },
+              "machine": { "type": ["string", "null"], "description": "Its `machine:`, or null when it names none." },
+              "next": { "type": ["string", "null"], "description": "When it fires next, RFC 3339 UTC; null for `@reboot`, and for a schedule with no time left." },
+              "at_daemon_start": { "type": "boolean", "description": "True for `@reboot`: it fires once each time `decree daemon` starts, and at no other time (docs/reference/messages.md, Cron files)." }
+            }
+          }
         }
       }
     }

@@ -14,8 +14,8 @@ pub struct CronFile {
     pub filename: String,
     /// Raw cron expression as written in the frontmatter (e.g., `*/15 * * * *`).
     pub cron_expr: String,
-    /// Parsed cron schedule.
-    pub schedule: cron::Schedule,
+    /// When it fires.
+    pub when: When,
     /// The file as a message, parsed as every other message is (docs/reference/messages.md,
     /// Parsing and writing).
     pub message: Message,
@@ -26,6 +26,24 @@ impl CronFile {
     pub fn machine(&self) -> Option<&str> {
         self.message.machine()
     }
+}
+
+/// Vixie cron's `@reboot`: fire once when the cron daemon starts (`decree daemon`).
+pub const REBOOT: &str = "@reboot";
+
+/// When a cron file fires: on a schedule, or once each time `decree daemon` starts.
+#[derive(Debug, Clone)]
+pub enum When {
+    Schedule(Box<cron::Schedule>),
+    DaemonStart,
+}
+
+/// Parse a `cron:` value: `@reboot`, or a schedule ([`parse_schedule`]).
+pub fn parse_when(cron_expr: &str) -> Result<When, cron::error::Error> {
+    if cron_expr.trim() == REBOOT {
+        return Ok(When::DaemonStart);
+    }
+    parse_schedule(cron_expr).map(|s| When::Schedule(Box::new(s)))
 }
 
 /// Scan `.decree/cron/` for valid cron files.
@@ -68,19 +86,19 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
         .text("cron")
         .ok_or_else(|| DecreeError::Other(format!("no cron field in {filename}")))?
         .to_string();
-    let schedule = parse_schedule(&cron_expr)
+    let when = parse_when(&cron_expr)
         .map_err(|e| DecreeError::Other(format!("invalid cron expression in {filename}: {e}")))?;
     Ok(CronFile {
         filename: filename.to_string(),
         cron_expr,
-        schedule,
+        when,
         message,
     })
 }
 
 /// Parse a cron expression. Standard 5-field cron is accepted: the cron crate expects 6 or 7
 /// fields (seconds included), so a 5-field expression gets a "0" seconds prefix.
-pub fn parse_schedule(cron_expr: &str) -> Result<cron::Schedule, cron::error::Error> {
+fn parse_schedule(cron_expr: &str) -> Result<cron::Schedule, cron::error::Error> {
     let fields_count = cron_expr.split_whitespace().count();
     let schedule_expr = if fields_count == 5 {
         format!("0 {cron_expr}")
@@ -103,8 +121,12 @@ impl CronTracker {
     }
 
     /// Check if a cron file is due and hasn't already fired this minute.
-    /// Returns true if the job should fire.
+    /// Returns true if the job should fire. A `@reboot` file is never due: it fires only
+    /// when the daemon starts.
     pub fn is_due(&self, cron_file: &CronFile) -> bool {
+        let When::Schedule(schedule) = &cron_file.when else {
+            return false;
+        };
         let now = Utc::now();
         let minute_key = now.format("%Y%m%d%H%M").to_string();
 
@@ -117,7 +139,7 @@ impl CronTracker {
 
         // Check if the cron expression matches the current time
         // Get the next upcoming occurrence and see if it falls within the current minute
-        if let Some(next) = cron_file.schedule.upcoming(Utc).next() {
+        if let Some(next) = schedule.upcoming(Utc).next() {
             let diff = next.signed_duration_since(now);
             // If the next occurrence is within 60 seconds, the current minute matches
             diff.num_seconds() < 60
@@ -326,26 +348,58 @@ mod tests {
         assert_eq!(msg.text("trigger"), Some("cron"));
     }
 
+    fn next(cf: &CronFile) -> bool {
+        match &cf.when {
+            When::Schedule(s) => s.upcoming(Utc).next().is_some(),
+            When::DaemonStart => false,
+        }
+    }
+
+    #[test]
+    fn test_reboot_fires_at_daemon_start_only() {
+        let cf = parse_cron_file(
+            "boot.md",
+            "---\ncron: \"@reboot\"\nmachine: boot\n---\nWarm up.\n",
+        )
+        .unwrap();
+        assert!(matches!(cf.when, When::DaemonStart));
+        assert_eq!(cf.cron_expr, "@reboot");
+        assert!(!CronTracker::new().is_due(&cf));
+        let msg = cron_to_inbox_message(&cf);
+        assert_eq!(
+            String::from_utf8(msg.to_bytes()).unwrap(),
+            "---\nmachine: boot\ntrigger: cron\n---\nWarm up.\n"
+        );
+    }
+
+    #[test]
+    fn test_parse_when_only_reboot_is_new() {
+        assert!(matches!(parse_when("@reboot"), Ok(When::DaemonStart)));
+        assert!(matches!(parse_when("0 * * * *"), Ok(When::Schedule(_))));
+        assert!(parse_when("@daemon").is_err());
+        assert!(parse_when("@reboot 0").is_err());
+    }
+
     #[test]
     fn test_various_cron_expressions() {
         // Every minute
         let cf = parse_cron_file("t.md", "---\ncron: \"* * * * *\"\n---\n").unwrap();
-        assert!(cf.schedule.upcoming(Utc).next().is_some());
+        assert!(next(&cf));
 
         // Every hour
         let cf = parse_cron_file("t.md", "---\ncron: \"0 * * * *\"\n---\n").unwrap();
-        assert!(cf.schedule.upcoming(Utc).next().is_some());
+        assert!(next(&cf));
 
         // Daily at 9am
         let cf = parse_cron_file("t.md", "---\ncron: \"0 9 * * *\"\n---\n").unwrap();
-        assert!(cf.schedule.upcoming(Utc).next().is_some());
+        assert!(next(&cf));
 
         // Weekdays at 9am
         let cf = parse_cron_file("t.md", "---\ncron: \"0 9 * * 1-5\"\n---\n").unwrap();
-        assert!(cf.schedule.upcoming(Utc).next().is_some());
+        assert!(next(&cf));
 
         // Every 15 minutes
         let cf = parse_cron_file("t.md", "---\ncron: \"*/15 * * * *\"\n---\n").unwrap();
-        assert!(cf.schedule.upcoming(Utc).next().is_some());
+        assert!(next(&cf));
     }
 }

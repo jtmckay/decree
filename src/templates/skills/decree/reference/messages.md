@@ -198,7 +198,20 @@ A vulnerability whose fix is published should not stay in the build overnight.
   **Then** it lists no advisory that a compatible patched version fixes
 ```
 
-`decree status --cron` lists them with their next fire time.
+`cron: "@reboot"` (Vixie cron's word) queues the message once each time `decree daemon` starts,
+at its first pass, even while the queue is held; a daemon restarted after a crash queues it again,
+so the script checks its own result before redoing work. A `@reboot` file added while the daemon
+runs waits for the next start, and `decree process` never fires it.
+
+```markdown
+---
+cron: "@reboot"
+machine: boot
+---
+Check that the services this project calls answer.
+```
+
+`decree status --cron` lists them with their next fire time (`daemon start` for `@reboot`).
 
 ## Replies to a waiting run
 

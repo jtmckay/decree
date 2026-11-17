@@ -150,3 +150,15 @@ or copy the file into `inbox/`. Either way the copy keeps its frontmatter and bo
 ## Cron files
 
 `.decree/cron/*.md` are message templates with a `cron:` key in their frontmatter, a standard cron expression. On each `decree daemon` pass, every cron file that is due is written to `inbox/` through the same writer as `decree emit`: the new message has the cron file's `machine`, `trigger: cron`, the cron file's other keys and its body; the `cron` key is not copied. A cron file must name its machine. `decree check` validates every cron file (M3, [Validation](machines.md#validation)), and `decree status --cron` lists them with their next fire time.
+
+`cron: "@reboot"` fires once each time `decree daemon` starts, at its first pass, as Vixie cron's `@reboot` fires when the cron daemon starts, not when the host boots ([D80](../decisions.md#d80-reboot-fires-when-the-daemon-starts)). For a daemon that runs from boot to shutdown, that is on boot: warm a model, check that services answer, catch up on what was missed while the host was down.
+
+```markdown
+---
+cron: "@reboot"
+machine: boot
+---
+Check that the services this project calls answer.
+```
+
+The message goes through the same writer with `trigger: cron`, and `--machine` and `--exclude-machine` decide whether this daemon fires it, as for any cron file. It fires on every start, `decree daemon --retry` included, so a daemon a supervisor restarts after a crash queues it again each time; decree keeps no record of past starts. A script that must not repeat its work checks its own result first, as every script should. It fires only at start: a `@reboot` file added while the daemon runs waits for the next start, and `decree process` never fires it, as it fires no cron file. When a file in `.decree/attention/` holds the queue (or after `decree stop`), the message is still queued at start and runs once the hold is gone. `decree status --cron` shows `daemon start` in place of its next fire time; `--format json` gives it `next: null` and `at_daemon_start: true`.

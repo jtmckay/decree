@@ -116,7 +116,7 @@ pub(crate) const RULES: [(&str, &str); 28] = [
     ),
     (
         "M3",
-        "Every `cron/*.md` passes the same checks, and its `cron:` expression parses.",
+        "Every `cron/*.md` passes the same checks, and its `cron:` expression parses or is `@reboot`.",
     ),
     (
         "E1",

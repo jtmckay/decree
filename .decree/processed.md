@@ -121,3 +121,4 @@ A07-bare-decree-prints-synopsis.md
 A08-no-lib.md
 A09-plugins-export-import.md
 A10-official-plugins.md
+A11-cron-at-daemon-start.md

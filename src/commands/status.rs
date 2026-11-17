@@ -7,7 +7,7 @@
 //!   `waiting` run; then the queued messages. Runs finished in a state other than `failed`
 //!   are counted, not listed, and each list shows its last `SHOWN` entries, unless `--all`.
 //! - With id: the run's frontmatter, status, and its events as a table.
-//! - `--cron`: the cron files and when each fires next.
+//! - `--cron`: the cron files and when each fires next (`daemon start` for `@reboot`).
 //!
 //! Without an id it also lists the active runs of decree projects below the project root,
 //! or below the current folder when it is in no project (`examples/project/`, say).
@@ -84,7 +84,7 @@ pub fn run(
     format: Format,
 ) -> Result<(), DecreeError> {
     if cron {
-        return show_cron(project_root);
+        return show_cron(project_root, format);
     }
     let project = Project::load(project_root)?;
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
@@ -708,9 +708,14 @@ fn event_detail(kind: &str, e: &Event) -> String {
     out
 }
 
-/// `--cron`: each cron file, its schedule and machine, and when it fires next.
-fn show_cron(project_root: &Path) -> Result<(), DecreeError> {
+/// `--cron`: each cron file, its schedule and machine, and when it fires next: a time, or
+/// `daemon start` for `@reboot` (docs/reference/messages.md, Cron files).
+fn show_cron(project_root: &Path, format: Format) -> Result<(), DecreeError> {
     let files = cron::scan_cron_files(project_root)?;
+    if format == Format::Json {
+        let rows: Vec<Value> = files.iter().map(cron_json).collect();
+        return print_json(&json!({ "cron": rows }));
+    }
     if files.is_empty() {
         println!("No cron files.");
         return Ok(());
@@ -721,16 +726,41 @@ fn show_cron(project_root: &Path) -> Result<(), DecreeError> {
     );
     for cf in &files {
         let machine = cf.machine().unwrap_or("\u{2014}");
-        let next = cf.schedule.upcoming(Local).next().map_or_else(
-            || "\u{2014}".to_string(),
-            |t| format!("{} (in {})", t.format("%Y-%m-%d %H:%M"), countdown(t)),
-        );
+        let next = match &cf.when {
+            cron::When::DaemonStart => "daemon start".to_string(),
+            cron::When::Schedule(schedule) => schedule.upcoming(Local).next().map_or_else(
+                || "\u{2014}".to_string(),
+                |t| format!("{} (in {})", t.format("%Y-%m-%d %H:%M"), countdown(t)),
+            ),
+        };
         println!(
             "{:<32}{:<19}{:<16}{next}",
             cf.filename, cf.cron_expr, machine
         );
     }
     Ok(())
+}
+
+/// One cron file in `status --cron --format json`: `next` is null for `@reboot`, which
+/// has `at_daemon_start: true` instead.
+fn cron_json(cf: &cron::CronFile) -> Value {
+    let (next, at_daemon_start) = match &cf.when {
+        cron::When::DaemonStart => (None, true),
+        cron::When::Schedule(schedule) => (
+            schedule
+                .upcoming(Utc)
+                .next()
+                .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+            false,
+        ),
+    };
+    json!({
+        "file": cf.filename,
+        "cron": cf.cron_expr,
+        "machine": cf.machine(),
+        "next": next,
+        "at_daemon_start": at_daemon_start,
+    })
 }
 
 /// Time left until `t`: "30s", "5m", "2h", "3d".

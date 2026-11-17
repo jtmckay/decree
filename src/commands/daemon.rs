@@ -66,6 +66,14 @@ fn poll(
     let mut blocked = None;
     let mut held = None;
     let mut result = report(pipeline.recover());
+    // `@reboot` cron files fire once per daemon process, here, whether or not the queue is
+    // held (docs/reference/messages.md, Cron files).
+    fire_cron_jobs(
+        project_root,
+        pipeline.filter(),
+        "cron fired at daemon start",
+        |cf| matches!(cf.when, cron::When::DaemonStart),
+    );
     loop {
         if result.is_ok() {
             pipeline.refresh();
@@ -156,28 +164,39 @@ fn report(result: Result<(), Stop>) -> Result<(), Stop> {
 
 /// Check cron directory and fire due jobs for the machines `filter` runs into inbox.
 fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker, filter: &MachineFilter) {
+    let fired = fire_cron_jobs(project_root, filter, "cron fired", |cf| tracker.is_due(cf));
+    for cf in &fired {
+        tracker.mark_fired(cf);
+    }
+}
+
+/// Queue each cron file `fires` picks, for the machines `filter` runs, through the one
+/// writer (`message::queue`). Returns those queued; `what` names them in the output.
+fn fire_cron_jobs(
+    project_root: &Path,
+    filter: &MachineFilter,
+    what: &str,
+    mut fires: impl FnMut(&cron::CronFile) -> bool,
+) -> Vec<cron::CronFile> {
     let cron_files = match cron::scan_cron_files(project_root) {
         Ok(files) => files,
         Err(e) => {
             notice(format!("decree daemon: error scanning cron: {e}"));
-            return;
+            return Vec::new();
         }
     };
 
-    for cf in &cron_files {
-        if !filter.runs(cf.message.machine()) || !tracker.is_due(cf) {
+    let decree_dir = project_root.join(layout::DECREE_DIR);
+    let mut fired = Vec::new();
+    for cf in cron_files {
+        if !filter.runs(cf.message.machine()) || !fires(&cf) {
             continue;
         }
-
-        let mut msg = cron::cron_to_inbox_message(cf);
-        let decree_dir = project_root.join(layout::DECREE_DIR);
+        let mut msg = cron::cron_to_inbox_message(&cf);
         match message::queue(&decree_dir, &mut msg) {
             Ok(id) => {
-                line(format!(
-                    "decree daemon: cron fired: {} -> {id}.md",
-                    cf.filename
-                ));
-                tracker.mark_fired(cf);
+                line(format!("decree daemon: {what}: {} -> {id}.md", cf.filename));
+                fired.push(cf);
             }
             Err(e) => {
                 notice(format!(
@@ -187,6 +206,7 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker, filter: &M
             }
         }
     }
+    fired
 }
 
 #[cfg(test)]

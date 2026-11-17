@@ -416,16 +416,20 @@ fn text_to_media_readme_commands_run() {
 fn assert_readme_reads_only(name: &str) {
     let dir = run_readme(name, "true");
     let project = dir.path().join("examples").join(name);
-    let mut copied = Vec::new();
-    files(&project, &mut copied);
-    copied.retain(|p| {
-        let rel = p.strip_prefix(&project).unwrap();
+    // Leave out what `decree check` installs, here and in the example itself (it is
+    // installed there too when `decree check` runs in the example directory).
+    let not_installed = |root: &Path, p: &PathBuf| {
+        let rel = p.strip_prefix(root).unwrap();
         !["machines", "scripts", "cache"]
             .iter()
             .any(|d| rel.starts_with(Path::new(".decree").join(d)))
-    });
+    };
+    let mut copied = Vec::new();
+    files(&project, &mut copied);
+    copied.retain(|p| not_installed(&project, p));
     let mut original = Vec::new();
     files(&examples().join(name), &mut original);
+    original.retain(|p| not_installed(&examples().join(name), p));
     assert_eq!(copied.len(), original.len(), "{name}");
     for path in original {
         let rel = path.strip_prefix(examples().join(name)).unwrap();

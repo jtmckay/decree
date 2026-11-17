@@ -22,7 +22,7 @@ pub(crate) mod runtime;
 pub(crate) mod trace;
 
 use clap::Parser;
-use cli::{Cli, Command, Format, PluginAction};
+use cli::{Cli, Command, PluginAction};
 use colored::Colorize;
 use error::{DecreeError, EXIT_SUCCESS};
 
@@ -133,15 +133,6 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             all,
             format,
         } => {
-            if cron && format == Format::Json {
-                use clap::CommandFactory;
-                Cli::command()
-                    .error(
-                        clap::error::ErrorKind::ArgumentConflict,
-                        "--cron prints text only; --format json covers `status` and `status <id>`",
-                    )
-                    .exit();
-            }
             let cwd = std::env::current_dir()?;
             let root = error::find_project_root();
             commands::status::run_from(&cwd, root, id.as_deref(), cron, all, format)
