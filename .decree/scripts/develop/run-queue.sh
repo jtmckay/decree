@@ -2,7 +2,7 @@
 # run-queue: run this repository's pending migrations unattended, each one on a
 # decree built from the commit before it.
 #
-#   .decree/lib/develop/run-queue.sh
+#   .decree/scripts/develop/run-queue.sh
 #
 # develop's `restart` (done's onentry, after commit) runs `decree stop`, so
 # `process` exits after each migration. This loop then builds the release

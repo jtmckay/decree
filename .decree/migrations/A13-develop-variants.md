@@ -1,15 +1,15 @@
 ---
 machine: develop
 ---
-# A12: Official develop variants: develop_rust, develop_node, develop_react
+# A13: Official develop variants: develop_rust, develop_node, develop_react
 
 ## Overview
 
-The official `develop` plugin (A09) ships a gate that runs nothing until the project fills it in, and an `infra` whose requirements name only what decree itself needs. Every Rust, Node or React project then writes the same gate and declares the same tools by hand.
+The official `develop` plugin (A10) ships a gate that runs nothing until the project fills it in, and an `infra` whose requirements name only what decree itself needs. Every Rust, Node or React project then writes the same gate and declares the same tools by hand.
 
 The user wants `develop` variants per ecosystem, as official plugins a project adds instead: `decree plugin add develop_rust`. Each variant comes with a gate that already runs that ecosystem's standard checks, and declares the tools it needs. The variants are spelled with `_`, because machine names match `^[a-z][a-z0-9_]*$`.
 
-A variant cannot add lines to `infra`'s own requirements file, which belongs to the `infra` plugin. So `infra` also reads a drop-in directory, `lib/infra/requirements.d/`, as Debian's `sources.list.d` and systemd's `*.d` directories let a package add configuration without editing another package's file.
+Since A08, `infra` checks the `requirements` file in every machine's scripts directory, so a variant declares its tools in its own `scripts/<variant>/requirements` and never edits `infra`'s.
 
 ## Outcome
 
@@ -18,7 +18,7 @@ A variant cannot add lines to `infra`'s own requirements file, which belongs to 
 - `develop_rust`, `develop_node` and `develop_react` are official plugins. Each is `develop`'s machine (same states, events and transitions) under its own name, so one project can add two of them (a Rust API and a React front end) and point each message at one.
 - Each variant's scripts are identical to `develop`'s, except:
   - the gate;
-  - the ecosystem's conventions in the implement, fix and verify prompts: where tests go and which tools to use. This repository's own `develop` already keeps its Rust conventions in `lib/develop/conventions.md`, which its prompts read; that is the starting point for `develop_rust`.
+  - the ecosystem's conventions in the implement, fix and verify prompts: where tests go and which tools to use. This repository's own `develop` already keeps its Rust conventions in `scripts/develop/conventions.md`, which its prompts read; that is the starting point for `develop_rust`.
   A test keeps the shared scripts identical across the variants.
 - `develop` itself stays as the generic plugin, with its empty gate.
 
@@ -35,9 +35,7 @@ Each gate names `pass` or `fail`, as `develop`'s does. A non-zero exit means the
 
 ### Tools the variants need
 
-- `infra` reads `lib/infra/requirements` and then every file in `lib/infra/requirements.d/`, in name order, as one list. `check` and `apply` cover all of them.
-- `infra`'s `declare` step still edits only `lib/infra/requirements`.
-- Each variant ships `lib/infra/requirements.d/<variant>` naming its tools: `cargo` for Rust, `node` and `npm` for Node and React (a project using pnpm or yarn adds that line). Each variant `needs` `infra`.
+- Each variant ships `scripts/<variant>/requirements` naming its tools: `cargo` for Rust, `node` and `npm` for Node and React (a project using pnpm or yarn adds that line). Each variant `needs` `infra`.
 
 ### Listing them
 
@@ -56,9 +54,8 @@ Each gate names `pass` or `fail`, as `develop`'s does. A non-zero exit means the
 - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass, and `decree check` passes in every example directory.
 - Documentation:
   - the decree skill template says to add the variant that fits the project, and that a project in another ecosystem starts from `develop` and fills in its gate;
-  - `requirements.d` is documented where `infra`'s requirements are;
   - CHANGELOG lists the change under Added;
-  - `docs/decisions.md` gets a decision on variants as separate machines, and on the drop-in directory.
+  - `docs/decisions.md` gets a decision on variants as separate machines.
 
 ## Acceptance Criteria
 
@@ -87,8 +84,8 @@ Each gate names `pass` or `fail`, as `develop`'s does. A non-zero exit means the
   **Then** it names `fail`
 
 - **Given** a project with `develop_node` added
-  **When** `lib/infra/run.sh check` runs without `node` on `PATH`
-  **Then** it reports `node` missing, read from `lib/infra/requirements.d/develop_node`
+  **When** `develop_node`'s `precheck` runs without `node` on `PATH`
+  **Then** it fails, reporting `node` missing from `scripts/develop_node/requirements`
 
 - **Given** the variants' plugin files
   **When** the tests run

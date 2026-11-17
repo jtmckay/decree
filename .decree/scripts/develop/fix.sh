@@ -20,7 +20,7 @@ ${DECREE_ROOT_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
 Fix the failures, append a line to ${progress} for each fix, and run the
 gate again. If ${plan} exists, follow it. If a failure needs a decision the
 message does not make, write the question to ${stop} and stop.
-Follow the conventions in ${DECREE_LIB}/develop/conventions.md.
+Follow the conventions in .decree/scripts/develop/conventions.md.
 Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
 echo "=== AI prompt (fix) ==="
 echo "${prompt}"

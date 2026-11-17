@@ -1,39 +1,38 @@
 ---
 machine: develop
 ---
-# A09: Official plugins, built into decree, all opt-in
+# A10: Official plugins, built into decree, all opt-in
 
 ## Overview
 
-A08 made plugins decree's way to keep and share a machine. decree also ships machines of its own, in two forms:
-- **Built-ins:** `develop`, `infra`, `qa` and `router`. `decree init` writes every one of them into every project, needed or not, as loose files in `machines/`, `scripts/` and `lib/`.
+A09 made plugins decree's way to keep and share a machine. decree also ships machines of its own, in two forms:
+- **Built-ins:** `develop`, `infra`, `qa` and `router`. `decree init` writes every one of them into every project, needed or not, as loose files in `machines/` and `scripts/`.
 - **Examples:** the newsletter, the ComfyUI machine in text-to-media, and the routers and machine in route-by-complexity. You can only get these by copying files from the repository.
 
 The user wants both to become **official plugins**:
 - built into the decree binary, so there is no network access and no version skew;
 - all of them opt-in: `init` installs none of them and then prints what is available.
 
-The user also wants a project to commit `.decree/plugins/` and nothing that is installed from it. The default `.gitignore` should ignore `machines/`, `scripts/` and `lib/`, as existential's `.decree/.gitignore` already does.
+The user also wants a project to commit `.decree/plugins/` and nothing that is installed from it. The default `.gitignore` should ignore `machines/` and `scripts/`, as existential's `.decree/.gitignore` already does.
 
-The user decided that a project's own edits to a plugin live in its plugin file, not in a separate config folder. That covers `gate.sh`, infra's requirements and kinds, and qa's invariants, wrenches and `QA_RUN`. A project edits the installed copy and exports it, and the `commit` script exports for it, so what a run changes is committed with the run. Sharing a project's plugin therefore shares its edits as well; that is accepted.
+The user decided that a project's own edits to a plugin live in its plugin file, not in a separate config folder. That covers `gate.sh`, each plugin's `requirements`, infra's kinds, and qa's invariants, wrenches and `QA_RUN`. A project edits the installed copy and exports it, and the `commit` script exports for it, so what a run changes is committed with the run. Sharing a project's plugin therefore shares its edits as well; that is accepted.
 
 The verbs follow npm and cargo:
 - `add` takes an official plugin into `plugins/`;
 - `import` takes a file into `plugins/`;
-- `install` writes `plugins/` into `machines/`, `scripts/` and `lib/`;
+- `install` writes `plugins/` into `machines/` and `scripts/`;
 - `export` writes the installed copy back into `plugins/`.
 
 ## Outcome
 
 ### The official plugins
 
-- The repository's `plugins/<name>.md` are the official plugins, and decree builds every one of them into its binary. There is one plugin per machine; lib that several of them share is a lib-only plugin, such as `ai` for `lib/ai.sh`. They are:
+- The repository's `plugins/<name>.md` are the official plugins, and decree builds every one of them into its binary. There is one plugin per machine, and each carries every file its scripts use (A08), so no official plugin depends on another for code. They are:
   - `develop`, `infra`, `qa` and `router`;
-  - every machine under `examples/`: `newsletter`, `comfy`, `develop_by_size`, `gliner_router` and `llm_router`;
-  - the lib plugins those need.
+  - every machine under `examples/`: `newsletter`, `comfy`, `develop_by_size`, `gliner_router` and `llm_router`.
 - Each official plugin's body says, for a person who has never seen decree, what it does, what it needs (services, tools, a cron file to write), and how to use it.
 - Each official plugin, added alone with its `needs` into an empty project, passes `decree check`.
-- A script that several plugins share (`clean_tree`, `commit`, `keep`) is in each plugin that runs it, and a test keeps the copies identical.
+- A file that several plugins use (`clean_tree`, `commit`, `keep`, `ai.sh`) is in each plugin that uses it, and a test keeps the copies identical.
 - `examples/` keeps only what is not a plugin, linked from the plugin that uses it: the observability config, the GLiNER server, demo messages and the project walkthrough.
 
 ### Listing and adding
@@ -61,26 +60,26 @@ The verbs follow npm and cargo:
 
 ### The default `.gitignore`
 
-It is the current template plus `machines/`, `scripts/` and `lib/`. `graph/` and `plugins/` stay committed.
+It is the current template plus `machines/` and `scripts/`. `graph/` and `plugins/` stay committed. A folder a project adds itself (a shared `lib/`, say) is the project's to commit or ignore.
 
 ### Committing a run's edits
 
-- The `commit` script exports every plugin whose installed copy differs from its plugin file before it commits. A run's edits to installed files (an `infra` run rewriting its requirements, a `develop` run editing its gate) reach `plugins/` in the run's one commit.
+- The `commit` script exports every plugin whose installed copy differs from its plugin file before it commits. A run's edits to installed files (an `infra` run rewriting `scripts/infra/requirements`, a `develop` run editing its gate) reach `plugins/` in the run's one commit.
 - A run that fails exports nothing. `keep` leaves its edits in the installed copy, where a retry builds on them.
 - Every doc and prompt that says to edit a plugin's file in place says the edit is kept by `decree plugin export <name>`, or by the next `commit`.
 
 ### This repository
 
-- This repository's own `.decree/` keeps its machine names, so queued migrations naming `develop` still run. Its machines are in its `.decree/plugins/`, started from the official ones plus its own edits: the cargo gate, `QA_RUN`, `lib/develop/conventions.md`, and done's `restart` with `lib/develop/run-queue.sh`, which keep the queue running unattended on a decree rebuilt after each migration. `run-queue.sh` still works after the conversion.
-- No file under any `.decree/machines/`, `.decree/scripts/` or `.decree/lib/` is tracked any more, anywhere outside `tests/fixtures/`.
+- This repository's own `.decree/` keeps its machine names, so queued migrations naming `develop` still run. Its machines are in its `.decree/plugins/`, started from the official ones plus its own edits: the cargo gate, `QA_RUN`, `scripts/develop/conventions.md`, and done's `restart` with `scripts/develop/run-queue.sh`, which keep the queue running unattended on a decree rebuilt after each migration. `run-queue.sh` still works after the conversion.
+- No file under any `.decree/machines/` or `.decree/scripts/` is tracked any more, anywhere outside `tests/fixtures/`.
 - The tests that ran the examples' machines (newsletter, text-to-media, route-by-complexity) run the official plugins instead.
 
 ### Existing projects
 
 - `docs/reference/` says how an existing project converts:
   1. `decree plugin export <name>` for each machine;
-  2. add the three lines to `.decree/.gitignore`;
-  3. `git rm -r --cached .decree/machines .decree/scripts .decree/lib`.
+  2. add the two lines to `.decree/.gitignore`;
+  3. `git rm -r --cached .decree/machines .decree/scripts`.
 - decree never edits an existing `.gitignore`.
 
 ## Constraints
@@ -96,7 +95,7 @@ It is the current template plus `machines/`, `scripts/` and `lib/`. `graph/` and
 - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass, and `decree check` passes in every example directory.
 - Documentation:
   - the README quick start, `src/templates/synopsis.md` (the user's text: change it only where it is now wrong) and the decree skill template show `init`, then `decree plugin list` and `decree plugin add develop`;
-  - the skill's rules say: commit `plugins/` and `graph/`, never `machines/`, `scripts/` or `lib/`; shared lib belongs to one plugin; the built-in machines section is about official plugins a project may have added;
+  - the skill's rules say: commit `plugins/` and `graph/`, never `machines/` or `scripts/`; the built-in machines section is about official plugins a project may have added;
   - CHANGELOG lists the change under Changed;
   - `docs/decisions.md` gets a decision saying why plugins are opt-in and official ones are built into the binary, and why project edits live in the plugin.
 
@@ -104,11 +103,11 @@ It is the current template plus `machines/`, `scripts/` and `lib/`. `graph/` and
 
 - **Given** an empty directory
   **When** `decree init` runs
-  **Then** it exits 0 without reading stdin; `.decree/plugins/`, `machines/`, `scripts/` and `lib/` hold no plugin files; its output lists every official plugin and the `decree plugin add` line; and `decree check` passes
+  **Then** it exits 0 without reading stdin; `.decree/plugins/`, `machines/` and `scripts/` hold no plugin files; its output lists every official plugin and the `decree plugin add` line; and `decree check` passes
 
 - **Given** a fresh `init`
   **When** `.decree/.gitignore` is read
-  **Then** it is the previous template plus `machines/`, `scripts/` and `lib/`
+  **Then** it is the previous template plus `machines/` and `scripts/`
 
 - **Given** a fresh `init`
   **When** `decree plugin add develop` runs
@@ -132,7 +131,7 @@ It is the current template plus `machines/`, `scripts/` and `lib/`. `graph/` and
 
 - **Given** an `init`ed git project with `infra` added, in which an `infra` run (with a stubbed `ai`) adds a requirement line
   **When** the run reaches `done`
-  **Then** its commit contains `.decree/plugins/infra.md` with the new line, and nothing under `.decree/lib/`
+  **Then** its commit contains `.decree/plugins/infra.md` with the new line, and nothing under `.decree/scripts/`
 
 - **Given** a `develop` run that edits its gate and then fails
   **When** the run ends in `failed`
@@ -140,7 +139,7 @@ It is the current template plus `machines/`, `scripts/` and `lib/`. `graph/` and
 
 - **Given** this repository after the change
   **When** `git ls-files` runs
-  **Then** no path matches `.decree/machines/`, `.decree/scripts/` or `.decree/lib/` outside `tests/fixtures/`, and every `examples/` machine has an official plugin in `plugins/`
+  **Then** no path matches `.decree/machines/` or `.decree/scripts/` outside `tests/fixtures/`, and every `examples/` machine has an official plugin in `plugins/`
 
 - **Given** no `AI_CLI` and no `ai_cli` data, and only `opencode` on `PATH`
   **When** `ai` runs

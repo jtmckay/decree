@@ -23,7 +23,7 @@ const AI: &[Pair] = &[("lib/ai.sh", "ai/ai.sh")];
 
 /// The built-in `develop` and `infra` machines and what they run, but `gate.sh`, which a
 /// project fills in, and develop's machine and prompts: this repository's own `develop` is
-/// its Rust variant (done's `restart`, and prompts that read `lib/develop/conventions.md`).
+/// its Rust variant (done's `restart`, and prompts that read `scripts/develop/conventions.md`).
 const DEVELOP: &[Pair] = &[
     ("machines/infra.yml", "machines/infra.yml"),
     ("scripts/clean_tree.sh", "scripts/clean_tree.sh"),

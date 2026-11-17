@@ -1,7 +1,7 @@
 ---
 machine: develop
 ---
-# A11: The official `lease` plugin: one holder per resource, batched by mode, with linger and max_wait
+# A12: The official `lease` plugin: one holder per resource, batched by mode, with linger and max_wait
 
 ## Overview
 
@@ -22,7 +22,7 @@ Prior art, for the names and behaviour:
 
 ### Where it lives
 
-- `lease` is an official plugin: `plugins/lease.md` in this repository, built into decree like the other official plugins (A09). Its body explains, for a person who has never seen decree:
+- `lease` is an official plugin: `plugins/lease.md` in this repository, built into decree like the other official plugins (A10). Its body explains, for a person who has never seen decree:
   - how to add it to a project (`decree plugin add lease`);
   - how to set the rules;
   - how to ask for a lease, how to know it is held, and how to release or renew it.
@@ -36,11 +36,11 @@ Prior art, for the names and behaviour:
 
 ### The rules
 
-The resource's owner writes them in `lib/lease/resources`, one resource per line, with `#` comments: `<name> <max_lease> <linger> <max_wait>`. Durations use decree's format (`15m`, `5s`). The plugin ships one line, `gpu 15m 5s 30m`.
+The resource's owner writes them in `scripts/lease/resources`, one resource per line, with `#` comments: `<name> <max_lease> <linger> <max_wait>`. Durations use decree's format (`15m`, `5s`). The plugin ships one line, `gpu 15m 5s 30m`.
 
 ### Swapping modes
 
-`lib/lease/swap/<resource>.sh <from> <to>` puts the resource into mode `<to>`. `<from>` is empty when the current mode is unknown. A missing script means there is nothing to do. The shipped script only says what it would do, and points to `docs/services.md` for unloading ollama and ComfyUI. A swap is a step with a timeout, never an `onentry`. If a swap fails, its lease fails, the mode becomes unknown, and the next lease swaps again.
+`scripts/lease/swap/<resource>.sh <from> <to>` puts the resource into mode `<to>`. `<from>` is empty when the current mode is unknown. A missing script means there is nothing to do. The shipped script only says what it would do, and points to `docs/services.md` for unloading ollama and ComfyUI. A swap is a step with a timeout, never an `onentry`. If a swap fails, its lease fails, the mode becomes unknown, and the next lease swaps again.
 
 ### Who goes next
 
@@ -58,9 +58,9 @@ Per resource, with at most one holder at a time:
 
 ## Constraints
 
-- No change to decree's core: the plugin uses only machines, scripts, `$DECREE_STORE`, `$DECREE_LIB`, `decree event` and `decree status`. If the plugin can't be built correctly without a core change, write the reason to `STOP` and end without making changes.
+- No change to decree's core: the plugin uses only machines, scripts, `$DECREE_STORE`, `decree event` and `decree status`. If the plugin can't be built correctly without a core change, write the reason to `STOP` and end without making changes.
 - The plugin's machine follows the skill's "simplest machine" rule. Each state it has is there for one of the behaviours above, with a comment saying which.
-- Any tool its scripts need beyond POSIX shell and decree (such as `flock` or `jq`) is named in the plugin's body under what it needs.
+- Any tool its scripts need beyond POSIX shell and decree (such as `flock` or `jq`) is named in the plugin's body under what it needs, and in its `scripts/lease/requirements` (A08), so `infra` checks it.
 - Tests use a stub swap script that records each call, and durations of seconds. No test waits longer than it must.
 - Only this migration's scope. existential is not changed.
 - Never edit `.decree/migrations/`, `.decree/runs/` or `.decree/processed.md`, not even by a search and replace across the repository: exclude them from every bulk edit.
@@ -126,7 +126,7 @@ In each criterion, the resource is `gpu` with `max_lease 3s`, `linger 1s` and `m
   **When** a lease for `z` is granted
   **Then** that lease's run fails, and the next lease (for any mode) swaps from an unknown mode
 
-- **Given** a lease for resource `tpu`, which is not in `lib/lease/resources`
+- **Given** a lease for resource `tpu`, which is not in `scripts/lease/resources`
   **When** it runs
   **Then** it fails at once naming `tpu` and listing `gpu`
 

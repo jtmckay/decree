@@ -25,7 +25,7 @@ holds decisions made since the message. If a criterion needs a decision the
 message does not make, write the question to ${stop} and stop.
 If anything fails, write ${gaps}: one line per unmet requirement or failing test,
 saying what is wrong.
-Follow the conventions in ${DECREE_LIB}/develop/conventions.md.
+Follow the conventions in .decree/scripts/develop/conventions.md.
 Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp).
 End your reply with one line: VERDICT: pass if everything passes, else
 VERDICT: fail."

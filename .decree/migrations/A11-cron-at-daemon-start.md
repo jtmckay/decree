@@ -1,7 +1,7 @@
 ---
 machine: develop
 ---
-# A10: A cron file can fire when the daemon starts (`@reboot`)
+# A11: A cron file can fire when the daemon starts (`@reboot`)
 
 ## Overview
 
