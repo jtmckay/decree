@@ -11,6 +11,8 @@ use tempfile::TempDir;
 
 mod common;
 use common::write_script;
+#[path = "common/schema.rs"]
+mod schema;
 
 /// Asks a person, then ships or stops; a timeout goes to `expired`.
 const DEPLOY: &str = "\
@@ -517,4 +519,307 @@ fn event_while_a_reply_is_already_queued_exits_1() {
     p.process().assert().code(0);
     assert_eq!(last_transition(&p.events(RUN))["to"], "done");
     assert_eq!(p.runs(), [RUN]);
+}
+
+// ---------------------------------------------------------------
+// A reply queued before the deadline wins (docs/reference/messages.md, Replies, step 5);
+// a rejected reply never holds the queue (step 4)
+// ---------------------------------------------------------------
+
+/// The deadline the tests set on `RUN`'s wait, and reply ids queued before and after it.
+const DEADLINE: &str = "2026-01-01T00:00:10.000Z";
+const BEFORE: &str = "20260101T000005.000000Z-0000b1";
+const AFTER: &str = "20260101T000015.000000Z-0000b2";
+
+impl Project {
+    /// Set the `timeout_at` of `RUN`'s wait, its last event, to `at`.
+    fn set_deadline(&self, at: &str) {
+        let path = self.decree().join("runs").join(RUN).join("events.jsonl");
+        let text = fs::read_to_string(&path).unwrap();
+        let (head, last) = text.trim_end().rsplit_once('\n').unwrap();
+        let key = "\"timeout_at\":\"";
+        let start = last.find(key).unwrap() + key.len();
+        let end = start + last[start..].find('"').unwrap();
+        let last = format!("{}{at}{}", &last[..start], &last[end..]);
+        fs::write(&path, format!("{head}\n{last}\n")).unwrap();
+    }
+
+    /// Queue a reply as `decree event` does: `inbox/<id>.md`, with frontmatter `id`.
+    fn queue_reply(&self, id: &str, to: &str, event: &str) {
+        self.write(
+            &format!("inbox/{id}.md"),
+            &format!("---\nid: {id}\nto: {to}\nevent: {event}\n---\n"),
+        );
+    }
+
+    /// The frontmatter of run `id`'s attention file, checked against `attention.schema.json`.
+    fn attention(&self, id: &str) -> Value {
+        let path = self.decree().join("attention").join(format!("{id}.md"));
+        let text = fs::read_to_string(&path).unwrap();
+        let json = schema::frontmatter_to_json(&text).unwrap();
+        let validator = schema::validator(schema::ATTENTION_SCHEMA);
+        assert_eq!(
+            schema::errors(&validator, &json),
+            Vec::<String>::new(),
+            "{text}"
+        );
+        json
+    }
+
+    /// `decree status --format json`, checked against its schema.
+    fn status(&self) -> Value {
+        let out = self
+            .decree_cmd()
+            .args(["status", "--format", "json"])
+            .assert()
+            .code(0)
+            .get_output()
+            .clone();
+        let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let validator = schema::validator(schema::CLI_STATUS_SCHEMA);
+        assert_eq!(schema::errors(&validator, &doc), Vec::<String>::new());
+        doc
+    }
+}
+
+fn timed_out(events: &[Value]) -> bool {
+    events.iter().any(|e| e.get("timed_out").is_some())
+}
+
+/// AC: a reply to the wait id queued before the deadline is delivered, not the timeout.
+#[test]
+fn a_reply_queued_before_the_deadline_wins_over_the_timeout() {
+    let p = Project::new("1h");
+    let wait_id = p.wait();
+    p.set_deadline(DEADLINE);
+    p.queue_reply(BEFORE, &wait_id, "approve");
+    p.process().assert().code(0);
+    let events = p.events(RUN);
+    assert!(!timed_out(&events), "{events:?}");
+    let answered = events
+        .iter()
+        .find(|e| e["type"] == "transition" && e["from"] == "approval")
+        .unwrap();
+    assert_eq!(answered["event"], "approve");
+    assert_eq!(answered["source"], "person");
+    assert_eq!(last_transition(&events)["to"], "done");
+    let received = p.decree().join("runs").join(RUN).join("received");
+    assert!(received.join(format!("{BEFORE}.md")).is_file());
+    assert_eq!(p.runs(), [RUN]);
+}
+
+/// AC: a reply to the run id, its current wait, queued before the deadline also wins.
+#[test]
+fn a_reply_to_the_run_id_queued_before_the_deadline_wins() {
+    let p = Project::new("1h");
+    p.wait();
+    p.set_deadline(DEADLINE);
+    p.queue_reply(BEFORE, RUN, "reject");
+    p.process().assert().code(0);
+    let events = p.events(RUN);
+    assert!(!timed_out(&events), "{events:?}");
+    assert_eq!(last_transition(&events)["to"], "rejected");
+    assert_eq!(last_transition(&events)["source"], "person");
+}
+
+/// A file written straight into `inbox/` gets its id, the time that counts, when decree
+/// first sees it: after the deadline here, so the timeout wins.
+#[test]
+fn a_reply_written_by_hand_counts_from_when_decree_gives_it_an_id() {
+    let p = Project::new("1h");
+    p.wait();
+    p.set_deadline(DEADLINE);
+    p.write(
+        "inbox/reply.md",
+        &format!("---\nto: {RUN}\nevent: approve\n---\n"),
+    );
+    p.process().assert().code(1);
+    let events = p.events(RUN);
+    assert!(timed_out(&events), "{events:?}");
+    assert_eq!(last_transition(&events)["to"], "expired");
+}
+
+/// AC: a reply queued after the deadline loses: the run times out, and the reply is a
+/// failed `invalid_message` run whose attention file does not hold.
+#[test]
+fn a_reply_queued_after_the_deadline_loses_and_does_not_hold() {
+    let p = Project::new("1h");
+    let wait_id = p.wait();
+    p.set_deadline(DEADLINE);
+    p.queue_reply(AFTER, &wait_id, "approve");
+    p.process().assert().code(1);
+    let events = p.events(RUN);
+    assert!(timed_out(&events), "{events:?}");
+    let taken = last_transition(&events);
+    assert_eq!(taken["event"], "error");
+    assert_eq!(taken["to"], "expired");
+    assert_eq!(taken["source"], "timeout");
+    let id = p.other_run();
+    assert_eq!(id, AFTER);
+    assert!(invalid_message(&p.events(&id)).contains("is not waiting: it is finished"));
+    let attention = p.attention(&id);
+    assert_eq!(attention["holds"], false);
+    assert_eq!(attention["machine"], "deploy");
+}
+
+/// AC: a reply queued before the deadline that names an unknown option is rejected, and
+/// the run takes the timeout.
+#[test]
+fn an_early_reply_with_an_unknown_option_is_rejected_and_the_timeout_delivered() {
+    let p = Project::new("1h");
+    let wait_id = p.wait();
+    p.set_deadline(DEADLINE);
+    p.queue_reply(BEFORE, &wait_id, "maybe");
+    p.process().assert().code(1);
+    let reason = invalid_message(&p.events(BEFORE));
+    assert!(reason.contains("`maybe` is not an option"), "{reason}");
+    let events = p.events(RUN);
+    assert!(timed_out(&events), "{events:?}");
+    assert_eq!(last_transition(&events)["to"], "expired");
+    assert_eq!(p.attention(BEFORE)["holds"], false);
+}
+
+/// Of two replies queued before the deadline, the first queued is delivered; the second,
+/// for a run no longer waiting, is rejected.
+#[test]
+fn of_two_early_replies_the_first_queued_wins() {
+    let p = Project::new("1h");
+    let wait_id = p.wait();
+    p.set_deadline(DEADLINE);
+    p.queue_reply("20260101T000006.000000Z-0000b3", RUN, "approve");
+    p.queue_reply(BEFORE, &wait_id, "reject");
+    p.process().assert().code(1);
+    let events = p.events(RUN);
+    assert!(!timed_out(&events), "{events:?}");
+    assert_eq!(last_transition(&events)["to"], "rejected");
+    let reason = invalid_message(&p.events("20260101T000006.000000Z-0000b3"));
+    assert!(reason.contains("is not waiting"), "{reason}");
+}
+
+/// AC: replies to a finished run and to a run id that does not exist each become a failed
+/// `invalid_message` run whose attention file is valid and does not hold; `status` lists
+/// them, nothing holds, and a migration queued behind them runs.
+#[test]
+fn rejected_replies_never_hold_the_queue() {
+    let p = Project::new("1h");
+    p.wait();
+    p.event(&[RUN, "reject"]).assert().code(0);
+    p.process().assert().code(0);
+    assert_eq!(last_transition(&p.events(RUN))["to"], "rejected");
+
+    p.write(
+        "machines/note.yml",
+        "name: note\ndescription: One script, then done.\ninitial: work\nstates:\n  \
+         work:\n    invoke: ask_person\n    transitions: { done: done }\n  \
+         done: { final: true }\n  failed: { final: true }\n",
+    );
+    p.write("migrations/01-note.md", "---\nmachine: note\n---\n# Note\n");
+    let (finished, unknown) = (BEFORE, AFTER);
+    p.queue_reply(finished, RUN, "approve");
+    p.queue_reply(unknown, "20250101T000000.000000Z-0000ff.w1", "approve");
+    let out = p.process().assert().code(1).get_output().clone();
+
+    assert!(invalid_message(&p.events(finished)).contains("is not waiting: it is finished"));
+    assert!(invalid_message(&p.events(unknown)).contains("names no run"));
+    let finished_file = p.attention(finished);
+    assert_eq!(finished_file["holds"], false);
+    assert_eq!(finished_file["machine"], "deploy");
+    assert_eq!(finished_file["status"], "failed");
+    let unknown_file = p.attention(unknown);
+    assert_eq!(unknown_file["holds"], false);
+    assert!(unknown_file.get("machine").is_none(), "{unknown_file}");
+
+    let processed = fs::read_to_string(p.decree().join("processed.md")).unwrap();
+    assert!(
+        processed.contains("01-note.md"),
+        "{processed}\n{}",
+        stderr(&out)
+    );
+
+    let doc = p.status();
+    let attention = doc["attention"].as_array().unwrap();
+    let paths: Vec<&str> = attention
+        .iter()
+        .map(|a| a["path"].as_str().unwrap())
+        .collect();
+    for id in [finished, unknown] {
+        assert!(
+            paths.contains(&format!(".decree/attention/{id}.md").as_str()),
+            "{paths:?}"
+        );
+    }
+    assert!(
+        attention.iter().all(|a| a["holds"] == false),
+        "{attention:?}"
+    );
+    let text = String::from_utf8_lossy(
+        &p.decree_cmd()
+            .arg("status")
+            .assert()
+            .code(0)
+            .get_output()
+            .stdout,
+    )
+    .into_owned();
+    assert!(!text.contains("holds the queue"), "{text}");
+    assert!(
+        text.contains(&format!("run {unknown} failed in `failed`")),
+        "{text}"
+    );
+}
+
+/// AC: `decree event` before a 1s deadline, and a daemon whose first pass starts after it:
+/// the reply is taken, and nothing holds the daemon.
+#[test]
+fn daemon_takes_a_reply_sent_before_the_deadline() {
+    use std::time::{Duration, Instant};
+    let p = Project::new("1s");
+    let wait_id = p.wait();
+    p.event(&[&wait_id, "approve"]).assert().code(0);
+    let deadline = p.events(RUN).last().unwrap()["timeout_at"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let deadline = chrono::DateTime::parse_from_rfc3339(&deadline).unwrap();
+    while chrono::Utc::now() <= deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let mut daemon = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
+        .current_dir(p.tmp.path())
+        .env("NO_COLOR", "1")
+        .env_remove("DECREE_MACHINES")
+        .env_remove("DECREE_EXCLUDE_MACHINES")
+        .args(["daemon", "--interval", "1s"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let limit = Instant::now() + Duration::from_secs(30);
+    while p.events(RUN).last().unwrap()["type"] != "run_finished" {
+        assert!(Instant::now() < limit, "the run did not finish");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(daemon.try_wait().unwrap().is_none(), "the daemon stopped");
+    // SAFETY: sends SIGTERM to the daemon this test spawned.
+    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
+    let limit = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(status) = daemon.try_wait().unwrap() {
+            assert_eq!(status.code(), Some(0));
+            break;
+        }
+        assert!(Instant::now() < limit, "daemon did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let events = p.events(RUN);
+    assert!(!timed_out(&events), "{events:?}");
+    assert_eq!(last_transition(&events)["to"], "done");
+    assert_eq!(p.runs(), [RUN]);
+    let attention = p.status()["attention"].as_array().unwrap().clone();
+    assert!(
+        attention.iter().all(|a| a["holds"] == false),
+        "{attention:?}"
+    );
 }

@@ -358,6 +358,17 @@ pub fn is_message_id(s: &str) -> bool {
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
 }
 
+/// The time an id decree made (`is_message_id`) was made: when its message reached the
+/// queue (docs/reference/messages.md, Frontmatter keys). `None` for any other string.
+pub fn id_time(id: &str) -> Option<DateTime<Utc>> {
+    if !is_message_id(id) {
+        return None;
+    }
+    chrono::NaiveDateTime::parse_from_str(&id[..22], "%Y%m%dT%H%M%S%.6f")
+        .ok()
+        .map(|t| t.and_utc())
+}
+
 /// Whether `inbox/<file>` is queued: named `<id>.md` by an id decree made that has no run
 /// yet, its frontmatter `id` (if it parses) that same id. Only queued files are claimed;
 /// `arrive` gives every other one an id. A run folder without `message.md` is a claim in
@@ -785,6 +796,17 @@ pub(crate) fn yaml_syntax_message(msg: &str) -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_id_time_is_the_time_an_id_was_made() {
+        let t = id_time("20261117T203956.486781Z-2e1c33").unwrap();
+        assert_eq!(t.to_rfc3339(), "2026-11-17T20:39:56.486781+00:00");
+        assert_eq!(id_time("reply"), None);
+        assert_eq!(id_time("20261317T203956.486781Z-2e1c33"), None);
+        let made = new_id(Path::new("/nonexistent"), |_| Ok(true)).unwrap();
+        let ahead = Utc::now() - id_time(&made).unwrap();
+        assert!(ahead >= chrono::TimeDelta::zero() && ahead.num_seconds() < 5);
+    }
 
     // --- Message (docs/reference/messages.md, Parsing and writing) ---
 

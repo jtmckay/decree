@@ -43,7 +43,8 @@ pub const MANUAL_STOP_FILE: &str = "manual-stop.md";
 const STOP_KEYS: [&str; 3] = ["kind", "since", "holds"];
 
 /// The frontmatter keys of a run's attention file, in the order decree writes them
-/// (`schema/v1/attention.schema.json`).
+/// (`schema/v1/attention.schema.json`). All are required but `machine`, which is absent for
+/// a run with no machine of its own (`machine_of`).
 const KEYS: [&str; 8] = [
     "kind", "run", "machine", "message", "status", "state", "since", "holds",
 ];
@@ -139,11 +140,14 @@ impl Entry {
             }
             Ok(fm) => {
                 let get = |k: &str| fm.get(k).and_then(Value::as_str).unwrap_or_default();
+                let machine = fm
+                    .get("machine")
+                    .and_then(Value::as_str)
+                    .map_or(String::new(), |m| format!(" ({m})"));
                 format!(
-                    "{}: {holds}run {} ({}) {} in `{}` since {}",
+                    "{}: {holds}run {}{machine} {} in `{}` since {}",
                     self.path(),
                     get("run"),
-                    get("machine"),
                     get("status"),
                     get("state"),
                     get("since"),
@@ -203,9 +207,10 @@ pub fn parse(text: &str) -> Result<Map<String, Value>, String> {
     }
 }
 
-/// Check `value` against `attention.schema.json`: a run's file, an object with exactly the
-/// keys in `KEYS`, or the file `decree stop` writes, with exactly those in `STOP_KEYS`; each
-/// key of its type.
+/// Check `value` against `attention.schema.json`: a run's file, an object with the keys in
+/// `KEYS` (`machine` may be absent: a run with no machine of its own, such as a rejected
+/// reply to an unknown run), or the file `decree stop` writes, with exactly those in
+/// `STOP_KEYS`; each key of its type.
 pub fn validate(value: &Value) -> Result<(), String> {
     let Value::Object(map) = value else {
         return Err("not a mapping".to_string());
@@ -218,13 +223,17 @@ pub fn validate(value: &Value) -> Result<(), String> {
     if let Some(key) = map.keys().find(|k| !keys.contains(&k.as_str())) {
         return Err(format!("unknown key `{key}`"));
     }
-    if let Some(key) = keys.iter().find(|k| !map.contains_key(**k)) {
+    if let Some(key) = keys
+        .iter()
+        .find(|&&k| !map.contains_key(k) && k != "machine")
+    {
         return Err(format!("missing `{key}`"));
     }
     if kind != Some(KIND_MANUAL_STOP) {
         for key in ["run", "machine", "message", "state"] {
             match map.get(key) {
                 Some(Value::String(s)) if !s.is_empty() => {}
+                None if key == "machine" => {}
                 _ => return Err(format!("`{key}` is not a non-empty string")),
             }
         }
@@ -472,9 +481,7 @@ fn render(
     held: bool,
 ) -> Result<String, InterpreterError> {
     let run_dir = ctx.runs_dir().join(id);
-    let machine = first_text(events, "machine")
-        .unwrap_or("unknown")
-        .to_string();
+    let machine = machine_of(ctx, events, message);
     // A failed run is in `failed`; the state it failed from is the one `--retry` continues in.
     let state = match need {
         Need::Failed => events
@@ -508,17 +515,23 @@ fn render(
     let message_name = file.clone().unwrap_or_else(|| "inbox".to_string());
     let mut frontmatter = serde_norway::Mapping::new();
     for (key, value) in KEYS.into_iter().zip([
-        KIND_RUN.into(),
-        id.into(),
-        machine.as_str().into(),
-        message_name.into(),
-        status.into(),
-        state.as_str().into(),
-        since.as_str().into(),
-        serde_norway::Value::Bool(held),
+        Some(KIND_RUN.into()),
+        Some(id.into()),
+        machine.as_deref().map(Into::into),
+        Some(message_name.into()),
+        Some(status.into()),
+        Some(state.as_str().into()),
+        Some(since.as_str().into()),
+        Some(serde_norway::Value::Bool(held)),
     ]) {
-        frontmatter.insert(key.into(), value);
+        if let Some(value) = value {
+            frontmatter.insert(key.into(), value);
+        }
     }
+    let who = match &machine {
+        Some(machine) => format!("Run `{id}` (machine `{machine}`)"),
+        None => format!("Run `{id}`"),
+    };
     // A `Mapping` of strings and a bool always serializes.
     let yaml = serde_norway::to_string(&frontmatter).unwrap_or_default();
 
@@ -534,7 +547,7 @@ fn render(
     match need {
         Need::Failed => {
             body.push_str(&format!(
-                "Run `{id}` (machine `{machine}`) failed in `{state}` at {since}; \
+                "{who} failed in `{state}` at {since}; \
                  its logs are in `.decree/runs/{id}/`. Continue it with:\n\n{}",
                 retry(id)
             ));
@@ -546,7 +559,7 @@ fn render(
                 _ => "",
             };
             body.push_str(&format!(
-                "Run `{id}` (machine `{machine}`) was interrupted in `{state}`{cause} at \
+                "{who} was interrupted in `{state}`{cause} at \
                  {since}. Continue it with:\n\n{}",
                 retry(id)
             ));
@@ -554,7 +567,7 @@ fn render(
         Need::Person => body.push_str(&person(ctx, id, events, &state, &since)),
         Need::Child(child, child_state) => {
             body.push_str(&format!(
-                "Run `{id}` (machine `{machine}`) waits in `{state}` for child run \
+                "{who} waits in `{state}` for child run \
                  `{child}`, which was interrupted in `{child_state}`. Continue the child \
                  with:\n\n{}",
                 retry(child)
@@ -596,6 +609,22 @@ fn render(
         "---\n{yaml}---\n{}",
         body.trim_end().to_string() + "\n"
     ))
+}
+
+/// The machine an attention file names: the run's own; for a reply decree rejected (a run
+/// with no machine of its own), the machine of the run it was addressed to; `None` when there
+/// is neither, as for a reply to a run id that does not exist.
+fn machine_of(ctx: &Context, events: &[Event], message: Option<&Message>) -> Option<String> {
+    let own = first_text(events, "machine").filter(|m| !m.is_empty());
+    if let Some(machine) = own {
+        return Some(machine.to_string());
+    }
+    let to = message?.text("to")?;
+    let target = crate::reply::target_run(&ctx.runs_dir(), to)?;
+    let events = ctx.events(&target).ok()?;
+    first_text(&events, "machine")
+        .filter(|m| !m.is_empty())
+        .map(String::from)
 }
 
 /// The part of the file for a run waiting in a `person` state: the question, each option
@@ -677,6 +706,20 @@ mod tests {
         let mut v = valid();
         v.as_object_mut().unwrap().remove("run");
         assert_eq!(validate(&v).unwrap_err(), "missing `run`");
+    }
+
+    /// A run with no machine of its own (a rejected reply to an unknown run) has no
+    /// `machine`; one that is there is never empty.
+    #[test]
+    fn test_validate_allows_machine_to_be_absent_but_not_empty() {
+        let mut v = valid();
+        v.as_object_mut().unwrap().remove("machine");
+        assert_eq!(validate(&v), Ok(()));
+        v["machine"] = json!("");
+        assert_eq!(
+            validate(&v).unwrap_err(),
+            "`machine` is not a non-empty string"
+        );
     }
 
     #[test]

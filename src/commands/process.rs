@@ -471,11 +471,49 @@ impl Pipeline {
     }
 
     /// Deliver every `timeout` deadline of a run this process runs that has passed, and
-    /// continue those runs.
+    /// continue those runs. A reply to that wait queued at or before its deadline wins
+    /// (docs/reference/messages.md, Replies, step 5): it is delivered first, and then the
+    /// run is no longer waiting, so it gets no timeout.
     pub(crate) fn deliver_timeouts(&mut self) -> Result<(), Stop> {
         self.may_run()?;
-        let timed_out = reply::deliver_timeouts(&self.ctx, chrono::Utc::now(), |id| self.owns(id))?;
+        let now = chrono::Utc::now();
+        self.deliver_early_replies(now)?;
+        let timed_out = reply::deliver_timeouts(&self.ctx, now, |id| self.owns(id))?;
         self.continue_runs(&timed_out)
+    }
+
+    /// For each run waiting past its deadline at `now`, take the queued replies to its wait
+    /// that were queued at or before the deadline, in filename order (the order they were
+    /// queued), until one is delivered. One that fails a check is rejected as any reply is.
+    fn deliver_early_replies(&mut self, now: chrono::DateTime<chrono::Utc>) -> Result<(), Stop> {
+        let overdue = reply::overdue(&self.ctx, now, |id| self.owns(id))?;
+        if overdue.is_empty() {
+            return Ok(());
+        }
+        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
+        let inbox = decree_dir.join(INBOX_DIR);
+        // A file written straight into `inbox/` gets its id, the time that counts, now.
+        message::arrive(&decree_dir)?;
+        for wait in &overdue {
+            loop {
+                self.may_run()?;
+                let early = reply::queued(&inbox)
+                    .map_err(|e| DecreeError::Other(format!("{}: {e}", inbox.display())))?
+                    .into_iter()
+                    .find(|(file, to)| {
+                        !self.lost.contains(file)
+                            && message::is_queued(&decree_dir, file)
+                            && file
+                                .strip_suffix(".md")
+                                .is_some_and(|id| wait.answered_by(to, id))
+                    });
+                let Some((file, _)) = early else { break };
+                if self.take_inbox(file)? == Taken::Delivered {
+                    break;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Give each new `inbox/` file an id (`message::arrive`), then take the next queued file
@@ -498,6 +536,15 @@ impl Pipeline {
         let Some(file) = next else {
             return Ok(false);
         };
+        self.take_inbox(file)?;
+        Ok(true)
+    }
+
+    /// Take queued `inbox/<file>`: deliver it if it is a reply and continue its run, or claim
+    /// it and run it; a reply that fails a check becomes a failed `invalid_message` run.
+    fn take_inbox(&mut self, file: String) -> Result<Taken, Stop> {
+        let inbox = self.ctx.project_root.join(DECREE_DIR).join(INBOX_DIR);
+        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let mut problem = None;
         let mut arrived_as = None;
         if let Ok(m) = Message::read(&inbox.join(&file)) {
@@ -507,11 +554,11 @@ impl Pipeline {
                 match reply::deliver(&self.ctx, &inbox, &file, to, event)? {
                     Delivery::Delivered(run_id) => {
                         self.continue_one(&run_id)?;
-                        return Ok(true);
+                        return Ok(Taken::Delivered);
                     }
                     Delivery::Lost => {
                         self.lost.insert(file);
-                        return Ok(true);
+                        return Ok(Taken::Other);
                     }
                     Delivery::Rejected(reason) => problem = Some(reason),
                 }
@@ -519,7 +566,7 @@ impl Pipeline {
         }
         let Some(claim) = message::claim(&decree_dir, &file)? else {
             self.lost.insert(file);
-            return Ok(true);
+            return Ok(Taken::Other);
         };
         let id = claim.id.clone();
         let report = self.report.as_ref();
@@ -528,10 +575,10 @@ impl Pipeline {
         })? {
             Outcome::Finished(state) if state == FAILED => {
                 self.fail(&id, Some(arrived_as.as_deref().unwrap_or(&file)));
-                Ok(true)
+                Ok(Taken::Other)
             }
             ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
-            _ => Ok(true),
+            _ => Ok(Taken::Other),
         }
     }
 
@@ -556,6 +603,15 @@ impl Pipeline {
             None => Ok(false),
         }
     }
+}
+
+/// What taking an inbox file did.
+#[derive(Debug, PartialEq, Eq)]
+enum Taken {
+    /// It was a reply, delivered to its run.
+    Delivered,
+    /// It was claimed as a run of its own, rejected, or another process took it.
+    Other,
 }
 
 /// Whether a process that runs `filter` runs run `id`: its root run's machine is one it runs.

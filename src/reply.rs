@@ -228,10 +228,60 @@ pub fn deliver(
     Ok(Delivery::Delivered(wait.run_id))
 }
 
+/// A run waiting for a reply past its `timeout_at`, found without its lock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overdue {
+    pub run_id: String,
+    pub wait_id: String,
+    pub timeout_at: DateTime<Utc>,
+}
+
+impl Overdue {
+    /// Whether a reply with `to` and id `reply_id`, queued in `inbox/`, wins over this
+    /// timeout (docs/reference/messages.md, Replies, step 5): it names this wait (its wait
+    /// id, or the run id meaning its current wait) and was queued at or before the deadline.
+    /// The time that counts is the reply's id, when it reached the queue, not when `process`
+    /// gets to it.
+    pub fn answered_by(&self, to: &str, reply_id: &str) -> bool {
+        (to == self.run_id || to == self.wait_id)
+            && message::id_time(reply_id).is_some_and(|t| t <= self.timeout_at)
+    }
+}
+
+/// Every run, in `id` order, that `owns` is true for and that waits for a reply past its
+/// `timeout_at` at `now`.
+pub fn overdue(
+    ctx: &Context,
+    now: DateTime<Utc>,
+    owns: impl Fn(&str) -> bool,
+) -> Result<Vec<Overdue>, InterpreterError> {
+    let runs_dir = ctx.runs_dir();
+    let mut overdue = Vec::new();
+    for id in run_ids(&runs_dir).map_err(io_err(&runs_dir))? {
+        if ctx.run_finished(&id)?.is_some() || !owns(&id) {
+            continue;
+        }
+        let events = ctx.events(&id)?;
+        let Some(last) = events.last().filter(|&e| past_deadline(Some(e), now)) else {
+            continue;
+        };
+        let (Some(wait_id), Some(timeout_at)) = (text(last, "wait_id"), deadline(last)) else {
+            continue;
+        };
+        overdue.push(Overdue {
+            run_id: id,
+            wait_id: wait_id.to_string(),
+            timeout_at,
+        });
+    }
+    Ok(overdue)
+}
+
 /// docs/reference/messages.md, Replies, step 5: every run waiting past its `timeout_at` gets a `received`
 /// event for `error` with `timed_out: true`. Returns those runs, in `id` order, now
 /// `pending`. A run another process holds is skipped, as is one `owns` is false for: a run
-/// of a machine this process does not run.
+/// of a machine this process does not run. The caller delivers first any reply queued
+/// before a deadline (`Overdue::answered_by`), which wins over the timeout.
 pub fn deliver_timeouts(
     ctx: &Context,
     now: DateTime<Utc>,
@@ -239,14 +289,8 @@ pub fn deliver_timeouts(
 ) -> Result<Vec<String>, InterpreterError> {
     let runs_dir = ctx.runs_dir();
     let mut timed_out = Vec::new();
-    for id in run_ids(&runs_dir).map_err(io_err(&runs_dir))? {
+    for Overdue { run_id: id, .. } in overdue(ctx, now, owns)? {
         let run_dir = runs_dir.join(&id);
-        if ctx.run_finished(&id)?.is_some()
-            || !past_deadline(ctx.events(&id)?.last(), now)
-            || !owns(&id)
-        {
-            continue;
-        }
         let Some(_lock) = RunLock::acquire(&run_dir).map_err(io_err(&run_dir.join(LOCK_FILE)))?
         else {
             continue;
@@ -275,9 +319,14 @@ fn past_deadline(last: Option<&Event>, now: DateTime<Utc>) -> bool {
     let Some(last) = last else { return false };
     is_type(last, "waiting")
         && text(last, "wait_id").is_some()
-        && text(last, "timeout_at")
-            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-            .is_some_and(|deadline| deadline <= now)
+        && deadline(last).is_some_and(|deadline| deadline <= now)
+}
+
+/// The `timeout_at` of a `waiting` event.
+fn deadline(waiting: &Event) -> Option<DateTime<Utc>> {
+    text(waiting, "timeout_at")
+        .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t.with_timezone(&Utc))
 }
 
 fn append_received(ctx: &Context, wait: &Wait, fields: Value) -> Result<(), InterpreterError> {

@@ -237,4 +237,12 @@ plans.toml lives in config/.
 ```
 
 Any tool (a chat bot, a web UI) can write the same file. A reply to a stale wait id or with an
-event that is not an option is not applied; it shows up in `decree status` as a failed message.
+event that is not an option is not applied; it shows up in `decree status` as a failed message,
+with a file in `.decree/attention/` that never holds the queue (`holds: false`).
+
+With a `timeout`, a reply queued at or before the deadline wins over the timeout, even when
+`process` or `daemon` gets to it after the deadline. The time that counts is the reply's `id`,
+when it reached the queue: when `decree event` or `decree emit` queued it, or, for a file
+written straight into `inbox/`, when decree gave it an id on arrival. A tool that answers near
+a deadline should queue its reply with `decree event`; a reply queued after the deadline loses,
+and the run takes `error` with `timed_out: true`.
