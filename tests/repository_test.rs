@@ -57,6 +57,7 @@ fn no_installed_copy_is_tracked_and_the_examples_machines_are_official_plugins()
         "develop_by_size",
         "gliner_router",
         "llm_router",
+        "lease",
         "develop",
         "infra",
         "qa",

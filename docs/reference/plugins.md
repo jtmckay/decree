@@ -88,6 +88,7 @@ decree is built with its official plugins: the decree repository's [`plugins/`](
 | [`develop_by_size`](../../plugins/develop_by_size.md) | Sizes a change with a classifier, then implements it locally first or with Claude ([route-by-complexity](../../examples/route-by-complexity/README.md)). | `gliner_router` |
 | [`gliner_router`](../../plugins/gliner_router.md) | A typed router: the GLiNER2.5-Decide classifier. | |
 | [`llm_router`](../../plugins/llm_router.md) | A typed router: a local model held to the request's `reply_schema`. | |
+| [`lease`](../../plugins/lease.md) | One holder per resource (a GPU, an LLM server, a paid API) for a limited time, the next picked to keep mode swaps rare ([D83](../decisions.md#d83-leases-are-an-official-plugin-not-core)). | |
 
 Each one's body says, for someone new to decree, what it does, what it needs (services, tools, a cron file to write) and how to use it, and each one, added alone with its `needs` to an empty project, passes `decree check`. Every plugin carries every file its scripts use ([D77](../decisions.md#d77-a-machines-files-live-with-its-scripts)), so a file several use (`ai.sh`, `clean_tree.sh`, `commit.sh`, `keep.sh`) is a copy in each, kept identical by a test.
 

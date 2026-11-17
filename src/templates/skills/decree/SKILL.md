@@ -212,7 +212,7 @@ until fixed (the old machines keep running and the errors are printed).
 
 A project may have added official plugins (`decree plugin list` marks them `added`): `develop`,
 `infra` and `qa` below, `router` (the default router), and `newsletter`, `comfy`,
-`develop_by_size`, `gliner_router` and `llm_router`, each described in its plugin file. When one
+`develop_by_size`, `gliner_router`, `llm_router` and `lease`, each described in its plugin file. When one
 of the three below is there, start from it before writing a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
 unless the git work tree is clean, naming each `interrupted` or `failed` run that may have left
 the changes, with its `--retry` and `git stash push` commands, also in its attention file) and

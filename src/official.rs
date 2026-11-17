@@ -12,7 +12,7 @@ pub struct Official {
 }
 
 /// Every official plugin, by name.
-pub const OFFICIAL: [Official; 9] = [
+pub const OFFICIAL: [Official; 10] = [
     Official {
         name: "comfy",
         text: include_str!("../plugins/comfy.md"),
@@ -32,6 +32,10 @@ pub const OFFICIAL: [Official; 9] = [
     Official {
         name: "infra",
         text: include_str!("../plugins/infra.md"),
+    },
+    Official {
+        name: "lease",
+        text: include_str!("../plugins/lease.md"),
     },
     Official {
         name: "llm_router",
