@@ -1,6 +1,6 @@
 //! `.decree/attention/` (docs/reference/cli.md, Attention): one markdown file per run that
 //! needs a person, as `processed.md` records what is done. decree writes `<id>.md` when run
-//! `<id>` becomes `failed`, `interrupted` or `waiting` in a `person` state, and for a
+//! `<id>` becomes `failed`, `interrupted` or `waiting` in a `reply` state, and for a
 //! migration that waits for an interrupted child run; it deletes the file when the run
 //! becomes `active` or `pending`, finishes in another state, or is pruned. It does so as the
 //! status changes, never by rescanning, so a file a person deleted stays deleted.
@@ -421,8 +421,8 @@ enum Need {
     Failed,
     /// Stopped by a signal, or by a crash found later.
     Interrupted,
-    /// Waits in a `person` state for a reply.
-    Person,
+    /// Waits in a `reply` state for a reply.
+    Reply,
     /// A migration waiting for child run `.0`, interrupted in state `.1`.
     Child(String, String),
 }
@@ -449,7 +449,7 @@ fn record_one(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
             None => events
                 .last()
                 .filter(|e| is_type(e, "waiting") && text(e, "wait_id").is_some())
-                .map(|_| Need::Person),
+                .map(|_| Need::Reply),
             Some(_) if trigger == "migration" => ctx
                 .stalled_child(&events)?
                 .map(|(child, state)| Need::Child(child, state)),
@@ -510,7 +510,7 @@ fn render(
     let status = match need {
         Need::Failed => "failed",
         Need::Interrupted => "interrupted",
-        Need::Person | Need::Child(..) => "waiting",
+        Need::Reply | Need::Child(..) => "waiting",
     };
     let message_name = file.clone().unwrap_or_else(|| "inbox".to_string());
     let mut frontmatter = serde_norway::Mapping::new();
@@ -564,7 +564,7 @@ fn render(
                 retry(id)
             ));
         }
-        Need::Person => body.push_str(&person(ctx, id, events, &state, &since)),
+        Need::Reply => body.push_str(&reply(ctx, id, events, &state, &since)),
         Need::Child(child, child_state) => {
             body.push_str(&format!(
                 "{who} waits in `{state}` for child run \
@@ -627,9 +627,9 @@ fn machine_of(ctx: &Context, events: &[Event], message: Option<&Message>) -> Opt
         .map(String::from)
 }
 
-/// The part of the file for a run waiting in a `person` state: the question, each option
+/// The part of the file for a run waiting in a `reply` state: the question, each option
 /// with its description, and a `decree event` line per option.
-fn person(ctx: &Context, id: &str, events: &[Event], state: &str, since: &str) -> String {
+fn reply(ctx: &Context, id: &str, events: &[Event], state: &str, since: &str) -> String {
     let Some(last) = events.last() else {
         return String::new();
     };
@@ -638,13 +638,13 @@ fn person(ctx: &Context, id: &str, events: &[Event], state: &str, since: &str) -
     let node = machine.and_then(|m| m.find(state).map(|s| (m, s)));
     let question = node
         .and_then(|(m, s)| match &m.nodes[s].invoke {
-            Some(Invoke::Person(p)) => p.question.clone(),
+            Some(Invoke::Reply(p)) => p.question.clone(),
             _ => None,
         })
         .or_else(|| node.and_then(|(m, s)| m.nodes[s].description.clone()))
         .unwrap_or_else(|| format!("Run {id} waits in `{state}`."));
     let mut out = format!(
-        "Run `{id}` waits in `{state}` since {since} for a person to answer:\n\n{}\n\nOptions:\n\n",
+        "Run `{id}` waits in `{state}` since {since} for a reply:\n\n{}\n\nOptions:\n\n",
         question.trim()
     );
     let options = strings(last, "options");

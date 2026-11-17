@@ -10,8 +10,8 @@ stateDiagram-v2
     state work {
         [*] --> implement
         implement --> verify: done
-        review --> verified: approve (person)
-        review --> implement: retry (person)
+        review --> verified: approve (reply)
+        review --> implement: retry (reply)
         rounds_left --> review: false (check)
         rounds_left --> triage: true (check)
         triage --> implement: retry (model)
@@ -24,7 +24,7 @@ stateDiagram-v2
     precheck --> work: done
     precheck --> failed: error (implicit)
     review --> failed: error (implicit)
-    review --> failed: reject (person)
+    review --> failed: reject (reply)
     spawn_followups --> done: done
     spawn_followups --> failed: error (implicit)
     triage --> failed: error (implicit)
@@ -45,7 +45,7 @@ stateDiagram-v2
         onexit: collect_logs
     end note
     note right of review
-        person: ask_person
+        reply: ask_person
     end note
     note right of rounds_left
         check: visits implement less_than data.max_rounds

@@ -1,6 +1,6 @@
-//! The decision invokes (docs/reference/runs.md, Check, Model, Person): a `check` evaluates its
+//! The decision invokes (docs/reference/runs.md, Check, Model, Reply): a `check` evaluates its
 //! condition; a `model` writes a request, runs the router machine as a child run and validates
-//! its reply; a `person` runs its `ask` script and waits.
+//! its reply; a `reply` runs its `notify` script and waits.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -14,10 +14,10 @@ use crate::cond;
 use crate::cond::Condition;
 use crate::events::{confidences, is_transition, is_type, text, timestamp, visits, Event};
 use crate::layout::RECEIVED_DIR;
-use crate::machine::{LoadedMachine, ModelInvoke, PersonInvoke, FAILED, ROUTER_MACHINE};
+use crate::machine::{LoadedMachine, ModelInvoke, ReplyInvoke, FAILED, ROUTER_MACHINE};
 use crate::runtime::{Phase, ScriptRun};
 
-/// The JSON file, in the run folder, mapping each option of the `person` state the
+/// The JSON file, in the run folder, mapping each option of the `reply` state the
 /// run waits in to its description: what `DECREE_CHOICES` names (docs/reference/scripts.md).
 pub const CHOICES_FILE: &str = "choices.json";
 
@@ -166,26 +166,26 @@ pub(super) fn reply_schema(options: &[String]) -> ReplySchema {
     }
 }
 
-/// The options of `model` or `person` state `n`, in name order (docs/reference/machines.md, Choices).
+/// The options of `model` or `reply` state `n`, in name order (docs/reference/machines.md, Choices).
 pub(super) fn option_names(m: &LoadedMachine, n: usize) -> Vec<String> {
     m.options(n).map(|e| e.event.clone()).collect()
 }
 
 impl Interpreter<'_> {
-    /// Step 2 for a `person` state (docs/reference/messages.md, Replies): write its options to
-    /// `choices.json`, run its `ask` script with the wait id, then append `waiting` and stop.
-    /// An `ask` script that exits non-zero gives `error` instead, since nobody was told.
-    pub(super) fn ask(
+    /// Step 2 for a `reply` state (docs/reference/messages.md, Replies): write its options to
+    /// `choices.json`, run its `notify` script with the wait id, then append `waiting` and stop.
+    /// A `notify` script that exits non-zero gives `error` instead, since nobody was told.
+    pub(super) fn notify(
         &mut self,
         s: usize,
-        person: &PersonInvoke,
+        reply: &ReplyInvoke,
     ) -> Result<Invoked, InterpreterError> {
         let m = self.machine;
         let node = &m.nodes[s];
-        let ask = person
-            .ask
+        let notify = reply
+            .notify
             .as_deref()
-            .ok_or_else(|| self.invalid(format!("`{}` has no `ask` script", node.id)))?;
+            .ok_or_else(|| self.invalid(format!("`{}` has no `notify` script", node.id)))?;
         let options: BTreeMap<&str, &str> = m
             .options(s)
             .map(|e| {
@@ -206,9 +206,9 @@ impl Interpreter<'_> {
             visits,
             events: &events,
             wait_id: &wait_id,
-            question: person.question.as_deref().unwrap_or_default(),
+            question: reply.question.as_deref().unwrap_or_default(),
             choices: &choices,
-            ..ScriptRun::new(ask, &node.id, Phase::Invoke)
+            ..ScriptRun::new(notify, &node.id, Phase::Invoke)
         })?;
         if !execution.succeeded() {
             return Ok(Invoked::Event(Decision::new(
@@ -218,7 +218,7 @@ impl Interpreter<'_> {
             )));
         }
 
-        let timeout_at = person.timeout.map(|timeout| {
+        let timeout_at = reply.timeout.map(|timeout| {
             let deadline = chrono::TimeDelta::from_std(timeout)
                 .ok()
                 .and_then(|d| Utc::now().checked_add_signed(d))
@@ -471,9 +471,9 @@ impl Interpreter<'_> {
     }
 
     /// docs/reference/messages.md, Replies: a reply or a timeout was delivered to
-    /// `person` state `s` as `event`, the last of `events`. A reply appends the
+    /// `reply` state `s` as `event`, the last of `events`. A reply appends the
     /// `decision` event and is `DECREE_RECEIVED` for the scripts that follow.
-    pub(super) fn person_received(
+    pub(super) fn reply_received(
         &mut self,
         s: usize,
         events: &[Event],
@@ -500,7 +500,7 @@ impl Interpreter<'_> {
         }
         let mut fields = json!({
             "state": m.nodes[s].id,
-            "kind": "person",
+            "kind": "reply",
             "event": event,
             "options": option_names(m, s),
         });
@@ -508,6 +508,6 @@ impl Interpreter<'_> {
             fields["reply"] = json!(reply);
         }
         self.append("decision", fields)?;
-        Ok(Decision::new(event, "person", None))
+        Ok(Decision::new(event, "reply", None))
     }
 }

@@ -190,8 +190,8 @@ pub struct ScriptRun<'a> {
     pub attempt_values: Option<&'a [String]>,
     /// `DECREE_EVENTS`: what the state accepts, from `LoadedMachine::accepted_events`.
     pub events: &'a [String],
-    /// `DECREE_WAIT_ID`, `DECREE_QUESTION` and `DECREE_CHOICES`: set for the `ask` script of
-    /// a `person` state, empty otherwise.
+    /// `DECREE_WAIT_ID`, `DECREE_QUESTION` and `DECREE_CHOICES`: set for the `notify` script of
+    /// a `reply` state, empty otherwise.
     pub wait_id: &'a str,
     pub question: &'a str,
     pub choices: &'a Path,

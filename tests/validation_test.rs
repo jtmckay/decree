@@ -414,9 +414,9 @@ states:
     transitions: { true: work, false: approval }
   approval:
     invoke:
-      person:
+      reply:
         question: Ship it?
-        ask: ask
+        notify: ask
     transitions:
       approve: { target: done, description: Ship it. }
       reject:  { target: failed, description: Do not ship. }
@@ -446,7 +446,7 @@ states:
     transitions: { true: approval }
   approval:
     invoke:
-      person: { ask: ask }
+      reply: { notify: ask }
     transitions:
       approve: { target: done, description: Ship it. }
       reject:  failed
@@ -457,7 +457,7 @@ states:
         scripts: &[],
         expected: "\
 machines/m.yml: again: a `check` state must handle `false`, itself or through an ancestor (V8)
-machines/m.yml: approval: a `person` state needs a `question`: what is being decided (V8)
+machines/m.yml: approval: a `reply` state needs a `question`: what is being decided (V8)
 machines/m.yml: approval: option `reject` needs a `description`: write it as `reject: { target: failed, description: ... }` (V8)
 ",
     },
@@ -1008,7 +1008,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/d.yml", TIMEOUT_PERSON),
+            ("machines/d.yml", TIMEOUT_REPLY),
         ],
         scripts: &[],
         expected: PASSES,
@@ -1298,7 +1298,14 @@ machines/b.yml: work.step: router on a state is not supported: make the decision
         name: "choose, the old decision invoke",
         files: &[("machines/m.yml", OLD_CHOOSE)],
         scripts: &[],
-        expected: "machines/m.yml: approval: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { person: { question: ..., ask: <script> } } for a person (V19)\n",
+        expected: "machines/m.yml: approval: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { reply: { question: ..., notify: <script> } } to wait for a reply (V19)\n",
+    },
+    Case {
+        rule: "V19",
+        name: "person with ask, the old name of reply with notify",
+        files: &[("machines/m.yml", OLD_PERSON)],
+        scripts: &[],
+        expected: "machines/m.yml: approval: person: is now reply: (and its ask: is notify:) (V19)\n",
     },
     Case {
         rule: "V19",
@@ -1324,7 +1331,7 @@ machines/b.yml: work.step: router on a state is not supported: make the decision
         scripts: &[],
         expected: "\
 machines/a.yml: work: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` inside the script invoke, invoke: { script: { name: <script>, attempts: … } } (V19)
-machines/b.yml: work: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d }) (V19)
+machines/b.yml: work: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or reply: { ..., timeout: <n>s|m|h|d }) (V19)
 ",
     },
     Case {
@@ -1365,10 +1372,10 @@ machines/b.yml: pick: unknown field `attempts`, expected one of `question`, `rou
     },
     Case {
         rule: "V19",
-        name: "timeout_s in a script and a person invoke",
+        name: "timeout_s in a script and a reply invoke",
         files: &[
             ("machines/a.yml", OLD_TIMEOUT_S_SCRIPT),
-            ("machines/d.yml", OLD_TIMEOUT_S_PERSON),
+            ("machines/d.yml", OLD_TIMEOUT_S_REPLY),
         ],
         scripts: &[],
         expected: "\
@@ -1848,7 +1855,7 @@ states:
 ",
 );
 
-/// `choose: person`, which `person:` replaced (V19).
+/// `choose: person`, which `reply:` replaced (V19).
 const OLD_CHOOSE: &str = "\
 name: m
 description: A person picks one option, written the old way.
@@ -1856,6 +1863,25 @@ initial: approval
 states:
   approval:
     invoke: { choose: person, question: Ship it?, ask: ask }
+    transitions:
+      approve: { target: done, description: Ship it. }
+      reject:  { target: failed, description: Do not ship. }
+  done: { final: true }
+  failed: { final: true }
+";
+
+/// `person:` with `ask:`, which `reply:` with `notify:` replaced (V19).
+const OLD_PERSON: &str = "\
+name: m
+description: Wait for a reply, written the old way.
+initial: approval
+states:
+  approval:
+    invoke:
+      person:
+        question: Ship it?
+        ask: ask
+        timeout: 1h
     transitions:
       approve: { target: done, description: Ship it. }
       reject:  { target: failed, description: Do not ship. }
@@ -1937,17 +1963,17 @@ states:
   failed: { final: true }
 ";
 
-/// `timeout_s` inside a person invoke, which `timeout: <duration>` replaced (V19).
-const OLD_TIMEOUT_S_PERSON: &str = "\
+/// `timeout_s` inside a reply invoke, which `timeout: <duration>` replaced (V19).
+const OLD_TIMEOUT_S_REPLY: &str = "\
 name: d
 description: Ask a person, for a week at most.
 initial: approval
 states:
   approval:
     invoke:
-      person:
+      reply:
         question: Ship this build?
-        ask: ask_person
+        notify: ask_person
         timeout_s: 604800
     transitions:
       approve: { target: done, description: Ship this build. }
@@ -1956,17 +1982,17 @@ states:
   failed: { final: true }
 ";
 
-/// A person invoke with a `timeout` in days (V16).
-const TIMEOUT_PERSON: &str = "\
+/// A reply invoke with a `timeout` in days (V16).
+const TIMEOUT_REPLY: &str = "\
 name: d
 description: Ask a person, for a week at most.
 initial: approval
 states:
   approval:
     invoke:
-      person:
+      reply:
         question: Ship this build?
-        ask: ask_person
+        notify: ask_person
         timeout: 7d
     transitions:
       approve: { target: done, description: Ship this build. }
@@ -2037,13 +2063,13 @@ states:
   failed: { final: true }
 ";
 
-/// The script names in a machine (V12): a string `invoke`, `ask`, and `onentry`/`onexit`.
+/// The script names in a machine (V12): a string `invoke`, `notify`, and `onentry`/`onexit`.
 fn script_names(value: &Value, names: &mut Vec<String>) {
     match value {
         Value::Mapping(map) => {
             for (key, value) in map {
                 match (key.as_str(), value) {
-                    (Some("invoke" | "script" | "ask"), Value::String(name)) => {
+                    (Some("invoke" | "script" | "notify"), Value::String(name)) => {
                         names.push(name.clone())
                     }
                     (Some("script"), Value::Mapping(script)) => {

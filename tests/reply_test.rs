@@ -23,9 +23,9 @@ states:
   approval:
     description: Ship this build?
     invoke:
-      person:
+      reply:
         question: Ship this build?
-        ask: ask_person
+        notify: ask_person
         timeout: TIMEOUT
     transitions:
       approve: { target: ship, description: Ship this build. }
@@ -219,7 +219,7 @@ fn a_migration_held_back_by_a_child_waiting_for_a_reply_is_named() {
 }
 
 #[test]
-fn reply_with_wait_id_and_option_continues_with_source_person() {
+fn reply_with_wait_id_and_option_continues_with_source_reply() {
     let p = Project::new("1h");
     let wait_id = p.wait();
     p.write(
@@ -240,14 +240,14 @@ fn reply_with_wait_id_and_option_continues_with_source_person() {
         "{file}"
     );
     let decision = events.iter().find(|e| e["type"] == "decision").unwrap();
-    assert_eq!(decision["kind"], "person");
+    assert_eq!(decision["kind"], "reply");
     assert_eq!(decision["reply"], json!(file));
     let taken = events
         .iter()
         .find(|e| e["type"] == "transition" && e["from"] == "approval")
         .unwrap();
     assert_eq!(taken["event"], "approve");
-    assert_eq!(taken["source"], "person");
+    assert_eq!(taken["source"], "reply");
     assert_eq!(last_transition(&events)["to"], "done");
 
     // The reply is in `received/`, not a run of its own, and later scripts see it.
@@ -280,7 +280,7 @@ fn reply_naming_the_run_id_answers_its_current_wait() {
     let received = events.iter().find(|e| e["type"] == "received").unwrap();
     assert_eq!(received["wait_id"], json!(wait_id));
     assert_eq!(last_transition(&events)["to"], "rejected");
-    assert_eq!(last_transition(&events)["source"], "person");
+    assert_eq!(last_transition(&events)["source"], "reply");
 }
 
 // ---------------------------------------------------------------
@@ -601,7 +601,7 @@ fn a_reply_queued_before_the_deadline_wins_over_the_timeout() {
         .find(|e| e["type"] == "transition" && e["from"] == "approval")
         .unwrap();
     assert_eq!(answered["event"], "approve");
-    assert_eq!(answered["source"], "person");
+    assert_eq!(answered["source"], "reply");
     assert_eq!(last_transition(&events)["to"], "done");
     let received = p.decree().join("runs").join(RUN).join("received");
     assert!(received.join(format!("{BEFORE}.md")).is_file());
@@ -619,7 +619,7 @@ fn a_reply_to_the_run_id_queued_before_the_deadline_wins() {
     let events = p.events(RUN);
     assert!(!timed_out(&events), "{events:?}");
     assert_eq!(last_transition(&events)["to"], "rejected");
-    assert_eq!(last_transition(&events)["source"], "person");
+    assert_eq!(last_transition(&events)["source"], "reply");
 }
 
 /// A file written straight into `inbox/` gets its id, the time that counts, when decree

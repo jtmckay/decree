@@ -32,13 +32,13 @@ struct Project {
     shutdown: Arc<AtomicBool>,
 }
 
-/// Every script machine `m` names: invokes, `ask` scripts, `onentry` and `onexit`.
+/// Every script machine `m` names: invokes, `notify` scripts, `onentry` and `onexit`.
 fn script_names(m: &LoadedMachine) -> Vec<&str> {
     let mut names = Vec::new();
     for node in &m.nodes {
         match &node.invoke {
             Some(Invoke::Script(script)) => names.push(script.name.as_str()),
-            Some(Invoke::Person(c)) => names.extend(c.ask.as_deref()),
+            Some(Invoke::Reply(c)) => names.extend(c.notify.as_deref()),
             _ => {}
         }
         names.extend(node.onentry.iter().chain(&node.onexit).map(String::as_str));
@@ -1148,7 +1148,7 @@ fn lock_is_deleted_when_the_run_finishes_or_is_interrupted() {
 
 #[test]
 fn lock_of_a_waiting_run_is_released() {
-    let (p, _) = person_project(&[]);
+    let (p, _) = reply_project(&[]);
     assert!(matches!(p.run(), Outcome::Waiting { .. }));
     assert!(!p.run_dir().join(LOCK_FILE).exists());
     assert_eq!(status_of(&p), RunStatus::Waiting);
@@ -1277,7 +1277,7 @@ fn recover_leaves_an_active_run_alone_and_resume_refuses_it() {
 
 #[test]
 fn recover_does_not_mark_a_waiting_run_without_a_lock() {
-    let (p, _) = person_project(&[]);
+    let (p, _) = reply_project(&[]);
     assert!(matches!(p.run(), Outcome::Waiting { .. }));
     let before = p.events().len();
     assert_eq!(recover(&p.ctx(), |_| true).unwrap(), Recovery::default());
@@ -1507,14 +1507,14 @@ fn nested_final_onentry_failure_is_error_resolved_from_that_state() {
 }
 
 // ---------------------------------------------------------------
-// Person, interpreter side (docs/reference/messages.md, Replies; docs/reference/runs.md)
+// Reply, interpreter side (docs/reference/messages.md, Replies; docs/reference/runs.md)
 // ---------------------------------------------------------------
 
-/// The `step_person` project, run until it waits. `ask_person` prints its environment.
-fn person_project(scripts: &[(&str, &str)]) -> (Project, String) {
+/// The `step_reply` project, run until it waits. `ask_person` prints its environment.
+fn reply_project(scripts: &[(&str, &str)]) -> (Project, String) {
     let mut all = vec![("ask_person", "print_env")];
     all.extend_from_slice(scripts);
-    let p = Project::new("step_person", &all);
+    let p = Project::new("step_reply", &all);
     let outcome = p.run();
     let entered = p
         .events_of("transition")
@@ -1544,9 +1544,9 @@ fn receive(p: &Project, fields: Value) -> Outcome {
 }
 
 #[test]
-fn person_ask_script_sees_the_wait_id_and_choices_then_the_run_waits() {
+fn reply_notify_script_sees_the_wait_id_and_choices_then_the_run_waits() {
     let before = Utc::now();
-    let (p, wait_id) = person_project(&[]);
+    let (p, wait_id) = reply_project(&[]);
     assert_eq!(
         p.order(),
         ["root_entry", "build_invoke", "gate_entry", "approval_entry"]
@@ -1560,7 +1560,7 @@ fn person_ask_script_sees_the_wait_id_and_choices_then_the_run_waits() {
         "DECREE_EVENTS=approve reject".to_string(),
         "DECREE_STATE=approval".to_string(),
         "DECREE_PHASE=invoke".to_string(),
-        // An `ask` script produces no event, so it has no event file.
+        // A `notify` script produces no event, so it has no event file.
         "DECREE_EVENT_FILE=".to_string(),
     ] {
         assert!(log.lines().any(|l| l == line), "{line}\n{log}");
@@ -1594,18 +1594,18 @@ fn person_ask_script_sees_the_wait_id_and_choices_then_the_run_waits() {
 }
 
 #[test]
-fn person_without_timeout_has_null_timeout_at() {
-    let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_person.yml"))
+fn reply_without_timeout_has_null_timeout_at() {
+    let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_reply.yml"))
         .unwrap()
         .replace("            timeout: 60s\n", "");
-    let p = Project::from_text("step_person", &text, &[]);
+    let p = Project::from_text("step_reply", &text, &[]);
     assert!(matches!(p.run(), Outcome::Waiting { .. }));
     assert_eq!(p.events_of("waiting")[0]["timeout_at"], Value::Null);
 }
 
 #[test]
-fn person_reply_continues_with_source_person_and_reruns_nothing() {
-    let (p, wait_id) = person_project(&[("ship_invoke", "print_env")]);
+fn reply_continues_with_source_reply_and_reruns_nothing() {
+    let (p, wait_id) = reply_project(&[("ship_invoke", "print_env")]);
     let outcome = receive(
         &p,
         json!({ "wait_id": wait_id, "event": "approve", "file": "reply.md" }),
@@ -1640,7 +1640,7 @@ fn person_reply_continues_with_source_person_and_reruns_nothing() {
     assert_eq!(events[i - 1]["type"], "received");
     let d = &events[i];
     assert_eq!(d["state"], "approval");
-    assert_eq!(d["kind"], "person");
+    assert_eq!(d["kind"], "reply");
     assert_eq!(d["event"], "approve");
     assert_eq!(d["options"], json!(["approve", "reject"]));
     assert_eq!(d["reply"], "reply.md");
@@ -1652,7 +1652,7 @@ fn person_reply_continues_with_source_person_and_reruns_nothing() {
     assert_eq!(taken["from"], "approval");
     assert_eq!(taken["event"], "approve");
     assert_eq!(taken["to"], "ship");
-    assert_eq!(taken["source"], "person");
+    assert_eq!(taken["source"], "reply");
     assert_eq!(taken["exit_code"], Value::Null);
     // Later scripts see the reply, and no wait.
     let log = p.log_of("ship_invoke");
@@ -1671,8 +1671,8 @@ fn person_reply_continues_with_source_person_and_reruns_nothing() {
 }
 
 #[test]
-fn person_timeout_error_goes_to_failed_with_source_timeout() {
-    let (p, wait_id) = person_project(&[]);
+fn reply_timeout_error_goes_to_failed_with_source_timeout() {
+    let (p, wait_id) = reply_project(&[]);
     let outcome = receive(
         &p,
         json!({ "wait_id": wait_id, "event": "error", "timed_out": true }),
@@ -1689,8 +1689,8 @@ fn person_timeout_error_goes_to_failed_with_source_timeout() {
 }
 
 #[test]
-fn person_ask_script_failure_is_error_and_does_not_wait() {
-    let p = Project::new("step_person", &[("ask_person", "exit_three")]);
+fn reply_notify_script_failure_is_error_and_does_not_wait() {
+    let p = Project::new("step_reply", &[("ask_person", "exit_three")]);
     assert_eq!(p.run(), Outcome::Finished("failed".into()));
     assert!(p.events_of("waiting").is_empty());
     let t = p.events_of("transition");
@@ -1701,8 +1701,8 @@ fn person_ask_script_failure_is_error_and_does_not_wait() {
 }
 
 #[test]
-fn person_onentry_failure_is_error_and_does_not_ask() {
-    let p = Project::new("step_person", &[("approval_entry", "exit_three")]);
+fn reply_onentry_failure_is_error_and_does_not_notify() {
+    let p = Project::new("step_reply", &[("approval_entry", "exit_three")]);
     assert_eq!(p.run(), Outcome::Finished("failed".into()));
     assert!(p.events_of("waiting").is_empty());
     assert!(p
@@ -1713,7 +1713,7 @@ fn person_onentry_failure_is_error_and_does_not_ask() {
 
 #[test]
 fn resume_refuses_a_run_that_has_not_received_an_event() {
-    let (p, _) = person_project(&[]);
+    let (p, _) = reply_project(&[]);
     let params = serde_norway::Mapping::new();
     let ctx = p.ctx();
     let err = Interpreter::new(
@@ -1734,12 +1734,12 @@ fn resume_refuses_a_run_that_has_not_received_an_event() {
 
 #[test]
 fn every_decision_waiting_and_received_field_appears() {
-    let (p, wait_id) = person_project(&[]);
+    let (p, wait_id) = reply_project(&[]);
     receive(
         &p,
         json!({ "wait_id": wait_id, "event": "approve", "file": "reply.md" }),
     );
-    let (q, wait_id) = person_project(&[]);
+    let (q, wait_id) = reply_project(&[]);
     receive(
         &q,
         json!({ "wait_id": wait_id, "event": "error", "timed_out": true }),
@@ -1948,16 +1948,16 @@ fn machine_invoke_past_max_depth_starts_no_child_and_is_error() {
     assert_eq!(runs, [RUN_ID]);
 }
 
-/// `step_parent` invoking `step_person`, run until the child waits for a reply.
-fn parent_of_person() -> (Project, String, String) {
+/// `step_parent` invoking `step_reply`, run until the child waits for a reply.
+fn parent_of_reply() -> (Project, String, String) {
     let parent = fixture("step_parent").replace(
         "machine: { name: step_child, params: { label: release } }",
-        "machine: step_person",
+        "machine: step_reply",
     );
     let p = Project::from_texts(
         &[
             ("step_parent", &parent),
-            ("step_person", &fixture("step_person")),
+            ("step_reply", &fixture("step_reply")),
         ],
         &[],
     );
@@ -1991,16 +1991,16 @@ fn deliver(p: &Project, id: &str, fields: Value) {
 }
 
 #[test]
-fn child_waiting_for_a_person_leaves_the_parent_waiting_until_the_reply_finishes_both() {
-    let (p, child, wait_id) = parent_of_person();
+fn child_waiting_for_a_reply_leaves_the_parent_waiting_until_the_reply_finishes_both() {
+    let (p, child, wait_id) = parent_of_reply();
     let ctx = p.ctx();
     let events = p.events();
     assert_eq!(events.last().unwrap()["type"], "waiting");
     assert_eq!(events.last().unwrap()["child"], json!(child));
     assert_eq!(ctx.status(p.machine(), &events, false), RunStatus::Waiting);
-    let person = &p.machines["step_person"];
+    let reply = &p.machines["step_reply"];
     assert_eq!(
-        run_status(person, &p.child_events(&child), false),
+        run_status(reply, &p.child_events(&child), false),
         RunStatus::Waiting
     );
 
@@ -2034,7 +2034,7 @@ fn child_waiting_for_a_person_leaves_the_parent_waiting_until_the_reply_finishes
 
 #[test]
 fn parent_of_a_finished_child_is_pending_and_continues() {
-    let (p, child, wait_id) = parent_of_person();
+    let (p, child, wait_id) = parent_of_reply();
     let ctx = p.ctx();
     deliver(
         &p,
@@ -2042,10 +2042,10 @@ fn parent_of_a_finished_child_is_pending_and_continues() {
         json!({ "wait_id": wait_id, "event": "reject", "file": "reply.md" }),
     );
     // Continue only the child, as if decree stopped before continuing the parent.
-    let person = &p.machines["step_person"];
+    let reply = &p.machines["step_reply"];
     let executor = ctx
         .executor(
-            person,
+            reply,
             &child,
             "invoke",
             &serde_norway::Mapping::new(),
@@ -2056,7 +2056,7 @@ fn parent_of_a_finished_child_is_pending_and_continues() {
         depth: 1,
         ..inbox_input()
     };
-    let outcome = Interpreter::new(&ctx, person, executor, input)
+    let outcome = Interpreter::new(&ctx, reply, executor, input)
         .unwrap()
         .resume()
         .unwrap();
@@ -2074,7 +2074,7 @@ fn parent_of_a_finished_child_is_pending_and_continues() {
 
 #[test]
 fn parent_of_an_unfinished_child_does_not_continue() {
-    let (p, child, _) = parent_of_person();
+    let (p, child, _) = parent_of_reply();
     let err = continue_run(&p.ctx(), RUN_ID).unwrap_err();
     assert_eq!(
         err.to_string(),

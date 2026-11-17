@@ -108,7 +108,14 @@ fn check_passes_on_the_reference_examples() {
     fs::write(decree.join("machines/release.yml"), release).unwrap();
     let scripts = decree.join("scripts");
     fs::create_dir_all(&scripts).unwrap();
-    for name in ["greet", "implement", "test", "build", "ask_person", "ship"] {
+    for name in [
+        "greet",
+        "implement",
+        "test",
+        "build",
+        "notify_person",
+        "ship",
+    ] {
         let path = scripts.join(name);
         fs::write(&path, "#!/usr/bin/env bash\nexit 0\n").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -412,7 +419,7 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
             "deploy.yml",
             "        question: Ship this build?\n",
             "",
-            "machines/deploy.yml: approval: a `person` state needs a `question`: what is being decided (V8)",
+            "machines/deploy.yml: approval: a `reply` state needs a `question`: what is being decided (V8)",
         ),
         (
             PROJECT,

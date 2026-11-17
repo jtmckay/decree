@@ -11,8 +11,8 @@ picks among the options a state declares. It is built from three blocks:
   Scripts   Executables in .decree/scripts/ that do one piece of work and
             report one outcome. Bash by default.
 
-A model or a person only ever picks among the transitions a machine declares,
-in a state that invokes `model` or `person`.
+A model, a person or a program only ever picks among the transitions a
+machine declares, in a state that invokes `model` or `reply`.
 
 Commands:
   decree init [--ai AI] [--permissions]
@@ -73,7 +73,7 @@ Commands:
                               whole message (decree emit < FILE runs it
                               again). Prints its id
   decree event ID EVENT [-m NOTE]
-                              Reply to a run waiting for a person
+                              Reply to a run waiting for a reply
   decree status [ID] [--all]  What blocks the queue, runs by status and queued
                               messages (--all lists every one), and active
                               runs in projects below; one run's events
@@ -138,9 +138,9 @@ Machines:
       transitions: { done: approval }
     approval:
       invoke:
-        person:
+        reply:
           question: Ship it?
-          ask: ask_person
+          notify: notify_person
       transitions:
         approve: { target: ship, description: Ship this build. }
         reject:  { target: rejected, description: Do not ship. }
@@ -158,7 +158,7 @@ Machines:
                                               a script
     check: { visits: S, less_than: 3 }        a condition: true or false
     model: { question: ..., output: <state> } a router machine asks a model
-    person: { question: ..., ask: <script> }  a person replies with `decree event`
+    reply: { question: ..., notify: <script> } someone replies: `decree event`
     machine: <name>                           a child run of another machine
   Other keys: onentry and onexit (scripts run on entering or leaving a state,
   or the whole run at the root), data, emits, compound states (initial plus
@@ -176,8 +176,8 @@ Scripts:
   DECREE_MAX_DEPTH, DECREE_STORE, DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS,
   DECREE_FINAL_ATTEMPT, DECREE_TRIGGER, DECREE_EVENTS, DECREE_EVENT_FILE,
   DECREE_PARENT, DECREE_RECEIVED, DECREE_DATA_<NAME>; with an attempts list DECREE_ATTEMPT_VALUE and
-  DECREE_ATTEMPT_VALUES; in a router run DECREE_REQUEST and DECREE_REPLY; for an
-  ask script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES; and TRACEPARENT
+  DECREE_ATTEMPT_VALUES; in a router run DECREE_REQUEST and DECREE_REPLY; for a
+  notify script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES; and TRACEPARENT
   (W3C Trace Context: the run's trace and the script's span), with TRACESTATE
   when the message carried one.
 

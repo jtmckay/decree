@@ -42,9 +42,9 @@ states:
   approval:
     description: Ship the build?
     invoke:
-      person:
+      reply:
         question: Ship it?
-        ask: ask_person
+        notify: ask_person
     transitions:
       approve: { target: shipped, description: Ship it. }
       reject: { target: done, description: Do not ship. }
@@ -594,11 +594,11 @@ fn process_streams_each_run_and_a_line_as_it_stops() {
     );
 }
 
-/// AC: a run that reaches a `person` state. `decree process` prints the wait id,
+/// AC: a run that reaches a `reply` state. `decree process` prints the wait id,
 /// the options and a `decree event` command per option, and exits 0; after `decree event`
 /// and another `decree process`, the run is `done`.
 #[test]
-fn person_prints_the_wait_and_a_reply_finishes_the_run() {
+fn reply_prints_the_wait_and_a_reply_finishes_the_run() {
     let p = Project::init();
     p.machine("deploy", DEPLOY);
     p.script("ask_person", "#!/usr/bin/env bash\nexit 0\n");
@@ -633,12 +633,12 @@ fn person_prints_the_wait_and_a_reply_finishes_the_run() {
     p.stdout(&["process"], 0);
     assert_eq!(
         transitions(&p.events(&id)),
-        ["- -> approval (claim)", "approval -> shipped (person)"]
+        ["- -> approval (claim)", "approval -> shipped (reply)"]
     );
     let status = p.stdout(&["status", &id], 0);
     assert!(status.contains("status: finished in `shipped`"), "{status}");
     assert!(
-        status.contains("approval: person → approve (reply "),
+        status.contains("approval: reply → approve (reply "),
         "{status}"
     );
 }

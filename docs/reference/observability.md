@@ -74,8 +74,8 @@ Standards:
 | --- | --- | --- | --- | --- |
 | The run | `run <machine>` | The span the message's `traceparent` names, else none | The claim event, or a `retry` event | `run_finished` or `interrupted` |
 | A script execution (`onentry`, invoke attempt, `onexit`) | `script <state>/<script>` | The run span | `started_at` of its `script` event | `started_at` + `duration_ms` |
-| A decision (`check`, `model`, `person`) | `decision <kind> <state>` | The run span | Its `decision` event; for a router run, the `waiting` event for it | Its `decision` event |
-| A wait (a `person` reply, or a `machine` invoke's child run) | `wait <state>` | The run span | The `waiting` event | The `received` event |
+| A decision (`check`, `model`, `reply`) | `decision <kind> <state>` | The run span | Its `decision` event; for a router run, the `waiting` event for it | Its `decision` event |
+| A wait (a `reply`, or a `machine` invoke's child run) | `wait <state>` | The run span | The `waiting` event | The `received` event |
 
 A router run's run span is a child of its `model` decision's span, and a `machine` invoke's child run's run span is a child of its wait span. A run continued by `decree process --retry` gets a new run span in the same trace, from the `retry` event, linked to the previous run span. Every span has the attributes `decree.run_id`, `decree.machine` and `decree.state`; script spans add `decree.attempt` and `process.exit.code` (from [OpenTelemetry's semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/process/), when the script exited rather than being killed), and decision and wait spans add `decree.event`. A script that exits non-zero, times out or is killed, a `model` decision with a `router_error`, a run ending in `failed`, and an interrupted run have status `ERROR`. All spans are of kind `INTERNAL`.
 

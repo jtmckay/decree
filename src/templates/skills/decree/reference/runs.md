@@ -24,9 +24,9 @@ Types:
 
 | `type` | Meaning |
 | --- | --- |
-| `transition` | `from`, `event`, `to`, `source` (`claim`, `exit_code`, `script`, `attempt`, `check`, `model`, `person`, `machine`, `timeout`, `internal`, `invalid_message`, `retry`). |
+| `transition` | `from`, `event`, `to`, `source` (`claim`, `exit_code`, `script`, `attempt`, `check`, `model`, `reply`, `machine`, `timeout`, `internal`, `invalid_message`, `retry`). |
 | `script` | One script finished: `state`, `phase`, `script`, `path`, `attempt`, `duration_ms`, `exit_code`, `log`. |
-| `decision` | A `check`, `model` or `person` produced its event: `kind`, `event`, and for models `pick`, `reason`, `confidence`, `router`, `child_run`. |
+| `decision` | A `check`, `model` or `reply` produced its event: `kind`, `event`, and for models `pick`, `reason`, `confidence`, `router`, `child_run`. |
 | `waiting` | Paused for a person (`wait_id`, `options`, `timeout_at`) or a child run (`child`). |
 | `received` | A reply, a timeout or a child's result arrived. |
 | `interrupted` | Stopped before a final state: `cause` is `signal` or `crash`. |
@@ -53,7 +53,7 @@ child, and `--retry` alone continues it. `decree status` shows the blocker under
 ## Attention
 
 `.decree/attention/<id>.md` is decree's list of what needs a person: a file per run that is
-`failed`, `interrupted` or `waiting` in a `person` state, and per migration waiting for an
+`failed`, `interrupted` or `waiting` in a `reply` state, and per migration waiting for an
 interrupted child (naming the child). Frontmatter `kind: run`, `run`, `machine`, `message`,
 `status`, `state`, `since`, `holds` (`.decree/schema/v1/attention.schema.json`), then what
 happened, the exact command (`decree process --retry <id>`, or one `decree event <wait id>
@@ -74,7 +74,7 @@ until it changes again. `decree process` ends with `<n> run(s) need attention: .
 
 `decree graph` writes `.decree/graph/<machine>.md` (a Mermaid `stateDiagram-v2`) for each
 machine and `.decree/graph/system.md` (machines, `emits` and `invokes` edges, cron entry points).
-Edge labels say who decided: `(check)`, `(model)`, `(person)`, `(machine: <name>)`; `(implicit)`
+Edge labels say who decided: `(check)`, `(model)`, `(reply)`, `(machine: <name>)`; `(implicit)`
 marks an unhandled `error` going to `failed`. Commit the files; they render on GitHub, GitLab,
 Obsidian and in VS Code's Markdown preview (`Ctrl+Shift+V`), or paste the diagram into
 https://mermaid.live.

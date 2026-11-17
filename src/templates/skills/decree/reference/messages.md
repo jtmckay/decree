@@ -215,8 +215,8 @@ Check that the services this project calls answer.
 
 ## Replies to a waiting run
 
-A run in a `person` state waits for a reply with a **wait id** (`<run id>.w<seq>`). The
-state's `ask` script tells someone the question, the options and how to answer. A reply is an
+A run in a `reply` state waits for a reply with a **wait id** (`<run id>.w<seq>`). The
+state's `notify` script tells someone the question, the options and how to answer. A reply is an
 inbox message with `to:` (the wait id, or the run id meaning "its current wait") and `event:`
 (one of the options); the body is an optional note the run's later scripts read through
 `DECREE_RECEIVED`.

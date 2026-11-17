@@ -93,8 +93,8 @@
           "description": "Atomic state entered."
         },
         "source": {
-          "enum": ["claim", "exit_code", "script", "attempt", "check", "model", "person", "machine", "timeout", "internal", "invalid_message", "retry"],
-          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `person`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `person` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree process --retry`."
+          "enum": ["claim", "exit_code", "script", "attempt", "check", "model", "reply", "machine", "timeout", "internal", "invalid_message", "retry"],
+          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `reply`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `reply` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree process --retry`."
         },
         "exit_code": {
           "type": ["integer", "null"],
@@ -245,7 +245,7 @@
     },
     "decision": {
       "title": "decision",
-      "description": "A `check`, `model` or `person` invoke produced its event. Written before the `transition` it causes.",
+      "description": "A `check`, `model` or `reply` invoke produced its event. Written before the `transition` it causes.",
       "required": ["type", "state", "kind", "event", "span_id"],
       "properties": {
         "type": { "const": "decision", "description": "Always `decision`." },
@@ -254,8 +254,8 @@
           "description": "The deciding state."
         },
         "kind": {
-          "enum": ["check", "model", "person"],
-          "description": "`check`, `model` or `person`."
+          "enum": ["check", "model", "reply"],
+          "description": "`check`, `model` or `reply`."
         },
         "event": {
           "type": "string",
@@ -269,7 +269,7 @@
       "oneOf": [
         { "$ref": "#/$defs/checkDecision" },
         { "$ref": "#/$defs/modelDecision" },
-        { "$ref": "#/$defs/personDecision" }
+        { "$ref": "#/$defs/replyDecision" }
       ]
     },
     "checkDecision": {
@@ -336,12 +336,12 @@
       "then": { "required": ["router_error"], "not": { "required": ["pick"] } },
       "else": { "required": ["pick"], "not": { "required": ["router_error"] } }
     },
-    "personDecision": {
-      "title": "person decision",
-      "description": "A person's reply was delivered to a `person` state.",
+    "replyDecision": {
+      "title": "reply decision",
+      "description": "A reply was delivered to a `reply` state.",
       "required": ["options", "reply"],
       "properties": {
-        "kind": { "const": "person", "description": "Always `person`." },
+        "kind": { "const": "reply", "description": "Always `reply`." },
         "options": {
           "$ref": "#/$defs/names",
           "description": "The options offered, in name order."
@@ -354,7 +354,7 @@
     },
     "waiting": {
       "title": "waiting",
-      "description": "The run is paused: in a `person` state for a reply, or in a `machine` or `model` state for its child run.",
+      "description": "The run is paused: in a `reply` state for a reply, or in a `machine` or `model` state for its child run.",
       "required": ["type", "state"],
       "properties": {
         "type": { "const": "waiting", "description": "Always `waiting`." },
@@ -364,13 +364,13 @@
         }
       },
       "oneOf": [
-        { "$ref": "#/$defs/personWait" },
+        { "$ref": "#/$defs/replyWait" },
         { "$ref": "#/$defs/childWait" }
       ]
     },
-    "personWait": {
-      "title": "person wait",
-      "description": "Waiting in a `person` state for a reply.",
+    "replyWait": {
+      "title": "reply wait",
+      "description": "Waiting in a `reply` state for a reply.",
       "required": ["wait_id", "options", "timeout_at"],
       "properties": {
         "wait_id": {
@@ -383,7 +383,7 @@
         },
         "timeout_at": {
           "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
-          "description": "RFC 3339 deadline from the `person` invoke's `timeout`, or `null` without one."
+          "description": "RFC 3339 deadline from the `reply` invoke's `timeout`, or `null` without one."
         }
       }
     },
@@ -436,7 +436,7 @@
     },
     "timeoutReceived": {
       "title": "timeout received",
-      "description": "A `person` wait passed its deadline; the event is `error`.",
+      "description": "A `reply` wait passed its deadline; the event is `error`.",
       "required": ["wait_id", "timed_out"],
       "properties": {
         "wait_id": {

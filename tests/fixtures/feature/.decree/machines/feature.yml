@@ -39,9 +39,9 @@ states:
           unsure: review
       review:                      # a person picks one option; the run pauses for the reply
         invoke:
-          person:
+          reply:
             question: Tests still fail. What next?
-            ask: ask_person
+            notify: ask_person
             timeout: 2d
         transitions:
           approve: { target: verified, description: Good enough; commit it. }

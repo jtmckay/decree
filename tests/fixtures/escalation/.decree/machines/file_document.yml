@@ -73,9 +73,9 @@ states:
   # 6. A person decides; the run waits for their reply.
   ask_person:
     invoke:
-      person:
+      reply:
         question: Which kind of document is this?
-        ask: ask_person
+        notify: ask_person
         timeout: 7d
     transitions:
       invoice:

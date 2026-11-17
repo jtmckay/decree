@@ -16,7 +16,7 @@ It is more machinery than the simplest machine, which is where a project should 
 - `rounds_left` is a `check` on `visits`: `fill_gaps` runs `max_gap_rounds` times. A `decree process --retry` counts visits again from the retry, so a retried run gets every round again ([Visits](reference/runs.md#step-loop)).
 - Each round is a child run of the `gaps` machine: fill, gate, fix, final gate, verify. Its steps are `develop`'s own scripts, through symlinks. They keep their files (`progress.md`, `gaps.md`, `gate.log`, `plan.md`, `STOP`) in the root run's folder, `$DECREE_ROOT_RUN_DIR`, so every round reads and adds to the same notes as `develop`.
 - `gaps`' data entry `ai_cli` picks the backend: `ai.sh`'s `ai` calls the one it names ([The AI helper](reference/scripts.md#the-ai-helper)). `fill_gaps` uses the default; `claude_round` passes `params: { ai_cli: claude }`. Every call is a line in `.decree/ai-use.md`, so you can see what each round cost.
-- `ask_human` is a `person` state: the run waits for `decree event <wait id> accept|retry|fail`. After 30 days with no answer its event is `error`, which, like a round that ends in `failed`, goes to `failed`.
+- `ask_human` is a `reply` state that asks a person: the run waits for `decree event <wait id> accept|retry|fail`. After 30 days with no answer its event is `error`, which, like a round that ends in `failed`, goes to `failed`.
 
 ## The files
 
@@ -71,9 +71,9 @@ states:
     transitions: { filled: done, unfilled: ask_human }
   ask_human:                       # every round is spent: a person decides
     invoke:
-      person:
+      reply:
         question: Every round is spent. Read gaps.md and progress.md in the run folder; accept the work, give Claude another round, or fail the run.
-        ask: ask_human
+        notify: notify_human
         timeout: 30d
     transitions:
       accept: { target: done, description: Commit the work as it is. }
@@ -180,7 +180,7 @@ mv "${dir}/gaps.md.new" "${dir}/gaps.md"
 cat "${dir}/gaps.md"
 ```
 
-`.decree/scripts/develop/ask_human.sh`, `ask_human`'s `ask` script. It prints what a person needs; a real one could post it to chat or an issue:
+`.decree/scripts/develop/notify_human.sh`, `ask_human`'s `notify` script. It prints what a person needs; a real one could post it to chat or an issue:
 
 ```bash
 #!/usr/bin/env bash
@@ -198,7 +198,7 @@ for event in ${DECREE_EVENTS}; do
 done
 ```
 
-Then `chmod +x .decree/scripts/gaps/fill.sh .decree/scripts/develop/gate_gaps.sh .decree/scripts/develop/ask_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree plugin export gaps` and `decree plugin export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
+Then `chmod +x .decree/scripts/gaps/fill.sh .decree/scripts/develop/gate_gaps.sh .decree/scripts/develop/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree plugin export gaps` and `decree plugin export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
 
 ## Tuning it
 

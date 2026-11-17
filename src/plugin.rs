@@ -835,7 +835,7 @@ pub fn write_and_install(decree_dir: &Path, plugin: &Plugin) -> Result<PathBuf, 
 }
 
 /// Every script name a machine runs: root `onentry` and `onexit`, and each state's script
-/// invoke, `person` `ask`, `onentry` and `onexit`, sorted.
+/// invoke, `reply` `notify`, `onentry` and `onexit`, sorted.
 fn script_names(m: &machine::LoadedMachine) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for node in &m.nodes {
@@ -845,7 +845,7 @@ fn script_names(m: &machine::LoadedMachine) -> BTreeSet<String> {
             Some(Invoke::Script(s)) => {
                 out.insert(s.name.clone());
             }
-            Some(Invoke::Person(p)) => out.extend(p.ask.iter().cloned()),
+            Some(Invoke::Reply(p)) => out.extend(p.notify.iter().cloned()),
             _ => {}
         }
     }

@@ -132,7 +132,7 @@ pub enum Command {
         format: Format,
     },
 
-    /// Reply to a run waiting in a `person` state
+    /// Reply to a run waiting in a `reply` state
     Event {
         /// Wait id (<run id>.w<seq>), or run id meaning its current wait
         target: String,

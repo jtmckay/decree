@@ -112,7 +112,7 @@ fn invoke_suffix(invoke: &Invoke, is_error: bool) -> String {
             Some(router) => format!(" (model: {router})"),
             None => " (model)".into(),
         },
-        Invoke::Person(_) => " (person)".into(),
+        Invoke::Reply(_) => " (reply)".into(),
         Invoke::Machine(mi) => format!(" (machine: {})", mi.name),
     }
 }
@@ -144,9 +144,10 @@ fn notes(m: &LoadedMachine, out: &mut String) {
                 lines.push(line);
             }
             Some(Invoke::Machine(mi)) => lines.push(format!("machine: {}", mi.name)),
-            Some(Invoke::Person(c)) => {
-                lines.push(format!("person: {}", c.ask.as_deref().unwrap_or_default()))
-            }
+            Some(Invoke::Reply(c)) => lines.push(format!(
+                "reply: {}",
+                c.notify.as_deref().unwrap_or_default()
+            )),
             Some(Invoke::Script(script)) => {
                 if let Some(values) = script.attempts.as_ref().and_then(Attempts::values) {
                     lines.push(format!("attempts: {}", values.join(" → ")));
@@ -208,7 +209,7 @@ fn container(
 }
 
 /// Whether to draw ` (implicit)` `error` to `failed`: a non-final atomic state that
-/// invokes a script, a machine, a `model` or a `person`, or has an `onentry`,
+/// invokes a script, a machine, a `model` or a `reply`, or has an `onentry`,
 /// where nothing in its chain handles `error`. A `check` cannot fail.
 fn implicit_error(m: &LoadedMachine, i: usize) -> bool {
     let node = &m.nodes[i];

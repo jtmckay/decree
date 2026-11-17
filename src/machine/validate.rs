@@ -79,7 +79,7 @@ impl LoadedMachine {
                     }
                     can_error = true;
                 }
-                Some(Invoke::Person(_)) => {
+                Some(Invoke::Reply(_)) => {
                     events.extend(self.options(i).map(|e| e.event.clone()));
                     can_error = true;
                 }
@@ -386,7 +386,7 @@ impl Validator<'_> {
                         }
                     }
                 }
-                Some(invoke @ (Invoke::Model(_) | Invoke::Person(_))) => {
+                Some(invoke @ (Invoke::Model(_) | Invoke::Reply(_))) => {
                     let Some((kind, question)) = invoke.question() else {
                         continue;
                     };
@@ -666,14 +666,14 @@ impl Validator<'_> {
             let at = self.m.state_path(i);
             let invoked = match &node.invoke {
                 Some(Invoke::Script(script)) => Some(script.name.as_str()),
-                Some(Invoke::Person(c)) => {
-                    if c.ask.is_none() {
+                Some(Invoke::Reply(c)) => {
+                    if c.notify.is_none() {
                         self.push(
                             at.clone(),
-                            "a `person` state needs an `ask` script, which tells someone how to reply (V12)".into(),
+                            "a `reply` state needs a `notify` script, which tells someone or something how to reply (V12)".into(),
                         );
                     }
-                    c.ask.as_deref()
+                    c.notify.as_deref()
                 }
                 _ => None,
             };
@@ -906,7 +906,7 @@ impl Validator<'_> {
                     );
                 }
             }
-            if matches!(node.invoke, Some(Invoke::Model(_) | Invoke::Person(_))) {
+            if matches!(node.invoke, Some(Invoke::Model(_) | Invoke::Reply(_))) {
                 let reserved: Vec<String> = self
                     .m
                     .options(i)

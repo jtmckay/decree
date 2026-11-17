@@ -63,15 +63,15 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_FINAL_ATTEMPT` | `true` if `DECREE_ATTEMPT` equals `DECREE_MAX_ATTEMPTS`, else `false`. |
 | `DECREE_TRIGGER` | The message's `trigger`. |
 | `DECREE_EVENTS` | The events the current state accepts, space-separated, in name order. Lets a script check what it may name. |
-| `DECREE_EVENT_FILE` | For a script invoke: absolute path of `runs/<id>/.event`, created empty before each attempt, where the script names its event ([Events from an invoke](#events-from-an-invoke)). Empty for `onentry` and `onexit` scripts and the `ask` script of a `person` state, which produce no events. |
+| `DECREE_EVENT_FILE` | For a script invoke: absolute path of `runs/<id>/.event`, created empty before each attempt, where the script names its event ([Events from an invoke](#events-from-an-invoke)). Empty for `onentry` and `onexit` scripts and the `notify` script of a `reply` state, which produce no events. |
 | `DECREE_PARENT` | In a child run: the parent run's id. Empty otherwise. |
 | `DECREE_PARENT_RUN_DIR` | In a child run: absolute path of the parent run's directory, `runs/<parent>/`. Empty otherwise. |
 | `DECREE_ROOT_RUN_DIR` | Absolute path of the directory of the run at the top of the chain, the run with no parent: in a grandchild, the grandparent's. In a top-level run it equals `DECREE_RUN_DIR`. |
 | `DECREE_REQUEST` | In a router run: absolute path of the request JSON ([Model](runs.md#model)). Empty otherwise. |
 | `DECREE_REPLY` | In a router run: absolute path where the reply JSON must be written. Empty otherwise. |
-| `DECREE_WAIT_ID` | For the `ask` script of a `person` state: the wait id a reply must name. Empty otherwise. |
-| `DECREE_QUESTION` | For the `ask` script of a `person` state: its `question`. Empty otherwise. |
-| `DECREE_CHOICES` | For the `ask` script: absolute path of a JSON file mapping each option to its description. Empty otherwise. |
+| `DECREE_WAIT_ID` | For the `notify` script of a `reply` state: the wait id a reply must name. Empty otherwise. |
+| `DECREE_QUESTION` | For the `notify` script of a `reply` state: its `question`. Empty otherwise. |
+| `DECREE_CHOICES` | For the `notify` script: absolute path of a JSON file mapping each option to its description. Empty otherwise. |
 | `DECREE_RECEIVED` | Absolute path of the last reply this run received (`runs/<id>/received/<file>`), or empty. |
 | `DECREE_DATA_<NAME>` | One per `data` entry, `<NAME>` uppercased: the message's `params` value, else the default. Ints as decimal, numbers in their shortest round-trip form without an exponent (`0.5`, `2`; a default of `1.0` is `1`), bools as `true` or `false`. |
 | `TRACEPARENT` | W3C Trace Context `00-<trace id>-<span id>-01`: the run's trace and this script execution's own span, the `span_id` of its `script` event. Set for every script, replacing any `TRACEPARENT` decree inherited ([Traces](observability.md#traces)). |

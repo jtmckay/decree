@@ -10,9 +10,9 @@ machine:
         done: approval
     approval:
       invoke:
-        person:
+        reply:
           question: Ship this build?
-          ask: ask_person
+          notify: notify_person
           timeout: 1d
       transitions:
         approve:
@@ -32,12 +32,12 @@ machine:
     failed:
       final: true
 scripts:
-  ask_person.sh: |
+  notify_person.sh: |
     #!/usr/bin/env bash
-    # The ask script of deploy's approval, shared by any person state. decree only
-    # knows the run is waiting for one of the options; how a person is asked is up
-    # to this script: chat, email, an issue, or a UI that writes the reply message
-    # itself. Here it prints the commands; a real one would post them.
+    # The notify script of deploy's approval, shared by any reply state that asks a
+    # person. decree only knows the run is waiting for one of the options; how a
+    # person is asked is up to this script: chat, email, an issue, or a UI that
+    # writes the reply message itself. Here it prints the commands; a real one would post them.
     set -euo pipefail
     title=$(grep -m1 '^# ' "$DECREE_MESSAGE" | sed 's/^# //' || true)
     echo "Waiting for a person: $DECREE_MACHINE/$DECREE_STATE ${title:+- $title}"

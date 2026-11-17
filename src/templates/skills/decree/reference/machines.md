@@ -53,7 +53,7 @@ name is short for `{ name: <name> }`, and `invoke: implement` is short for
 | `script: { name: <script>, attempts?: <n> \| [<value>, …], timeout?: <duration> }` | The script (see `scripts.md`), re-run in place while it fails, once per attempt (default 1), each stopped after `timeout`. A list gives each attempt its value in `$DECREE_ATTEMPT_VALUE`. | `done` (exit 0), `error` (non-zero), or the event it writes to `$DECREE_EVENT_FILE`. |
 | `check: <condition>` | decree evaluates the condition. No AI. | `true` or `false`. |
 | `model: { question: ..., router?: <machine>, min_confidence?: 0.8, output?: <state> }` | A router machine asks a model to pick one of the state's transitions. | An option; `unsure` below `min_confidence`; `error` if the router fails. |
-| `person: { question: ..., ask: <script>, timeout?: <duration> }` | The `ask` script tells someone; the run pauses for a reply. | An option; `error` on timeout. |
+| `reply: { question: ..., notify: <script>, timeout?: <duration> }` | The `notify` script tells someone (a person, a UI, a program); the run pauses for a reply. | An option; `error` on timeout. |
 | `machine: { name: <machine>, params?: {...} }` | The machine runs as a child run. | The child's root final state (`failed` becomes `error`). |
 
 A duration (`timeout`, and `decree prune --older-than` and `decree daemon --interval`) is a whole
@@ -72,9 +72,9 @@ in block style:
 
 ### Choices
 
-For `model` and `person`, `question` is what is being decided, and the **options are the state's
+For `model` and `reply`, `question` is what is being decided, and the **options are the state's
 transitions** except `unsure` and `error`. Every option needs a `description`: the question and
-the descriptions are exactly what the model or person sees, so write them to stand alone. Write
+the descriptions are exactly what the model, or whoever replies, sees, so write them to stand alone. Write
 prose (`question`, `description`) in block style, one key per line. Prose containing `: ` breaks
 a plain YAML value: quote it (`description: "Step one: build"`) or use `description: >-` with the
 text indented below.
@@ -232,9 +232,9 @@ states:
           unsure: review
       review:                      # a person picks one option; the run pauses for the reply
         invoke:
-          person:
+          reply:
             question: Tests still fail. What next?
-            ask: ask_person
+            notify: notify_person
             timeout: 2d
         transitions:
           approve: { target: verified, description: Good enough; commit it. }
@@ -271,7 +271,7 @@ states:
 
 Decide the cheapest way first and pass on only what is undecided: `false` from a `check`, `unsure`
 from a `model` below its `min_confidence`, then a `confidence` check to decide whether a
-person's time is worth it, then `person`. Each threshold is a number in the machine.
+person's time is worth it, then a `reply` from a person. Each threshold is a number in the machine.
 
 ## Validation
 

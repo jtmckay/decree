@@ -2074,8 +2074,8 @@ fn consensus_project(picks: [&str; 3]) -> Project {
              decide:\n    invoke:\n      model:\n        question: Which letter?\n        \
              router: consensus_router\n        min_confidence: 0.6\n    transitions:\n{options}      \
              unsure: ask_person\n  \
-             ask_person:\n    invoke:\n      person:\n        question: Which letter?\n        \
-             ask: tell\n    transitions:\n{options}  \
+             ask_person:\n    invoke:\n      reply:\n        question: Which letter?\n        \
+             notify: tell\n    transitions:\n{options}  \
              done:   {{ final: true }}\n  failed: {{ final: true }}\n"
         ),
     )

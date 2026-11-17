@@ -376,9 +376,9 @@ states:
     transitions: { true: ask, false: child }
   ask:
     invoke:
-      person:
+      reply:
         question: Ship it?
-        ask: ask_person
+        notify: ask_person
         timeout: 1d
     transitions:
       approve: { target: child, description: Ship it. }
@@ -484,6 +484,13 @@ fn mistakes_are_rejected_where_they_are() {
             "{ target: child, description: Ship it. }",
             "child",
             "/states/ask/transitions/approve",
+        ),
+        // The old name of `reply`, and of its `notify` (V19).
+        ("      reply:\n", "      person:\n", "/states/ask/invoke"),
+        (
+            "        notify: ask_person\n",
+            "        ask: ask_person\n",
+            "/states/ask/invoke",
         ),
         (
             "{ done: long }",
@@ -780,6 +787,21 @@ fn decree_version_is_optional_on_the_claim_and_retry() {
 }
 
 /// Mistakes a router or a pipeline could make: each is rejected.
+/// A transition taken from a reply has `source: "reply"`, after a `reply` decision.
+#[test]
+fn reply_is_a_source_and_a_decision_kind() {
+    let events = schema::events_validator();
+    let common = r#""v": 1, "seq": 1, "ts": "2026-10-01T14:30:05.123Z", "run_id": "r", "machine": "m", "trigger": "inbox", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736""#;
+    for right in [
+        r#""type": "decision", "state": "s", "kind": "reply", "event": "go", "options": ["go", "stop"], "reply": "r.md", "span_id": "a5d8cc901b3f44e0""#,
+        r#""type": "transition", "from": "a", "event": "go", "to": "b", "source": "reply", "exit_code": null"#,
+    ] {
+        let line: serde_json::Value =
+            serde_json::from_str(&format!("{{{common}, {right}}}")).unwrap();
+        assert!(events.is_valid(&line), "rejected: {right}");
+    }
+}
+
 #[test]
 fn wrong_events_requests_and_replies_are_rejected() {
     let events = schema::events_validator();
@@ -793,7 +815,10 @@ fn wrong_events_requests_and_replies_are_rejected() {
         // A claim without its file; a model decision with an error and a pick.
         r#""type": "transition", "from": null, "event": "claimed", "to": "a", "source": "claim", "exit_code": null"#,
         r#""type": "decision", "state": "s", "kind": "model", "event": "error", "options": ["a"], "router": "router", "duration_ms": 0, "pick": "a", "router_error": "x""#,
-        // A person wait without its deadline; a child wait with options.
+        // The old name of the `reply` source and decision kind.
+        r#""type": "transition", "from": "a", "event": "go", "to": "b", "source": "person", "exit_code": null"#,
+        r#""type": "decision", "state": "s", "kind": "person", "event": "go", "options": ["go", "stop"], "reply": "r.md", "span_id": "a5d8cc901b3f44e0""#,
+        // A reply wait without its deadline; a child wait with options.
         r#""type": "waiting", "state": "s", "wait_id": "r.w1", "options": ["a"]"#,
         r#""type": "waiting", "state": "s", "child": "c", "options": ["a"]"#,
         // No trace id, or one in uppercase or all zeros.

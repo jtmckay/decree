@@ -26,9 +26,9 @@ decree runs work through three building blocks:
 
 Every state invokes one function, and its result is an event. The function is a script, a child
 machine (`machine: deploy`), or a built-in decision: `check` (deterministic: `true` or `false`),
-`model` (a model picks an option, asked through a router machine) or `person` (the run pauses
-until a reply picks one). `invoke` has exactly one key, which names the kind. AI and people
-appear only where a machine invokes `model` or `person`.
+`model` (a model picks an option, asked through a router machine) or `reply` (the run pauses
+until a reply, from a person or a program, picks one). `invoke` has exactly one key, which names
+the kind. AI and people appear only where a machine invokes `model` or `reply`.
 
 ## Starting a project
 
@@ -47,12 +47,12 @@ file (`.decree/plugins/<name>.md`) says what it does, what it needs and how to u
   scripts it needs, one state each, in a straight line (`done` → the next state), ending in
   `done`. `error` already goes to `failed` implicitly; don't write it.
   - Add nothing else until the user asks for it or a run has shown it is needed: no `check`,
-    `model` or `person` decisions, loops or round counters, `data` params, `attempts`,
+    `model` or `reply` decisions, loops or round counters, `data` params, `attempts`,
     `timeout`, child machines, `emits`, compound states or one state per case.
   - When an addition is warranted, add the smallest one that solves the problem, and say why
     in the state's comment (`# the local model fails often: try Claude second`).
   - The cheapest fixes come first, in this order: change the script; `attempts`; a transition
-    on an event the script names; a `check`; a `model` or `person` decision; a child machine.
+    on an event the script names; a `check`; a `model` or `reply` decision; a child machine.
   - Asked to design a machine, show the simple version, and list possible additions in prose
     as options, not in the YAML.
   - When `develop` runs show that a failed verify is worth more rounds, decree's
@@ -88,7 +88,7 @@ file (`.decree/plugins/<name>.md`) says what it does, what it needs and how to u
 - **Scripts choose how, machines choose what runs next.** A script may decide *how* to do its
   one job from its params and environment: which workflow file, which model for this attempt,
   which flags. A choice of *which step runs next* is a transition, on `done` or an event the
-  script names. Make it a decision state (`check`, `model`, `person`) only when the step after
+  script names. Make it a decision state (`check`, `model`, `reply`) only when the step after
   it differs, and the choice is worth seeing in the graph, testing with `decree check`, or
   giving to a model or a person.
 - **Route with a typed router.** For a `model` decision that routes work (which model, which
@@ -198,11 +198,11 @@ file (`.decree/plugins/<name>.md`) says what it does, what it needs and how to u
 | `decree daemon [--interval <duration>] [--retry [<id>]] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with cron, every `2s` by default; `--machine` and `--exclude-machine` as for `process`. |
 | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then what blocks the queue and the command that continues it, runs by status (`--all`: every run), and active runs in projects below; one run's events; `--cron`: cron files and when each fires next (`daemon start` for `@reboot`). |
 | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
-| `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `person` state; a run id or a migration's name means its current wait. |
+| `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `reply` state; a run id or a migration's name means its current wait. |
 | `decree stop [-m <note>]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted (no restart needed). Ctrl-C interrupts the run instead. |
 | `decree prune --older-than <age> [--dry-run]` | Delete finished run folders older than `30d`, `12h`, `90m`, `90s`; keeps failed migrations and children of unfinished runs. |
 
-`process` exits once nothing more can run, leaving `person` waits and `timeout`s for the next
+`process` exits once nothing more can run, leaving `reply` waits and `timeout`s for the next
 `process`; `daemon` keeps polling, fires cron and continues runs as replies arrive, so unattended
 work runs under `daemon`. Both read machines and `.env` files again before each run: an edit
 applies to the next run without a restart, and an edit that fails `decree check` is not used

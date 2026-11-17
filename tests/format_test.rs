@@ -45,9 +45,9 @@ initial: approval
 states:
   approval:
     invoke:
-      person:
+      reply:
         question: Ship it?
-        ask: ask_person
+        notify: ask_person
     transitions:
       approve: { target: shipped, description: Ship it. }
       reject: { target: done, description: Do not ship. }

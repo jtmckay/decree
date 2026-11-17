@@ -291,14 +291,14 @@
         },
         "wait_id": {
           "type": "string",
-          "description": "For a run waiting in a `person` state, the wait id a reply names."
+          "description": "For a run waiting in a `reply` state, the wait id a reply names."
         },
         "options": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "For a run waiting in a `person` state, the events it accepts."
+          "description": "For a run waiting in a `reply` state, the events it accepts."
         },
         "child": {
           "type": "string",

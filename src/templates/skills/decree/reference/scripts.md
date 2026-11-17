@@ -154,7 +154,7 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
 | `DECREE_PARENT_RUN_DIR` | In a child run, the parent run's folder; empty otherwise. Reach the task's files from here, never by building `runs/$DECREE_PARENT`. |
 | `DECREE_ROOT_RUN_DIR` | The folder of the run at the top of the chain (no parent); `DECREE_RUN_DIR` in a top-level run. |
 | `DECREE_REQUEST`, `DECREE_REPLY` | In a router run: the request JSON to read and the reply JSON to write. |
-| `DECREE_WAIT_ID`, `DECREE_QUESTION`, `DECREE_CHOICES` | For a `person` `ask` script: the wait id, the question, and a JSON file of options and descriptions. |
+| `DECREE_WAIT_ID`, `DECREE_QUESTION`, `DECREE_CHOICES` | For a `reply` state's `notify` script: the wait id, the question, and a JSON file of options and descriptions. |
 | `DECREE_RECEIVED` | The last reply this run received (`runs/<id>/received/<file>`), or empty. |
 | `DECREE_DATA_<NAME>` | Each `data` value: the message's `params`, else the default. |
 | `TRACEPARENT`, `TRACESTATE` | W3C Trace Context: the run's trace and this script's span (`00-<trace id>-<span id>-01`), and the message's `tracestate` if it had one. OpenTelemetry SDKs read them, so the script's own spans join the run's trace; `decree emit` copies them into the new message. |
@@ -181,11 +181,11 @@ machine's `env_file`, the process environment, `.decree/.env`.
 One script run by several states with different values: give each state a two-line script,
 `METHOD=image_text exec "$(dirname "$0")/build.sh"`, rather than parsing the state name.
 
-## An ask script
+## A notify script
 
 ```bash
 #!/usr/bin/env bash
-# scripts/ask_person.sh: tell someone how to answer. A real one posts to chat or opens an issue.
+# scripts/notify_person.sh: tell someone how to answer. A real one posts to chat or opens an issue.
 set -euo pipefail
 echo "Question: $DECREE_QUESTION"
 cat "$DECREE_CHOICES"

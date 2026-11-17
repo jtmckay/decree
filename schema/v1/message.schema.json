@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/message.schema.json",
   "title": "decree message frontmatter",
-  "description": "The YAML frontmatter of a decree message: a migration (.decree/migrations/*.md), an inbox message (.decree/inbox/*.md) or a cron file (.decree/cron/*.md). The body below the frontmatter is the task, in markdown; decree never changes it. A message has one of two shapes: a message that starts a run of a machine (`machine`, with `params`), or a reply to a run waiting in a `person` state (`to` and `event`). Any other key is kept as written and ignored by decree. `decree check` checks the rest (M1-M3): that the machine exists, that `params` fit its `data`, and that a cron expression parses. Reference: docs/reference/messages.md.",
+  "description": "The YAML frontmatter of a decree message: a migration (.decree/migrations/*.md), an inbox message (.decree/inbox/*.md) or a cron file (.decree/cron/*.md). The body below the frontmatter is the task, in markdown; decree never changes it. A message has one of two shapes: a message that starts a run of a machine (`machine`, with `params`), or a reply to a run waiting in a `reply` state (`to` and `event`). Any other key is kept as written and ignored by decree. `decree check` checks the rest (M1-M3): that the machine exists, that `params` fit its `data`, and that a cron expression parses. Reference: docs/reference/messages.md.",
   "type": "object",
   "properties": {
     "id": {
@@ -62,7 +62,7 @@
     },
     "to": {
       "type": "string",
-      "description": "Makes this message a reply, not a new run: the wait id (<run id>.w<seq>) of a run paused in a `person` state, or the run id meaning its current wait. `decree event` writes replies.",
+      "description": "Makes this message a reply, not a new run: the wait id (<run id>.w<seq>) of a run paused in a `reply` state, or the run id meaning its current wait. `decree event` writes replies.",
       "examples": ["20261001T143005Z-3fa9c1.w3"]
     },
     "event": {
@@ -86,7 +86,7 @@
     },
     {
       "title": "reply",
-      "description": "A reply to a run waiting in a `person` state: `to` and `event`. The body is an optional note for the run's later scripts.",
+      "description": "A reply to a run waiting in a `reply` state: `to` and `event`. The body is an optional note for the run's later scripts.",
       "required": ["to", "event"]
     }
   ],

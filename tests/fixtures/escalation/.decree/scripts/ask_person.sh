@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The ask script of every choose: person state (feature's review, deploy's
+# The notify script of every reply state (feature's review, deploy's
 # approval). decree only knows the run is waiting for one of the options; how
 # a person is asked is up to this script: chat, email, an issue, or a UI that
 # writes the reply message itself. Here it prints the commands; a real one

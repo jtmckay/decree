@@ -1,5 +1,5 @@
-name: step_person
-description: Build, ask a person inside a compound state, then ship.
+name: step_reply
+description: Build, wait for a reply inside a compound state, then ship.
 onentry: [root_entry]
 onexit: [root_exit]
 initial: build
@@ -14,9 +14,9 @@ states:
     states:
       approval:
         invoke:
-          person:
+          reply:
             question: Ship this build?
-            ask: ask_person
+            notify: ask_person
             timeout: 60s
         onentry: [approval_entry]
         onexit: [approval_exit]

@@ -14,7 +14,7 @@ decree is built from three blocks:
 - **Machines** are YAML statecharts that say *in what order*: states, what each state invokes, and which event leads where. They follow [W3C SCXML](https://www.w3.org/TR/scxml/), written in YAML, and contain no code and no paths.
 - **Scripts** are executables that do *one piece of work* and report one outcome. Bash by default.
 
-Decisions are states of their own, cheapest first: a deterministic `check`, then a `model` (a local classifier or an LLM), then a `person`. Everything else is deterministic, and every step is recorded in each run's `events.jsonl`.
+Decisions are states of their own, cheapest first: a deterministic `check`, then a `model` (a local classifier or an LLM), then a `reply` from a person. Everything else is deterministic, and every step is recorded in each run's `events.jsonl`.
 
 ```text
             decree emit
@@ -77,11 +77,11 @@ cat > .decree/scripts/greet.sh <<'EOF'
 #!/usr/bin/env bash
 echo "Hello from $DECREE_MACHINE: $(sed -n 's/^# //p' "$DECREE_MESSAGE" | head -n 1)"
 EOF
-cat > .decree/scripts/ask_person.sh <<'EOF'
+cat > .decree/scripts/notify_person.sh <<'EOF'
 #!/usr/bin/env bash
 echo "$DECREE_QUESTION Reply with: decree event $DECREE_WAIT_ID <event>"
 EOF
-chmod +x .decree/scripts/greet.sh .decree/scripts/ask_person.sh
+chmod +x .decree/scripts/greet.sh .decree/scripts/notify_person.sh
 ```
 
 **4. Write a machine.** It names scripts, never paths: `greet` resolves to `scripts/hello/greet*`, else `scripts/greet*`. Editors that read SchemaStore apply the machine schema by path, so they complete keys and underline mistakes ([editors](docs/editors.md)).
@@ -97,9 +97,9 @@ states:
     transitions: { done: approval }
   approval:
     invoke:
-      person:
+      reply:
         question: Approve the greeting?
-        ask: ask_person
+        notify: notify_person
     transitions:
       approve: { target: done, description: Keep it. }
       reject:  { target: rejected, description: Throw it away. }
@@ -195,9 +195,9 @@ states:
     transitions: { done: approval }
   approval:
     invoke:
-      person:
+      reply:
         question: Ship it?
-        ask: ask_person
+        notify: notify_person
     transitions:
       approve: { target: ship, description: Ship this build. }
       reject:  { target: rejected, description: Do not ship. }
@@ -217,7 +217,7 @@ Every state does one thing: it invokes a function, and the function's result is 
 | `<script>`, or `script: { name: <script>, attempts: 2, timeout: 10m }` | Runs the script, re-running it up to `attempts` times and stopping it after `timeout` (a [duration](docs/reference/machines.md#durations): `90s`, `10m`, `12h`, `7d`). | `done`, `error`, or the event it writes to `$DECREE_EVENT_FILE` |
 | `check: <condition>` | A deterministic condition over a state's output, `data`, `visits` or a model's confidence, such as `check: { visits: fix, less_than: 3 }`. | `true`, `false` |
 | `model: { question: ..., output: <state> }` | A router machine asks a model to pick one of the state's transitions, with a confidence, given the `output` state's output and the message body. Below `min_confidence` the event is `unsure`. | the transition names, `unsure` |
-| `person: { question: ..., ask: <script> }` | The `ask` script tells someone; the run pauses until a reply arrives. | the transition names, `error` on `timeout` |
+| `reply: { question: ..., notify: <script> }` | The `notify` script tells someone (a person, a UI, a program); the run pauses until a reply arrives. | the transition names, `error` on `timeout` |
 | `machine: <name>`, or `machine: { name: <name>, params: {...} }` | Runs another machine as a child run. | the child's final state (`failed` as `error`) |
 
 Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, or the whole run at the root), `data` (typed values set from a message's `params`), `emits` (machines a state's scripts may `decree emit` to), compound states (`initial` plus `states`, with transitions that bubble up) and `final`.

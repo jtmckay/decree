@@ -7,9 +7,9 @@ Machine: [machines/deploy.yml](../machines/deploy.yml)
 ```mermaid
 stateDiagram-v2
     [*] --> build
-    approval --> ship: approve (person)
+    approval --> ship: approve (reply)
     approval --> failed: error (implicit)
-    approval --> rejected: reject (person)
+    approval --> rejected: reject (reply)
     build --> approval: done
     build --> failed: error (implicit)
     ship --> done: done
@@ -18,6 +18,6 @@ stateDiagram-v2
     failed --> [*]
     rejected --> [*]
     note right of approval
-        person: ask_person
+        reply: ask_person
     end note
 ```

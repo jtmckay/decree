@@ -5,8 +5,8 @@
 //!
 //! Interpreted here: the whole SCXML subset (docs/reference/machines.md). Transitions on compound states, with
 //! events bubbling from the atomic state outward; `type: internal`; final states at any
-//! level, a nested one raising `done.state.<parent>`; `person`, which runs its
-//! `ask` script, appends `waiting` and stops until a `received` event continues the run;
+//! level, a nested one raising `done.state.<parent>`; `reply`, which runs its
+//! `notify` script, appends `waiting` and stops until a `received` event continues the run;
 //! and child runs (docs/reference/runs.md, Sub-machines): a `machine` invoke, and the router machine of
 //! a `model` invoke. Replies and timeouts are delivered by `reply`.
 //!
@@ -138,7 +138,7 @@ pub enum Outcome {
     /// SIGINT or SIGTERM stopped a script in this state; an `interrupted` event was
     /// appended (docs/reference/messages.md, Stopping).
     Interrupted(String),
-    /// The run entered this `person` state, its `ask` script ran, and a `waiting`
+    /// The run entered this `reply` state, its `notify` script ran, and a `waiting`
     /// event was appended. A reply must name `wait_id` (docs/reference/messages.md, Replies).
     Waiting { state: String, wait_id: String },
     /// The run waits in this `machine` or `model` state for child run `child`, which
@@ -243,7 +243,7 @@ impl<'a> Interpreter<'a> {
     /// last event is a `transition` with `source: "retry"`), root `onentry` and the
     /// `onentry` of every ancestor of the state and of the state itself run again, then
     /// its invoke. Otherwise the last event is `received`, or `waiting` for a child run
-    /// that has finished: take the event's transition at step 4, with `source: "person"`
+    /// that has finished: take the event's transition at step 4, with `source: "reply"`
     /// after a `decision` event for a reply, `source: "timeout"`, or `source: "machine"` for
     /// a child's final state; a finished router run is validated as docs/reference/runs.md, Choose:
     /// model says. Nothing is re-run then, because the run only paused.
@@ -382,10 +382,10 @@ impl<'a> Interpreter<'a> {
             }
             return self.step_from(s, Some(Decision::new(&event, "machine", None)));
         }
-        if !matches!(invoke, Some(Invoke::Person(_))) {
-            return Err(not_received("its current state is not a `person` state"));
+        if !matches!(invoke, Some(Invoke::Reply(_))) {
+            return Err(not_received("its current state is not a `reply` state"));
         }
-        let decision = self.person_received(s, &events, &event)?;
+        let decision = self.reply_received(s, &events, &event)?;
         self.step_from(s, Some(decision))
     }
 
@@ -492,7 +492,7 @@ impl<'a> Interpreter<'a> {
             }
             Some(Invoke::Check(check)) => self.check(s, check).map(Invoked::Event),
             Some(Invoke::Model(c)) => self.ask_model(s, c),
-            Some(Invoke::Person(c)) => self.ask(s, c),
+            Some(Invoke::Reply(c)) => self.notify(s, c),
             Some(Invoke::Machine(invoke)) => self.invoke_machine(s, invoke),
         }
     }

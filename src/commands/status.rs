@@ -659,7 +659,7 @@ fn event_detail(kind: &str, e: &Event) -> String {
                     }
                     s.push(')');
                 }
-                "person" => s.push_str(&format!(" (reply {})", f("reply"))),
+                "reply" => s.push_str(&format!(" (reply {})", f("reply"))),
                 _ => {}
             }
             s

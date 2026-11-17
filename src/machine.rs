@@ -20,7 +20,7 @@ pub const MACHINES_DIR: &str = "machines";
 /// Root-level final state an unhandled `error` goes to (V5).
 pub const FAILED: &str = "failed";
 
-/// Events a `model` or `person` state handles beside its options (docs/reference/machines.md, Choices).
+/// Events a `model` or `reply` state handles beside its options (docs/reference/machines.md, Choices).
 const NOT_OPTIONS: [&str; 2] = ["unsure", "error"];
 
 /// A machine file: one SCXML document (`<scxml>`), written as YAML.
@@ -95,8 +95,8 @@ pub enum Invoke {
     Check(Box<Condition>),
     /// `decree:model`
     Model(ModelInvoke),
-    /// `decree:person`
-    Person(PersonInvoke),
+    /// `decree:reply`
+    Reply(ReplyInvoke),
     /// SCXML's own type: a child state machine.
     Machine(MachineInvoke),
 }
@@ -205,13 +205,13 @@ pub struct ModelInvoke {
     pub output: Option<String>,
 }
 
-/// `{ person: { question, ask, timeout? } }`. `question` and `ask` are optional here so
+/// `{ reply: { question, notify, timeout? } }`. `question` and `notify` are optional here so
 /// that V8 and V12, not the parser, report them missing.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PersonInvoke {
+pub struct ReplyInvoke {
     pub question: Option<String>,
-    pub ask: Option<String>,
+    pub notify: Option<String>,
     /// A duration (`crate::duration`).
     #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
     pub timeout: Option<Duration>,
@@ -227,7 +227,7 @@ pub struct MachineInvoke {
 }
 
 /// The kinds `invoke` names, in the order the reference lists them.
-const INVOKE_KINDS: &str = "`script`, `check`, `model`, `person` or `machine`";
+const INVOKE_KINDS: &str = "`script`, `check`, `model`, `reply` or `machine`";
 
 /// A `script` or `machine` invoke's value: a bare name is short for `{ name: <name> }`.
 fn named<T: serde::de::DeserializeOwned>(value: serde_norway::Value) -> Result<T, String> {
@@ -269,8 +269,8 @@ impl<'de> Deserialize<'de> for Invoke {
             "model" => serde_norway::from_value(value)
                 .map(Invoke::Model)
                 .map_err(|e| e.to_string()),
-            "person" => serde_norway::from_value(value)
-                .map(Invoke::Person)
+            "reply" => serde_norway::from_value(value)
+                .map(Invoke::Reply)
                 .map_err(|e| e.to_string()),
             "machine" => named(value).map(Invoke::Machine),
             other => Err(format!(
@@ -299,11 +299,11 @@ impl Invoke {
         }
     }
 
-    /// The `question` of a `model` or `person` invoke: the kind's name and the question.
+    /// The `question` of a `model` or `reply` invoke: the kind's name and the question.
     pub fn question(&self) -> Option<(&'static str, Option<&str>)> {
         match self {
             Invoke::Model(m) => Some(("model", m.question.as_deref())),
-            Invoke::Person(p) => Some(("person", p.question.as_deref())),
+            Invoke::Reply(p) => Some(("reply", p.question.as_deref())),
             _ => None,
         }
     }
@@ -580,7 +580,7 @@ impl std::fmt::Display for ParseError {
 const UNSUPPORTED_STATE_KEYS: [(&str, &str); 14] = [
     ("router", "router on a state is not supported: make the decision a state with invoke: { model: { question: ... } }"),
     ("default", "default on a state is not supported: a model state takes unsure, or error, instead"),
-    ("timeout_s", "timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d })"),
+    ("timeout_s", "timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or reply: { ..., timeout: <n>s|m|h|d })"),
     ("cond", "cond is not supported: make the decision a state with invoke: { check: ... }"),
     ("parallel", "SCXML <parallel> is not supported: a run is always in exactly one atomic state"),
     ("history", "SCXML <history> is not supported: a run is always in exactly one atomic state"),
@@ -595,13 +595,14 @@ const UNSUPPORTED_STATE_KEYS: [(&str, &str); 14] = [
 ];
 
 /// Old `invoke` shapes and their replacements (V19): `choose`, `input`, `{ machine, params }`,
-/// a bare `matches` and `timeout_s`. Nothing old is read: each fails with the shape to write instead.
-const CHOOSE: &str = "choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { person: { question: ..., ask: <script> } } for a person";
+/// a bare `matches`, `timeout_s` and `person` (with its `ask`). Nothing old is read: each fails with the shape to write instead.
+const CHOOSE: &str = "choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { reply: { question: ..., notify: <script> } } to wait for a reply";
 const INPUT: &str = "input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } })";
 const MACHINE_PARAMS: &str = "{ machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } }";
 const BARE_MATCHES: &str =
     "a bare matches is not supported: name the state it reads, { output: <state>, matches: ... }";
 const TIMEOUT_S: &str = "timeout_s is not supported: write timeout: <n>s|m|h|d";
+const PERSON: &str = "person: is now reply: (and its ask: is notify:)";
 
 /// What to write instead of the old retry key, whose value is `value` (V19): `attempts` with the
 /// same number, or a list.
@@ -634,6 +635,10 @@ fn old_invoke_shape(invoke: &serde_norway::Value) -> Option<&'static str> {
     if has("choose") {
         return Some(CHOOSE);
     }
+    let reply_ask = invoke.get("reply").is_some_and(|r| r.get("ask").is_some());
+    if has("person") || reply_ask {
+        return Some(PERSON);
+    }
     let model_input = invoke
         .get("model")
         .is_some_and(|m| m.get("input").is_some());
@@ -643,7 +648,7 @@ fn old_invoke_shape(invoke: &serde_norway::Value) -> Option<&'static str> {
     if has("machine") && map.len() > 1 {
         return Some(MACHINE_PARAMS);
     }
-    let old_timeout = ["script", "person"].iter().any(|kind| {
+    let old_timeout = ["script", "reply"].iter().any(|kind| {
         invoke
             .get(kind)
             .is_some_and(|k| k.get("timeout_s").is_some())
@@ -890,7 +895,7 @@ pub(crate) fn is_event_name(s: &str) -> bool {
         })
 }
 
-/// Events an invoke may not name and a `model` or `person` option may not be (docs/reference/machines.md, Rules).
+/// Events an invoke may not name and a `model` or `reply` option may not be (docs/reference/machines.md, Rules).
 pub fn is_reserved_event(event: &str) -> bool {
     matches!(event, "done" | "error" | "unsure")
         || event.starts_with("done.")
@@ -988,7 +993,7 @@ impl LoadedMachine {
         Some(cur)
     }
 
-    /// The options of `model` or `person` state `i` (docs/reference/machines.md, Choices): its own transitions except
+    /// The options of `model` or `reply` state `i` (docs/reference/machines.md, Choices): its own transitions except
     /// `unsure` and `error`, in name order.
     pub fn options(&self, i: usize) -> impl Iterator<Item = &Edge> {
         self.nodes[i]

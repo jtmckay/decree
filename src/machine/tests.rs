@@ -5,7 +5,7 @@ use std::fs;
 use tempfile::TempDir;
 
 /// `examples/project`'s `hello`, `develop` and `deploy` (as docs/reference/machines.md shows them), and from `tests/fixtures/feature/`: `ship`, which
-/// invokes `feature` and `deploy`, `feature` (nesting, a check, a model, a person, `data`,
+/// invokes `feature` and `deploy`, `feature` (nesting, a check, a model, a reply, `data`,
 /// `emits`, `onentry` and `onexit`) and the router `feature` names by default.
 const EXAMPLES: [&str; 6] = ["hello", "develop", "deploy", "ship", "feature", "router"];
 
@@ -95,11 +95,11 @@ fn reference_examples_load() {
 
     let deploy = &machines["deploy"];
     let approval = &deploy.nodes[deploy.find("approval").unwrap()];
-    let Some(Invoke::Person(c)) = &approval.invoke else {
+    let Some(Invoke::Reply(c)) = &approval.invoke else {
         panic!("{:?}", approval.invoke);
     };
     assert_eq!(c.question.as_deref(), Some("Ship this build?"));
-    assert_eq!(c.ask.as_deref(), Some("ask_person"));
+    assert_eq!(c.notify.as_deref(), Some("notify_person"));
     assert_eq!(c.timeout, Some(Duration::from_secs(86400)));
 
     let ship = &machines["ship"];
@@ -273,7 +273,7 @@ fn invoke_object_without_a_type_key() {
     let text = fixture("hello").replace("invoke: greet ", "invoke: { run: greet }");
     let err = load_err("hello", &text);
     assert!(
-        err.contains("greet: unknown invoke kind `run`: `invoke` names one of `script`, `check`, `model`, `person` or `machine`"),
+        err.contains("greet: unknown invoke kind `run`: `invoke` names one of `script`, `check`, `model`, `reply` or `machine`"),
         "{err}"
     );
     assert!(err.ends_with("(V19)"), "{err}");
@@ -283,7 +283,7 @@ fn invoke_object_without_a_type_key() {
     );
     let err = load_err("hello", &text);
     assert!(
-        err.contains("greet: `invoke` is a script name or a map with exactly one key, which names the kind: `script`, `check`, `model`, `person` or `machine`"),
+        err.contains("greet: `invoke` is a script name or a map with exactly one key, which names the kind: `script`, `check`, `model`, `reply` or `machine`"),
         "{err}"
     );
 }
@@ -564,16 +564,16 @@ fn check_events_true_and_false_are_written_without_quotes() {
 }
 
 #[test]
-fn person_needs_a_question_and_described_options() {
+fn reply_needs_a_question_and_described_options() {
     let text = format!(
-        "{HEAD}  a:\n    invoke:\n      person: {{ ask: tell }}\n    transitions:\n      \
+        "{HEAD}  a:\n    invoke:\n      reply: {{ notify: tell }}\n    transitions:\n      \
          ship: {{ target: done, description: Ship it. }}\n      stop: done\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     assert_eq!(
         problems(&text),
         [
-            "a: a `person` state needs a `question`: what is being decided (V8)",
+            "a: a `reply` state needs a `question`: what is being decided (V8)",
             "a: option `stop` needs a `description`: write it as `stop: { target: done, description: ... }` (V8)",
         ]
     );
@@ -810,7 +810,7 @@ fn internal_only_from_a_compound_state_to_a_descendant() {
 fn event_names_and_reserved_options() {
     let text = format!(
         "{HEAD}  a: {{ invoke: x, transitions: {{ Done: b, done: b }} }}\n  \
-         b:\n    invoke:\n      person: {{ question: Go?, ask: tell }}\n    transitions:\n      \
+         b:\n    invoke:\n      reply: {{ question: Go?, notify: tell }}\n    transitions:\n      \
          go: {{ target: done, description: Go. }}\n      done.later: {{ target: done, description: Later. }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
@@ -836,10 +836,28 @@ fn old_shape(state: &str) -> String {
 }
 
 #[test]
-fn choose_names_model_and_person() {
+fn choose_names_model_and_reply() {
     assert_eq!(
         old_shape("    invoke: { choose: model, question: Go? }\n    transitions: { go: done, stop: done }\n"),
-        "a: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { person: { question: ..., ask: <script> } } for a person (V19)"
+        "a: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { reply: { question: ..., notify: <script> } } to wait for a reply (V19)"
+    );
+}
+
+#[test]
+fn person_names_reply_and_notify() {
+    let message = "a: person: is now reply: (and its ask: is notify:) (V19)";
+    assert_eq!(
+        old_shape("    invoke:\n      person: { question: Go?, ask: tell }\n    transitions: { go: done, stop: done }\n"),
+        message
+    );
+    assert_eq!(
+        old_shape("    invoke:\n      person: { question: Go?, ask: tell, timeout_s: 60 }\n    transitions: { go: done, stop: done }\n"),
+        message
+    );
+    // Half renamed: `reply:` that still names its script with `ask:`.
+    assert_eq!(
+        old_shape("    invoke:\n      reply: { question: Go?, ask: tell }\n    transitions: { go: done, stop: done }\n"),
+        message
     );
 }
 
@@ -872,7 +890,7 @@ fn state_level_script_settings_name_the_script_invoke() {
     );
     assert_eq!(
         old_shape("    invoke: s\n    timeout_s: 60\n    transitions: { done: done }\n"),
-        "a: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or person: { ..., timeout: <n>s|m|h|d }) (V19)"
+        "a: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or reply: { ..., timeout: <n>s|m|h|d }) (V19)"
     );
 }
 
@@ -1078,7 +1096,7 @@ fn param_problems_name_the_param_the_value_and_the_allowed_values() {
 fn script_problems_name_the_state_and_relative_path() {
     let text = format!(
         "{HEAD}  a: {{ invoke: x, transitions: {{ done: b }} }}\n  \
-         b:\n    invoke:\n      person: {{ question: Go? }}\n    transitions:\n      \
+         b:\n    invoke:\n      reply: {{ question: Go? }}\n    transitions:\n      \
          go: {{ target: done, description: Go. }}\n      stop: {{ target: done, description: Stop. }}\n  \
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
@@ -1097,7 +1115,7 @@ fn script_problems_name_the_state_and_relative_path() {
             Problem {
                 at: "b".into(),
                 message:
-                    "a `person` state needs an `ask` script, which tells someone how to reply (V12)"
+                    "a `reply` state needs a `notify` script, which tells someone or something how to reply (V12)"
                         .into(),
             },
             Problem {

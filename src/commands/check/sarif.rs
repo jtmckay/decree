@@ -52,7 +52,7 @@ pub(crate) const RULES: [(&str, &str); 28] = [
     ),
     (
         "V8",
-        "Decision and sub-machine states cover their events: a `check` state handles `true` and `false` (one still written with `yes` and `no` is told to rename them); a `model` state with `min_confidence` handles `unsure`; a `model` or `person` state has a `question` and at least two options, each with a `description`; a `machine` state handles every root final state of the child except `failed`.",
+        "Decision and sub-machine states cover their events: a `check` state handles `true` and `false` (one still written with `yes` and `no` is told to rename them); a `model` state with `min_confidence` handles `unsure`; a `model` or `reply` state has a `question` and at least two options, each with a `description`; a `machine` state handles every root final state of the child except `failed`.",
     ),
     (
         "V9",
@@ -68,7 +68,7 @@ pub(crate) const RULES: [(&str, &str); 28] = [
     ),
     (
         "V12",
-        "Every script name (`script`, `ask`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file ([Resolution](scripts.md#resolution)); a `person` has an `ask` script.",
+        "Every script name (`script`, `notify`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file ([Resolution](scripts.md#resolution)); a `reply` has a `notify` script.",
     ),
     (
         "V13",
@@ -84,7 +84,7 @@ pub(crate) const RULES: [(&str, &str); 28] = [
     ),
     (
         "V16",
-        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `person`), which the parser enforces with V19.",
+        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `reply`), which the parser enforces with V19.",
     ),
     (
         "V17",
@@ -92,11 +92,11 @@ pub(crate) const RULES: [(&str, &str); 28] = [
     ),
     (
         "V18",
-        "Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-named event or a `model` or `person` option.",
+        "Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-named event or a `model` or `reply` option.",
     ),
     (
         "V19",
-        "Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `person:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` anywhere (`attempts: <n>` or `attempts: [<value>, …]`, inside `invoke: { script: … }`), `timeout_s` on a state (inside `invoke: { script: … }`), `timeout_s` in an invoke (`timeout: <n>s|m|h|d`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`).",
+        "Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `reply:`), `person:` (`reply:`, and its `ask:` is `notify:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` anywhere (`attempts: <n>` or `attempts: [<value>, …]`, inside `invoke: { script: … }`), `timeout_s` on a state (inside `invoke: { script: … }`), `timeout_s` in an invoke (`timeout: <n>s|m|h|d`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`).",
     ),
     (
         "V20",

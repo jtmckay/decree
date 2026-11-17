@@ -8,9 +8,9 @@ Machine: [machines/file_document.yml](../machines/file_document.yml)
 stateDiagram-v2
     [*] --> by_name
     ask_person --> set_aside: error
-    ask_person --> file_invoice: invoice (person)
-    ask_person --> file_other: other (person)
-    ask_person --> file_receipt: receipt (person)
+    ask_person --> file_invoice: invoice (reply)
+    ask_person --> file_other: other (reply)
+    ask_person --> file_receipt: receipt (reply)
     big_model --> failed: error (implicit)
     big_model --> file_invoice: invoice (model)
     big_model --> file_other: other (model)
@@ -39,7 +39,7 @@ stateDiagram-v2
     failed --> [*]
     set_aside --> [*]
     note right of ask_person
-        person: ask_person
+        reply: ask_person
     end note
     note right of big_model
         model: router, min_confidence 0.7

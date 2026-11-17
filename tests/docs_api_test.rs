@@ -720,8 +720,10 @@ fn collect_needs(states: &serde_norway::Mapping, needs: &mut Needs) {
                 if let Some(s) = invoke.get("script") {
                     needs.scripts.insert(name_of(s));
                 }
-                if let Some(p) = invoke.get("person") {
-                    needs.scripts.insert(p["ask"].as_str().unwrap().to_string());
+                if let Some(p) = invoke.get("reply") {
+                    needs
+                        .scripts
+                        .insert(p["notify"].as_str().unwrap().to_string());
                 }
                 if let Some(m) = invoke.get("model") {
                     let router = m.get("router").and_then(|r| r.as_str()).unwrap_or("router");

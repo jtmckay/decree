@@ -8,9 +8,9 @@ states:
     transitions: { done: approval }
   approval:                        # a person picks one option; the run pauses for the reply
     invoke:
-      person:
+      reply:
         question: Ship this build?
-        ask: ask_person
+        notify: ask_person
         timeout: 1d
     transitions:
       approve: { target: ship, description: Ship this build. }

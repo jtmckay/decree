@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/attention.schema.json",
   "title": "decree attention file frontmatter",
-  "description": "The YAML frontmatter of a file decree writes in .decree/attention/, in one of two shapes by `kind`. `run`: .decree/attention/<id>.md, written when run <id> needs a person: it failed, was interrupted, waits in a `person` state, or is a migration waiting for an interrupted child run. `manual-stop`: .decree/attention/manual-stop.md, written by `decree stop`, which holds the queue until a person deletes it. A markdown body follows: what happened and the exact command that continues the run, or how to resume. The files are read-only: answer with `decree event` or a reply, continue with `decree process --retry`. A `.md` file in the folder whose frontmatter is missing or does not match this schema holds the queue as if it had `holds: true`. Reference: docs/reference/cli.md, Attention.",
+  "description": "The YAML frontmatter of a file decree writes in .decree/attention/, in one of two shapes by `kind`. `run`: .decree/attention/<id>.md, written when run <id> needs a person: it failed, was interrupted, waits in a `reply` state, or is a migration waiting for an interrupted child run. `manual-stop`: .decree/attention/manual-stop.md, written by `decree stop`, which holds the queue until a person deletes it. A markdown body follows: what happened and the exact command that continues the run, or how to resume. The files are read-only: answer with `decree event` or a reply, continue with `decree process --retry`. A `.md` file in the folder whose frontmatter is missing or does not match this schema holds the queue as if it had `holds: true`. Reference: docs/reference/cli.md, Attention.",
   "oneOf": [
     {
       "$ref": "#/$defs/run"
@@ -51,7 +51,7 @@
             "interrupted",
             "waiting"
           ],
-          "description": "`failed`: finished in `failed`. `interrupted`: stopped by a signal, or by a crash found later from a stale lock. `waiting`: waits in a `person` state for a reply, or is a migration waiting for an interrupted child run, which the body names."
+          "description": "`failed`: finished in `failed`. `interrupted`: stopped by a signal, or by a crash found later from a stale lock. `waiting`: waits in a `reply` state for a reply, or is a migration waiting for an interrupted child run, which the body names."
         },
         "state": {
           "type": "string",

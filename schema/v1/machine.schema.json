@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json",
   "title": "decree machine",
-  "description": "A decree machine: a YAML statechart in .decree/machines/<name>.yml, one W3C SCXML document written as YAML. It holds only structure: states, what each state invokes, and transitions from events to states; never code or paths. Every state invokes one function (a script, a check, a model, a person or another machine), and the function's result is an event that picks the next state. This schema checks the shape: keys, types, required keys, each invoke kind and condition, name patterns and ranges. `decree check` checks the rest (V1-V21): that names resolve, targets exist, every state is reachable, and no machine invokes itself. Reference: docs/reference/machines.md.",
+  "description": "A decree machine: a YAML statechart in .decree/machines/<name>.yml, one W3C SCXML document written as YAML. It holds only structure: states, what each state invokes, and transitions from events to states; never code or paths. Every state invokes one function (a script, a check, a model, a reply or another machine), and the function's result is an event that picks the next state. This schema checks the shape: keys, types, required keys, each invoke kind and condition, name patterns and ranges. `decree check` checks the rest (V1-V21): that names resolve, targets exist, every state is reachable, and no machine invokes itself. Reference: docs/reference/machines.md.",
   "type": "object",
   "required": ["name", "description", "initial", "states"],
   "additionalProperties": false,
@@ -115,7 +115,7 @@
     "question": {
       "type": "string",
       "pattern": "\\S",
-      "description": "What is being decided, written to stand alone: the model or the person sees exactly this question and the options with their descriptions (V8). Write it in block style, one key per line."
+      "description": "What is being decided, written to stand alone: the model, or whoever replies, sees exactly this question and the options with their descriptions (V8). Write it in block style, one key per line."
     },
     "dataSpec": {
       "type": "object",
@@ -188,7 +188,7 @@
         },
         "description": {
           "type": "string",
-          "description": "Extension: what the state is for. Shown as a `person` state's question when it waits, and in graphs."
+          "description": "Extension: what the state is for. Shown as a `reply` state's question when it waits, and in graphs."
         },
         "invoke": { "$ref": "#/$defs/invoke" },
         "onentry": {
@@ -238,7 +238,7 @@
       }
     },
     "atomicState": {
-      "description": "An atomic state: no `initial` without `states` (V6), and no `type: internal` transition, which only a compound state may have (V17). A `check` state's events are `true` and `false`, never `yes` and `no` (V8). A `model` or `person` state needs at least two options, each with a `description` (V8), none of them a reserved event (V18).",
+      "description": "An atomic state: no `initial` without `states` (V6), and no `type: internal` transition, which only a compound state may have (V17). A `check` state's events are `true` and `false`, never `yes` and `no` (V8). A `model` or `reply` state needs at least two options, each with a `description` (V8), none of them a reserved event (V18).",
       "properties": {
         "initial": false,
         "transitions": {
@@ -267,7 +267,7 @@
             "properties": {
               "invoke": {
                 "type": "object",
-                "anyOf": [{ "required": ["model"] }, { "required": ["person"] }]
+                "anyOf": [{ "required": ["model"] }, { "required": ["reply"] }]
               }
             }
           },
@@ -279,7 +279,7 @@
       ]
     },
     "invoke": {
-      "description": "SCXML <invoke>: the state's function. Its result is one event that picks the next transition. Either a script name (`invoke: build` is short for `invoke: { script: build }`), or a map with exactly one key naming the kind: `script`, `check`, `model`, `person` or `machine`. A state with no invoke and a `done` transition passes straight through. Not allowed on compound (V6) or final (V7) states.",
+      "description": "SCXML <invoke>: the state's function. Its result is one event that picks the next transition. Either a script name (`invoke: build` is short for `invoke: { script: build }`), or a map with exactly one key naming the kind: `script`, `check`, `model`, `reply` or `machine`. A state with no invoke and a `done` transition passes straight through. Not allowed on compound (V6) or final (V7) states.",
       "anyOf": [
         {
           "$ref": "#/$defs/scriptName",
@@ -296,7 +296,7 @@
             "script": { "$ref": "#/$defs/scriptInvoke" },
             "check": { "$ref": "#/$defs/condition" },
             "model": { "$ref": "#/$defs/modelInvoke" },
-            "person": { "$ref": "#/$defs/personInvoke" },
+            "reply": { "$ref": "#/$defs/replyInvoke" },
             "machine": { "$ref": "#/$defs/machineInvoke" }
           }
         }
@@ -306,7 +306,7 @@
         { "script": { "name": "implement", "attempts": 2 } },
         { "check": { "visits": "implement", "less_than": { "data": "max_rounds" } } },
         { "model": { "question": "Should we implement again or split the work?", "min_confidence": 0.8, "output": "verify" } },
-        { "person": { "question": "Ship this build?", "ask": "ask_person", "timeout": "1d" } },
+        { "reply": { "question": "Ship this build?", "notify": "notify_person", "timeout": "1d" } },
         { "machine": "deploy" }
       ]
     },
@@ -375,23 +375,23 @@
       },
       "examples": [{ "question": "Should we implement again or split the work?", "min_confidence": 0.8, "output": "verify" }]
     },
-    "personInvoke": {
+    "replyInvoke": {
       "type": "object",
-      "description": "SCXML type decree:person. The `ask` script tells someone; the run pauses until a reply (`decree event <wait id> <option>`) picks one of this state's transitions (its options: every transition except `unsure` and `error`, each with a `description`). Events: the chosen option; `error` on timeout.",
-      "required": ["question", "ask"],
+      "description": "SCXML type decree:reply (BPMN receive task; the AWS Step Functions callback pattern, with the wait id as the task token). The `notify` script tells someone or something (a person, a UI, a program) that a reply is wanted; the run pauses until a reply (`decree event <wait id> <option>`) picks one of this state's transitions (its options: every transition except `unsure` and `error`, each with a `description`). Events: the chosen option; `error` on timeout.",
+      "required": ["question", "notify"],
       "additionalProperties": false,
       "properties": {
         "question": { "$ref": "#/$defs/question" },
-        "ask": {
+        "notify": {
           "$ref": "#/$defs/scriptName",
-          "description": "The script that tells someone a decision is waiting and how to reply. It gets the wait id and the options in its environment (V12)."
+          "description": "The script that tells someone or something that a reply is wanted and how to send it. It gets the wait id and the options in its environment (V12)."
         },
         "timeout": {
           "$ref": "#/$defs/duration",
           "description": "How long to wait for a reply; after that the event is `error`. A duration (V16). Default: wait forever."
         }
       },
-      "examples": [{ "question": "Tests still fail. What next?", "ask": "ask_person", "timeout": "2d" }]
+      "examples": [{ "question": "Tests still fail. What next?", "notify": "notify_person", "timeout": "2d" }]
     },
     "machineInvoke": {
       "description": "SCXML's own invoke type: run another machine as a child run. Its event is the id of the root-level final state the child reached (`done`, `rejected`, ...), and `failed` becomes `error`; this state must handle each of them (V8). A bare name is short for `{ name: <name> }`. A machine never invokes itself, directly or through others (V20).",
@@ -558,7 +558,7 @@
             },
             "description": {
               "type": "string",
-              "description": "What choosing this option means. Required on each option of a `model` or `person` state (V8): the model or person sees it. Write it in block style."
+              "description": "What choosing this option means. Required on each option of a `model` or `reply` state (V8): the model, or whoever replies, sees it. Write it in block style."
             },
             "type": {
               "const": "internal",
@@ -570,7 +570,7 @@
       "examples": ["verify", { "target": "implement", "description": "The failures look fixable; implement again." }]
     },
     "options": {
-      "description": "A `model` or `person` state's transitions. Its options are every transition except `unsure` and `error`: at least two, each with a `description`, none named `done` or starting with `done.` or `error.` (V8, V18).",
+      "description": "A `model` or `reply` state's transitions. Its options are every transition except `unsure` and `error`: at least two, each with a `description`, none named `done` or starting with `done.` or `error.` (V8, V18).",
       "properties": {
         "unsure": true,
         "error": true,
@@ -589,7 +589,7 @@
     },
     "option": {
       "type": "object",
-      "description": "An option of a `model` or `person` state, in the long form with a `description` (V8).",
+      "description": "An option of a `model` or `reply` state, in the long form with a `description` (V8).",
       "required": ["target", "description"],
       "properties": {
         "description": { "pattern": "\\S" }

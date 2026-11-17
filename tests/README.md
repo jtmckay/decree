@@ -55,7 +55,7 @@ Case {
 ```
 
 - `files` are written under `.decree/`: machines, and any `migrations/`, `inbox/`, `cron/` or `processed.md`.
-- Every script a machine names (`invoke`, `script`, `ask`, `onentry`, `onexit`) gets an executable stub at `scripts/<name>`. List a script in `scripts` to change that: `Script::Missing("setup")`, `Script::At("m/snapshot.sh")` or `Script::NotExecutable("snapshot.sh")`.
+- Every script a machine names (`invoke`, `script`, `notify`, `onentry`, `onexit`) gets an executable stub at `scripts/<name>`. List a script in `scripts` to change that: `Script::Missing("setup")`, `Script::At("m/snapshot.sh")` or `Script::NotExecutable("snapshot.sh")`.
 - `expected` is the exact stdout of `decree check`, or `PASSES` for exit 0 and no output. Each line of a failing case must end with `(<rule>)`.
 - A new rule also needs a line in `RULES` and in `rule_tests!`; `every_rule_has_a_passing_and_a_failing_case` fails until it has both.
 - `schemas_agree_with_decree_check_on_every_case` validates the case's machines and messages against the JSON Schemas: a passing case must validate, and every file a failing case reports must be rejected, unless the case's file is in `CHECK_ONLY` with the reason only `decree check` catches it.

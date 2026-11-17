@@ -28,7 +28,7 @@ examples/project/.decree/
     machines/develop.yml      control flow, no code
     scripts/develop/          the work: implement.sh picks the model from $DECREE_ATTEMPT_VALUE and asks it
                               through ai.sh (`ai`; AI_CLI picks the backend); test.sh
-    scripts/deploy/           build.sh, ship.sh, and ask_person.sh, which tells a person the options of a person state
+    scripts/deploy/           build.sh, ship.sh, and notify_person.sh, which tells a person the options of a reply state
   migrations/  processed.md MESSAGES: ordered, run once; processed.md lists 01 as run
   inbox/                    MESSAGES: FIFO queue; here, a person's reply
   cron/nightly-audit.md     a message template that drops into inbox/ every night
@@ -58,7 +58,7 @@ states:
 ## The runs
 
 - [`runs/20261001T143005.000000Z-189ed2/`](.decree/runs/20261001T143005.000000Z-189ed2/events.jsonl), the run of migration `01-rate-limit-upload.md` on `develop`, finished `done`. `implement`'s `local` attempt failed (event 2, exit 1); decree ran the `claude` attempt in place (event 3, a `transition` with `source: "attempt"` and `attempt_value: "claude"`), which succeeded, and `test` passed.
-- [`runs/20261001T153012Z-7b4e2a/`](.decree/runs/20261001T153012Z-7b4e2a/events.jsonl), a `deploy` run from the inbox, is waiting in `approval` for a person. `ask_person.sh` ([`deploy`](.decree/plugins/deploy.md)'s) printed the commands that answer it ([its log](.decree/runs/20261001T153012Z-7b4e2a/0002-approval-ask_person.log)). The person ran `decree event 20261001T153012Z-7b4e2a.w3 approve -m "..."`, which wrote [`inbox/20261001T160301Z-9be210.md`](.decree/inbox/20261001T160301Z-9be210.md); the next `decree process` delivers it and the run goes on to `ship`.
+- [`runs/20261001T153012Z-7b4e2a/`](.decree/runs/20261001T153012Z-7b4e2a/events.jsonl), a `deploy` run from the inbox, is waiting in `approval` for a person. `ask_person.sh` ([`deploy`](.decree/plugins/deploy.md)'s) printed the commands that answer it ([its log](.decree/runs/20261001T153012Z-7b4e2a/0002-approval-notify_person.log)). The person ran `decree event 20261001T153012Z-7b4e2a.w3 approve -m "..."`, which wrote [`inbox/20261001T160301Z-9be210.md`](.decree/inbox/20261001T160301Z-9be210.md); the next `decree process` delivers it and the run goes on to `ship`.
 - [`runs/20261001T030000Z-c4e81b/`](.decree/runs/20261001T030000Z-c4e81b/events.jsonl), the nightly cron run on `develop`, was interrupted by Ctrl-C during `implement`. decree does not continue it on its own: `decree process --retry 20261001T030000Z-c4e81b` does.
 
 [Runs](../../docs/reference/runs.md) describes every event in these logs.
