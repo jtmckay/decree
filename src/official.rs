@@ -12,7 +12,7 @@ pub struct Official {
 }
 
 /// Every official plugin, by name.
-pub const OFFICIAL: [Official; 10] = [
+pub const OFFICIAL: [Official; 13] = [
     Official {
         name: "comfy",
         text: include_str!("../plugins/comfy.md"),
@@ -24,6 +24,18 @@ pub const OFFICIAL: [Official; 10] = [
     Official {
         name: "develop_by_size",
         text: include_str!("../plugins/develop_by_size.md"),
+    },
+    Official {
+        name: "develop_node",
+        text: include_str!("../plugins/develop_node.md"),
+    },
+    Official {
+        name: "develop_react",
+        text: include_str!("../plugins/develop_react.md"),
+    },
+    Official {
+        name: "develop_rust",
+        text: include_str!("../plugins/develop_rust.md"),
     },
     Official {
         name: "gliner_router",
@@ -162,12 +174,20 @@ mod tests {
             }
         }
         let carriers = |file: &str| -> Vec<&str> { copies[file].iter().map(|(n, _)| *n).collect() };
-        assert_eq!(carriers("commit.sh"), ["develop", "infra", "qa"]);
-        assert_eq!(carriers("keep.sh"), ["develop", "infra", "qa"]);
-        assert_eq!(carriers("clean_tree.sh"), ["develop", "infra", "qa"]);
+        let develops = ["develop", "develop_node", "develop_react", "develop_rust"];
+        let with_infra_qa = [&develops[..], &["infra", "qa"]].concat();
+        assert_eq!(carriers("commit.sh"), with_infra_qa);
+        assert_eq!(carriers("keep.sh"), with_infra_qa);
+        assert_eq!(carriers("clean_tree.sh"), with_infra_qa);
         assert_eq!(
             carriers("ai.sh"),
-            ["develop", "develop_by_size", "infra", "qa"]
+            [
+                &develops[..1],
+                &["develop_by_size"],
+                &develops[1..],
+                &["infra", "qa"]
+            ]
+            .concat()
         );
     }
 

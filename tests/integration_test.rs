@@ -61,10 +61,13 @@ fn test_init_creates_directory_structure() {
 }
 
 /// The official plugins `init` lists: every one, by name.
-const OFFICIAL: [&str; 10] = [
+const OFFICIAL: [&str; 13] = [
     "comfy",
     "develop",
     "develop_by_size",
+    "develop_node",
+    "develop_react",
+    "develop_rust",
     "gliner_router",
     "infra",
     "lease",

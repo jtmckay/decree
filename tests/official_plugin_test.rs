@@ -12,10 +12,13 @@ use tempfile::TempDir;
 #[path = "common/schema.rs"]
 mod schema;
 
-const OFFICIAL: [&str; 10] = [
+const OFFICIAL: [&str; 13] = [
     "comfy",
     "develop",
     "develop_by_size",
+    "develop_node",
+    "develop_react",
+    "develop_rust",
     "gliner_router",
     "infra",
     "lease",

@@ -40,6 +40,12 @@ decree plugin add develop    # develop, and infra, which it needs, into .decree/
 
 `init` never prompts and installs no plugin. Add only what the project needs; each plugin's
 file (`.decree/plugins/<name>.md`) says what it does, what it needs and how to use it.
+For a Rust, Node or React project, add the `develop` variant that fits instead of `develop`:
+`decree plugin add develop_rust` (or `develop_node`, `develop_react`). Each is `develop`'s
+machine under its own name, with a gate that already runs the ecosystem's standard checks,
+conventions its prompts follow, and its tools in `scripts/<variant>/requirements`; a project
+with two parts (a Rust API, a React front end) adds two and names one in each message. A
+project in another ecosystem starts from `develop` and fills in its gate.
 
 ## Rules
 
@@ -210,7 +216,8 @@ until fixed (the old machines keep running and the errors are printed).
 
 ## The official plugins
 
-A project may have added official plugins (`decree plugin list` marks them `added`): `develop`,
+A project may have added official plugins (`decree plugin list` marks them `added`): `develop`
+(or its variants `develop_rust`, `develop_node` and `develop_react`, which work as it does),
 `infra` and `qa` below, `router` (the default router), and `newsletter`, `comfy`,
 `develop_by_size`, `gliner_router`, `llm_router` and `lease`, each described in its plugin file. When one
 of the three below is there, start from it before writing a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run

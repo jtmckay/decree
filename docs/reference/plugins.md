@@ -80,6 +80,9 @@ decree is built with its official plugins: the decree repository's [`plugins/`](
 | Plugin | What it does | Needs |
 | --- | --- | --- |
 | [`develop`](../../plugins/develop.md) | Implements a message with an AI agent, runs the project's gate, has the agent fix a failing gate, then check the acceptance criteria; one commit per run. | `infra` (its `precheck` runs `infra`'s `run.sh check`) |
+| [`develop_rust`](../../plugins/develop_rust.md) | `develop` for a Rust project: its gate runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`, and its prompts follow Rust conventions ([D84](../decisions.md#d84-develop-variants-are-separate-machines)). | `infra` |
+| [`develop_node`](../../plugins/develop_node.md) | `develop` for a Node project: its gate installs with the lockfile's package manager (npm, pnpm or yarn) as CI does, then runs `lint`, `typecheck` and `test` where `package.json` defines them. | `infra` |
+| [`develop_react`](../../plugins/develop_react.md) | `develop` for a React project: `develop_node`'s gate, then `build`; its prompts ask for component tests with Testing Library. | `infra` |
 | [`infra`](../../plugins/infra.md) | Declares what the environment needs in `scripts/infra/requirements` and installs or checks it ([Declared environment](scripts.md#declared-environment)). | |
 | [`qa`](../../plugins/qa.md) | Attacks the project and hands each real bug to `develop` as a failing test. | `develop` |
 | [`router`](../../plugins/router.md) | The default router a `model` state with no `router:` asks ([The default router](runs.md#the-default-router)). | |
@@ -92,7 +95,9 @@ decree is built with its official plugins: the decree repository's [`plugins/`](
 
 Each one's body says, for someone new to decree, what it does, what it needs (services, tools, a cron file to write) and how to use it, and each one, added alone with its `needs` to an empty project, passes `decree check`. Every plugin carries every file its scripts use ([D77](../decisions.md#d77-a-machines-files-live-with-its-scripts)), so a file several use (`ai.sh`, `clean_tree.sh`, `commit.sh`, `keep.sh`) is a copy in each, kept identical by a test.
 
-The `ai.sh` of `develop`, `infra`, `qa` and `develop_by_size`, and `router`'s `ask.sh`, pick the AI CLI when they run, so no file names a backend: the run's `ai_cli` data, else `AI_CLI`, else the first of `claude`, `opencode` and `copilot` on `PATH` ([The AI helper](scripts.md#the-ai-helper)).
+The `develop` variants (`develop_rust`, `develop_node`, `develop_react`) are `develop`'s machine under their own names, so one project can add two and point each message at one. Each carries `develop`'s scripts but for its gate, the `conventions.md` its implement, fix and verify prompts follow, and the tools it declares in `scripts/<variant>/requirements`, which `precheck` checks; a test keeps the rest identical to `develop`'s ([D84](../decisions.md#d84-develop-variants-are-separate-machines)). A project in another ecosystem starts from `develop` and fills in its gate.
+
+The `ai.sh` of `develop` and its variants, `infra`, `qa` and `develop_by_size`, and `router`'s `ask.sh`, pick the AI CLI when they run, so no file names a backend: the run's `ai_cli` data, else `AI_CLI`, else the first of `claude`, `opencode` and `copilot` on `PATH` ([The AI helper](scripts.md#the-ai-helper)).
 
 **A new decree version.** The built-in copies change with decree. `decree plugin list` marks `differs` each plugin whose file in `plugins/` is not this decree's, and `decree plugin add --force <name>` takes this decree's copy, printing the project's edits it drops; put them back in the installed copy and run `decree plugin export <name>`.
 
