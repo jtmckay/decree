@@ -1,7 +1,8 @@
 //! Every project in `examples/` is a 0.5 project.
-//! `decree check` passes in each without a warning, no 0.4 word remains in the
-//! examples, `src/`, `docs/reference/`, `README.md` or `tests/`, and each README's
-//! commands run as written, with a stub on `PATH` for the services they call.
+//! `decree check` passes in each without a warning, before any other command (it installs the
+//! project's plugins first, as in a fresh clone), no 0.4 word remains in the examples,
+//! `plugins/`, `src/`, `docs/reference/`, `README.md` or `tests/`, and each README's commands
+//! run as written, with a stub on `PATH` for the services they call.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -96,15 +97,9 @@ fn has_word(line: &str, term: &str) -> bool {
 #[test]
 fn every_example_passes_check_without_a_warning() {
     let names = projects();
-    assert_eq!(
-        names,
-        [
-            "newsletter",
-            "project",
-            "route-by-complexity",
-            "text-to-media"
-        ]
-    );
+    // The other examples are official plugins (`plugins/`), and keep only their demo
+    // messages and what is not a plugin.
+    assert_eq!(names, ["project"]);
     for name in names {
         let dir = tempfile::tempdir().unwrap();
         copy_dir(&examples().join(&name), dir.path());
@@ -125,7 +120,7 @@ fn every_example_passes_check_without_a_warning() {
 
 /// The 0.4 words on one line of `rel` (a path relative to the repository).
 fn old_words(rel: &Path, line: &str) -> Vec<&'static str> {
-    let in_examples = rel.starts_with("examples");
+    let in_examples = rel.starts_with("examples") || rel.starts_with("plugins");
     VERSION_TERMS
         .iter()
         .chain(if in_examples { OLD_TERMS } else { &[] })
@@ -137,7 +132,7 @@ fn old_words(rel: &Path, line: &str) -> Vec<&'static str> {
 #[test]
 fn no_0_4_word_in_src_docs_readme_tests_or_examples() {
     let mut all = Vec::new();
-    for root in ["src", "docs/reference", "tests", "examples"] {
+    for root in ["src", "docs/reference", "tests", "examples", "plugins"] {
         files(&repo().join(root), &mut all);
     }
     all.push(repo().join("README.md"));
@@ -217,18 +212,25 @@ fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded
                 assert!(!decree.join(gone).exists(), "{name}: .decree/{gone} exists");
             }
         }
-        let mut machines = Vec::new();
-        files(&decree.join("machines"), &mut machines);
-        for machine in machines {
-            let text = fs::read_to_string(&machine).unwrap();
-            let stem = machine.file_stem().unwrap().to_string_lossy();
-            assert_eq!(
-                text.lines().next(),
-                Some(format!("# Graph: ../graph/{stem}.md").as_str()),
-                "{}",
-                machine.display()
+        // Its machines are plugins, each drawn in graph/; git ignores the installed copies.
+        for line in ["machines/", "scripts/"] {
+            assert!(
+                gitignore.lines().any(|l| l == line),
+                "{name}: .gitignore does not list {line}"
             );
-            assert!(!text.contains("$schema="), "{}", machine.display());
+        }
+        let mut plugins = Vec::new();
+        files(&decree.join("plugins"), &mut plugins);
+        assert!(!plugins.is_empty(), "{name}: no plugins");
+        for plugin in plugins {
+            let stem = plugin.file_stem().unwrap().to_string_lossy();
+            assert!(
+                decree.join(format!("graph/{stem}.md")).is_file(),
+                "{}: no graph",
+                plugin.display()
+            );
+            let text = fs::read_to_string(&plugin).unwrap();
+            assert!(!text.contains("$schema="), "{}", plugin.display());
         }
     }
 }
@@ -285,7 +287,7 @@ fn readme_bash_blocks(readme: &str) -> Vec<String> {
 }
 
 /// Copies `examples/<name>` into a temp directory (as `examples/<name>`, so the
-/// README's `cd` works), runs `prepare` and then every line of the README's
+/// README's `cd` and paths work), runs `prepare` there and then every line of the README's
 /// ```bash blocks in one shell, with the stubs and this build of decree first
 /// on PATH. `decree daemon` runs
 /// until the queue is empty, then gets SIGTERM. Returns the project copy.
@@ -308,7 +310,7 @@ fn run_readme(name: &str, prepare: &str) -> tempfile::TempDir {
     .unwrap();
 
     let readme = fs::read_to_string(examples().join(name).join("README.md")).unwrap();
-    let mut script = format!("set -euo pipefail\n{RUN_DAEMON}(cd examples/{name} && {prepare})\n");
+    let mut script = format!("set -euo pipefail\n{RUN_DAEMON}({prepare})\n");
     for block in readme_bash_blocks(&readme) {
         for line in block.lines() {
             if line == "decree daemon" {
@@ -376,12 +378,13 @@ fn text_to_media_readme_commands_run() {
     if !has_jq() {
         return;
     }
-    // The README's prerequisite: a picture of yours for the third render.
+    // The README's prerequisite: a picture of yours for the third render, in the project the
+    // README makes.
     let dir = run_readme(
         "text-to-media",
-        "mkdir -p images && echo picture > images/reference.png",
+        "mkdir -p renders/images && echo picture > renders/images/reference.png",
     );
-    let project = dir.path().join("examples/text-to-media");
+    let project = dir.path().join("renders");
     assert_eq!(processed(&project).len(), 4);
     assert_eq!(all_runs_done(&project), 5);
     for render in [
@@ -407,13 +410,20 @@ fn text_to_media_readme_commands_run() {
     assert!(payload.contains("The character gently waves"), "{payload}");
 }
 
-/// The recorded examples' commands only read the project: nothing runs, and `decree graph`
-/// changes nothing.
+/// The examples' commands only read the example: nothing runs there, and `decree graph`
+/// changes nothing. `decree check` installs its plugins into `machines/` and `scripts/`
+/// (recording each in `cache/`), which git ignores.
 fn assert_readme_reads_only(name: &str) {
     let dir = run_readme(name, "true");
     let project = dir.path().join("examples").join(name);
     let mut copied = Vec::new();
     files(&project, &mut copied);
+    copied.retain(|p| {
+        let rel = p.strip_prefix(&project).unwrap();
+        !["machines", "scripts", "cache"]
+            .iter()
+            .any(|d| rel.starts_with(Path::new(".decree").join(d)))
+    });
     let mut original = Vec::new();
     files(&examples().join(name), &mut original);
     assert_eq!(copied.len(), original.len(), "{name}");
@@ -426,11 +436,6 @@ fn assert_readme_reads_only(name: &str) {
             rel.display()
         );
     }
-}
-
-#[test]
-fn newsletter_readme_commands_run() {
-    assert_readme_reads_only("newsletter");
 }
 
 #[test]

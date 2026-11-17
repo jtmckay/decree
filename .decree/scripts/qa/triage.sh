@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qa's triage: Claude sorts each failure into a real bug, a wrong test or acceptable
+# qa's triage: the AI sorts each failure into a real bug, a wrong test or acceptable
 # behaviour. A bug's tests are marked expected to fail and get one report per root cause in
 # bugs/; wrong tests are rewritten; acceptable ones are removed. The chaos suite must then
 # pass, or the step fails. A failure the docs do not settle is a question in STOP; the run

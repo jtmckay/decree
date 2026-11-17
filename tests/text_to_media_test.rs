@@ -1,6 +1,6 @@
-//! `examples/text-to-media/`: the `comfy` machine run through the binary against a stub
-//! ComfyUI. The example's `.decree/`, with its workflows in `scripts/comfy/`, is copied to a
-//! temp project, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
+//! The official `comfy` plugin (`plugins/comfy.md`, the machine of `examples/text-to-media/`)
+//! run through the binary against a stub ComfyUI. A temp project runs `decree init` and
+//! `decree plugin add comfy`, which installs its workflows in `scripts/comfy/`, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
 //! `/prompt`, `/history/<id>` and `/view` from files under `stub/`, and logs each request. No
 //! ComfyUI, no network.
 
@@ -50,20 +50,16 @@ esac
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nstub image";
 
-fn example() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/text-to-media")
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let path = entry.unwrap().path();
-        let target = to.join(path.file_name().unwrap());
-        if path.is_dir() {
-            copy_dir(&path, &target);
-        } else {
-            fs::copy(&path, &target).unwrap();
-        }
+/// `decree init` and `decree plugin add <plugins>` in `root`: the official plugins, installed.
+fn add_plugins(root: &Path, plugins: &[&str]) {
+    let mut add = vec!["plugin", "add"];
+    add.extend_from_slice(plugins);
+    for args in [vec!["init"], add] {
+        cargo_bin_cmd!("decree")
+            .current_dir(root)
+            .args(&args)
+            .assert()
+            .success();
     }
 }
 
@@ -86,16 +82,14 @@ struct Project {
 }
 
 impl Project {
-    /// The example's `.decree/` (its workflows in `scripts/comfy/`) with no messages, a stub ComfyUI that
+    /// A project with the `comfy` plugin (its workflows in `scripts/comfy/`), a stub ComfyUI that
     /// finishes the prompt after `polls_before_done` empty answers with `status`, and an
     /// image in `images/ref.png`.
     fn new(polls_before_done: u32, status: &str) -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
-        copy_dir(&example().join(".decree"), &p.root().join(".decree"));
-        fs::remove_dir_all(p.root().join(".decree/migrations")).unwrap();
-        fs::create_dir(p.root().join(".decree/migrations")).unwrap();
+        add_plugins(p.root(), &["comfy"]);
         fs::create_dir(p.root().join("images")).unwrap();
         fs::write(p.root().join("images/ref.png"), PNG).unwrap();
         fs::create_dir(p.stub()).unwrap();
@@ -371,15 +365,18 @@ fn a_failed_render_fails_in_await() {
     assert!(!p.root().join("art").exists());
 }
 
-/// One machine, `comfy`, with the states build, submit, await, fetch, done and failed.
+/// The plugin is one machine, `comfy`, needing no other, with the states build, submit,
+/// await, fetch, done and failed.
 #[test]
-fn comfy_is_the_only_machine_and_has_six_states() {
-    let machines: Vec<String> = fs::read_dir(example().join(".decree/machines"))
+fn comfy_is_one_machine_with_six_states() {
+    let tmp = TempDir::new().unwrap();
+    add_plugins(tmp.path(), &["comfy"]);
+    let machines: Vec<String> = fs::read_dir(tmp.path().join(".decree/machines"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(machines, ["comfy.yml"]);
-    let text = fs::read_to_string(example().join(".decree/machines/comfy.yml")).unwrap();
+    let text = common::plugin_machine("plugins/comfy.md");
     let machine: serde_norway::Value = serde_norway::from_str(&text).unwrap();
     let states: Vec<&str> = machine["states"]
         .as_mapping()

@@ -25,7 +25,7 @@ pub struct Cli {
 pub enum Command {
     /// Initialize project (refuses to touch an existing .decree/)
     Init {
-        /// AI backend of the router machine init writes [default: first found on PATH, else opencode]
+        /// AI backend whose skill init writes, and AI_CLI in .env.example [default: first found on PATH, else opencode]
         #[arg(long, value_enum)]
         ai: Option<AiBackend>,
 
@@ -260,10 +260,36 @@ pub enum Command {
 /// `decree plugin` (docs/reference/plugins.md).
 #[derive(Subcommand, Debug)]
 pub enum PluginAction {
+    /// List the official plugins built into decree, each marked added or differs
+    List {
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
+    /// Copy official plugins, and every official plugin they need, into .decree/plugins/ and install them
+    Add {
+        /// Official plugins to add (`decree plugin list` names them)
+        #[arg(required = true)]
+        names: Vec<String>,
+
+        /// Replace a plugin already in .decree/plugins/ with this decree's copy, printing what changes
+        #[arg(long)]
+        force: bool,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
     /// Write .decree/plugins/<name>.md from the installed machine, scripts/<name>/ and the flat scripts it runs
     Export {
-        /// Machine to export
-        name: String,
+        /// Machine to export [default: every plugin whose installed copy differs from its file]
+        name: Option<String>,
+
+        /// With no name: print the plugins whose installed copy differs from their file, and write nothing
+        #[arg(long, conflicts_with = "name")]
+        dry_run: bool,
 
         /// Output format
         #[arg(long, value_enum, default_value_t)]

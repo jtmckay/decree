@@ -1,5 +1,6 @@
-//! `examples/route-by-complexity/`: `develop_by_size` run through the binary down each of
-//! its paths, including the attempt lists of `local_first` and `claude_only`. The example's `.decree/` is copied to a temp project whose
+//! The official `develop_by_size` plugin (`examples/route-by-complexity/`'s machine) run
+//! through the binary down each of its paths, including the attempt lists of `local_first` and
+//! `claude_only`. A temp project adds the plugins and the example's message, and its installed
 //! `gliner_router/ask_gliner.sh` is a stub that writes a chosen reply, with stub `opencode`,
 //! `claude` and test commands first on `PATH`. No model, no network. Also: the request decree
 //! writes carries a `reply_schema` over the options, the GLiNER quick starts are at most five
@@ -16,7 +17,7 @@ use tempfile::TempDir;
 mod common;
 use common::write_script;
 
-/// The example's migration.
+/// The example's message, `examples/route-by-complexity/messages/`, queued as a migration.
 const MIGRATION: &str = "01-raise-upload-limit.md";
 
 /// Writes the reply the test chose (`stub/reply.json`), as the real script writes the
@@ -47,21 +48,22 @@ echo tests >> "$(dirname "$0")/calls"
 exit "$(sed -n "${n}p" "$dir/test_results")"
 "#;
 
-fn example() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/route-by-complexity")
+/// `decree init` and `decree plugin add <plugins>` in `root`: the official plugins, installed.
+fn add_plugins(root: &Path, plugins: &[&str]) {
+    let mut add = vec!["plugin", "add"];
+    add.extend_from_slice(plugins);
+    for args in [vec!["init"], add] {
+        cargo_bin_cmd!("decree")
+            .current_dir(root)
+            .args(&args)
+            .assert()
+            .success();
+    }
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let path = entry.unwrap().path();
-        let target = to.join(path.file_name().unwrap());
-        if path.is_dir() {
-            copy_dir(&path, &target);
-        } else {
-            fs::copy(&path, &target).unwrap();
-        }
-    }
+/// `examples/route-by-complexity/`: the classifier server and the demo message.
+fn example() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/route-by-complexity")
 }
 
 struct Project {
@@ -69,13 +71,20 @@ struct Project {
 }
 
 impl Project {
-    /// The example's project, the classifier's reply, and the exit codes of the test
-    /// command's calls, in order.
+    /// A project with the official `develop_by_size` and `llm_router` plugins (and
+    /// `gliner_router`, which the first needs) and the example's message, the classifier's
+    /// reply, and the exit codes of the test command's calls, in order.
     fn new(reply: &str, test_results: &[i32]) -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
-        copy_dir(&example().join(".decree"), &p.root().join(".decree"));
+        add_plugins(p.root(), &["develop_by_size", "llm_router"]);
+        // As the README says: the demo message, queued as a migration.
+        fs::copy(
+            example().join("messages").join(MIGRATION),
+            p.root().join(".decree/migrations").join(MIGRATION),
+        )
+        .unwrap();
         fs::create_dir(p.root().join("src")).unwrap();
         let config: String = (1..=12).map(|i| format!("// line {i}\n")).collect();
         fs::write(p.root().join("src/config.rs"), config).unwrap();
@@ -566,7 +575,12 @@ fn the_llm_router_sends_reply_schema_as_format_and_writes_the_reply() {
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
-    let out = Command::new(example().join(".decree/scripts/llm_router/ask_llm.sh"))
+    let script = tmp.path().join("ask_llm.sh");
+    write_script(
+        &script,
+        &common::plugin_script("plugins/llm_router.md", "ask_llm.sh"),
+    );
+    let out = Command::new(&script)
         .env("PATH", path)
         .env("DECREE_REQUEST", &request)
         .env("DECREE_REPLY", &reply)

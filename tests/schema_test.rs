@@ -57,17 +57,30 @@ fn example_projects() -> Vec<PathBuf> {
     projects
 }
 
-/// The machine files of every project in this repository: the example projects, and the
-/// repository's own `.decree/`.
-fn project_machines() -> Vec<PathBuf> {
-    let mut projects = vec![repo()];
-    projects.extend(example_projects());
-    let machines: Vec<PathBuf> = projects
-        .iter()
-        .flat_map(|p| files_in(&p.join(".decree/machines"), ".yml"))
-        .collect();
-    assert!(machines.len() > 15, "found only {machines:?}");
-    machines
+/// The machines of every project in this repository, by name and text: the machine files of
+/// the fixtures, and the machine each plugin file installs (the official `plugins/`, each
+/// example's and the repository's own `.decree/plugins/`), as git holds them.
+fn project_machines() -> Vec<(String, String)> {
+    let mut out = read(
+        &example_projects()
+            .iter()
+            .filter(|p| p.starts_with(repo().join("tests/fixtures")))
+            .flat_map(|p| files_in(&p.join(".decree/machines"), ".yml"))
+            .collect::<Vec<_>>(),
+    );
+    let mut plugin_dirs = vec![repo().join("plugins"), repo().join(".decree/plugins")];
+    plugin_dirs.extend(example_projects().iter().map(|p| p.join(".decree/plugins")));
+    for path in plugin_dirs.iter().flat_map(|d| files_in(d, ".md")) {
+        let rel = path.strip_prefix(repo()).unwrap().display().to_string();
+        let machine = common::plugin_machine(&rel);
+        out.push((rel, machine));
+    }
+    assert!(
+        out.len() > 15,
+        "found only {:?}",
+        out.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    out
 }
 
 /// One line per file in `files` that `validate` rejects or cannot read, naming the file.
@@ -189,48 +202,59 @@ fn every_property_has_a_description() {
 
 #[test]
 fn every_machine_in_the_repository_validates() {
-    let found = machine_rejects(&read(&project_machines()));
+    let found = machine_rejects(&project_machines());
     assert!(found.is_empty(), "{found}");
 }
 
-/// The machine templates, with their placeholders filled as `decree init --ai claude` fills
-/// them.
+/// Every official plugin, `plugins/<name>.md`: its frontmatter validates against
+/// `plugin.schema.json`, and its machine, as installed, against the machine schema.
 #[test]
-fn every_machine_template_validates() {
-    let templates = repo().join("src/templates");
-    let mut paths = files_in(&templates.join("machines"), ".yml");
-    paths.push(templates.join("router/router.yml"));
-    let files: Vec<(String, String)> = read(&paths)
-        .into_iter()
-        .map(|(name, text)| {
-            let filled = text
-                .replace("{ai_title}", "Claude")
-                .replace("{ai_cli}", "claude -p")
-                .replace("{ai}", "claude");
-            assert!(!filled.contains("{ai"), "{name}: unfilled placeholder");
-            (name, filled)
-        })
-        .collect();
-    assert_eq!(files.len(), 4);
-    let found = machine_rejects(&files);
+fn every_official_plugin_validates() {
+    let paths = files_in(&repo().join("plugins"), ".md");
+    assert_eq!(paths.len(), 9);
+    let plugin_validator = schema::validator(schema::PLUGIN_SCHEMA);
+    let mut machines = Vec::new();
+    for (name, text) in read(&paths) {
+        let yaml = text
+            .strip_prefix("---\n")
+            .and_then(|t| t.split_once("\n---\n"))
+            .map(|(fm, _)| fm)
+            .unwrap_or_else(|| panic!("{name}: no frontmatter"));
+        let frontmatter: serde_json::Value = serde_norway::from_str(yaml).unwrap();
+        let errors = schema::errors(&plugin_validator, &frontmatter);
+        assert!(errors.is_empty(), "{name}: {errors:?}");
+        let mut machine = frontmatter["machine"].clone();
+        machine
+            .as_object_mut()
+            .unwrap()
+            .insert("name".into(), frontmatter["name"].clone());
+        machines.push((name, serde_norway::to_string(&machine).unwrap()));
+    }
+    let found = machine_rejects(&machines);
     assert!(found.is_empty(), "{found}");
 }
 
+/// AC (A10): a fresh `init` installs no machine; every machine `decree plugin add` installs
+/// validates, whichever backend `init` was given.
 #[test]
-fn every_machine_of_a_fresh_init_validates_for_each_ai() {
+fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
     for ai in ["claude", "copilot", "opencode"] {
         let tmp = TempDir::new().unwrap();
-        cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
-            .env("NO_COLOR", "1")
-            .args(["init", "--ai", ai])
-            .assert()
-            .success();
+        let decree = |args: &[&str]| {
+            cargo_bin_cmd!("decree")
+                .current_dir(tmp.path())
+                .env("NO_COLOR", "1")
+                .args(args)
+                .assert()
+                .success();
+        };
+        decree(&["init", "--ai", ai]);
+        assert!(!tmp.path().join(".decree/machines").exists(), "{ai}");
+        decree(&["plugin", "add", "develop", "qa", "router"]);
         let paths = files_in(&tmp.path().join(".decree/machines"), ".yml");
         assert_eq!(paths.len(), 4, "{ai}");
         for path in &paths {
             let text = fs::read_to_string(path).unwrap();
-            assert!(text.starts_with("# Graph: "), "{ai}: {}", path.display());
             assert!(!text.contains("$schema="), "{ai}: {}", path.display());
         }
         let found = machine_rejects(&read(&paths));
@@ -503,7 +527,7 @@ fn project() -> TempDir {
     fs::create_dir_all(decree.join("machines")).unwrap();
     fs::write(
         decree.join("machines/hello.yml"),
-        fs::read_to_string(repo().join("examples/project/.decree/machines/hello.yml")).unwrap(),
+        common::plugin_machine("examples/project/.decree/plugins/hello.md"),
     )
     .unwrap();
     common_script(&decree.join("scripts/greet"));

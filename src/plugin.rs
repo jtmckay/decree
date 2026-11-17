@@ -716,8 +716,8 @@ pub fn conflict_message(name: &str) -> String {
 /// The plugin of the installed copy of machine `name` (docs/reference/plugins.md, Export): the
 /// machine, every file of `scripts/<name>/`, and every flat `scripts/` file its states run,
 /// as a file of `scripts/<name>/`, and `needs`, every other machine it invokes, emits to or
-/// routes through. An existing plugin file keeps its body; a new one gets `# <name>` and the
-/// machine's description.
+/// routes through. An existing plugin file keeps its body and its `needs`; a new one gets
+/// `# <name>` and the machine's description.
 pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
     let path = decree_dir.join(machine_file(name));
     if !is_ident(name) {
@@ -785,12 +785,19 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
     }
     needs.remove(name);
 
-    let body = match read_one(decree_dir, name) {
-        Ok(Found { text, .. }) => std::str::from_utf8(&text)
+    let existing = read_one(decree_dir, name).ok();
+    // An existing plugin file keeps its `needs`: a plugin may rely on another in a way the
+    // machine does not show (develop's precheck runs infra's run.sh).
+    if let Some(Ok(old)) = existing.as_ref().map(|f| &f.parsed) {
+        needs.extend(old.needs.iter().cloned());
+    }
+    needs.remove(name);
+    let body = match existing {
+        Some(Found { text, .. }) => std::str::from_utf8(&text)
             .ok()
             .and_then(|t| Message::parse(t).ok())
             .map(|m| m.body),
-        Err(_) => None,
+        None => None,
     };
     let body = body.unwrap_or_else(|| {
         let description = loaded.description().trim();
@@ -807,6 +814,13 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
         needs: needs.into_iter().collect(),
         body,
     })
+}
+
+/// Whether `plugin`'s installed copy exists and differs from what the plugin installs: it was
+/// edited in place, or the plugin changed while it was (a conflict).
+pub fn edited(decree_dir: &Path, plugin: &Plugin) -> Result<bool, DecreeError> {
+    let copy = Copy::read(decree_dir, &plugin.name)?;
+    Ok(!copy.is_absent() && !copy.matches(plugin))
 }
 
 /// Write `plugin` to `plugins/<name>.md` and make the installed copy match it: the flat

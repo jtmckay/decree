@@ -1,6 +1,6 @@
 # An escalation ladder for develop
 
-The built-in `develop` machine gives a message one pass: implement, gate, fix, verify. When `verify` fails, or the gate still fails after `fix`, the run ends in `failed`. This recipe adds a ladder: rounds that close what is still missing, first with a cheap agent (a local model through OpenCode), then one round with Claude, then a person. It comes from a beta project where it worked well.
+The official `develop` plugin gives a message one pass: implement, gate, fix, verify. When `verify` fails, or the gate still fails after `fix`, the run ends in `failed`. This recipe adds a ladder: rounds that close what is still missing, first with a cheap agent (a local model through OpenCode), then one round with Claude, then a person. It comes from a beta project where it worked well.
 
 It is more machinery than the simplest machine, which is where a project should start ([Start with the simplest machine](../src/templates/skills/decree/SKILL.md)). Add it once plain `develop` runs show that failed verifies are worth more rounds.
 
@@ -20,7 +20,7 @@ It is more machinery than the simplest machine, which is where a project should 
 
 ## The files
 
-Start from a project `decree init` wrote. Replace `.decree/machines/develop.yml` with this one; it is the built-in machine with `data`, and the states from `final_gate` on changed or added.
+Start from a project with `develop` added (`decree init`, then `decree plugin add develop`). Replace the installed `.decree/machines/develop.yml` with this one, and keep the edit with `decree plugin export develop` (or let the next run's `commit` export it); it is the official machine with `data`, and the states from `final_gate` on changed or added.
 
 `.decree/machines/develop.yml`:
 
@@ -198,7 +198,7 @@ for event in ${DECREE_EVENTS}; do
 done
 ```
 
-Then `chmod +x .decree/scripts/gaps/fill.sh .decree/scripts/develop/gate_gaps.sh .decree/scripts/develop/ask_human.sh`, `decree check` and `decree graph`.
+Then `chmod +x .decree/scripts/gaps/fill.sh .decree/scripts/develop/gate_gaps.sh .decree/scripts/develop/ask_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree plugin export gaps` and `decree plugin export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
 
 ## Tuning it
 

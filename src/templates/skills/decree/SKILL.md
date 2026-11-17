@@ -30,6 +30,17 @@ machine (`machine: deploy`), or a built-in decision: `check` (deterministic: `tr
 until a reply picks one). `invoke` has exactly one key, which names the kind. AI and people
 appear only where a machine invokes `model` or `person`.
 
+## Starting a project
+
+```bash
+decree init                  # .decree/ with no machines; it lists the official plugins
+decree plugin list           # the official plugins built into decree, marked added and differs
+decree plugin add develop    # develop, and infra, which it needs, into .decree/plugins/, installed
+```
+
+`init` never prompts and installs no plugin. Add only what the project needs; each plugin's
+file (`.decree/plugins/<name>.md`) says what it does, what it needs and how to use it.
+
 ## Rules
 
 - **Start with the simplest machine.** Write the most naive machine that does the job: the
@@ -153,23 +164,29 @@ appear only where a machine invokes `model` or `person`.
   until it is deleted. To pause the queue, `decree stop`: the runs going now finish, and
   nothing more runs until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the
   run instead.
-- **Plugins are the source.** In a project with `.decree/plugins/`, each `plugins/<name>.md`
-  holds a machine and its `scripts/<name>/`, and decree installs it before it reads machines.
-  Edit the installed copy (`machines/<name>.yml`, `scripts/<name>/`), run it, then
-  `decree plugin export <name>` and commit the plugin file. If `decree check` reports a P3
+- **Plugins are the source.** Each `.decree/plugins/<name>.md` holds a machine and its
+  `scripts/<name>/`, and decree installs it before it reads machines. Edit the installed copy
+  (`machines/<name>.yml`, `scripts/<name>/`), run it, then keep the edit with
+  `decree plugin export <name>`, or let the next run's `commit` export it, and commit the
+  plugin file. A machine written by hand in `machines/` is not committed until it is exported
+  (`decree check` warns about it). A project's settings for a plugin (`gate.sh`,
+  `requirements`, `QA_RUN`) are such edits: they live in its plugin file. If `decree check` reports a P3
   conflict (the plugin changed while the copy was edited), export to keep the edit and merge
   with git, or `decree plugin install <name>` to take the plugin's version. Never edit
   `.decree/cache/plugins/`.
 - **Never delete run folders to clean up**; they are the record. Use
   `decree prune --older-than <age>`.
-- Do not commit `.decree/inbox/`, `.decree/runs/`, `.decree/store/` or `.decree/cache/`.
+- Commit `.decree/plugins/` and `.decree/graph/`, never `.decree/machines/` or
+  `.decree/scripts/`: git ignores them, and decree installs them from `plugins/`. Do not commit
+  `.decree/inbox/`, `.decree/runs/`, `.decree/store/` or `.decree/cache/`.
 
 ## Commands
 
 | Command | Use |
 | --- | --- |
 | `decree check [--format json\|sarif]` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
-| `decree plugin export <name>` | Write `.decree/plugins/<name>.md` from the installed machine, its `scripts/<name>/` and the flat scripts it runs. `decree plugin import <file\|->` checks one and installs it; `decree plugin install [<name>]` replaces an edited installed copy. |
+| `decree plugin list` / `decree plugin add <name>... [--force]` | List the official plugins (`added`, `differs`); add them, and those they need, to `.decree/plugins/` and install them. `--force` takes this decree's copy and prints the edits it drops. |
+| `decree plugin export [<name>]` | Write `.decree/plugins/<name>.md` from the installed machine, its `scripts/<name>/` and the flat scripts it runs; with no name, every plugin whose installed copy was edited. `decree plugin import <file\|->` checks one and installs it; `decree plugin install [<name>]` replaces an edited installed copy. |
 | `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
 | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
@@ -191,10 +208,12 @@ work runs under `daemon`. Both read machines and `.env` files again before each 
 applies to the next run without a restart, and an edit that fails `decree check` is not used
 until fixed (the old machines keep running and the errors are printed).
 
-## The built-in machines
+## The official plugins
 
-`decree init` writes three working machines besides the router. Start from them before writing
-a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
+A project may have added official plugins (`decree plugin list` marks them `added`): `develop`,
+`infra` and `qa` below, `router` (the default router), and `newsletter`, `comfy`,
+`develop_by_size`, `gliner_router` and `llm_router`, each described in its plugin file. When one
+of the three below is there, start from it before writing a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
 unless the git work tree is clean, naming each `interrupted` or `failed` run that may have left
 the changes, with its `--retry` and `git stash push` commands, also in its attention file) and
 ends with `commit` (`done`'s `onentry`: the run's work as one commit, titled with the message's
@@ -215,12 +234,13 @@ git worktree the user makes and runs decree in (`git worktree add ../app-exp -b 
 `develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
 source the `ai.sh` beside them (`ai`, which calls `ai_<backend>`: a data entry `ai_cli`, else
-`AI_CLI`, else the `--ai` init chose) and
+`AI_CLI`, else the first of `claude`, `opencode` and `copilot` on `PATH`) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and
 retries. `precheck` runs
-`scripts/infra/run.sh check`, which checks every `.decree/scripts/*/requirements`. The project fills in `scripts/develop/gate.sh` with its own checks; until then it
-runs nothing, says so and names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,
+`scripts/infra/run.sh check`, which checks every `.decree/scripts/*/requirements`. The project fills in `scripts/develop/gate.sh` with its own checks, kept by
+`decree plugin export develop` (or the next `commit`); until then it runs nothing, says so and
+names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,
 then `final_gate`, whose `fail` ends the run); a non-zero exit means the checks could not run,
 such as a missing tool, and goes to `failed` without `fix`. `ai.sh` runs the agent with
 `DECREE_EVENT_FILE=/dev/null` and empties the caller's event file after it, so a gate the agent
@@ -230,14 +250,16 @@ ends in `pass` or `fail` from the AI's `VERDICT:` line.
 `infra`: `declare` → `apply`. The AI edits `scripts/infra/requirements` (`kind name version
 source`, one resource per line, in dependency order), adding a kind in `scripts/infra/kinds/`
 only when none fits; `apply` runs `scripts/infra/run.sh apply`, which installs what is missing and checks
-every line. The first `infra` migration builds the environment; later ones add to it.
+every line. The first `infra` migration builds the environment; later ones add to it. Its
+`commit` exports `infra`, so the new lines are in `.decree/plugins/infra.md` in the run's commit.
 
 `qa`: `recon` → `attack` → `run` → `triage` → `report`. The AI writes chaos tests in
 `QA_DIR` (`tests/chaos`) against `scripts/qa/invariants.md`, each naming a wrench from
 `scripts/qa/wrenches.md`; triage marks each real bug's tests with the framework's strict
 expected-failure marker and writes one report per root cause (the broken invariant and the
 expected behaviour, no fix), and `report` emits each as a `develop` message. A guard (`scripts/qa/qa.sh`) fails any step whose AI changed a file outside
-`QA_DIR`. It does not start until `QA_RUN` in `scripts/qa/qa.sh` names the suite's command; once
+`QA_DIR`. It does not start until `QA_RUN` in `scripts/qa/qa.sh` names the suite's command (kept
+by `decree plugin export qa`); once
 qa finds bugs, the gate should run it too.
 
 ## Worked example

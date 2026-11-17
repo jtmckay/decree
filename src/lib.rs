@@ -15,6 +15,7 @@ pub(crate) mod layout;
 pub(crate) mod machine;
 pub(crate) mod message;
 pub(crate) mod migration;
+pub(crate) mod official;
 pub(crate) mod plugin;
 pub(crate) mod reply;
 pub(crate) mod runtime;
@@ -96,9 +97,20 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             commands::daemon::run(&root()?, interval, retry, quiet, &select)
         }
         Command::Plugin { action } => match action {
-            PluginAction::Export { name, format } => {
-                commands::plugin::export(&root()?, &name, format)
-            }
+            PluginAction::List { format } => commands::plugin::list(&root()?, format),
+            PluginAction::Add {
+                names,
+                force,
+                format,
+            } => commands::plugin::add(&root()?, &names, force, format),
+            PluginAction::Export {
+                name,
+                dry_run,
+                format,
+            } => match name {
+                Some(name) => commands::plugin::export(&root()?, &name, format),
+                None => commands::plugin::export_edited(&root()?, dry_run, format),
+            },
             PluginAction::Import {
                 file,
                 force,

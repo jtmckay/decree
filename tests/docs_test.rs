@@ -1,11 +1,13 @@
 //! The documentation holds together: relative Markdown links resolve, the machine examples
-//! in `docs/reference/machines.md` are the files in `examples/project/` (but for `release`,
+//! in `docs/reference/machines.md` are the machines of `examples/project/`'s plugins (but for `release`,
 //! which composes them), nothing points at the
 //! removed implementation spec, `CHANGELOG.md` has the 0.5.0 entry and links the
-//! versioning rule, the SchemaStore entry in `docs/editors.md` names the machine schema, and `SECURITY.md` states the permission mode the built-in machines use. Reads this repository's files only; writes nothing.
+//! versioning rule, the SchemaStore entry in `docs/editors.md` names the machine schema, and `SECURITY.md` states the permission mode the official plugins use. Reads this repository's files only; writes nothing.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+mod common;
 
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -270,14 +272,16 @@ fn machine_examples_are_the_project_example_machines() {
     let names: Vec<&str> = examples.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names, ["hello", "develop", "deploy", "release"]);
     // `release` is the reference's own; `docs_api_test.rs` checks it with `decree check`.
+    // The example's machines are plugins, `examples/project/.decree/plugins/<name>.md`; the
+    // docs show them with comments, so they are compared as YAML.
     for (name, example) in examples.iter().filter(|(n, _)| n != "release") {
-        let file = root.join(format!("examples/project/.decree/machines/{name}.yml"));
-        let machine = std::fs::read_to_string(&file).unwrap();
+        let file = format!("examples/project/.decree/plugins/{name}.md");
+        let machine: serde_norway::Value =
+            serde_norway::from_str(&common::plugin_machine(&file)).unwrap();
+        let shown: serde_norway::Value = serde_norway::from_str(example).unwrap();
         assert_eq!(
-            example,
-            &machine,
-            "docs/reference/machines.md example `{name}` differs from {}",
-            file.display()
+            shown, machine,
+            "docs/reference/machines.md example `{name}` differs from the machine {file} installs"
         );
     }
 }
@@ -421,7 +425,7 @@ fn shell_default(script: &str, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// `SECURITY.md` has the usual sections, and says what `src/templates/ai/ai.sh` does:
+/// `SECURITY.md` has the usual sections, and says what the official plugins' `ai.sh` does:
 /// Claude runs with `--permission-mode auto` unless `CLAUDE_PERMISSION_MODE` says otherwise.
 #[test]
 fn the_security_policy_matches_the_claude_script() {
@@ -443,7 +447,7 @@ fn the_security_policy_matches_the_claude_script() {
         assert!(policy.contains(&format!("`.decree/{dir}/`")), "{dir}");
     }
 
-    let script = std::fs::read_to_string(root.join("src/templates/ai/ai.sh")).unwrap();
+    let script = common::plugin_script("plugins/develop.md", "ai.sh");
     assert_eq!(
         shell_default(&script, "CLAUDE_PERMISSION_MODE").as_deref(),
         Some("auto"),

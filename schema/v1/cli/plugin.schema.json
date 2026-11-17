@@ -2,8 +2,165 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/plugin.schema.json",
   "title": "decree plugin --format json",
-  "description": "What `decree plugin export|import|install --format json` prints on stdout, one shape per `action`. On failure (a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. Reference: docs/reference/plugins.md.",
+  "description": "What `decree plugin list|add|export|import|install --format json` prints on stdout, one shape per `action`. On failure (an unknown official plugin, a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. Reference: docs/reference/plugins.md.",
   "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "version",
+        "plugins"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "list",
+          "description": "`decree plugin list`: every official plugin built into this decree."
+        },
+        "version": {
+          "type": "string",
+          "description": "This decree's version, whose official plugins these are."
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Every official plugin, by name.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "description",
+              "needs",
+              "added",
+              "differs"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "The plugin's name: `decree plugin add <name>` adds it."
+              },
+              "description": {
+                "type": "string",
+                "description": "Its machine's one-line `description`."
+              },
+              "needs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "description": "The official plugins it needs, which `decree plugin add` adds with it."
+              },
+              "added": {
+                "type": "boolean",
+                "description": "Whether the project's .decree/plugins/ has a plugin of this name."
+              },
+              "differs": {
+                "type": "boolean",
+                "description": "Whether the project's copy differs from this decree's, byte for byte: edited (exported edits), or from another decree version. `decree plugin add --force <name>` takes this decree's copy."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "plugins"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "add",
+          "description": "`decree plugin add <name>...`: official plugins copied into plugins/ and installed."
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Each plugin named, then each plugin added because one of them needs it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "plugin",
+              "file",
+              "status",
+              "needed_by",
+              "changes",
+              "dropped_edits_in_place"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "plugin": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "The plugin's name."
+              },
+              "file": {
+                "type": "string",
+                "description": "The plugin file, .decree/plugins/<name>.md, relative to the project root."
+              },
+              "status": {
+                "enum": [
+                  "added",
+                  "needed",
+                  "kept",
+                  "replaced"
+                ],
+                "description": "`added`: named and added; `needed`: added because a plugin needs it; `kept`: named, but already in plugins/, so left as it is; `replaced`: named with --force, and replaced with this decree's copy."
+              },
+              "needed_by": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "description": "For `needed`: the plugins that need it. Empty otherwise."
+              },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "change",
+                    "lines"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "The file, relative to the project root, or `needs`."
+                    },
+                    "change": {
+                      "enum": [
+                        "added",
+                        "changed",
+                        "removed"
+                      ],
+                      "description": "How it changed."
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The lines it drops (`- `) and adds (`+ `), in order, without context."
+                    }
+                  }
+                },
+                "description": "For `replaced`: what changed, including the project's own edits it dropped. Empty otherwise."
+              },
+              "dropped_edits_in_place": {
+                "type": "boolean",
+                "description": "For `replaced`: whether the installed copy had edits in place, not exported, which installing dropped."
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "type": "object",
       "required": [
@@ -58,6 +215,33 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "description": "The plugin's `needs`."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "exported",
+        "dry_run"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "export",
+          "description": "`decree plugin export` with no name: every plugin whose installed copy differed from its file, exported."
+        },
+        "exported": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "The plugins exported (or, with `dry_run`, that would be), by name; empty when no installed copy differed."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "`--dry-run`: `exported` names the plugins that would be exported, and nothing was written."
         }
       }
     },
@@ -179,6 +363,29 @@
     }
   ],
   "examples": [
+    {
+      "action": "add",
+      "plugins": [
+        {
+          "plugin": "develop",
+          "file": ".decree/plugins/develop.md",
+          "status": "added",
+          "needed_by": [],
+          "changes": [],
+          "dropped_edits_in_place": false
+        },
+        {
+          "plugin": "infra",
+          "file": ".decree/plugins/infra.md",
+          "status": "needed",
+          "needed_by": [
+            "develop"
+          ],
+          "changes": [],
+          "dropped_edits_in_place": false
+        }
+      ]
+    },
     {
       "action": "install",
       "installed": [

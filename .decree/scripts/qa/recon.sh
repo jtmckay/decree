@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qa's recon: Claude lists the attack surface, from the docs and the code, in surface.md.
+# qa's recon: the AI lists the attack surface, from the docs and the code, in surface.md.
 set -euo pipefail
 . .decree/scripts/qa/ai.sh
 . .decree/scripts/qa/qa.sh

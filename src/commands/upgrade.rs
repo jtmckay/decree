@@ -22,9 +22,19 @@ const TWO_COPIES: &str = "If `which -a decree` lists two copies, the one first o
                           so remove the other (`cargo uninstall decree`).";
 
 /// What to run in each project afterwards: the command, and when it is needed.
-const AFTER: [(&str, Option<&str>); 2] = [
+/// The official plugins are built into decree, so a new version may change them: `plugin list`
+/// marks each one the project's copy differs from, and `plugin add --force` takes the new copy.
+const AFTER: [(&str, Option<&str>); 4] = [
     ("decree skill", None),
     ("decree schema", Some("the project has .decree/schema/")),
+    (
+        "decree plugin list",
+        Some("the project has .decree/plugins/: it marks `differs` each plugin the new version changed"),
+    ),
+    (
+        "decree plugin add --force <name>",
+        Some("you want the new version's copy of a plugin marked `differs`: it prints the edits it drops"),
+    ),
 ];
 
 /// The running version.

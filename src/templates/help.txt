@@ -16,9 +16,10 @@ in a state that invokes `model` or `person`.
 
 Commands:
   decree init [--ai AI] [--permissions]
-                              Create .decree/ with machines, scripts and the
-                              router machine for AI (claude, copilot or
-                              opencode). claude and copilot also get the skill
+                              Create .decree/ (no plugin installed) and list
+                              the official plugins; --ai (claude, copilot or
+                              opencode) sets AI_CLI in .env.example. claude
+                              and copilot also get the skill
   decree check                Validate machines and pending messages
                               (--format sarif: a SARIF 2.1.0 log for code
                               scanning)
@@ -26,9 +27,16 @@ Commands:
   decree schema               Write .decree/schema/v1/, a local copy of the
                               JSON Schemas for machines, messages, events,
                               router files and --format json output
-  decree plugin export NAME   Share a machine as one file: write
+  decree plugin list          The official plugins built into decree, marked
+                              added and differs
+  decree plugin add NAME... [--force]
+                              Copy official plugins, and those they need,
+                              into .decree/plugins/ and install them
+  decree plugin export [NAME] [--dry-run]
+                              Share a machine as one file: write
                               .decree/plugins/NAME.md from machines/NAME.yml
-                              and scripts/NAME/
+                              and scripts/NAME/; no NAME: every plugin whose
+                              installed copy was edited
   decree plugin import FILE|- [--force]
                               Check a plugin, copy it to .decree/plugins/
                               and install it (curl -fsSL URL | decree plugin
@@ -84,11 +92,12 @@ Commands:
   decree --version            Print the version
 
   --format json on check, status, emit, event, stop, prune, graph, schema, skill,
-  upgrade and process --dry-run prints one JSON document instead of text, described by
+  upgrade, plugin and process --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 
 Files (.decree/):
-  machines/<name>.yml         Machines
+  plugins/<name>.md           A machine and its scripts; committed
+  machines/<name>.yml         Machines (installed from plugins/; gitignored)
   scripts/<name>              Scripts shared by every machine
   scripts/<machine>/<name>    A machine's own scripts, found before scripts/, and
                               its helpers, config and data, never run by decree
@@ -192,6 +201,7 @@ Cron (.decree/cron/<name>.md, run by `decree daemon`):
 
 Getting started:
   1. decree init                  Set up the project
+     decree plugin add develop    Add an official plugin (decree plugin list)
   2. Write .decree/migrations/01-<name>.md
   3. decree check                 Validate machines and pending messages
   4. decree process               Run it; `decree status` shows what happened

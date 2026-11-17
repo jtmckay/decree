@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# develop's verify: Claude checks the acceptance criteria and ends its reply
+# develop's verify: the AI checks the acceptance criteria and ends its reply
 # with `VERDICT: pass` or `VERDICT: fail`; the last such line is the event. A
 # reply without one fails the attempt, so decree asks again. Like implement, it
 # writes STOP instead of guessing. On `fail` it leaves gaps.md, what is missing, for

@@ -51,7 +51,7 @@ history in git.
 - **Named by its file.** Wherever you name a run (`decree process --retry`, `decree daemon
   --retry`, `decree status <id>`, `decree tail <id>`, `decree event`), the migration's file
   name or stem (`01-a.md`, `01-a`) works too and means its newest run. Status lines, `process`
-  notices and the built-in `commit`'s title show the file beside the run id.
+  notices and the official plugins' `commit` title show the file beside the run id.
 - **Ledger.** `.decree/processed.md` (committed) lists one filename per line. When a migration's
   run reaches a final state other than `failed`, decree appends its filename *before* that final
   state's `onentry` scripts run, so `done: { final: true, onentry: [commit] }` commits the code

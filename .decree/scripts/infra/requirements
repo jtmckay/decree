@@ -4,6 +4,9 @@
 # and so can a fresh checkout or CI). Each kind is kinds/<kind>.sh. Another machine may
 # keep its own requirements beside its scripts; run.sh checks them after these.
 #
+# The AI CLI the official plugins' ai.sh picks (AI_CLI, else the first of claude, opencode
+# and copilot on PATH) belongs here too, such as `command   claude`.
+#
 # kind    name   version   source
 command   claude
 command   git

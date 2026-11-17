@@ -292,10 +292,16 @@ fn accepts(text: &str, command: Option<&str>) -> Accepts {
         let rest = usage
             .strip_prefix(&prefix)
             .unwrap_or_else(|| panic!("{usage}"));
-        out.positionals = rest
+        let words: Vec<&str> = rest
             .split_whitespace()
             .filter(|w| *w != "[OPTIONS]")
-            .count();
+            .collect();
+        // `<NAMES>...` takes any number of arguments.
+        out.positionals = if words.iter().any(|w| w.ends_with("...")) {
+            usize::MAX
+        } else {
+            words.len()
+        };
     }
     out
 }

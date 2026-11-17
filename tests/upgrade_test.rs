@@ -78,6 +78,21 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         );
     }
     assert!(stdout.contains("`which -a decree`"), "{stdout}");
+    // AC (A10): the after-steps say `plugin list` shows which plugins the new version changed,
+    // and `plugin add --force <name>` takes the new copy.
+    assert!(
+        lines.iter().any(|l| l.starts_with("decree plugin list")
+            && l.contains("`differs`")
+            && l.contains("new version changed")),
+        "{stdout}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("decree plugin add --force <name>")
+                && l.contains("new version's copy")),
+        "{stdout}"
+    );
     assert!(stdout.contains("`cargo uninstall decree`"), "{stdout}");
     assert!(
         lines
@@ -132,6 +147,14 @@ fn json_output_matches_its_schema() {
             .iter()
             .map(|a| a["command"].as_str().unwrap())
             .collect();
-        assert_eq!(after, ["decree skill", "decree schema"]);
+        assert_eq!(
+            after,
+            [
+                "decree skill",
+                "decree schema",
+                "decree plugin list",
+                "decree plugin add --force <name>"
+            ]
+        );
     }
 }

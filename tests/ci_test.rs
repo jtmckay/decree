@@ -1,10 +1,13 @@
 //! `.github/workflows/ci.yml` parses as YAML, its `test` job runs exactly the commands of
-//! the gate script (`.decree/scripts/develop/gate.sh`), so the two cannot drift apart,
+//! the gate script (`gate.sh` in this repository's `.decree/plugins/develop.md`, installed as
+//! `.decree/scripts/develop/gate.sh`), so the two cannot drift apart,
 //! and its `decree-check` job checks every project with `--format sarif` and uploads the
 //! results. Reads this repository's files only; writes nothing.
 
 use serde_norway::Value;
 use std::path::PathBuf;
+
+mod common;
 
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -46,8 +49,7 @@ fn uses(job: &Value) -> Vec<&str> {
 
 /// The commands the gate script runs: each `cargo` line, without its trailing `&&`.
 fn gate_commands() -> Vec<String> {
-    let path = repo().join(".decree/scripts/develop/gate.sh");
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+    let text = common::plugin_script(".decree/plugins/develop.md", "gate.sh");
     text.lines()
         .map(|line| line.trim().trim_end_matches("&&").trim())
         .filter(|line| line.starts_with("cargo "))

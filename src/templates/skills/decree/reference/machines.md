@@ -90,7 +90,7 @@ options, the `output` state's output as `input`, message body, the run's history
 `reply_schema`, a JSON Schema for the reply; `.decree/schema/v1/request.schema.json` after
 `decree schema`) and runs a
 **router**: an ordinary machine (`router:` on the invoke, else the machine named `router`, which
-`decree init` writes).
+the official `router` plugin provides).
 Its script reads `$DECREE_REQUEST`, asks a model, and writes
 `{"event": "...", "reason": "...", "confidence": 0.86}` to `$DECREE_REPLY`
 (`.decree/schema/v1/reply.schema.json`). decree checks the

@@ -9,7 +9,7 @@ Routers come in two kinds:
 | Kind | How the reply is constrained | What its confidence means | How it can fail | Cost | Use it for |
 | --- | --- | --- | --- | --- | --- |
 | **Typed**: a classifier ([GLiNER2.5-Decide](#fastino-gliner25-decide-run-locally)), constrained decoding ([Ollama's `format`](#ollama-with-format), vLLM's guided choice, SGLang's `select`), [TypeSafe Jev](#typesafe-jev) | By the model: it cannot answer outside the options. A classifier picks one of the labels it is given; a decoder is held to the request's `reply_schema`; Jev picks among its criteria. | A classifier's score for its pick, or Jev's figure from its probability distribution: measured. A constrained language model's number is still its own estimate. | Its service is down or times out: the router run fails, and the event is `error`. | A classifier on CPU: milliseconds, no fee. A local model: seconds of GPU. Jev: per call. | **Routing**: the cheap, frequent, bounded decisions, such as which model does the work or which path a message takes. |
-| **Untyped**: a chat model or coding agent ([`claude -p`, Copilot, OpenCode](#claude-copilot-and-opencode-written-by-decree-init)) | Not at all: the script asks for JSON in the prompt, finds it in free text and checks it. | Self-reported: the least reliable kind. | No JSON, or a pick that is not an option: the script fails, and the event is `error` once its attempts run out. | Tokens and seconds per call, and a subscription or a bill. | **The work** itself, and judgments that need reasoning over a lot of context. |
+| **Untyped**: a chat model or coding agent ([`claude -p`, Copilot, OpenCode](#claude-opencode-and-copilot-the-official-router-plugin)) | Not at all: the script asks for JSON in the prompt, finds it in free text and checks it. | Self-reported: the least reliable kind. | No JSON, or a pick that is not an option: the script fails, and the event is `error` once its attempts run out. | Tokens and seconds per call, and a subscription or a bill. | **The work** itself, and judgments that need reasoning over a lot of context. |
 
 Use a typed router to decide, and an untyped model to do. A routing decision runs on every message, so it should be cheap, and its answer must be one of the options, so it should not be able to say anything else: a classifier such as GLiNER2.5-Decide is the one to reach for, and its score is a real one to set `min_confidence` against. Claude, Copilot and OpenCode are for writing the code and for questions that need the whole message and the codebase to answer; asked to route, they cost more, can reply off the options, and report a confidence that means little. [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) puts both together: GLiNER decides whether a change is small enough for a local model, or needs Claude.
 
@@ -17,10 +17,10 @@ Running a model server is outside decree: these routers only talk to one (see [`
 
 ## The contract
 
-A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, which `decree init` writes (`decree check` fails V16 if a `model` names no router and there is no `machines/router.yml`):
+A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, such as the official plugin `decree plugin add router` adds (`decree check` fails V16 if a `model` names no router and there is no `machines/router.yml`):
 
 ```yaml
-# machines/develop_by_size.yml, in examples/route-by-complexity/
+# the machine of the official develop_by_size plugin (plugins/develop_by_size.md)
 size_up:
   invoke:
     model:
@@ -90,7 +90,7 @@ The `decision` event records the router, the router's run id (`child_run`), the 
 
 | Router | Where its confidence comes from |
 | --- | --- |
-| Chat models (`router`, as `decree init` writes it) | The model's own estimate in its reply. The least reliable: chat models tend to report high numbers whatever they pick. |
+| Chat models (`router`, the official plugin) | The model's own estimate in its reply. The least reliable: chat models tend to report high numbers whatever they pick. |
 | TypeSafe Jev | Computed from the shape of its probability distribution over the options. |
 | GLiNER2.5-Decide | The classifier's score for the label it picks (`include_confidence=True`). |
 | A language model constrained by `format` | Still the model's own estimate: the decoder constrains the shape of the reply, not how honest its number is. |
@@ -134,7 +134,7 @@ body=$(jq '{instructions: .question,
             text: ([.input, .message_body] | map(select(. != "")) | join("\n\n"))}' "$DECREE_REQUEST")
 reply=$(curl -fsS --max-time 30 -H 'content-type: application/json' -d "$body" "$url")
 printf '%s\n' "$reply" > "$DECREE_REPLY"
-jq -r '"picked \(.event)"' "$DECREE_REPLY"   # for the log only, as in ask_claude
+jq -r '"picked \(.event)"' "$DECREE_REPLY"   # for the log only, as in the router's ask
 ```
 
 `classify_text` takes the labels with their descriptions, and no separate instructions, so the server puts the question in front of the text. The pages document a score for the picked label only, so the reply has no `probabilities`. If the server is down, `curl` fails, the router run ends in `failed`, and the state's event is `error`: give the state an `error` transition (to a bigger model, or to a person) if a missing classifier should not fail the run, as `develop_by_size` does.
@@ -239,33 +239,30 @@ OpenAI's Decisions API would be a typed router: it takes context and questions w
 
 ## Untyped routers
 
-### Claude, Copilot and OpenCode (written by `decree init`)
+### Claude, OpenCode and Copilot (the official `router` plugin)
 
-The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree init --ai claude` writes `machines/router.yml` and its script `scripts/router/ask_claude.sh`:
+The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree plugin add router` installs [`plugins/router.md`](../plugins/router.md): `machines/router.yml` and its script `scripts/router/ask.sh`:
 
 ```yaml
-# Graph: ../graph/router.md
 name: router
-description: Ask Claude to pick one of the options in the request.
+description: Ask an AI CLI (claude, opencode or copilot) to pick one of the options in the request.
 initial: ask
 states:
-  ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
+  ask:                             # renders the prompt from $DECREE_REQUEST, runs the AI CLI, writes $DECREE_REPLY
     invoke:                        # a reply that is not one of the options fails the script; it runs once more
-      script: { name: ask_claude, attempts: 2 }
+      script: { name: ask, attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
 ```
 
-`ask_claude` renders the prompt in [The default router](reference/runs.md#the-default-router) with `jq`, sends it to `claude -p`, takes the last JSON object from the reply (the last fenced block if there is one, which may span lines; else the last line holding an object), and exits non-zero unless its `event` is one of the options: a reply with no JSON, or with a pick that is not an option, fails the script, and once its attempts run out the state's event is `error`. It does not use `reply_schema`: the reply is free text, checked after the fact. It needs `jq` on `PATH`.
+`ask` picks the CLI as `ai.sh` does: the run's `ai_cli` data, else `AI_CLI` (`.decree/.env` or the shell), else the first of `claude`, `opencode` and `copilot` on `PATH`. It renders the prompt in [The default router](reference/runs.md#the-default-router) with `jq`, sends it, takes the last JSON object from the reply (the last fenced block if there is one, which may span lines; else the last line holding an object), and exits non-zero unless its `event` is one of the options: a reply with no JSON, or with a pick that is not an option, fails the script, and once its attempts run out the state's event is `error`. It does not use `reply_schema`: the reply is free text, checked after the fact. It needs `jq` on `PATH`. Only the line that calls the CLI differs by backend:
 
-`--ai copilot` and `--ai opencode` write the same `router` machine with `ask_copilot` or `ask_opencode` (`scripts/router/ask_<ai>.sh`). Only the script's name and the line that calls the CLI differ:
-
-| `--ai` | Script | The call |
-| --- | --- | --- |
-| `claude` | `ask_claude` | `printf '%s' "$prompt" \| claude -p` |
-| `copilot` | `ask_copilot` | `copilot -p "$prompt"` |
-| `opencode` | `ask_opencode` | `opencode run "$prompt"` |
+| CLI | The call |
+| --- | --- |
+| `claude` | `printf '%s' "$prompt" \| claude -p` |
+| `opencode` | `opencode run "$prompt"` |
+| `copilot` | `copilot -p "$prompt"` |
 
 ## Cheap model first, stronger model when unsure
 
@@ -286,7 +283,7 @@ states:
   failed: { final: true }
 ```
 
-`ask_cheap` is `ask_gliner` (or `ask_claude` with a small model) plus one line at the end:
+`ask_cheap` is `ask_gliner` (or the router's `ask` with a small model) plus one line at the end:
 
 ```bash
 jq -e '(.confidence // 0) >= 0.85' "$DECREE_REPLY" > /dev/null && echo sure > "$DECREE_EVENT_FILE"
@@ -401,7 +398,7 @@ size_up:
 
 - **All agree**: `quorum` equal to the number of routers. **A majority**: more than half of them.
 - **More or fewer routers**: one state per router, in a line before `combine`; `combine` counts however many there are.
-- **A router that fails** ends `consensus_router` in `failed`, so the calling state's event is `error`, as for any router. A router's script that checks its own pick against the options (as `ask_claude` does) keeps a pick outside them from counting; `combine` counts only the request's options, and decree checks the reply either way.
+- **A router that fails** ends `consensus_router` in `failed`, so the calling state's event is `error`, as for any router. A router's script that checks its own pick against the options (as the default router's `ask` does) keeps a pick outside them from counting; `combine` counts only the request's options, and decree checks the reply either way.
 - Each router's `confidence` is not used: a pick counts once whatever its score. Each router still calls its own model, so the cost is the sum of theirs.
 
 ### Where it does not apply

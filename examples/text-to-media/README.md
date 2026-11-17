@@ -8,37 +8,19 @@ No model is involved: the scripts call ComfyUI directly, with `curl` and `jq`.
 
 ## The machine
 
-[`machines/comfy.yml`](.decree/machines/comfy.yml) ([graph](.decree/graph/comfy.md)):
+The machine is the official plugin [`comfy`](../../plugins/comfy.md), built into decree: `decree plugin add comfy` adds it to a project. Its file says what each state does and what it needs. In short:
 
-```mermaid
-stateDiagram-v2
-    [*] --> build
-    await --> fetch: done
-    await --> failed: error (implicit)
-    build --> submit: done
-    build --> failed: error (implicit)
-    fetch --> done: done
-    fetch --> failed: error (implicit)
-    submit --> await: done
-    submit --> failed: error (implicit)
-    done --> [*]
-    failed --> [*]
-    note left of build
-        machine onentry: precheck
-    end note
-```
-
-1. The root `onentry`, [`precheck`](.decree/scripts/precheck.sh), fails fast if `curl` or `jq` is missing.
-2. [`build`](.decree/scripts/comfy/build.sh) patches `.decree/scripts/comfy/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type (the positive `CLIPTextEncode`, every node with a `width`, `height`, `seed` or `noise_seed`, every `filename_prefix`), so a new method is a new workflow file. It fails, before anything is sent, on an unknown method, listing the methods, or on a missing `method`, `output` or prompt, or a missing `input_image` when the workflow loads an image.
-3. [`submit`](.decree/scripts/comfy/submit.sh) uploads `input_image`, if any (`POST /upload/image`), queues the workflow (`POST /prompt`) and keeps the prompt id. It is safe to repeat, so it has `attempts: 3`.
-4. [`await`](.decree/scripts/comfy/await.sh) polls `GET /history/<prompt id>` every `COMFY_POLL_S` seconds (5) until the prompt is there, which it is once it finishes, and fails if it did not succeed. It has no attempts: a render that never finishes, within its 3 h timeout, is something to look at, not to retry.
-5. [`fetch`](.decree/scripts/comfy/fetch.sh) downloads each file the prompt saved (`GET /view`) to `output` plus the file's extension, or `output-<n>` plus it when there are several. It is safe to repeat, so it has `attempts: 3`.
+1. The root `onentry`, `precheck`, fails fast if `curl` or `jq` is missing.
+2. `build` patches `.decree/scripts/comfy/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type, so a new method is a new workflow file.
+3. `submit` uploads `input_image`, if any, queues the workflow and keeps the prompt id (`attempts: 3`).
+4. `await` polls `GET /history/<prompt id>` until the prompt finishes, within 3 hours.
+5. `fetch` downloads each file the prompt saved to `output` plus its extension (`attempts: 3`).
 
 The scripts find ComfyUI at `COMFY_URL`, `http://127.0.0.1:8188` by default.
 
 ## Methods and messages
 
-A method is a workflow in [`.decree/scripts/comfy/`](.decree/scripts/comfy/), by file stem: data that comfy's scripts read, so it sits beside them; decree runs only the scripts its states name ([Resolution](../../docs/reference/scripts.md#resolution)). One message per method:
+A method is a workflow in `.decree/scripts/comfy/`, by file stem: data that comfy's scripts read, so it sits beside them; decree runs only the scripts its states name ([Resolution](../../docs/reference/scripts.md#resolution)). A new workflow there is a new method; `decree plugin export comfy` keeps it in the plugin file. One message per method:
 
 ### `image_flux2_text_landscape`: an image from text (FLUX2)
 
@@ -85,16 +67,19 @@ The character gently waves her hand and smiles.
 
 ## Running it
 
-You need a running ComfyUI with the FLUX2 and WAN2.2 models the workflows load, and `curl` and `jq`. [`migrations/`](.decree/migrations/) holds four renders; the third restyles a picture of yours, which it expects at `images/reference.png`, and the fourth animates the second's image.
+You need a running ComfyUI with the FLUX2 and WAN2.2 models the workflows load, and `curl` and `jq`. [`messages/`](messages/) holds four renders; the third restyles a picture of yours, which it expects at `images/reference.png`, and the fourth animates the second's image. From a clone of decree, in a new project beside `examples/`:
 
 ```bash
-cd examples/text-to-media
+mkdir -p renders && cd renders
+decree init
+decree plugin add comfy
+cp ../examples/text-to-media/messages/*.md .decree/migrations/
 decree check
 decree process
 decree status
 ```
 
-The renders are in `output/`. To render from other tools (a game engine, a web app), queue messages and keep a daemon running:
+The renders are in `renders/output/`. To render from other tools (a game engine, a web app), queue messages and keep a daemon running:
 
 ```bash
 echo "A lighthouse at dawn, oil painting" | decree emit --machine comfy --param method=image_flux2_text_landscape --param output=output/lighthouse
@@ -131,7 +116,7 @@ data:
     type: string
     default: ""
     enum: ["", image_flux2_text_landscape, image_flux2_text_image, video_i2v_wan2.2_14B_long]
-  # output, input_image, width, height and seed as in comfy.yml
+  # output, input_image, width, height and seed as in the comfy plugin
 initial: has_method
 states:
   has_method:
@@ -162,28 +147,19 @@ states:
   build_animate: { invoke: build_animate, transitions: { done: submit } }
 ```
 
-Each `build_*` script names its method and hands over to `build`, as `scripts/comfy/build_text.sh` does:
+Each `build_*` script names its method and hands over to `build`, as `.decree/scripts/comfy/build_text.sh` would:
 
 ```sh
 #!/usr/bin/env bash
 METHOD=image_flux2_text_landscape exec "$(dirname "$0")/build.sh"
 ```
 
-`gliner_router` is the typed router from [`route-by-complexity`](../route-by-complexity/README.md). `enum` makes `decree check` and `decree emit` reject a method that is not a workflow before anything runs. Every `build_*` state runs a two-line script that names the method and runs the one `build`: `build` takes `$METHOD` when it is set, else the `method` param, so no script parses a state's name. Two options per decision keep the classifier's picks clear ([Where GLiNER fits](../../docs/routers.md#where-gliner-fits)), and the `check` states settle what the params already answer before it is asked. `unsure` fails rather than guessing, since a wrong render costs GPU time and still needs a person. This example leaves all of this out on purpose: it is not needed until senders cannot name the method.
+`gliner_router` is the typed router of [`route-by-complexity`](../route-by-complexity/README.md), the official plugin [`gliner_router`](../../plugins/gliner_router.md). `enum` makes `decree check` and `decree emit` reject a method that is not a workflow before anything runs. Every `build_*` state runs a two-line script that names the method and runs the one `build`: `build` takes `$METHOD` when it is set, else the `method` param, so no script parses a state's name. Two options per decision keep the classifier's picks clear ([Where GLiNER fits](../../docs/routers.md#where-gliner-fits)), and the `check` states settle what the params already answer before it is asked. `unsure` fails rather than guessing, since a wrong render costs GPU time and still needs a person. This example leaves all of this out on purpose: it is not needed until senders cannot name the method.
 
 ## The files
 
 ```text
 examples/text-to-media/
-  .decree/
-    machines/comfy.yml               build, submit, await, fetch
-    scripts/
-      precheck.sh                    root onentry: curl and jq are installed
-      comfy/*.json                   the methods: ComfyUI workflows in API format, by file stem
-      comfy/build.sh                 patches scripts/comfy/<method>.json ($METHOD, else method) into runs/<id>/comfy-payload.json
-      comfy/submit.sh                uploads input_image, POST /prompt, keeps the prompt id
-      comfy/await.sh                 polls /history/<prompt id> until the prompt finishes
-      comfy/fetch.sh                 downloads each output to `output` plus its extension
-    migrations/                      four renders to try it with
-    graph/  schema/                  written by `decree graph` and `decree schema`
+  messages/                          four renders to try it with, as migrations
+plugins/comfy.md                     the machine, its scripts and its workflows: the official plugin
 ```

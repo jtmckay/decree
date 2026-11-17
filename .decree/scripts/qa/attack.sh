@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qa's attack: Claude writes chaos tests in QA_DIR, each naming its wrench and invariant.
+# qa's attack: the AI writes chaos tests in QA_DIR, each naming its wrench and invariant.
 set -euo pipefail
 . .decree/scripts/qa/ai.sh
 . .decree/scripts/qa/qa.sh

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# infra's declare: Claude changes scripts/infra/requirements to meet the message, and
+# infra's declare: the AI changes scripts/infra/requirements to meet the message, and
 # installs nothing; apply does. If the change needs a choice the message does not make,
 # it writes the question to STOP instead of guessing; the run fails until a person
 # answers it in plan.md, deletes STOP and runs `decree process --retry`.

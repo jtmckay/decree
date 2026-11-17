@@ -1,4 +1,4 @@
-# The AI helper the built-in machines' scripts source, a copy in each one's scripts
+# The AI helper the official plugins' scripts source, a copy in each one's scripts
 # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
 # `ai "<prompt>"` asks the AI and prints its reply.
 #
@@ -7,8 +7,8 @@
 # (DECREE_DATA_AI_CLI: a message's or a parent's `params`, else the machine's
 # default), so a child machine invoked with `params: { ai_cli: claude }` works with
 # Claude whatever the project's setting; else the one AI_CLI names (in .decree/.env,
-# or the shell decree runs in); else claude, which `decree init --ai` chose. To use another
-# backend, add an ai_<name> function and set AI_CLI=<name>.
+# or the shell decree runs in); else the first of claude, opencode and copilot found
+# on PATH. To use another backend, add an ai_<name> function and set AI_CLI=<name>.
 #
 # The agent names no event (it writes STOP instead): a script it runs, such as the
 # gate, gets DECREE_EVENT_FILE=/dev/null, and the caller's event file is emptied
@@ -20,10 +20,26 @@
 # Every call adds a line to .decree/ai-use.md (git ignores it): when, which run and
 # state, which CLI and model, the run's attempt and the step's, how long it took
 # and its exit code.
-AI_DEFAULT=claude
+
+# The backend `ai` calls: DECREE_DATA_AI_CLI, else AI_CLI, else the first of claude,
+# opencode and copilot on PATH. Prints nothing and fails if there is none.
+pick_ai_cli() {
+  local cli=${DECREE_DATA_AI_CLI:-${AI_CLI:-}}
+  if [ -z "${cli}" ]; then
+    for cli in claude opencode copilot; do
+      command -v "${cli}" >/dev/null && break
+      cli=
+    done
+  fi
+  [ -n "${cli}" ] && echo "${cli}"
+}
 
 ai() {
-  local cli=${DECREE_DATA_AI_CLI:-${AI_CLI:-${AI_DEFAULT}}}
+  local cli
+  cli=$(pick_ai_cli) || {
+    echo "ai: no AI CLI: set AI_CLI (in .decree/.env) or put claude, opencode or copilot on PATH" >&2
+    return 2
+  }
   if ! declare -F "ai_${cli}" >/dev/null; then
     echo "ai: no ai_${cli} function in ai.sh (AI_CLI=${cli})" >&2
     return 2

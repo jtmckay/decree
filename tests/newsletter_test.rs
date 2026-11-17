@@ -1,12 +1,12 @@
-//! `examples/newsletter/`: the `newsletter` machine run through the binary, with no network
-//! and no model. The example's `.decree/` is copied to a temp project whose `feeds.txt` lists
-//! local `file://` fixtures (`tests/fixtures/newsletter/`: one RSS 2.0, one Atom, one broken),
+//! The official `newsletter` plugin (`plugins/newsletter.md`) run through the binary, with no
+//! network and no model. A temp project runs `decree init` and `decree plugin add newsletter`,
+//! with the `.env` the plugin's file names, and its `feeds.txt` lists local `file://` fixtures (`tests/fixtures/newsletter/`: one RSS 2.0, one Atom, one broken),
 //! and a stub `curl` first on `PATH` stands in for Ollama's `/api/chat` and for ntfy. Covers:
 //! a first run writes `newsletter/<today>.md` with the stub's picks and records the five links
 //! in the machine's store, `.decree/store/newsletter/seen.tsv`; a second run writes the "nothing new" issue without calling the model; a
 //! broken feed is skipped, and all feeds broken fails `gather`; `deliver` posts to ntfy once
 //! with `NTFY_URL` set, and skips the ping, saying so, without it. Skipped without `python3`
-//! or `jq`, which the example's scripts need.
+//! or `jq`, which the plugin's scripts need.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
@@ -64,26 +64,15 @@ fn has_tools() -> bool {
     found
 }
 
-fn example() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/newsletter")
-}
+/// The official plugin's file.
+const PLUGIN: &str = "plugins/newsletter.md";
+
+/// The `.env` the plugin's file says to write.
+const DOTENV: &str = "OLLAMA_URL=http://127.0.0.1:11434\nOLLAMA_MODEL=gemma4:e4b\nNEWSLETTER_DIR=newsletter\nNEWSLETTER_MAX_ITEMS=60\n";
 
 fn fixture(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/newsletter");
     format!("file://{}", path.join(name).display())
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let path = entry.unwrap().path();
-        let target = to.join(path.file_name().unwrap());
-        if path.is_dir() {
-            copy_dir(&path, &target);
-        } else {
-            fs::copy(&path, &target).unwrap();
-        }
-    }
 }
 
 fn today() -> String {
@@ -96,20 +85,20 @@ struct Project {
 }
 
 impl Project {
-    /// The example's project, reading the named fixture feeds.
+    /// A project with the official `newsletter` plugin, reading the named fixture feeds.
     fn new(feeds: &[&str]) -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
-        copy_dir(&example().join(".decree"), &p.root().join(".decree"));
-        // The example commits a sample store to show what it holds; a new project starts empty.
-        fs::remove_dir_all(p.root().join(".decree/store")).unwrap();
-        // As the README says: copy the template to the `.env` decree reads.
-        fs::copy(
-            p.root().join(".decree/.env.example"),
-            p.root().join(".decree/.env"),
-        )
-        .unwrap();
+        for args in [&["init"][..], &["plugin", "add", "newsletter"]] {
+            cargo_bin_cmd!("decree")
+                .current_dir(p.root())
+                .args(args)
+                .assert()
+                .success();
+        }
+        // As the plugin's file says: the settings in the `.env` decree reads.
+        fs::write(p.root().join(".decree/.env"), DOTENV).unwrap();
         let list: String = feeds.iter().map(|f| fixture(f) + "\n").collect();
         fs::write(
             p.root().join(".decree/scripts/newsletter/feeds.txt"),
@@ -394,7 +383,7 @@ fn deliver_is_safe_to_re_run() {
     }
     let p = Project::new(&["rss.xml", "atom.xml"]);
     let id = p.run(None);
-    let script = example().join(".decree/scripts/newsletter/deliver.sh");
+    let script = p.root().join(".decree/scripts/newsletter/deliver.sh");
     let out = Command::new(script)
         .current_dir(p.root())
         .env("DECREE_RUN_DIR", p.run_dir(&id))
@@ -413,17 +402,14 @@ fn deliver_is_safe_to_re_run() {
     assert_eq!(p.seen(), LINKS);
 }
 
-/// One machine, `newsletter`, with the states gather, write, deliver, done and failed,
-/// `seen.tsv` declared in its store, and a weekly cron file for it.
+/// The plugin is one machine, `newsletter`, with the states gather, write, deliver, done and
+/// failed, `seen.tsv` declared in its store, and its file shows the weekly cron file to write
+/// and the `.env` it reads.
 #[test]
-fn newsletter_is_the_only_machine_and_has_five_states() {
-    let machines: Vec<String> = fs::read_dir(example().join(".decree/machines"))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(machines, ["newsletter.yml"]);
-    let text = fs::read_to_string(example().join(".decree/machines/newsletter.yml")).unwrap();
-    let machine: serde_norway::Value = serde_norway::from_str(&text).unwrap();
+fn newsletter_has_five_states_and_documents_its_cron_file() {
+    let machine: serde_norway::Value =
+        serde_norway::from_str(&common::plugin_machine(PLUGIN)).unwrap();
+    assert_eq!(machine["name"], "newsletter");
     let states: Vec<&str> = machine["states"]
         .as_mapping()
         .unwrap()
@@ -438,25 +424,28 @@ fn newsletter_is_the_only_machine_and_has_five_states() {
         .map(|k| k.as_str().unwrap())
         .collect();
     assert_eq!(store, ["seen.tsv"]);
-    let cron = fs::read_to_string(example().join(".decree/cron/newsletter.md")).unwrap();
+    let file = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(PLUGIN)).unwrap();
     assert!(
-        cron.contains("cron: \"0 7 * * 1\"\nmachine: newsletter\n"),
-        "{cron}"
+        file.contains("  cron: \"0 7 * * 1\"\n  machine: newsletter\n"),
+        "{file}"
     );
+    for line in DOTENV.lines() {
+        assert!(file.contains(line), "{line}");
+    }
 }
 
 /// `seen.tsv` lives in the machine's store: declared under `store:`, drawn in the graph, and
 /// read and written by the scripts through `$DECREE_STORE` (docs/reference/scripts.md, Store).
 #[test]
 fn seen_tsv_is_in_the_store() {
-    let graph = fs::read_to_string(example().join(".decree/graph/newsletter.md")).unwrap();
+    let p = Project::new(&[]);
+    let graph = fs::read_to_string(p.root().join(".decree/graph/newsletter.md")).unwrap();
     assert!(
         graph.contains("    note left of gather\n        store: seen.tsv\n    end note\n"),
         "{graph}"
     );
     for script in ["gather.py", "deliver.sh"] {
-        let text =
-            fs::read_to_string(example().join(".decree/scripts/newsletter").join(script)).unwrap();
+        let text = common::plugin_script(PLUGIN, script);
         assert!(text.contains("DECREE_STORE"), "{script}");
         assert!(!text.contains("NEWSLETTER_DIR/seen.tsv"), "{script}");
     }

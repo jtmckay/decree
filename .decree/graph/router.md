@@ -1,6 +1,6 @@
 # router
 
-Ask Claude to pick one of the options in the request.
+Ask an AI CLI (claude, opencode or copilot) to pick one of the options in the request.
 
 Machine: [machines/router.yml](../machines/router.yml)
 

@@ -144,17 +144,34 @@ impl Replay {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
         let recorded = repo().join(project).join(".decree");
-        // The machines, scripts, graphs and cron files; no runs, queue or migrations.
+        // The plugins (or machines and scripts), graphs and cron files; no runs, queue or
+        // migrations, and nothing installed or cached locally.
+        let has_plugins = recorded.join("plugins").is_dir();
         copy_dir(&recorded, &decree, &|p| {
             p.parent() == Some(recorded.as_path())
-                && ["runs", "inbox", "migrations", "processed.md"]
+                && (["runs", "inbox", "migrations", "processed.md", "cache"]
                     .iter()
                     .any(|n| p.file_name().unwrap() == *n)
+                    || has_plugins
+                        && ["machines", "scripts"]
+                            .iter()
+                            .any(|n| p.file_name().unwrap() == *n))
         });
         for dir in ["runs", "inbox", "migrations"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
+        // A project with plugins (examples/project) has its machines and scripts installed
+        // from them, as in a fresh clone; the stubs below are then edits in place, which
+        // `process` keeps.
+        if decree.join("plugins").is_dir() {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
+                .args(["plugin", "install"])
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        }
         for script in files(&decree.join("scripts")) {
             write_script(&script, STUB);
         }

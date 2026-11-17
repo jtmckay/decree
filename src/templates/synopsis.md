@@ -5,8 +5,10 @@ A message says what to do, a machine says in what order, scripts do the work.
 Install or update:
        curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh
 
-1. Set up a project:
+1. Set up a project, then see the official plugins and add one:
        decree init
+       decree plugin list
+       decree plugin add develop
 
 2. Write a script (chmod +x it):
        `.decree/scripts/greet.sh`

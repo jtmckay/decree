@@ -1,7 +1,0 @@
-schema/
-.env*
-!.env.example
-attention/
-process.log
-cache/
-ai-use.md

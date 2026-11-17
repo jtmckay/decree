@@ -18,7 +18,8 @@ fn decree_cmd(dir: &TempDir) -> Command {
 
 // --- decree init ---
 
-/// After `init`, `.decree/` holds exactly the entries of docs/reference/README.md, File layout.
+/// After `init`, `.decree/` holds exactly the entries of docs/reference/README.md, File layout:
+/// no plugin is installed, so `plugins/` is empty and there is no `machines/` or `scripts/`.
 #[test]
 fn test_init_creates_directory_structure() {
     let dir = TempDir::new().unwrap();
@@ -38,45 +39,39 @@ fn test_init_creates_directory_structure() {
     assert_eq!(
         entries,
         [
+            ".env.example",
             ".gitignore",
             "cron",
             "graph",
             "inbox",
-            "machines",
             "migrations",
+            "plugins",
             "processed.md",
             "runs",
-            "scripts"
         ]
     );
-    for d in [
-        "cron",
-        "graph",
-        "inbox",
-        "machines",
-        "migrations",
-        "runs",
-        "scripts",
-    ] {
+    for d in ["cron", "graph", "inbox", "migrations", "plugins", "runs"] {
         assert!(decree.join(d).is_dir(), "{d}");
     }
-    for d in ["cron", "inbox", "migrations", "runs"] {
+    for d in ["cron", "inbox", "migrations", "plugins", "runs"] {
         assert_eq!(fs::read_dir(decree.join(d)).unwrap().count(), 0, "{d}");
     }
-    assert!(decree.join("graph/router.md").is_file());
     assert!(decree.join("graph/system.md").is_file());
-    // No `lib/`: each built-in machine's helpers, config and data sit beside its scripts.
-    for file in [
-        "scripts/develop/ai.sh",
-        "scripts/infra/ai.sh",
-        "scripts/infra/requirements",
-        "scripts/infra/run.sh",
-        "scripts/qa/ai.sh",
-        "scripts/qa/qa.sh",
-    ] {
-        assert!(decree.join(file).is_file(), "{file}");
-    }
+    assert!(!decree.join("lib").exists());
 }
+
+/// The official plugins `init` lists: every one, by name.
+const OFFICIAL: [&str; 9] = [
+    "comfy",
+    "develop",
+    "develop_by_size",
+    "gliner_router",
+    "infra",
+    "llm_router",
+    "newsletter",
+    "qa",
+    "router",
+];
 
 #[test]
 fn test_init_processed_md_is_empty() {
@@ -107,6 +102,9 @@ fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
     out
 }
 
+/// AC (A10): `init` in an empty directory exits 0 without reading stdin; `plugins/`,
+/// `machines/` and `scripts/` hold no plugin files; it lists every official plugin and the
+/// `decree plugin add` line; and `decree check` passes.
 #[test]
 fn test_init_stdin_closed_asks_nothing() {
     let dir = TempDir::new().unwrap();
@@ -119,21 +117,38 @@ fn test_init_stdin_closed_asks_nothing() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0));
-    let all = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let all = format!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
     assert!(!all.contains('?'), "init asked something: {all}");
     assert!(!all.contains("[y/N]") && !all.contains("[Y/n]"));
 
-    // Without --ai and with nothing on PATH, the backend is opencode.
-    assert!(dir
-        .path()
-        .join(".decree/scripts/router/ask_opencode.sh")
-        .is_file());
+    let decree = dir.path().join(".decree");
+    assert_eq!(fs::read_dir(decree.join("plugins")).unwrap().count(), 0);
+    assert!(!decree.join("machines").exists());
+    assert!(!decree.join("scripts").exists());
+    // Every official plugin, one line each with its description, then the line that adds one.
+    let listed: Vec<&str> = stdout
+        .lines()
+        .skip_while(|l| !l.starts_with("Official plugins"))
+        .skip(1)
+        .take_while(|l| l.starts_with("  "))
+        .map(|l| l.split_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(listed, OFFICIAL, "{stdout}");
+    assert!(
+        stdout
+            .lines()
+            .last()
+            .unwrap()
+            .contains("`decree plugin add develop`"),
+        "{stdout}"
+    );
+    // Without --ai and with nothing on PATH, AI_CLI is left for the plugins to detect.
+    let env = fs::read_to_string(decree.join(".env.example")).unwrap();
+    assert!(env.contains("\n# AI_CLI=claude\n"), "{env}");
     // Without --permissions, no permissions file is written.
     assert!(!dir.path().join("opencode.json").exists());
+    assert_check_passes(&dir);
 }
 
 #[test]
@@ -179,8 +194,9 @@ fn assert_check_passes(dir: &TempDir) {
     );
 }
 
+/// `--ai` chooses the skill and `AI_CLI` in `.env.example`; no other file names the backend.
 #[test]
-fn test_init_ai_claude_writes_router_and_check_passes() {
+fn test_init_ai_claude_writes_skill_and_ai_cli_and_check_passes() {
     let dir = TempDir::new().unwrap();
 
     decree_cmd(&dir)
@@ -190,9 +206,8 @@ fn test_init_ai_claude_writes_router_and_check_passes() {
         .success();
 
     let decree = dir.path().join(".decree");
-    assert!(decree.join("machines/router.yml").is_file());
-    assert!(decree.join("scripts/router/ask_claude.sh").is_file());
-    assert!(decree.join("graph/router.md").is_file());
+    let env = fs::read_to_string(decree.join(".env.example")).unwrap();
+    assert!(env.ends_with("\nAI_CLI=claude\n"), "{env}");
     assert_check_passes(&dir);
     // The decree skill is installed for the chosen backend.
     assert!(dir.path().join(".claude/skills").is_dir());
@@ -200,7 +215,7 @@ fn test_init_ai_claude_writes_router_and_check_passes() {
 }
 
 #[test]
-fn test_init_ai_opencode_and_copilot_write_their_routers() {
+fn test_init_ai_opencode_and_copilot_write_their_ai_cli() {
     for ai in ["opencode", "copilot"] {
         let dir = TempDir::new().unwrap();
         decree_cmd(&dir)
@@ -208,27 +223,23 @@ fn test_init_ai_opencode_and_copilot_write_their_routers() {
             .assert()
             .success();
         let decree = dir.path().join(".decree");
-        let machine = fs::read_to_string(decree.join("machines/router.yml")).unwrap();
-        assert!(machine.contains("name: router\n"), "{machine}");
-        assert!(
-            machine.contains(&format!("script: {{ name: ask_{ai}, attempts: 2 }}\n")),
-            "{machine}"
-        );
-        let scripts: Vec<String> = fs::read_dir(decree.join("scripts/router"))
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(scripts, [format!("ask_{ai}.sh")]);
+        let env = fs::read_to_string(decree.join(".env.example")).unwrap();
+        assert!(env.ends_with(&format!("\nAI_CLI={ai}\n")), "{env}");
+        assert!(!decree.join("machines").exists());
         assert_check_passes(&dir);
     }
 }
 
-/// Run the `ask_claude` that `decree init --ai claude` writes, with a stub `claude` on
-/// `PATH` that prints `stub_reply`: (exit code, `reply.json` if written, stderr).
+/// Run the `router` plugin's `ask.sh`, with `AI_CLI=claude` and a stub `claude` on `PATH`
+/// that prints `stub_reply`: (exit code, `reply.json` if written, stderr).
 fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir)
         .args(["init", "--ai", "claude"])
+        .assert()
+        .success();
+    decree_cmd(&dir)
+        .args(["plugin", "add", "router"])
         .assert()
         .success();
     let bin = dir.path().join("bin");
@@ -257,9 +268,11 @@ fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
     });
     fs::write(run.join("request.json"), request.to_string()).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let out = std::process::Command::new(dir.path().join(".decree/scripts/router/ask_claude.sh"))
+    let out = std::process::Command::new(dir.path().join(".decree/scripts/router/ask.sh"))
         .current_dir(dir.path())
         .env("PATH", path)
+        .env("AI_CLI", "claude")
+        .env_remove("DECREE_DATA_AI_CLI")
         .env("DECREE_REQUEST", run.join("request.json"))
         .env("DECREE_REPLY", run.join("reply.json"))
         .output()
@@ -309,13 +322,17 @@ fn test_ask_claude_fails_on_a_reply_that_is_not_an_option() {
     }
 }
 
-/// The router `init` writes, run by decree, picks the option when the model replies with
-/// a bare JSON object: the script's last stdout line must not be read as its event.
+/// The `router` plugin, run by decree, picks the option when the model replies with a bare
+/// JSON object: the script's last stdout line must not be read as its event.
 #[test]
 fn test_default_router_through_decree_takes_a_bare_json_reply() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir)
         .args(["init", "--ai", "claude"])
+        .assert()
+        .success();
+    decree_cmd(&dir)
+        .args(["plugin", "add", "router"])
         .assert()
         .success();
     fs::write(
@@ -356,6 +373,7 @@ states:
     decree_cmd(&dir)
         .arg("process")
         .env("PATH", path)
+        .env("AI_CLI", "claude")
         .assert()
         .code(0);
     let message =
@@ -424,6 +442,8 @@ fn test_init_permissions_keeps_existing_settings() {
     );
 }
 
+/// AC (A10): the `.gitignore` `init` writes is the previous template plus `machines/` and
+/// `scripts/`: a project commits `plugins/` and `graph/`, and nothing installed from `plugins/`.
 #[test]
 fn test_init_gitignore_content() {
     let dir = TempDir::new().unwrap();
@@ -433,7 +453,7 @@ fn test_init_gitignore_content() {
     let gitignore = fs::read_to_string(dir.path().join(".decree/.gitignore")).unwrap();
     assert_eq!(
         gitignore,
-        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nattention/\nprocess.log\ncache/\nai-use.md\n"
+        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nattention/\nprocess.log\ncache/\nai-use.md\nmachines/\nscripts/\n"
     );
 }
 

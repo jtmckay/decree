@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# develop's implement: Claude implements the message in small steps, noting
+# develop's implement: the AI implements the message in small steps, noting
 # each in progress.md, so a retry continues where the last attempt stopped. If
 # the message is unclear, it writes the question to STOP instead of guessing;
 # the run fails until a person answers it in plan.md, deletes STOP and runs

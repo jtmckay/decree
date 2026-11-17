@@ -34,7 +34,7 @@ again. A kind installs into the project (a venv, `node_modules`, `.tools/bin`), 
 `sudo`; a step only a person can do prints the exact command and returns 1. A kind that
 downloads checks the file against the sha256 in its line's source, `<url>#sha256=<hex>`, taken
 from what the project publishes (`SHA256SUMS`, the release page), never from hashing the
-download itself. `decree init` writes
+download itself. The `infra` plugin ships
 the `command` kind (on `PATH`, at the line's version if it has one, from `--version`; or a
 person installs it).
 
@@ -108,7 +108,7 @@ EOF
 Scripts hand work to one another, and to a person, through files in `$DECREE_ROOT_RUN_DIR`
 (the run's own folder, or in a child run the top run's, so a child machine whose steps are
 develop's scripts shares them). decree reads none of them but `hold`, and quotes `STOP` and
-`leftovers` in the run's attention file; the built-in `develop` machine's scripts follow this convention:
+`leftovers` in the run's attention file; the official `develop` plugin's scripts follow this convention:
 
 - `progress.md`: the step log, one line per step, what is done and what is next. A retry
   reads it and continues.
@@ -122,10 +122,10 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
 - `gaps.md`: what `verify` found missing on `fail`; a retry's `implement` closes each first.
   `verify` keeps the last one if an attempt dies.
 - `hold`, in the run's own `$DECREE_RUN_DIR`: written by a step whose failure must stop every
-  run (the built-in `keep`, in `failed`). decree puts its text in the run's file in
+  run (the official plugins' `keep`, in `failed`). decree puts its text in the run's file in
   `.decree/attention/` with `holds: true`, and nothing runs until `decree process --retry <id>`
   removes both or a person deletes the attention file.
-- `leftovers`, in the run's own `$DECREE_RUN_DIR`: written by the built-in `clean_tree` when it
+- `leftovers`, in the run's own `$DECREE_RUN_DIR`: written by the official plugins' `clean_tree` when it
   finds uncommitted changes. It names each run that passed `clean_tree` and is now
   `interrupted` or `failed` (from `"${DECREE}" status --all --format json`, read with `jq`),
   with `decree process --retry <id>` and `git stash push --include-untracked -m "decree <id>"

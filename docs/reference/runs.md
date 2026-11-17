@@ -68,23 +68,22 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
 
 ## The default router
 
-`decree init` writes `machines/router.yml` and its script. It is a normal machine: edit it, replace it, or write another and point a `model` invoke's `router:` at it. Below is the `--ai claude` version; `--ai copilot` and `--ai opencode` differ only in the script name (`ask_copilot`, `ask_opencode`) and the CLI call ([cli.md](cli.md)).
+The official `router` plugin ([plugins.md](plugins.md#official-plugins)), which `decree plugin add router` adds, installs `machines/router.yml` and its script, `scripts/router/ask.sh`. It is a normal machine: edit it (and keep the edit with `decree plugin export router`), replace it, or write another and point a `model` invoke's `router:` at it. Its machine:
 
 ```yaml
-# Graph: ../graph/router.md
 name: router
-description: Ask Claude to pick one of the options in the request.
+description: Ask an AI CLI (claude, opencode or copilot) to pick one of the options in the request.
 initial: ask
 states:
-  ask:                             # renders the prompt from $DECREE_REQUEST, runs claude -p, writes $DECREE_REPLY
+  ask:                             # renders the prompt from $DECREE_REQUEST, runs the AI CLI, writes $DECREE_REPLY
     invoke:                        # a reply that is not one of the options fails the script; it runs once more
-      script: { name: ask_claude, attempts: 2 }
+      script: { name: ask, attempts: 2 }
     transitions: { done: done }
   done:   { final: true }
   failed: { final: true }
 ```
 
-`ask_claude` renders this prompt, sends it to `claude -p`, takes the last JSON object from the reply (code fences and prose around it are fine), and exits non-zero unless its `event` is one of the options:
+`ask` picks the AI CLI as `ai.sh` does (the run's `ai_cli` data, else `AI_CLI`, else the first of `claude`, `opencode` and `copilot` on `PATH`), renders this prompt, sends it (`claude -p`, `opencode run` or `copilot -p`), takes the last JSON object from the reply (code fences and prose around it are fine), and exits non-zero unless its `event` is one of the options:
 
 ```text
 You choose the next step of a workflow. Reply with only a JSON object:

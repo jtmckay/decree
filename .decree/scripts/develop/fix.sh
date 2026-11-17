@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# develop's fix: Claude fixes what the gate reported. Like implement, it
+# develop's fix: the AI fixes what the gate reported. Like implement, it
 # writes STOP instead of guessing.
 set -euo pipefail
 . .decree/scripts/develop/ai.sh

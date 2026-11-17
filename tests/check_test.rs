@@ -9,6 +9,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+mod common;
+
 /// `<project>/.decree`, `project` relative to the repository.
 fn decree_dir(project: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -46,6 +48,15 @@ fn copy_dir(src: &Path, dst: &Path) {
 fn check_project(project: &str, edit: impl FnOnce(&Path)) -> (i32, String, String) {
     let tmp = TempDir::new().unwrap();
     copy_dir(&decree_dir(project), &tmp.path().join(".decree"));
+    // A project with plugins (examples/project) has its machines installed first, as any
+    // command does, so `edit` changes the installed copy, as a person edits it.
+    if tmp.path().join(".decree/plugins").is_dir() {
+        cargo_bin_cmd!("decree")
+            .current_dir(tmp.path())
+            .args(["plugin", "install"])
+            .assert()
+            .success();
+    }
     edit(&tmp.path().join(".decree"));
     let out = cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
@@ -79,8 +90,11 @@ fn check_passes_on_the_reference_examples() {
     let decree = tmp.path().join(".decree");
     fs::create_dir_all(decree.join("machines")).unwrap();
     for name in ["hello", "develop", "deploy"] {
-        let file = format!("machines/{name}.yml");
-        fs::copy(decree_dir(PROJECT).join(&file), decree.join(&file)).unwrap();
+        fs::write(
+            decree.join(format!("machines/{name}.yml")),
+            common::plugin_machine(&format!("{PROJECT}/.decree/plugins/{name}.md")),
+        )
+        .unwrap();
     }
     let reference = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/machines.md"),
@@ -319,6 +333,7 @@ fn check_does_not_warn_about_a_migration_after_the_ones_that_ran() {
 fn check_warns_until_the_graph_is_rewritten() {
     let tmp = TempDir::new().unwrap();
     copy_dir(&decree_dir(PROJECT), &tmp.path().join(".decree"));
+    fs::create_dir_all(tmp.path().join(".decree/machines")).unwrap();
     fs::write(
         tmp.path().join(".decree/machines/greet.yml"),
         "name: greet\ndescription: Run hello.\ninitial: work\nstates:\n  \
@@ -338,6 +353,12 @@ fn check_warns_until_the_graph_is_rewritten() {
             String::from_utf8(out.stderr).unwrap(),
         )
     };
+    // Kept as a plugin, as git ignores machines/ in a project with plugins/.
+    cargo_bin_cmd!("decree")
+        .current_dir(tmp.path())
+        .args(["plugin", "export", "greet"])
+        .assert()
+        .success();
     let (code, stderr) = run("check");
     assert_eq!(code, 0);
     assert!(
@@ -359,6 +380,20 @@ fn check_warns_when_the_graph_directory_is_missing() {
         stderr.contains("warning: graph/system.md: missing"),
         "{stderr}"
     );
+}
+
+/// The machine `name` as docs/reference/machines.md shows it, written by hand.
+fn docs_machine(name: &str) -> String {
+    let reference = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/machines.md"),
+    )
+    .unwrap();
+    reference
+        .split("```yaml\n")
+        .filter_map(|block| block.split_once("```").map(|(yaml, _)| yaml))
+        .find(|yaml| yaml.lines().any(|l| l == format!("name: {name}")))
+        .unwrap_or_else(|| panic!("docs/reference/machines.md shows no `{name}`"))
+        .to_string()
 }
 
 /// The docs/reference/machines.md messages for the shapes this model rejects.
@@ -397,7 +432,13 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
     for (project, file, from, to, expected) in cases {
         let (code, stdout, _) = check_project(project, |decree| {
             let path = decree.join("machines").join(file);
-            let text = fs::read_to_string(&path).unwrap();
+            // examples/project's machines are plugins; the edit is to the machine as written
+            // by hand, as docs/reference/machines.md shows it.
+            let text = if project == PROJECT {
+                docs_machine(file.trim_end_matches(".yml"))
+            } else {
+                fs::read_to_string(&path).unwrap()
+            };
             assert!(text.contains(from), "{file}: {from}");
             fs::write(&path, text.replacen(from, to, 1)).unwrap();
         });

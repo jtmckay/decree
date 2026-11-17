@@ -157,6 +157,7 @@ impl Project {
     }
 
     fn machine(&self, name: &str, yml: &str) {
+        fs::create_dir_all(self.decree_dir().join("machines")).unwrap();
         fs::write(self.decree_dir().join(format!("machines/{name}.yml")), yml).unwrap();
     }
 
@@ -254,7 +255,7 @@ fn init_emit_process_status_shows_the_run_done() {
     let p = Project::init();
     p.machine(
         "hello",
-        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
+        &common::plugin_machine("examples/project/.decree/plugins/hello.md"),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let id = p.emit("hello", "Say hello.\n");
@@ -578,13 +579,17 @@ fn process_streams_each_run_and_a_line_as_it_stops() {
         "{log}"
     );
     assert!(tail.contains(&format!("✓ {third} done in ")), "{log}");
-    // Neither the log nor .decree/cache/ draws a warning from `decree check`.
+    // Neither the log nor .decree/cache/ draws a warning from `decree check` (the machines,
+    // written by hand in a project with plugins/, draw one each: git ignores machines/).
     fs::create_dir_all(p.decree_dir().join("cache/playwright")).unwrap();
     p.decree(&["graph"]).assert().success();
     let out = p.decree(&["check"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        !String::from_utf8_lossy(&out.stderr).contains("warning"),
+        stderr
+            .lines()
+            .all(|l| l.contains("no plugin installed this machine")),
         "{out:?}"
     );
 }
@@ -919,7 +924,7 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     p.script("work", FLAKY_WORK);
     p.machine(
         "hello",
-        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
+        &common::plugin_machine("examples/project/.decree/plugins/hello.md"),
     );
     p.script("greet", "#!/usr/bin/env bash\necho hello\n");
     let failing = p.emit("flaky", "Fails.\n");
@@ -960,6 +965,7 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
 #[test]
 fn machine_prune_and_daemon_take_the_same_durations() {
     let p = Project::init();
+    p.script("keep", "#!/usr/bin/env bash\n");
     let machine = |timeout: &str| {
         format!(
             "name: t\ndescription: A script with a time limit.\ninitial: work\nstates:\n  \
@@ -1145,7 +1151,7 @@ fn a_named_event_picks_the_transition() {
          verify:\n    invoke: verify\n    transitions: { pass: passed, fail: failed }\n  \
          passed: { final: true }\n  failed: { final: true }\n",
     );
-    fs::create_dir(p.decree_dir().join("scripts/verify")).unwrap();
+    fs::create_dir_all(p.decree_dir().join("scripts/verify")).unwrap();
     p.script(
         "verify/verify.sh",
         "#!/usr/bin/env bash\necho checking\necho pass > \"$DECREE_EVENT_FILE\"\n",
@@ -1159,11 +1165,14 @@ fn a_named_event_picks_the_transition() {
 }
 
 /// AC (A08): `decree init` in an empty directory writes no `.decree/lib/`, `decree check`
-/// passes, and infra's `run.sh check` runs from `.decree/scripts/infra/`, reporting each line
-/// with the file it came from.
+/// passes, and infra's `run.sh check`, once `infra` is added, runs from
+/// `.decree/scripts/infra/`, reporting each line with the file it came from.
 #[test]
 fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     let p = Project::init();
+    assert!(!p.decree_dir().join("lib").exists());
+    p.decree(&["check"]).assert().success().stderr("");
+    p.decree(&["plugin", "add", "infra"]).assert().success();
     assert!(!p.decree_dir().join("lib").exists());
     p.decree(&["check"]).assert().success().stderr("");
     let out = std::process::Command::new(".decree/scripts/infra/run.sh")
@@ -1176,8 +1185,7 @@ fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         stdout,
-        "ok       command claude (scripts/infra/requirements)\n\
-         ok       command git (scripts/infra/requirements)\n"
+        "ok       command git (scripts/infra/requirements)\n"
     );
 }
 
@@ -1198,7 +1206,7 @@ fn scripts_get_no_decree_lib() {
     let p = Project::init();
     p.machine(
         "hello",
-        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
+        &common::plugin_machine("examples/project/.decree/plugins/hello.md"),
     );
     p.script(
         "greet",
@@ -1226,6 +1234,7 @@ fn scripts_get_no_decree_lib() {
 #[test]
 fn check_ignores_the_files_beside_a_machines_scripts() {
     let p = Project::init();
+    p.decree(&["plugin", "add", "develop"]).assert().success();
     let develop = p.decree_dir().join("scripts/develop");
     assert!(develop.join("ai.sh").is_file());
     fs::write(develop.join("conventions.md"), "# Conventions\n").unwrap();
@@ -1244,7 +1253,7 @@ fn daemon_reads_dotenv_again_on_each_pass() {
     let p = Project::init();
     p.machine(
         "hello",
-        &fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap(),
+        &common::plugin_machine("examples/project/.decree/plugins/hello.md"),
     );
     p.script(
         "greet",
@@ -1420,7 +1429,7 @@ fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
 #[test]
 fn daemon_reads_machines_again_before_each_run() {
     let p = Project::init();
-    let hello = fs::read_to_string("examples/project/.decree/machines/hello.yml").unwrap();
+    let hello = common::plugin_machine("examples/project/.decree/plugins/hello.md");
     p.machine("hello", &hello);
     let record = |name: &str| {
         format!("#!/usr/bin/env bash\necho {name} >> \"$DECREE_PROJECT_ROOT/out.txt\"\n")
@@ -1481,6 +1490,7 @@ fn status_lists_active_runs_in_nested_projects() {
         cmd
     };
     decree(&web, &["init", "--ai", "claude"]).assert().success();
+    fs::create_dir_all(web.join(".decree/machines")).unwrap();
     fs::write(web.join(".decree/machines/tick.yml"), TICK).unwrap();
     write_script(&web.join(".decree/scripts/ticker"), TICK_WHILE_FLAG);
     fs::write(web.join("tick.flag"), "").unwrap();

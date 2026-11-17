@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+mod common;
+
 fn repo() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -43,7 +45,20 @@ fn machines_project(files: &[&str]) -> TempDir {
     fs::create_dir_all(&dir).unwrap();
     for file in files {
         let from = repo().join(file);
-        fs::copy(&from, dir.join(from.file_name().unwrap())).unwrap();
+        match file.strip_suffix(".md") {
+            // A plugin file: the machine it installs.
+            Some(plugin) => {
+                let name = Path::new(plugin).file_name().unwrap().to_str().unwrap();
+                fs::write(
+                    dir.join(format!("{name}.yml")),
+                    common::plugin_machine(file),
+                )
+                .unwrap();
+            }
+            None => {
+                fs::copy(&from, dir.join(from.file_name().unwrap())).unwrap();
+            }
+        }
     }
     tmp
 }
@@ -84,7 +99,7 @@ fn graph_writes_one_file_per_machine_and_system_md() {
     // `feature` has a compound state, a check, a model and a person.
     let tmp = machines_project(&[
         "tests/fixtures/feature/.decree/machines/feature.yml",
-        "examples/project/.decree/machines/hello.yml",
+        "examples/project/.decree/plugins/hello.md",
         "tests/fixtures/feature/.decree/machines/router.yml",
     ]);
     let (code, stdout, stderr) = graph(&tmp);
@@ -151,7 +166,7 @@ fn graph_rewrites_every_example_graph_unchanged() {
 
 #[test]
 fn graph_removes_stale_md_files_only() {
-    let tmp = machines_project(&["examples/project/.decree/machines/hello.yml"]);
+    let tmp = machines_project(&["examples/project/.decree/plugins/hello.md"]);
     let dir = tmp.path().join(".decree/graph");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("gone.md"), "# gone\n").unwrap();
@@ -164,7 +179,7 @@ fn graph_removes_stale_md_files_only() {
 
 #[test]
 fn graph_cron_without_machine_is_an_error() {
-    let tmp = machines_project(&["examples/project/.decree/machines/hello.yml"]);
+    let tmp = machines_project(&["examples/project/.decree/plugins/hello.md"]);
     let decree = tmp.path().join(".decree");
     fs::create_dir_all(decree.join("cron")).unwrap();
     fs::write(
@@ -182,7 +197,7 @@ fn graph_cron_without_machine_is_an_error() {
 
 #[test]
 fn graph_takes_no_machine_argument() {
-    let tmp = machines_project(&["examples/project/.decree/machines/hello.yml"]);
+    let tmp = machines_project(&["examples/project/.decree/plugins/hello.md"]);
     let out = cargo_bin_cmd!("decree")
         .current_dir(tmp.path())
         .args(["graph", "hello"])

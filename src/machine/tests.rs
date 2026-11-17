@@ -4,20 +4,35 @@ use crate::cond::Operand;
 use std::fs;
 use tempfile::TempDir;
 
-/// `examples/project`'s `hello`, `develop` and `deploy`, and from `tests/fixtures/feature/`: `ship`, which
+/// `examples/project`'s `hello`, `develop` and `deploy` (as docs/reference/machines.md shows them), and from `tests/fixtures/feature/`: `ship`, which
 /// invokes `feature` and `deploy`, `feature` (nesting, a check, a model, a person, `data`,
 /// `emits`, `onentry` and `onexit`) and the router `feature` names by default.
 const EXAMPLES: [&str; 6] = ["hello", "develop", "deploy", "ship", "feature", "router"];
 
 fn fixture(name: &str) -> String {
-    let project = if ["hello", "develop", "deploy"].contains(&name) {
-        "examples/project"
-    } else {
-        "tests/fixtures/feature"
-    };
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(project)
-        .join(".decree/machines")
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if ["hello", "develop", "deploy"].contains(&name) {
+        // examples/project keeps these machines as plugins; docs/reference/machines.md shows
+        // each as written by hand, which tests/docs_test.rs holds equal to it as YAML.
+        let doc = fs::read_to_string(root.join("docs/reference/machines.md")).unwrap();
+        let mut block: Option<Vec<&str>> = None;
+        for line in doc.lines() {
+            match &mut block {
+                None if line == "```yaml" => block = Some(Vec::new()),
+                Some(lines) if line == "```" => {
+                    if lines.iter().any(|l| *l == format!("name: {name}")) {
+                        return format!("{}\n", lines.join("\n"));
+                    }
+                    block = None;
+                }
+                Some(lines) => lines.push(line),
+                None => {}
+            }
+        }
+        panic!("docs/reference/machines.md shows no `{name}`");
+    }
+    let path = root
+        .join("tests/fixtures/feature/.decree/machines")
         .join(format!("{name}.yml"));
     fs::read_to_string(path).unwrap()
 }

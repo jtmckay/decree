@@ -1,6 +1,6 @@
 # qa
 
-Attack the project to make it misbehave, and hand each real bug to develop as a failing test; Claude writes tests only and never fixes code.
+Attack the project to make it misbehave, and hand each real bug to develop as a failing test; the AI writes tests only and never fixes code.
 
 Machine: [machines/qa.yml](../machines/qa.yml)
 

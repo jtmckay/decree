@@ -33,7 +33,7 @@ Machines follow W3C SCXML 1.0 (the State Chart XML recommendation): its terms, i
 | Data | A machine's typed, read-only values (`data:`), set from a message's `params`: SCXML `<data>`, initialised the way `<invoke><param>` initialises an invoked session. |
 | Decision | A built-in function a state can invoke instead of a script: `check` (a deterministic condition), `model` (a router machine asks a model to pick an option) or `person` (a person picks an option). See [Invoke](machines.md#invoke-the-states-function). |
 | Sub-machine | A machine a state invokes, `invoke: { machine: <name> }`: SCXML's nested session. It runs as a child run with its own folder and a `parent` reference; the final state it reaches is the parent state's event. |
-| Router | A machine that answers a `model` request: it reads the request, asks a model however it likes, and writes a reply. Replaceable; `decree init` writes one named `router`. |
+| Router | A machine that answers a `model` request: it reads the request, asks a model however it likes, and writes a reply. Replaceable; the official plugin `router` is one named `router`. |
 | Run | One message moving through one machine (an SCXML session), stored in `.decree/runs/<message id>/`. |
 
 ## Architecture
@@ -76,7 +76,7 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, attention/, process.log and cache/
+  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, attention/, process.log, cache/, ai-use.md, machines/ and scripts/ (installed from plugins/)
   migrations/                       # ordered run-once messages, committed, never edited (messages.md)
   processed.md                      # committed ledger: one migration filename per line
   inbox/                            # queued messages: *.md; files starting with "." are ignored
@@ -90,13 +90,13 @@ Each building block has its own directory in `.decree/`:
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
     hold                            # written by a script (keep): the run's attention file holds the queue (cli.md, Attention)
   cron/                             # *.md cron templates (messages.md, Cron files)
-  plugins/<machine name>.md           # optional, committed: a machine and its scripts folder as one file, installed into machines/ and scripts/<machine name>/ (plugins.md)
-  machines/<machine name>.yml         # statecharts (machines.md)
+  plugins/<machine name>.md           # committed (`decree init` writes the folder empty): a machine and its scripts folder as one file, installed into machines/ and scripts/<machine name>/ (plugins.md)
+  machines/<machine name>.yml         # statecharts (machines.md); installed from plugins/, so `decree init`'s .gitignore lists machines/ and scripts/
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
   schema/v1/*.schema.json             # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)
   scripts/<name>                    # executables shared by every machine; optional extension: verify.sh (scripts.md)
   scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
-  scripts/<machine name>/*            # also the machine's helpers, config and data, which decree never runs (scripts.md, A machine's files); `decree init` writes `ai.sh` for develop, infra and qa, infra's `requirements`, `run.sh` and `kinds/` (scripts.md, Declared environment), and qa's `qa.sh`, `invariants.md` and `wrenches.md`
+  scripts/<machine name>/*            # also the machine's helpers, config and data, which decree never runs (scripts.md, A machine's files); the official plugins carry `ai.sh` for develop, infra and qa, infra's `requirements`, `run.sh` and `kinds/` (scripts.md, Declared environment), and qa's `qa.sh`, `invariants.md` and `wrenches.md`
   .env                              # optional, never committed: KEY=value variables every script gets, secrets included (scripts.md, .env files)
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
@@ -114,7 +114,7 @@ A project is machines, scripts and messages; there is no configuration file for 
 
 | Setting | Instead |
 | --- | --- |
-| Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)). `decree init` writes it. |
+| Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)), such as the official plugin `decree plugin add router` adds. |
 | Default machine | None: every message names its machine with `machine:`. `decree emit`, cron files and `decree init`'s examples always do. |
 | Retries | `attempts` in the script invoke, a number or a list of values; default 1 (no retry), as a Step Functions task without `Retry`. |
 | Emit depth | `max_depth`, 10 unless `DECREE_MAX_DEPTH` sets it, from the shell or `.decree/.env` ([Environment](cli.md#environment)). |

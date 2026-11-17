@@ -77,14 +77,15 @@ struct Project {
 }
 
 impl Project {
-    /// `decree init --ai claude`, the test machines and scripts, and their graphs and
-    /// schemas, so `decree check` passes without a warning.
+    /// `decree init --ai claude`, the test machines and scripts, exported as plugins, and their
+    /// graphs and schemas, so `decree check` passes without a warning.
     fn new() -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
         run(p.root(), &["init", "--ai", "claude"], "");
         let decree = p.root().join(".decree");
+        fs::create_dir_all(decree.join("machines")).unwrap();
         for (name, yml) in [("flaky", FLAKY), ("deploy", DEPLOY), ("slow", SLOW)] {
             fs::write(decree.join(format!("machines/{name}.yml")), yml).unwrap();
         }
@@ -94,6 +95,10 @@ impl Project {
             ("wait_flag", WAIT_FLAG),
         ] {
             write_script(&decree.join("scripts").join(name), text);
+        }
+        // Kept as plugins, as git ignores machines/ and scripts/.
+        for name in ["flaky", "deploy", "slow"] {
+            run(p.root(), &["plugin", "export", name], "");
         }
         run(p.root(), &["graph"], "");
         run(p.root(), &["schema"], "");

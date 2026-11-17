@@ -152,14 +152,14 @@ impl MachineFilter {
     }
 
     /// Every name the filter gives must be a machine: one in `.decree/machines/` (`known`)
-    /// or a built-in. `source` is where the names came from.
+    /// or an official plugin, which a project may add. `source` is where the names came from.
     pub fn check(&self, known: impl Fn(&str) -> bool, source: &str) -> Result<(), DecreeError> {
         let (MachineFilter::Only(names) | MachineFilter::Except(names)) = self else {
             return Ok(());
         };
         let unknown: Vec<String> = names
             .iter()
-            .filter(|n| !known(n) && !crate::commands::init::is_builtin_machine(n))
+            .filter(|n| !known(n) && crate::official::get(n).is_none())
             .map(|n| format!("`{n}`"))
             .collect();
         match unknown.len() {

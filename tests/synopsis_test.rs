@@ -137,9 +137,19 @@ fn synopsis_steps_run_as_written() {
         assert_eq!(code, 0, "`{line}` failed:\n{stdout}\n{stderr}");
     };
 
-    // 1. Set up a project.
-    assert_eq!(steps[&1], ["decree init"]);
-    decree(&steps[&1][0]);
+    // 1. Set up a project, list the official plugins and add one.
+    assert_eq!(
+        steps[&1],
+        [
+            "decree init",
+            "decree plugin list",
+            "decree plugin add develop"
+        ]
+    );
+    for line in &steps[&1] {
+        decree(line);
+    }
+    assert!(dir.path().join(".decree/plugins/develop.md").is_file());
 
     // 2. A script: exit 0 is `done`.
     let script = step_file(&steps[&2]);
