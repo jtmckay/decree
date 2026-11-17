@@ -25,5 +25,7 @@ states:
     invoke:                        # a reply without a VERDICT line fails the attempt: ask again
       script: { name: verify, attempts: 3 }
     transitions: { pass: done, fail: failed, stop: failed }
-  done:   { final: true, onentry: [commit] }   # one commit per run; a migration's processed.md line too
+  done:                            # one commit per run; a migration's processed.md line too
+    final: true
+    onentry: [commit, restart]     # restart: hold the queue so run-queue.sh rebuilds decree for the next migration
   failed: { final: true, onentry: [keep] }     # the run's changes stay in the tree; its attention file holds the queue

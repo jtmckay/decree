@@ -22,19 +22,13 @@ const ROUTER: &[Pair] = &[
 const AI: &[Pair] = &[("lib/ai.sh", "ai/ai.sh")];
 
 /// The built-in `develop` and `infra` machines and what they run, but `gate.sh`, which a
-/// project fills in.
+/// project fills in, and develop's machine and prompts: this repository's own `develop` is
+/// its Rust variant (done's `restart`, and prompts that read `lib/develop/conventions.md`).
 const DEVELOP: &[Pair] = &[
-    ("machines/develop.yml", "machines/develop.yml"),
     ("machines/infra.yml", "machines/infra.yml"),
     ("scripts/clean_tree.sh", "scripts/clean_tree.sh"),
     ("scripts/commit.sh", "scripts/commit.sh"),
     ("scripts/keep.sh", "scripts/keep.sh"),
-    (
-        "scripts/develop/implement.sh",
-        "scripts/develop/implement.sh",
-    ),
-    ("scripts/develop/fix.sh", "scripts/develop/fix.sh"),
-    ("scripts/develop/verify.sh", "scripts/develop/verify.sh"),
     ("scripts/develop/precheck.sh", "scripts/develop/precheck.sh"),
     ("scripts/infra/declare.sh", "scripts/infra/declare.sh"),
     ("scripts/infra/apply.sh", "scripts/infra/apply.sh"),

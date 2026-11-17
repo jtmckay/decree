@@ -31,7 +31,7 @@ stateDiagram-v2
         machine onentry: clean_tree
     end note
     note right of done
-        onentry: commit
+        onentry: commit, restart
     end note
     note right of failed
         onentry: keep
