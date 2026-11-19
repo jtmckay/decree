@@ -34,6 +34,7 @@ machine:
           question: This lease waits in line for its resource. Give up its place, or ask to keep it longer once held?
           notify: tell
           timeout: 1s
+          attention: false
       transitions:
         release:
           target: done
@@ -57,6 +58,7 @@ machine:
           question: This lease holds its resource. Give it back, or keep it for its duration again?
           notify: tell
           timeout: 1s
+          attention: false
       transitions:
         release:
           target: done
@@ -461,7 +463,7 @@ A lease is a decree run of this machine, and its run id is the lease's id. Nothi
 ## What it needs
 
 - `bash`, `flock` (util-linux) and `jq`, listed in `scripts/lease/requirements`, so `infra`'s `run.sh check` checks them.
-- `decree daemon` running: a waiting lease looks every second whether it is its turn, and a held one whether it has expired, and only `daemon` keeps looking (`decree process` stops once every lease waits).
+- `decree daemon` running: a waiting lease looks every second whether it is its turn, and a held one whether it has expired, and only `daemon` keeps looking (`decree process` stops once every lease waits). Those waits are timers, not questions for a person (`attention: false`), so a lease never puts a file in `.decree/attention/`.
 
 ## Adding it
 

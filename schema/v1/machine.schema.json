@@ -389,6 +389,11 @@
         "timeout": {
           "$ref": "#/$defs/duration",
           "description": "How long to wait for a reply; after that the event is `error`. A duration (V16). Default: wait forever."
+        },
+        "attention": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the wait needs a person. `false` for a wait only programs answer, such as a short `timeout` used as a timer: the run gets no file in `.decree/attention/` and no `Waiting:` line from `process`. Default: `true`."
         }
       },
       "examples": [{ "question": "Tests still fail. What next?", "notify": "notify_person", "timeout": "2d" }]

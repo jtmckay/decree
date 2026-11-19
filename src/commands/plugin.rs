@@ -118,7 +118,9 @@ pub fn import(
         }
     }
 
-    let changes = old.as_ref().map(|old| changes(old.as_ref(), &plugin));
+    let changes = old
+        .as_ref()
+        .map(|old| changes(old.as_ref(), &plugin, false));
     let summary = summary(&plugin);
     let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(&name));
     if format == Format::Text {
@@ -269,37 +271,11 @@ fn merge(doc: &mut Json, extra: Json) {
     }
 }
 
-/// What installing `new` over `old` changes: each file added, changed or removed, relative to
-/// the project root, and `needs` when it changes. An `old` that fails the schema counts as
-/// nothing installed.
-fn changes(old: Option<&Plugin>, new: &Plugin) -> Vec<Json> {
-    let before: BTreeMap<String, String> = old
-        .map(Plugin::files)
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-    let after: BTreeMap<String, String> = new.files().into_iter().collect();
-    let mut out = Vec::new();
-    for (path, text) in &after {
-        let change = match before.get(path) {
-            None => "added",
-            Some(t) if t != text => "changed",
-            Some(_) => continue,
-        };
-        out.push(json!({ "path": format!("{DECREE_DIR}/{path}"), "change": change }));
-    }
-    for path in before.keys().filter(|p| !after.contains_key(*p)) {
-        out.push(json!({ "path": format!("{DECREE_DIR}/{path}"), "change": "removed" }));
-    }
-    if old.map(|o| &o.needs) != Some(&new.needs) && !(old.is_none() && new.needs.is_empty()) {
-        out.push(json!({ "path": "needs", "change": "changed" }));
-    }
-    out
-}
-
 /// `decree plugin export` with no name: export every plugin whose installed copy differs from
 /// its plugin file (edited in place, or by a run), so the edits reach `plugins/`. `commit`
-/// runs it before it commits. A plugin that fails the schema, or is not installed, is skipped.
+/// runs it before it commits. A plugin that fails the schema, or is not installed, is skipped,
+/// and so is a conflict (its file changed since it was installed): exporting would write the
+/// old installed version over the new file, so it is named and left for a person to merge.
 /// With `dry_run`, it names them and writes nothing: `keep` holds the queue on them.
 pub fn export_edited(
     project_root: &Path,
@@ -308,9 +284,14 @@ pub fn export_edited(
 ) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
     let mut exported = Vec::new();
+    let mut conflicts = Vec::new();
     for found in plugin::read_all(&decree_dir)? {
         let Ok(p) = found.parsed else { continue };
         if !plugin::edited(&decree_dir, &p)? {
+            continue;
+        }
+        if plugin::conflicted(&decree_dir, &p.name, &found.text)? {
+            conflicts.push(p.name);
             continue;
         }
         if !dry_run {
@@ -323,10 +304,17 @@ pub fn export_edited(
         Format::Json => print_json(&json!({
             "action": "export",
             "exported": exported,
+            "conflicts": conflicts,
             "dry_run": dry_run,
         })),
         Format::Text => {
-            if exported.is_empty() {
+            for name in &conflicts {
+                println!(
+                    "not exported: {} changed since `{name}` was installed, and its installed copy was edited; merge by hand (`decree plugin export {name}` writes the copy, `decree plugin install {name}` takes the file)",
+                    plugin::plugin_file(name)
+                );
+            }
+            if exported.is_empty() && conflicts.is_empty() {
                 println!("no plugin's installed copy differs from its file: nothing to export");
             }
             let verb = if dry_run { "would write" } else { "wrote" };
@@ -521,7 +509,7 @@ pub fn add(
         if a.status == "replaced" {
             let old = plugin::read_one(&decree_dir, &a.name)?;
             let old_plugin = old.parsed.as_ref().ok();
-            a.changes = line_changes(old_plugin, &new);
+            a.changes = changes(old_plugin, &new, true);
             a.dropped_edits_in_place = match old_plugin {
                 Some(p) => plugin::edited(&decree_dir, p)?,
                 None => false,
@@ -607,10 +595,11 @@ fn machine_without_plugin(decree_dir: &Path, name: &str) -> bool {
         && !decree_dir.join(plugin::plugin_file(name)).is_file()
 }
 
-/// What replacing `old` with `new` changes, file by file: each file added, changed or removed,
-/// relative to the project root, with the lines it drops (`-`) and adds (`+`), and `needs`
-/// when it changes.
-fn line_changes(old: Option<&Plugin>, new: &Plugin) -> Vec<Json> {
+/// What replacing `old` with `new` changes, file by file in path order: each file added,
+/// changed or removed, relative to the project root, and `needs` when it changes. With
+/// `lines`, each also names the lines it drops (`-`) and adds (`+`). An `old` that fails the
+/// schema counts as nothing installed.
+fn changes(old: Option<&Plugin>, new: &Plugin, lines: bool) -> Vec<Json> {
     let before: BTreeMap<String, String> = old
         .map(Plugin::files)
         .unwrap_or_default()
@@ -629,20 +618,25 @@ fn line_changes(old: Option<&Plugin>, new: &Plugin) -> Vec<Json> {
             (Some(x), Some(y)) if x != y => "changed",
             _ => continue,
         };
-        let lines = diff_lines(a.map_or("", String::as_str), b.map_or("", String::as_str));
-        out.push(json!({
-            "path": format!("{DECREE_DIR}/{path}"),
-            "change": change,
-            "lines": lines,
-        }));
+        let mut entry = json!({ "path": format!("{DECREE_DIR}/{path}"), "change": change });
+        if lines {
+            entry["lines"] = json!(diff_lines(
+                a.map_or("", String::as_str),
+                b.map_or("", String::as_str)
+            ));
+        }
+        out.push(entry);
     }
     let old_needs = old.map(|o| o.needs.clone()).unwrap_or_default();
     if old_needs != new.needs {
-        out.push(json!({
-            "path": "needs",
-            "change": "changed",
-            "lines": [format!("- {}", old_needs.join(", ")), format!("+ {}", new.needs.join(", "))],
-        }));
+        let mut entry = json!({ "path": "needs", "change": "changed" });
+        if lines {
+            entry["lines"] = json!([
+                format!("- {}", old_needs.join(", ")),
+                format!("+ {}", new.needs.join(", "))
+            ]);
+        }
+        out.push(entry);
     }
     out
 }
@@ -719,19 +713,50 @@ mod tests {
     }
 
     #[test]
-    fn line_changes_shows_a_dropped_edit_and_needs() {
+    fn changes_with_lines_shows_a_dropped_edit_and_needs() {
         let text = official::get("develop").unwrap().text;
         let new = Plugin::parse(text, None).unwrap();
         let mut old = new.clone();
         old.scripts
             .insert("gate.sh".into(), "#!/usr/bin/env bash\ncargo test\n".into());
         old.needs.clear();
-        let changes = line_changes(Some(&old), &new);
+        let changes = changes(Some(&old), &new, true);
         assert_eq!(changes.len(), 2, "{changes:?}");
         assert_eq!(changes[0]["path"], ".decree/scripts/develop/gate.sh");
         assert_eq!(changes[0]["change"], "changed");
         let lines = changes[0]["lines"].as_array().unwrap();
         assert!(lines.iter().any(|l| l == "- cargo test"), "{lines:?}");
         assert_eq!(changes[1]["path"], "needs");
+    }
+
+    #[test]
+    fn export_edited_leaves_a_conflict_alone() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let decree_dir = root.join(DECREE_DIR);
+        let plugins = decree_dir.join(plugin::PLUGINS_DIR);
+        std::fs::create_dir_all(&plugins).unwrap();
+        let text = official::get("develop").unwrap().text;
+        let file = plugins.join("develop.md");
+        std::fs::write(&file, text).unwrap();
+        plugin::sync(&decree_dir).unwrap();
+        let gate = decree_dir.join("scripts/develop/gate.sh");
+        std::fs::write(&gate, "#!/usr/bin/env bash\ncargo test\n").unwrap();
+        // A pull changes the plugin file under the edit.
+        let pulled = format!("{text}\nA teammate's note.\n");
+        std::fs::write(&file, &pulled).unwrap();
+        assert_eq!(plugin::sync(&decree_dir).unwrap().conflicts, ["develop"]);
+        export_edited(root, false, Format::Json).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), pulled);
+        assert!(std::fs::read_to_string(&gate)
+            .unwrap()
+            .contains("cargo test"));
+        // Without the pull, the edit is exported.
+        std::fs::write(&file, text).unwrap();
+        plugin::sync(&decree_dir).unwrap();
+        export_edited(root, false, Format::Json).unwrap();
+        assert!(std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("cargo test"));
     }
 }

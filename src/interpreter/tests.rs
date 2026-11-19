@@ -1604,6 +1604,24 @@ fn reply_without_timeout_has_null_timeout_at() {
 }
 
 #[test]
+fn reply_waits_need_a_person_unless_attention_is_false() {
+    let (p, _) = reply_project(&[]);
+    assert_eq!(crate::attention::list(&p.root()).unwrap().len(), 1);
+    assert!(p.events_of("waiting")[0].get("attention").is_none());
+
+    let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_reply.yml"))
+        .unwrap()
+        .replace(
+            "            timeout: 60s\n",
+            "            timeout: 60s\n            attention: false\n",
+        );
+    let p = Project::from_text("step_reply", &text, &[]);
+    assert!(matches!(p.run(), Outcome::Waiting { .. }));
+    assert_eq!(p.events_of("waiting")[0]["attention"], json!(false));
+    assert!(crate::attention::list(&p.root()).unwrap().is_empty());
+}
+
+#[test]
 fn reply_continues_with_source_reply_and_reruns_nothing() {
     let (p, wait_id) = reply_project(&[("ship_invoke", "print_env")]);
     let outcome = receive(

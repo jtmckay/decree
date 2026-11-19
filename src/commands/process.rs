@@ -494,21 +494,21 @@ impl Pipeline {
         let inbox = decree_dir.join(INBOX_DIR);
         // A file written straight into `inbox/` gets its id, the time that counts, now.
         message::arrive(&decree_dir)?;
+        // One scan for every wait; a reply that arrives later is delivered on the next pass.
+        let replies = reply::queued(&inbox)
+            .map_err(|e| DecreeError::Other(format!("{}: {e}", inbox.display())))?;
         for wait in &overdue {
-            loop {
+            let answers = replies.iter().filter(|(file, to)| {
+                file.strip_suffix(".md")
+                    .is_some_and(|id| wait.answered_by(to, id))
+            });
+            for (file, _) in answers {
                 self.may_run()?;
-                let early = reply::queued(&inbox)
-                    .map_err(|e| DecreeError::Other(format!("{}: {e}", inbox.display())))?
-                    .into_iter()
-                    .find(|(file, to)| {
-                        !self.lost.contains(file)
-                            && message::is_queued(&decree_dir, file)
-                            && file
-                                .strip_suffix(".md")
-                                .is_some_and(|id| wait.answered_by(to, id))
-                    });
-                let Some((file, _)) = early else { break };
-                if self.take_inbox(file)? == Taken::Delivered {
+                // Taken already (for another wait, or by another process) or lost: skip it.
+                if self.lost.contains(file) || !message::is_queued(&decree_dir, file) {
+                    continue;
+                }
+                if self.take_inbox(file.clone())? == Taken::Delivered {
                     break;
                 }
             }
@@ -1182,7 +1182,10 @@ fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeErro
             continue;
         }
         let events = ctx.events(&id)?;
-        let Some(last) = events.last().filter(|e| is_type(e, "waiting")) else {
+        let Some(last) = events
+            .last()
+            .filter(|e| is_type(e, "waiting") && crate::attention::wants_attention(e))
+        else {
             continue;
         };
         let (Some(state), Some(wait_id)) = (text(last, "state"), text(last, "wait_id")) else {

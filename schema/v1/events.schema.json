@@ -384,6 +384,10 @@
         "timeout_at": {
           "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
           "description": "RFC 3339 deadline from the `reply` invoke's `timeout`, or `null` without one."
+        },
+        "attention": {
+          "const": false,
+          "description": "Present, and `false`, when the `reply` invoke has `attention: false`: the wait needs no person."
         }
       }
     },

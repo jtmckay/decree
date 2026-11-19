@@ -223,6 +223,7 @@
       "required": [
         "action",
         "exported",
+        "conflicts",
         "dry_run"
       ],
       "additionalProperties": false,
@@ -238,6 +239,14 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "description": "The plugins exported (or, with `dry_run`, that would be), by name; empty when no installed copy differed."
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "Edited plugins not exported because their plugin file changed since they were installed: exporting would write the old version over the new file, so a person merges them."
         },
         "dry_run": {
           "type": "boolean",

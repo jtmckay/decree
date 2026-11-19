@@ -449,6 +449,7 @@ fn record_one(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
             None => events
                 .last()
                 .filter(|e| is_type(e, "waiting") && text(e, "wait_id").is_some())
+                .filter(|e| wants_attention(e))
                 .map(|_| Need::Reply),
             Some(_) if trigger == "migration" => ctx
                 .stalled_child(&events)?
@@ -665,6 +666,12 @@ fn reply(ctx: &Context, id: &str, events: &[Event], state: &str, since: &str) ->
     }
     out.push('\n');
     out
+}
+
+/// Whether a `waiting` event for a reply needs a person: every one except a `reply` invoke
+/// with `attention: false`, which only programs answer.
+pub fn wants_attention(waiting: &Event) -> bool {
+    waiting.get("attention").and_then(Value::as_bool) != Some(false)
 }
 
 #[cfg(test)]

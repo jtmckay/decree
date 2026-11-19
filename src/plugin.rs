@@ -398,7 +398,9 @@ fn io_error(path: &Path, e: io::Error) -> DecreeError {
     DecreeError::Other(format!("{}: {e}", path.display()))
 }
 
-/// Every file under `dir`, by its `/`-separated path there, with its bytes.
+/// Every file under `dir`, by its `/`-separated path there, with its bytes. A symlink to
+/// a folder is not followed and not listed, so nothing under its target is ever removed;
+/// a symlink to a file is listed with its target's bytes.
 fn read_tree(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, DecreeError> {
     let mut out = BTreeMap::new();
     let mut stack = vec![(dir.to_path_buf(), String::new())];
@@ -409,8 +411,11 @@ fn read_tree(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, DecreeError> {
             let name = entry.file_name().to_string_lossy().into_owned();
             let rel = format!("{prefix}{name}");
             let full = entry.path();
-            if full.is_dir() {
+            let kind = entry.file_type().map_err(|e| io_error(&full, e))?;
+            if kind.is_dir() {
                 stack.push((full, format!("{rel}/")));
+            } else if kind.is_symlink() && full.is_dir() {
+                continue;
             } else {
                 let bytes = std::fs::read(&full).map_err(|e| io_error(&full, e))?;
                 out.insert(rel, bytes);
@@ -601,6 +606,8 @@ pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
         let plugin = match f.parsed {
             Ok(plugin) => plugin,
             Err(problems) => {
+                // The file is there: its installed copy and record stay as they were.
+                recorded.remove(&f.name);
                 out.invalid.push((f.name, problems));
                 continue;
             }
@@ -821,6 +828,19 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
 pub fn edited(decree_dir: &Path, plugin: &Plugin) -> Result<bool, DecreeError> {
     let copy = Copy::read(decree_dir, &plugin.name)?;
     Ok(!copy.is_absent() && !copy.matches(plugin))
+}
+
+/// Whether plugin file `text` is not the one plugin `name` was installed from: changed
+/// since (a `git pull`), or never installed over a copy that was already there. An edited
+/// copy of such a plugin is a conflict for a person to merge; exporting it would write the
+/// old installed version over the new file.
+pub fn conflicted(decree_dir: &Path, name: &str, text: &[u8]) -> Result<bool, DecreeError> {
+    let path = record_path(decree_dir, name);
+    match std::fs::read(&path) {
+        Ok(recorded) => Ok(recorded != text),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(io_error(&path, e)),
+    }
 }
 
 /// Write `plugin` to `plugins/<name>.md` and make the installed copy match it: the flat
@@ -1153,6 +1173,46 @@ Says hello.
         assert_eq!(s.invalid.len(), 1);
         assert!(!d.join("machines/hello.yml").exists());
         assert!(s.notices()[0].starts_with("plugins/hello.md: line 4: script path `../x.sh`"));
+    }
+
+    #[test]
+    fn an_installed_plugin_whose_file_turns_invalid_stays_installed() {
+        let tmp = project();
+        let d = tmp.path();
+        put(d, "plugins/hello.md", PLUGIN);
+        sync(d).unwrap();
+        put(
+            d,
+            "plugins/hello.md",
+            &PLUGIN.replace("name: hello", "name: hello\ncron: x"),
+        );
+        let s = sync(d).unwrap();
+        assert_eq!(s.invalid.len(), 1);
+        assert!(s.removed.is_empty() && s.kept.is_empty());
+        assert!(d.join("machines/hello.yml").exists());
+        assert!(d.join("scripts/hello/greet.sh").exists());
+        assert_eq!(
+            std::fs::read(record_path(d, "hello")).unwrap(),
+            PLUGIN.as_bytes()
+        );
+        // Fixed again, it is unchanged: no conflict, nothing to install.
+        put(d, "plugins/hello.md", PLUGIN);
+        let s = sync(d).unwrap();
+        assert!(s.installed.is_empty() && s.conflicts.is_empty());
+    }
+
+    #[test]
+    fn a_symlinked_folder_in_scripts_is_not_followed() {
+        let tmp = project();
+        let d = tmp.path();
+        put(d, "shared/keep.txt", "mine");
+        put(d, "plugins/hello.md", PLUGIN);
+        sync(d).unwrap();
+        std::os::unix::fs::symlink("../../shared", d.join("scripts/hello/shared")).unwrap();
+        let found = read_one(d, "hello").unwrap();
+        install(d, &found.parsed.unwrap(), &found.text).unwrap();
+        assert_eq!(get(d, "shared/keep.txt").unwrap(), "mine");
+        assert!(d.join("scripts/hello/shared").is_symlink());
     }
 
     #[test]

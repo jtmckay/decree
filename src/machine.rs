@@ -205,8 +205,8 @@ pub struct ModelInvoke {
     pub output: Option<String>,
 }
 
-/// `{ reply: { question, notify, timeout? } }`. `question` and `notify` are optional here so
-/// that V8 and V12, not the parser, report them missing.
+/// `{ reply: { question, notify, timeout?, attention? } }`. `question` and `notify` are
+/// optional here so that V8 and V12, not the parser, report them missing.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyInvoke {
@@ -215,6 +215,14 @@ pub struct ReplyInvoke {
     /// A duration (`crate::duration`).
     #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
     pub timeout: Option<Duration>,
+    /// Whether the wait needs a person: `false` for a wait only programs answer, such as a
+    /// timer, so it gets no file in `.decree/attention/` and no `Waiting:` line.
+    #[serde(default = "yes")]
+    pub attention: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// `{ machine: { name, params? } }`, or `{ machine: <name> }`.

@@ -225,15 +225,16 @@ impl Interpreter<'_> {
                 .unwrap_or(DateTime::<Utc>::MAX_UTC);
             timestamp(deadline)
         });
-        self.append(
-            "waiting",
-            json!({
-                "state": node.id,
-                "wait_id": wait_id,
-                "options": option_names(m, s),
-                "timeout_at": timeout_at,
-            }),
-        )?;
+        let mut waiting = json!({
+            "state": node.id,
+            "wait_id": wait_id,
+            "options": option_names(m, s),
+            "timeout_at": timeout_at,
+        });
+        if !reply.attention {
+            waiting["attention"] = json!(false);
+        }
+        self.append("waiting", waiting)?;
         Ok(Invoked::Wait(Outcome::Waiting {
             state: node.id.clone(),
             wait_id,
