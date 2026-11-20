@@ -6,6 +6,16 @@ Changes to the schemas in this folder. Within `v1` changes are additive only ([V
 
 ### Added
 
+- `machine.schema.json`: a `machine` invoke may name a `message` file in place of `name`; `state_files` (was `store`).
+- `cli/daemon.schema.json`: what `decree daemon --once --dry-run --format json` prints (was `cli/process.schema.json`).
+- `plugin.schema.json`: `state` and `order` (were `store` and `migrations`).
+- `message.schema.json`: a message other than a reply may leave out `machine`, as a cron file or order file does; `decree check` (M2) still requires it in `inbox/`.
+
+### Removed
+
+- `cli/prune.schema.json`, with `decree prune`.
+- `message.schema.json`: the `migration` key and the `migration` trigger; `cli/status.schema.json` and `cli/check.schema.json`: their migration fields (`status`'s `blocked` and `queued.migrations`, `check`'s rule `M1`); `attention.schema.json`'s `message` is always `inbox`.
+
 - `plugin.schema.json`: the frontmatter of a plugin, `.decree/plugins/<name>.md`: `name`, `machine` (without `name`), `scripts` (plain relative paths to their text) and `needs` ([plugins.md](../../docs/reference/plugins.md)).
 - `cli/plugin.schema.json`: what `decree plugin list|add|export|import|install --format json` prints, one shape per `action`; `export` with no name prints the plugins it exported.
 - `cli/check.schema.json`: `rule` may be `P1`, `P2` or `P3`, the plugin checks.
