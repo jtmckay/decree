@@ -83,6 +83,7 @@ impl Project {
             tmp: TempDir::new().unwrap(),
         };
         run(p.root(), &["init", "--ai", "claude"], "");
+        common::drop_default_plugins(p.root());
         let decree = p.root().join(".decree");
         fs::create_dir_all(decree.join("machines")).unwrap();
         for (name, yml) in [("flaky", FLAKY), ("deploy", DEPLOY), ("slow", SLOW)] {
@@ -225,7 +226,7 @@ fn check_graph_and_schema() {
 }
 
 #[test]
-fn emit_event_retry_status_process_and_prune() {
+fn emit_event_retry_status_and_daemon_once() {
     let p = Project::new();
 
     // emit: the id and path; an unknown machine prints nothing on stdout.
@@ -246,27 +247,20 @@ fn emit_event_retry_status_process_and_prune() {
         true,
     );
     assert_eq!(code, 1);
-    fs::write(
-        p.root().join(".decree/migrations/01-first.md"),
-        "---\nmachine: flaky\n---\n",
-    )
-    .unwrap();
 
-    // process --dry-run: what would run, with machines.
-    let dry = ["process", "--dry-run"];
-    let (code, doc) = p.json(&dry, "", schema::CLI_PROCESS_SCHEMA, false);
+    // daemon --once --dry-run: what would run, with machines.
+    let dry = ["daemon", "--once", "--dry-run"];
+    let (code, doc) = p.json(&dry, "", schema::CLI_DAEMON_SCHEMA, false);
     assert_eq!(code, 0);
     assert_eq!(
         doc,
         serde_json::json!({
-            "migrations": [{ "file": "01-first.md", "valid": true, "machine": "flaky" }],
             "inbox": [{ "file": format!("{flaky}.md"), "valid": true, "machine": "flaky" }],
         })
     );
-    fs::remove_file(p.root().join(".decree/migrations/01-first.md")).unwrap();
 
     // flaky fails and stops process; then deploy waits for a reply.
-    assert_eq!(run(p.root(), &["process"], "").0, 1);
+    assert_eq!(run(p.root(), &["daemon", "--once"], "").0, 1);
     let (_, doc) = p.json(
         &["emit", "--machine", "deploy"],
         "",
@@ -274,7 +268,7 @@ fn emit_event_retry_status_process_and_prune() {
         false,
     );
     let deploy = doc["id"].as_str().unwrap().to_string();
-    assert_eq!(run(p.root(), &["process"], "").0, 0);
+    assert_eq!(run(p.root(), &["daemon", "--once"], "").0, 0);
 
     let (code, doc) = p.json(&["status"], "", schema::CLI_STATUS_SCHEMA, false);
     assert_eq!(code, 0);
@@ -318,7 +312,7 @@ fn emit_event_retry_status_process_and_prune() {
         true,
     );
     assert_eq!(code, 1);
-    let (_, doc) = p.json(&dry, "", schema::CLI_PROCESS_SCHEMA, false);
+    let (_, doc) = p.json(&dry, "", schema::CLI_DAEMON_SCHEMA, false);
     assert_eq!(
         doc["inbox"],
         serde_json::json!([{ "file": format!("{reply}.md"), "valid": true, "to": deploy }])
@@ -326,10 +320,10 @@ fn emit_event_retry_status_process_and_prune() {
 
     // process --retry: a stream, so no --format (2); a waiting run cannot be retried (1);
     // a failed one continues in its state, and the pipeline runs on.
-    let retry = ["process", "--retry", flaky.as_str()];
+    let retry = ["daemon", "--once", "--retry", flaky.as_str()];
     let (code, stdout, _) = run(p.root(), &[&retry[..], &["--format", "json"]].concat(), "");
     assert_eq!((code, stdout.as_str()), (2, ""));
-    let (code, stdout, _) = run(p.root(), &["process", "--retry", &deploy], "");
+    let (code, stdout, _) = run(p.root(), &["daemon", "--once", "--retry", &deploy], "");
     assert_eq!((code, stdout.as_str()), (1, ""));
     p.touch("ok.flag");
     let (code, stdout, stderr) = run(p.root(), &retry, "");
@@ -338,31 +332,6 @@ fn emit_event_retry_status_process_and_prune() {
         stdout.contains(&format!("run {flaky} continues in `work`")),
         "{stdout}"
     );
-
-    // prune: what it would delete, then what it deleted.
-    let prune = ["prune", "--older-than", "0s"];
-    let (code, doc) = p.json(
-        &[&prune[..], &["--dry-run"]].concat(),
-        "",
-        schema::CLI_PRUNE_SCHEMA,
-        false,
-    );
-    assert_eq!(code, 0);
-    assert_eq!(doc["dry_run"], true);
-    let runs = doc["runs"].as_array().unwrap();
-    let ids: Vec<&str> = runs.iter().map(|r| r["id"].as_str().unwrap()).collect();
-    let mut expected = [flaky.as_str(), deploy.as_str()];
-    expected.sort();
-    assert_eq!(ids, expected, "in id order");
-    let shipped = runs.iter().find(|r| r["id"] == deploy.as_str()).unwrap();
-    assert_eq!(shipped["machine"], "deploy");
-    assert_eq!(shipped["state"], "shipped");
-    assert!(doc["bytes"].as_u64().unwrap() > 0);
-    let (code, doc) = p.json(&prune, "", schema::CLI_PRUNE_SCHEMA, false);
-    assert_eq!(code, 0);
-    assert_eq!(doc["dry_run"], false);
-    assert_eq!(doc["runs"].as_array().unwrap().len(), 2);
-    assert!(!p.root().join(".decree/runs").join(&flaky).exists());
 }
 
 /// An invalid queued message: process --dry-run lists it as invalid, reports its error on
@@ -376,15 +345,15 @@ fn process_dry_run_with_an_invalid_message() {
     )
     .unwrap();
     let (code, doc) = p.json(
-        &["process", "--dry-run"],
+        &["daemon", "--once", "--dry-run"],
         "",
-        schema::CLI_PROCESS_SCHEMA,
+        schema::CLI_DAEMON_SCHEMA,
         false,
     );
     assert_eq!(code, 1);
     assert_eq!(
         doc,
-        serde_json::json!({ "migrations": [], "inbox": [{ "file": "a.md", "valid": false }] })
+        serde_json::json!({ "inbox": [{ "file": "a.md", "valid": false }] })
     );
 }
 
@@ -398,7 +367,7 @@ fn status_of_an_active_run_names_its_running_script() {
         .trim()
         .to_string();
     let mut process = common::std_decree_at(p.root())
-        .arg("process")
+        .args(["daemon", "--once"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -429,53 +398,13 @@ fn status_of_an_active_run_names_its_running_script() {
         .starts_with(&format!(".decree/runs/{id}/0001-work-wait_flag")));
 }
 
-/// `--format` where it does not apply is a usage error, exit 2: `process` without
+/// `--format` where it does not apply is a usage error, exit 2: `daemon --once` without
 /// `--dry-run` prints text only; `daemon`, `tail`, `init` and `help` take no `--format`.
-/// A migration's run in `status` and `prune` JSON: `migration` beside `id`, valid against
-/// the schemas, and `decree status <stem>` finds it.
-#[test]
-fn a_migrations_run_has_its_file_in_status_and_prune_json() {
-    let p = Project::new();
-    fs::write(p.root().join("ok.flag"), "").unwrap();
-    fs::write(
-        p.root().join(".decree/migrations/01-first.md"),
-        "---\nmachine: flaky\n---\n",
-    )
-    .unwrap();
-    run(p.root(), &["process"], "");
-    let id = common::migration_run(&p.root().join(".decree"), "01-first.md");
-
-    let (code, doc) = p.json(&["status"], "", schema::CLI_STATUS_SCHEMA, false);
-    assert_eq!(code, 0);
-    let row = &doc["runs"]["finished"]["done"][0];
-    assert_eq!(row["id"], id.as_str(), "{doc:#}");
-    assert_eq!(row["migration"], "01-first.md", "{doc:#}");
-    let (code, doc) = p.json(
-        &["status", "01-first"],
-        "",
-        schema::CLI_STATUS_SCHEMA,
-        false,
-    );
-    assert_eq!(code, 0);
-    assert_eq!(doc["id"], id.as_str());
-    assert_eq!(doc["migration"], "01-first.md");
-
-    let (code, doc) = p.json(
-        &["prune", "--older-than", "0s"],
-        "",
-        schema::CLI_PRUNE_SCHEMA,
-        false,
-    );
-    assert_eq!(code, 0);
-    assert_eq!(doc["runs"][0]["id"], id.as_str(), "{doc:#}");
-    assert_eq!(doc["runs"][0]["migration"], "01-first.md", "{doc:#}");
-}
-
 #[test]
 fn format_where_it_does_not_apply_exits_2() {
     let p = Project::new();
     for args in [
-        &["process", "--format", "json"][..],
+        &["daemon", "--once", "--format", "json"][..],
         &["daemon", "--format", "json"],
         &["tail", "--format", "json"],
         &["help", "--format", "json"],

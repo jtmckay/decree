@@ -28,7 +28,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -108,7 +108,7 @@ impl Project {
     }
 
     fn process(&self, args: &[&str]) -> Command {
-        let mut cmd = self.decree_cmd(&["process"]);
+        let mut cmd = self.decree_cmd(&["daemon", "--once"]);
         cmd.args(args);
         cmd
     }
@@ -280,61 +280,17 @@ fn an_unknown_machine_is_an_error_naming_it() {
     assert_eq!(p.order(), ["a 20260101T000000.000000Z-000000"]);
 }
 
-/// AC: migrations keep one order for every process. With `01` for `b` first, a process
-/// that runs only `a` starts neither, says why and exits 0.
-#[test]
-fn a_migration_for_another_machine_holds_back_the_rest() {
-    let p = Project::new();
-    p.write("migrations/01-first.md", "---\nmachine: b\n---\n# First\n");
-    p.write(
-        "migrations/02-second.md",
-        "---\nmachine: a\n---\n# Second\n",
-    );
-    let out = stdout(&mut p.process(&["--machine", "a"]));
-    assert!(
-        out.contains(
-            "Held back: migration 01-first.md is for machine `b`, which this process does not run"
-        ),
-        "{out}"
-    );
-    assert!(p.runs().is_empty());
-
-    // The process for `b` runs `01`, then is held back by `02`.
-    let out = stdout(&mut p.process(&["--machine", "b"]));
-    let decree = p.tmp.path().join(".decree");
-    let first = common::migration_run(&decree, "01-first.md");
-    assert_eq!(p.order(), [format!("b {first}")]);
-    assert!(
-        out.contains("Held back: migration 02-second.md is for machine `a`"),
-        "{out}"
-    );
-    p.process(&["--machine", "a"]).assert().success();
-    let second = common::migration_run(&decree, "02-second.md");
-    assert_eq!(p.order(), [format!("b {first}"), format!("a {second}")]);
-}
-
 /// `--dry-run` lists only what this process would run.
 #[test]
 fn dry_run_honours_the_filter() {
     let p = Project::new();
-    p.write("migrations/01-first.md", "---\nmachine: a\n---\n");
-    p.write("migrations/02-second.md", "---\nmachine: b\n---\n");
-    p.write("migrations/03-third.md", "---\nmachine: a\n---\n");
     p.queue("20260101T000000.000000Z-000000", "a", "");
     p.queue("20260101T000000.000001Z-000001", "b", "");
     let out = stdout(&mut p.process(&["--dry-run", "--machine", "a"]));
-    assert!(out.contains("01-first.md"), "{out}");
-    assert!(!out.contains("02-second.md  "), "{out}");
-    assert!(!out.contains("03-third.md"), "{out}");
     assert!(out.contains("20260101T000000.000000Z-000000.md"), "{out}");
     assert!(!out.contains("20260101T000000.000001Z-000001.md"), "{out}");
-    assert!(
-        out.contains("Held back: migration 02-second.md is for machine `b`"),
-        "{out}"
-    );
     let json = stdout(&mut p.process(&["--dry-run", "--format", "json", "--exclude-machine", "a"]));
     let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(doc["migrations"].as_array().unwrap().len(), 0, "{doc}");
     assert_eq!(
         doc["inbox"][0]["file"], "20260101T000000.000001Z-000001.md",
         "{doc}"

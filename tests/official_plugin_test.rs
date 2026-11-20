@@ -9,10 +9,11 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
+mod common;
 #[path = "common/schema.rs"]
 mod schema;
 
-const OFFICIAL: [&str; 15] = [
+const OFFICIAL: [&str; 16] = [
     "comfy",
     "develop",
     "develop_by_size",
@@ -26,6 +27,7 @@ const OFFICIAL: [&str; 15] = [
     "newsletter",
     "order",
     "plugin_install",
+    "prune",
     "qa",
     "router",
 ];
@@ -51,10 +53,11 @@ fn ok(dir: &Path, args: &[&str]) -> String {
     stdout
 }
 
-/// A fresh `decree init`.
+/// A fresh `decree init`, without the default plugins.
 fn init() -> TempDir {
     let tmp = TempDir::new().unwrap();
     ok(tmp.path(), &["init", "--ai", "claude"]);
+    common::drop_default_plugins(tmp.path());
     tmp
 }
 

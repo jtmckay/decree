@@ -149,7 +149,7 @@ impl Project {
             .env("NO_COLOR", "1")
             .env_remove("NTFY_URL")
             .env_remove("NTFY_TOPIC")
-            .arg("process");
+            .args(["daemon", "--once"]);
         if let Some(url) = ntfy {
             cmd.env("NTFY_URL", url).env("NTFY_TOPIC", "news");
         }
@@ -379,7 +379,7 @@ fn deliver_without_ntfy_url_skips_the_ping_and_says_so() {
         .contains("NTFY_URL is not set; skipping the ntfy ping"));
 }
 
-/// Re-running `deliver` (as `decree process --retry` does) neither copies the issue again nor
+/// Re-running `deliver` (as `decree daemon --once --retry` does) neither copies the issue again nor
 /// adds a link to `seen.tsv` twice.
 #[test]
 fn deliver_is_safe_to_re_run() {

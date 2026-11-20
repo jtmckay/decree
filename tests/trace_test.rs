@@ -3,7 +3,7 @@
 //! parent spans; a message's `traceparent` honoured, and an invalid one ignored; the
 //! `TRACEPARENT` a script sees; and `traces.jsonl`, whose every line is an OTLP/JSON
 //! `ExportTraceServiceRequest` agreeing with `events.jsonl`, including the run span of an
-//! interrupted run written on recovery and the linked run span after `decree process --retry`. Each
+//! interrupted run written on recovery and the linked run span after `decree daemon --once --retry`. Each
 //! test builds its own `.decree/` in a temp directory.
 
 use assert_cmd::Command;
@@ -113,7 +113,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -155,7 +155,7 @@ impl Project {
     }
 
     fn process(&self) {
-        self.cmd(&["process"]).assert().success();
+        self.cmd(&["daemon", "--once"]).assert().success();
     }
 
     /// Each script execution's `(run id, TRACEPARENT, TRACESTATE or "-")`, in order.
@@ -346,7 +346,7 @@ fn a_script_sees_traceparent_naming_the_run_trace_and_its_own_span() {
     let p = Project::new();
     p.queue("top", "machine: flow\n");
     // A TRACEPARENT and TRACESTATE in decree's own environment belong to another trace.
-    p.cmd(&["process"])
+    p.cmd(&["daemon", "--once"])
         .env("TRACEPARENT", TRACEPARENT)
         .env("TRACESTATE", "other=1")
         .assert()
@@ -371,7 +371,7 @@ fn a_failed_script_and_a_failed_run_have_status_error() {
     let p = Project::new();
     fs::write(p.root().join("exit.code"), "3").unwrap();
     p.queue("fails", "machine: leaf\n");
-    p.cmd(&["process"]).assert().code(1);
+    p.cmd(&["daemon", "--once"]).assert().code(1);
     let spans = agree_with_events(&p.run_dir("fails"));
     let script = spans
         .values()
@@ -390,7 +390,7 @@ fn working(p: &Project) -> (std::process::Child, i32) {
     fs::write(p.root().join("wait.flag"), "").unwrap();
     let decree = common::std_decree_at(p.root())
         .env("NO_COLOR", "1")
-        .arg("process")
+        .args(["daemon", "--once"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -428,9 +428,9 @@ fn a_crashed_runs_span_is_written_on_recovery_with_error_and_retry_links_a_new_o
     assert!(is_error(&first), "{first}");
     assert_eq!(first["spanId"], events[0]["span_id"]);
 
-    // `decree process --retry` starts a new run span in the same trace, linked to the
+    // `decree daemon --once --retry` starts a new run span in the same trace, linked to the
     // previous one.
-    p.cmd(&["process", "--retry", &run_id("crash")])
+    p.cmd(&["daemon", "--once", "--retry", &run_id("crash")])
         .assert()
         .success();
     let events = p.events("crash");

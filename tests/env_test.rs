@@ -26,7 +26,7 @@ fn a_script_sees_only_the_decree_variables_its_own_run_sets() {
     )
     .unwrap();
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         // What an outer run's script environment holds.
         .env("DECREE_DATA_OUTER", "leak")
         .env("DECREE_PARENT", "outer-run")
@@ -81,13 +81,13 @@ fn dotenv_values_reach_scripts_and_the_process_environment_wins() {
     )
     .unwrap();
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env_remove("COMFY_URL")
         .assert()
         .success();
     queue(&tmp, B);
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env("COMFY_URL", "http://other:8188")
         .assert()
         .success();
@@ -108,7 +108,7 @@ fn dotenv_syntax_as_compose_reads_it() {
     )
     .unwrap();
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env("HOME", "/home/x")
         .env_remove("A")
         .env_remove("B")
@@ -131,14 +131,14 @@ fn dotenv_values_are_interpolated_and_the_process_environment_wins() {
     )
     .unwrap();
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env_remove("HOST")
         .env_remove("URL")
         .assert()
         .success();
     queue(&tmp, B);
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env("HOST", "other")
         .env_remove("URL")
         .assert()
@@ -160,7 +160,7 @@ fn single_quotes_and_double_dollar_are_literal() {
         .assert()
         .success();
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env("B", "set")
         .env_remove("A")
         .env_remove("C")
@@ -204,7 +204,7 @@ fn an_unknown_variable_is_empty_and_check_warns() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(!stderr.contains("is not set"), "{stderr}");
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env_remove("DECREE_TEST_UNSET_HOST")
         .env_remove("URL")
         .env_remove("PORT")
@@ -240,7 +240,7 @@ fn a_malformed_dotenv_fails_check_and_process() {
 
         let out = common::decree_at(tmp.path())
             .env("NO_COLOR", "1")
-            .arg("process")
+            .args(["daemon", "--once"])
             .assert()
             .code(1)
             .get_output()
@@ -303,7 +303,7 @@ fn a_machine_env_file_wins_and_stays_in_its_machine() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(!stderr.contains(".env"), "{stderr}");
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .env("A", "shell")
         .env("B", "shell")
         .env_remove("C")
@@ -361,7 +361,7 @@ fn a_machine_env_file_is_checked() {
     );
     let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
-        .arg("process")
+        .args(["daemon", "--once"])
         .assert()
         .code(1)
         .get_output()
@@ -442,7 +442,7 @@ fn run_dir_variables_in_a_parent_a_child_and_a_grandchild() {
         .assert()
         .success();
     common::decree_at(tmp.path())
-        .arg("process")
+        .args(["daemon", "--once"])
         .assert()
         .success();
     let out = fs::read_to_string(tmp.path().join("out.txt")).unwrap();

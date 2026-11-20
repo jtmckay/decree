@@ -6,7 +6,7 @@
 - **Timestamps.** Use the event's `ts` as the log timestamp, so back-filled and late-shipped events land at the right time.
 - **Labels** must stay low-cardinality: `machine`, `type`, and for script output `script`. `run_id`, `state` and `seq` are fields or structured metadata, never labels, because a label per run makes Loki slow. The one exception is `state` on `run_finished` lines, whose values are a machine's few final states, for [Metrics](#metrics).
 - **Script output files** carry their context in the path: `runs/<run_id>/<NNNN>-<state>-<script>.log`, or `runs/<run_id>/<NNNN>-<state>.log` when the script is named as its state. State and script names cannot contain `-`, so the regex `/runs/(?P<run_id>[^/]+)/(?P<n>\d{4,})-(?P<state>[^-/]+?)(?:-(?P<script>[^-/]+))?\.log$` is unambiguous; a missing `script` is the `state`.
-- **Retention.** Loki's retention is the history. `decree prune --older-than <age>` deletes finished run folders ([cli.md](cli.md)), and nothing else does, so the local `runs/` is a working copy: ship runs before pruning them, and prune with an age longer than the shipper's lag.
+- **Retention.** Loki's retention is the history. The official [`prune`](plugins.md#official-plugins) plugin deletes finished run folders older than `PRUNE_OLDER_THAN`, and nothing else does, so the local `runs/` is a working copy: ship runs before pruning them, and prune with an age longer than the shipper's lag.
 - **Stability.** Field names and meanings in [events.jsonl](runs.md#eventsjsonl) are a public contract under `v: 1`. Dashboards may depend on them.
 
 Example LogQL, also in [`examples/observability/README.md`](../../examples/observability/README.md):
@@ -18,7 +18,7 @@ quantile_over_time(0.95, {job="decree", type="script"} | json | unwrap duration_
 # runs that ended in failed, per machine, per day
 sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | state="failed" [1d]))
 
-# interrupted runs waiting for `decree process --retry`
+# interrupted runs waiting for `decree daemon --once --retry`
 {job="decree", type="interrupted"} | json
 
 # model decisions below a confidence floor
@@ -77,15 +77,15 @@ Standards:
 | A decision (`check`, `model`, `reply`) | `decision <kind> <state>` | The run span | Its `decision` event; for a router run, the `waiting` event for it | Its `decision` event |
 | A wait (a `reply`, or a `machine` invoke's child run) | `wait <state>` | The run span | The `waiting` event | The `received` event |
 
-A router run's run span is a child of its `model` decision's span, and a `machine` invoke's child run's run span is a child of its wait span. A run continued by `decree process --retry` gets a new run span in the same trace, from the `retry` event, linked to the previous run span. Every span has the attributes `decree.run_id`, `decree.machine` and `decree.state`; script spans add `decree.attempt` and `process.exit.code` (from [OpenTelemetry's semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/process/), when the script exited rather than being killed), and decision and wait spans add `decree.event`. A script that exits non-zero, times out or is killed, a `model` decision with a `router_error`, a run ending in `failed`, and an interrupted run have status `ERROR`. All spans are of kind `INTERNAL`.
+A router run's run span is a child of its `model` decision's span, and a `machine` invoke's child run's run span is a child of its wait span. A run continued by `decree daemon --once --retry` gets a new run span in the same trace, from the `retry` event, linked to the previous run span. Every span has the attributes `decree.run_id`, `decree.machine` and `decree.state`; script spans add `decree.attempt` and `process.exit.code` (from [OpenTelemetry's semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/process/), when the script exited rather than being killed), and decision and wait spans add `decree.event`. A script that exits non-zero, times out or is killed, a `model` decision with a `router_error`, a run ending in `failed`, and an interrupted run have status `ERROR`. All spans are of kind `INTERNAL`.
 
-**The file.** `runs/<id>/traces.jsonl` holds the run's spans, each appended when it ends as one OTLP/JSON `ExportTraceServiceRequest` line, with a single write on a file opened with `O_APPEND`, as `events.jsonl` is written. Each line has one resource (`service.name: decree` and `service.version`, from the [semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/service/)), one scope (`decree`) and one span. A script span of the recorded `develop` migration in `examples/project`, its keys in `trace.proto` order (decree writes them in alphabetical order, which a JSON reader ignores):
+**The file.** `runs/<id>/traces.jsonl` holds the run's spans, each appended when it ends as one OTLP/JSON `ExportTraceServiceRequest` line, with a single write on a file opened with `O_APPEND`, as `events.jsonl` is written. Each line has one resource (`service.name: decree` and `service.version`, from the [semantic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/service/)), one scope (`decree`) and one span. A script span of the recorded `develop` run in `examples/project`, its keys in `trace.proto` order (decree writes them in alphabetical order, which a JSON reader ignores):
 
 ```json
 {"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"decree"}},{"key":"service.version","value":{"stringValue":"0.5.0-beta.1"}}]},"scopeSpans":[{"scope":{"name":"decree","version":"0.5.0-beta.1"},"spans":[{"traceId":"b872e2142bcdeefd1e77db420727a461","spanId":"ebc969f42644ed25","parentSpanId":"189ed21326b51409","name":"script test/test","kind":1,"startTimeUnixNano":"1790866179700000000","endTimeUnixNano":"1790866271900000000","attributes":[{"key":"decree.run_id","value":{"stringValue":"20261001T143005.000000Z-189ed2"}},{"key":"decree.machine","value":{"stringValue":"develop"}},{"key":"decree.state","value":{"stringValue":"test"}},{"key":"decree.attempt","value":{"intValue":"1"}},{"key":"process.exit.code","value":{"intValue":"0"}}]}]}]}]}
 ```
 
-A span still open when the process is killed is not written. The run span of a run interrupted by a signal is written with the `interrupted` event; after a crash, the recovery that appends `interrupted` (`process` or `daemon` starting) writes it, ended at that event, with status `ERROR`. A run waiting for a reply has written its finished spans; its run span is written when it finishes.
+A span still open when the process is killed is not written. The run span of a run interrupted by a signal is written with the `interrupted` event; after a crash, the recovery that appends `interrupted` (`daemon` starting) writes it, ended at that event, with status `ERROR`. A run waiting for a reply has written its finished spans; its run span is written when it finishes.
 
 **Shipping.** The OpenTelemetry Collector (contrib distribution) reads the files with `otlp_json_file` and exports them to any OTLP endpoint (Jaeger, Grafana Tempo, Honeycomb, a vendor's agent). A minimal configuration, also in [`examples/observability/otel-collector.yaml`](../../examples/observability/otel-collector.yaml):
 
@@ -105,4 +105,4 @@ service:
       exporters: [otlp_http]
 ```
 
-Without a `storage` extension the receiver keeps its file offsets in memory, so a restarted Collector sends the files again from the beginning; add the `file_storage` extension and `storage: file_storage` to keep them. As with events, ship runs before `decree prune` removes them.
+Without a `storage` extension the receiver keeps its file offsets in memory, so a restarted Collector sends the files again from the beginning; add the `file_storage` extension and `storage: file_storage` to keep them. As with events, ship runs before the `prune` plugin removes them.

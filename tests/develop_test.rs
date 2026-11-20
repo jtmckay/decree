@@ -246,7 +246,7 @@ impl Project {
             .stdout
             .clone();
         let id = String::from_utf8(out).unwrap().trim().to_string();
-        let mut cmd = self.decree(&["process"]);
+        let mut cmd = self.decree(&["daemon", "--once"]);
         cmd.env("PATH", self.path());
         for (k, v) in env {
             cmd.env(k, v);
@@ -261,7 +261,7 @@ impl Project {
         self.commit_all("test setup");
         let id = self.emit_only();
         let out = self
-            .decree(&["process"])
+            .decree(&["daemon", "--once"])
             .env("PATH", self.path())
             .env(
                 "CLAUDE_DO",
@@ -341,7 +341,7 @@ fn files_under(dir: &Path) -> Vec<String> {
     out
 }
 
-/// AC (A10): `decree init` installs no plugin; `decree plugin add develop qa router` adds
+/// AC (A10): `decree init` installs only its default plugins (D86); `decree plugin add develop qa router` adds
 /// `develop`, `infra` (which `develop` needs), `qa` and `router`, each with its helpers, config
 /// and data beside its scripts (`ai.sh` for each that asks AI, the git scripts, infra's declared
 /// environment, qa's settings), and no `lib/`; no script but `ai.sh` defines `ai()`; everything
@@ -353,8 +353,16 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
         let p = Project::empty();
         p.decree(&["init", "--ai", ai]).assert().success();
         let decree = p.root().join(".decree");
-        assert_eq!(files_under(&decree.join("plugins")), Vec::<String>::new());
-        assert!(!decree.join("machines").exists(), "{ai}");
+        assert_eq!(
+            files_under(&decree.join("plugins")),
+            ["order.md", "prune.md"]
+        );
+        common::drop_default_plugins(p.root());
+        assert_eq!(
+            files_under(&decree.join("machines")),
+            Vec::<String>::new(),
+            "{ai}"
+        );
         assert!(!decree.join("scripts").exists(), "{ai}");
         p.decree(&["plugin", "add", "develop", "qa", "router"])
             .assert()
@@ -811,8 +819,8 @@ fn develop_stops_when_the_agent_writes_stop() {
     let log = p.log(&id, "implement");
     assert!(log.contains("Which greeting?\n"), "{log}");
 
-    // `decree process --retry` with STOP still there stops again, without asking the AI.
-    let mut cmd = p.decree(&["process", "--retry", &id, "--state", "implement"]);
+    // `decree daemon --once --retry` with STOP still there stops again, without asking the AI.
+    let mut cmd = p.decree(&["daemon", "--once", "--retry", &id, "--state", "implement"]);
     cmd.env("PATH", p.path());
     let out = cmd.output().unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
@@ -827,7 +835,7 @@ fn develop_stops_when_the_agent_writes_stop() {
 
     // `fix` and `verify` stop on it too.
     for state in ["fix", "verify"] {
-        let mut cmd = p.decree(&["process", "--retry", &id, "--state", state]);
+        let mut cmd = p.decree(&["daemon", "--once", "--retry", &id, "--state", state]);
         cmd.env("PATH", p.path());
         cmd.output().unwrap();
         assert_eq!(
@@ -983,7 +991,7 @@ fn a_reset_past_ai_limit_wait_stops_the_run() {
     );
     assert!(stop.contains("more than AI_LIMIT_WAIT (6h) away"), "{stop}");
     assert!(
-        stop.contains(&format!("`decree process --retry {id}`")),
+        stop.contains(&format!("`decree daemon --once --retry {id}`")),
         "{stop}"
     );
 
@@ -1318,7 +1326,7 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
     // file holds the queue; the person commits it and deletes the file.
     assert!(p
         .log(&id, "failed")
-        .contains(&format!("`decree process --retry {id}`")));
+        .contains(&format!("`decree daemon --once --retry {id}`")));
     fs::remove_file(p.attention(&id)).unwrap();
     let id = p.run(&[]);
     assert_eq!(p.outcome(&id), "failed");
@@ -1548,7 +1556,7 @@ fn a_dirty_tree_fails_the_run_before_the_agent() {
         .output()
         .unwrap();
     let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
-    p.decree(&["process"])
+    p.decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .output()
         .unwrap();
@@ -1562,7 +1570,7 @@ fn a_dirty_tree_fails_the_run_before_the_agent() {
         "clean_tree: uncommitted changes; commit or stash them, then run the message again:\n\
          ?? stray.txt\n\
          if a failed run left them, its file in .decree/attention/ names it; continue it with \
-         `decree process --retry <id>`\n"
+         `decree daemon --once --retry <id>`\n"
     );
     assert!(p.calls().is_empty());
 }
@@ -1581,7 +1589,7 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
     let interrupt = "case \"$prompt\" in *senior*) echo hi > hello.txt; \
          leader=$(ps -o pgid= -p $$ | tr -d ' '); \
          kill -INT \"$(ps -o ppid= -p \"$leader\" | tr -d ' ')\"; sleep 5 ;; esac";
-    p.decree(&["process"])
+    p.decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .env("CLAUDE_DO", interrupt)
         .output()
@@ -1591,7 +1599,7 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
 
     let calls = p.calls().len();
     let second = p.emit_only();
-    p.decree(&["process"])
+    p.decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .output()
         .unwrap();
@@ -1599,7 +1607,7 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
     let named = format!(
         "run {first} (Add a greeting) started from a clean tree and is interrupted; it may \
          have left them:\n  \
-         to continue it on them: `decree process --retry {first}`\n  \
+         to continue it on them: `decree daemon --once --retry {first}`\n  \
          to set them aside: `git stash push --include-untracked -m \"decree {first}\" -- .`\n"
     );
     assert_eq!(
@@ -1610,7 +1618,7 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
              ?? hello.txt\n\
              {named}\
              if a failed run left them, its file in .decree/attention/ names it; continue it \
-             with `decree process --retry <id>`\n"
+             with `decree daemon --once --retry <id>`\n"
         )
     );
     assert_eq!(
@@ -1631,7 +1639,7 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
         "--",
         ".",
     ]);
-    p.decree(&["process", "--retry", &second])
+    p.decree(&["daemon", "--once", "--retry", &second])
         .env("PATH", p.path())
         .output()
         .unwrap();
@@ -1749,19 +1757,18 @@ fn a_failed_run_exports_nothing_and_keeps_its_edit_installed() {
     assert!(gate.ends_with("# edited by the run\n"), "{gate}");
 }
 
-/// A migration's commit title ends with its file name, since its run id is a time id; the
-/// body names the run.
+/// An order file's run commits its work and its line in `state/order.git.txt` together,
+/// titled with the file, since its run id is a time id; the body names the run.
 #[test]
-fn a_migrations_commit_names_its_file() {
+fn an_order_files_commit_names_it_and_holds_its_record() {
     let p = Project::init();
-    fs::write(
-        p.root().join(".decree/migrations/01-greet.md"),
-        format!("---\nmachine: develop\n---\n{MESSAGE}"),
-    )
-    .unwrap();
+    p.decree(&["plugin", "add", "order"]).assert().success();
+    let order = p.root().join(".decree/machines/develop/order");
+    fs::create_dir_all(&order).unwrap();
+    fs::write(order.join("01-greet.md"), MESSAGE).unwrap();
     p.commit_all("test setup");
     let out = p
-        .decree(&["process"])
+        .decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .env(
             "CLAUDE_DO",
@@ -1770,18 +1777,17 @@ fn a_migrations_commit_names_its_file() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    let id = common::migration_run(&p.root().join(".decree"), "01-greet.md");
+    let id = common::run_of(&p.root().join(".decree"), "01-greet.md");
     assert_eq!(p.outcome(&id), "done");
-    assert_eq!(p.commits()[0], "Add a greeting (01-greet.md)");
+    assert_eq!(p.commits()[0], "Add a greeting (develop/01-greet.md)");
     assert_eq!(
         p.git(&["show", "--format=%b", "--name-only", "HEAD"]),
-        format!("decree run {id} (develop)\n\n\n.decree/processed.md\nhello.txt\n")
+        format!(
+            "decree run {id} (develop)\n\n\n.decree/machines/develop/state/order.git.txt\nhello.txt\n"
+        )
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains(&format!("▶ {id} (01-greet.md) · develop")),
-        "{stdout}"
-    );
+    // order's own record finds the line there already: nothing more to commit.
+    assert_eq!(p.git(&["status", "--porcelain"]), "");
 }
 
 /// A failed run keeps its changes in the work tree and writes its `hold`, so its file in
@@ -1812,18 +1818,18 @@ fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     assert!(file.contains("\n# Add a greeting\n"), "{file}");
     assert!(file.contains("?? hello.txt"), "the kept changes: {file}");
     assert!(
-        file.contains(&format!("    decree process --retry {id}\n")),
+        file.contains(&format!("    decree daemon --once --retry {id}\n")),
         "{file}"
     );
     assert!(p.run_dir(&id).join("hold").is_file());
     assert!(p
         .log(&id, "failed")
-        .contains(&format!("`decree process --retry {id}`")));
+        .contains(&format!("`decree daemon --once --retry {id}`")));
 
     // The next run waits: process names the file, starts nothing and exits 1.
     let next = p.emit_only();
     let out = p
-        .decree(&["process"])
+        .decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .output()
         .unwrap();
@@ -1842,7 +1848,7 @@ fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     // A retry removes the hold and the attention file before the run continues on the kept
     // changes, and the queue goes on.
     let out = p
-        .decree(&["process", "--retry", &id, "--state", "verify"])
+        .decree(&["daemon", "--once", "--retry", &id, "--state", "verify"])
         .env("PATH", p.path())
         .output()
         .unwrap();
@@ -1882,7 +1888,7 @@ fn deleting_the_attention_file_of_a_held_run_releases_the_queue() {
 
     let next = p.emit_only();
     let out = p
-        .decree(&["process"])
+        .decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .output()
         .unwrap();
@@ -1905,7 +1911,7 @@ fn a_run_that_never_started_clean_keeps_and_holds_nothing() {
         .output()
         .unwrap();
     let id = String::from_utf8(out.stdout).unwrap().trim().to_string();
-    p.decree(&["process"])
+    p.decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .output()
         .unwrap();

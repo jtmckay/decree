@@ -51,7 +51,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -330,7 +330,7 @@ fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
         .env_remove("DECREE_MESSAGE_ID")
         .env_remove("DECREE_MACHINE")
         .env_remove("DECREE_STATE")
-        .arg("process")
+        .args(["daemon", "--once"])
         .assert()
         .success();
     let mut runs: Vec<String> = fs::read_dir(p.decree().join("runs"))
@@ -360,33 +360,10 @@ fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
 
 // --- A whole message on stdin (docs/reference/cli.md, decree emit) ---
 
-/// A migration for `m`, as `decree process` leaves it once it has run.
+/// A message for `m`, as an order file holds one.
 const MIGRATION: &str = "---\nmachine: m\nnote: kept\n---\n# A\n\nDo the work.\n";
 
-/// One step, then `done`: a migration writes its `processed.md` line on entering a final state.
-const M: &str = "\
-name: m
-description: Takes one step.
-initial: step
-states:
-  step:
-    invoke: step
-    transitions: { done: done }
-  done: { final: true }
-  failed: { final: true }
-";
-
 impl Project {
-    /// `decree process` with no `DECREE_*` variables.
-    fn process(&self) {
-        let mut cmd = common::decree_at(self.tmp.path());
-        cmd.env("NO_COLOR", "1");
-        for var in ["DECREE_MESSAGE_ID", "DECREE_MACHINE", "DECREE_STATE"] {
-            cmd.env_remove(var);
-        }
-        cmd.arg("process").assert().success();
-    }
-
     /// The text of `inbox/<id>.md`.
     fn queued(&self, id: &str) -> String {
         fs::read_to_string(self.decree().join("inbox").join(format!("{id}.md"))).unwrap()
@@ -398,47 +375,6 @@ fn id_of(output: &std::process::Output) -> String {
         .unwrap()
         .trim()
         .to_string()
-}
-
-#[test]
-fn emit_of_a_processed_migration_queues_its_work_again() {
-    let p = Project::new();
-    common::write_file(&p.decree().join("machines/m/machine.yml"), M);
-    write_script(&p.decree().join("scripts/step"), "#!/usr/bin/env bash\n");
-    let migration = p.decree().join("migrations/01-a.md");
-    fs::write(&migration, MIGRATION).unwrap();
-    p.process();
-    let processed = fs::read_to_string(p.decree().join("processed.md")).unwrap();
-    assert_eq!(processed.trim(), "01-a.md");
-    let before: Vec<String> = fs::read_dir(p.decree().join("runs"))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .collect();
-
-    let output = p
-        .emit(&[], &[])
-        .write_stdin(fs::read_to_string(&migration).unwrap())
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    let id = id_of(&output);
-    p.process();
-
-    assert!(!before.contains(&id));
-    let text = fs::read_to_string(p.decree().join("runs").join(&id).join("message.md")).unwrap();
-    assert_eq!(
-        text,
-        format!(
-            "---\nid: {id}\nmachine: m\nnote: kept\ntrigger: emit\nstate: done\n---\n\
-             # A\n\nDo the work.\n"
-        )
-    );
-    assert_eq!(text.matches("Do the work.").count(), 1);
-    assert_eq!(fs::read_to_string(&migration).unwrap(), MIGRATION);
-    assert_eq!(
-        fs::read_to_string(p.decree().join("processed.md")).unwrap(),
-        processed
-    );
 }
 
 #[test]
@@ -466,7 +402,7 @@ fn emit_of_a_saved_message_replaces_the_keys_decree_sets() {
     let p = Project::new();
     p.parent("p1", Some(1));
     let saved = format!(
-        "---\nid: {A}\nmachine: other\nstate: done\ntrigger: migration\nmigration: 01-a.md\n\
+        "---\nid: {A}\nmachine: other\nstate: done\ntrigger: inbox\n\
          arrived_as: a.md\nparent: old\ndepth: 5\nparams:\n  n: 2\n  label: y\n---\nBody\n"
     );
     let env = [

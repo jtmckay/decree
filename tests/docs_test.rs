@@ -374,7 +374,7 @@ fn the_messages_reference_says_describe_the_outcome_not_the_steps() {
         .next()
         .unwrap();
     for want in [
-        "**One concern per migration**",
+        "**One concern per message**",
         "**Describe the outcome, not the steps.**",
         "if a different correct implementation would fail it, it is a step",
         "`## Overview` (why), `## Outcome` (what is true afterwards), `## Constraints`",
@@ -443,8 +443,8 @@ fn the_security_policy_matches_the_claude_script() {
     assert!(policy.contains("Report a vulnerability"));
     assert!(policy.contains("`--permission-mode auto`"));
     assert!(policy.contains("`CLAUDE_PERMISSION_MODE`"));
-    for dir in ["inbox", "migrations", "cron"] {
-        assert!(policy.contains(&format!("`.decree/{dir}/`")), "{dir}");
+    for dir in ["`.decree/inbox/`", "`cron/`", "`order/`"] {
+        assert!(policy.contains(dir), "{dir}");
     }
 
     let script = common::plugin_script("plugins/develop.md", "ai.sh");
@@ -568,8 +568,9 @@ fn lib_is_gone_from_the_repository_and_the_docs() {
     }
     assert_eq!(
         found,
-        ["docs/reference/scripts.md:140: A project may keep code its machines share in any folder \
-          it likes (`lib/`, `tools/`); decree does not look at it."],
+        ["docs/reference/scripts.md:137: A project may keep code its machines share in any folder \
+          it likes (`lib/`, `tools/`); decree does not look at it. To share it as decree files, \
+          make it a library machine ([Resolution](#resolution))."],
         "{}",
         found.join("\n")
     );

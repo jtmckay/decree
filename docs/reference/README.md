@@ -4,8 +4,8 @@ decree runs durable state-machine workflows from plain files: every run is an ap
 
 | File | Subject |
 | --- | --- |
-| [messages.md](messages.md) | Frontmatter, parsing, the lifecycle of a message, replies, the run lock, migrations, cron files |
-| [machines.md](machines.md) | Examples, `invoke`, keys, the store, the SCXML subset, rules, the machine schema, validation V1–V21, M1–M3 and E1 |
+| [messages.md](messages.md) | Frontmatter, parsing, the lifecycle of a message, replies, the run lock, order files, cron files |
+| [machines.md](machines.md) | Examples, `invoke`, keys, state, the SCXML subset, rules, the machine schema, validation V1–V21, M2–M3 and E1 |
 | [scripts.md](scripts.md) | Resolution, execution, environment (`.decree/.env`, a machine's `env_file`), a machine's files beside its scripts, the store, run-directory files, events from an invoke |
 | [runs.md](runs.md) | The step loop, `check`, `model` and routers, sub-machines, `reply`, `events.jsonl` |
 | [cli.md](cli.md) | Every command and its exit codes |
@@ -22,10 +22,10 @@ Machines follow W3C SCXML 1.0 (the State Chart XML recommendation): its terms, i
 | Term | Meaning |
 | --- | --- |
 | Message | A markdown file: YAML frontmatter (structured) plus a body (unstructured task text). One message = one run. |
-| Machine | A YAML statechart in `.decree/machines/<name>.yml`: one SCXML document, written as YAML. A type, never an instance. |
+| Machine | A YAML statechart in `.decree/machines/<name>/machine.yml`: one SCXML document, written as YAML. A type, never an instance. |
 | State | An SCXML state: atomic (does one step), compound (has child `states`) or final (`final: true`, ends the run). |
 | Configuration | SCXML's term for the set of active states: the current atomic state and all its ancestors. |
-| Script | An executable file in `.decree/scripts/` (shared by all machines) or `.decree/scripts/<machine>/` (one machine's override). Machines refer to scripts by name, never by path. |
+| Script | An executable file in a machine's `.decree/machines/<machine>/scripts/`. Machines refer to scripts by name, never by path. |
 | Invoke | A state's function, `invoke:` with one key naming its kind (`script`, `check`, `model`, `reply` or `machine`); `invoke: <name>` runs a script. An SCXML `<invoke>`: it runs while the state is active and its completion raises exactly one event. |
 | `onentry`, `onexit` | Scripts run when a state is entered or exited: SCXML executable content in `<onentry>` and `<onexit>`. They produce no event. |
 | Event | A name such as `done`, `error` or `pass` that selects a transition out of a state. |
@@ -76,9 +76,7 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, attention/, process.log, cache/, ai-use.md, machines/, scripts/ and cron/*/ (installed from plugins/)
-  migrations/                       # ordered run-once messages, committed, never edited (messages.md)
-  processed.md                      # committed ledger: one migration filename per line
+  .gitignore                        # contains: inbox/, runs/, schema/, the .env* files but .env.example, attention/, process.log, cache/, ai-use.md, and machines/** but each machine's order/, graph.md and *.git.txt files
   inbox/                            # queued messages: *.md; files starting with "." are ignored
   runs/<message id>/                # one folder per run, created when the message is claimed
     message.md                      # the claimed message; decree mirrors frontmatter `state`
@@ -89,24 +87,26 @@ Each building block has its own directory in `.decree/`:
     .running                        # the script running now: pid, state, phase, script, started_at, log (scripts.md)
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
     hold                            # written by a script (keep): the run's attention file holds the queue (cli.md, Attention)
-  cron/                             # *.md cron templates (messages.md, Cron files); cron/<plugin>/*.md installed from plugins/
-  plugins/<machine name>.md           # committed (`decree init` writes the folder empty): any of a machine, its scripts folder, cron files, migrations and store seeds as one file, installed by `decree plugin install` into machines/, scripts/<name>/ and cron/<name>/ (plugins.md)
-  machines/<machine name>.yml         # statecharts (machines.md); installed from plugins/, so `decree init`'s .gitignore lists machines/ and scripts/
-  graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
-  schema/v1/*.schema.json             # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)
-  scripts/<name>                    # executables shared by every machine; optional extension: verify.sh (scripts.md)
-  scripts/<machine name>/<name>       # optional: a machine's own script, overriding scripts/<name> for that machine
-  scripts/<machine name>/*            # also the machine's helpers, config and data, which decree never runs (scripts.md, A machine's files); the official plugins carry `ai.sh` for develop, infra and qa, infra's `requirements`, `run.sh` and `kinds/` (scripts.md, Declared environment), and qa's `qa.sh`, `invariants.md` and `wrenches.md`
+  plugins/<machine name>.md         # committed: any of a machine, its scripts, cron files, state and order seeds as one file, installed by `decree plugin install` into machines/<name>/ (plugins.md)
+  machines/<machine name>/          # one folder per machine, its domain
+    machine.yml                     # the statechart (machines.md); installed from plugins/, so git ignores it
+    scripts/<name>                  # its executables; optional extension: verify.sh (scripts.md)
+    scripts/*                       # also its helpers, config and data, which decree never runs (scripts.md, A machine's files)
+    cron/*.md                       # cron templates; `machine:` defaults to this machine (messages.md, Cron files)
+    state/                          # what the machine keeps between runs: $DECREE_STATE_DIR, declared under `state_files:`; never deleted by decree; *.git.txt files committed (scripts.md, State)
+    order/*.md                      # messages run in order at each daemon start by the official `order` plugin; committed (messages.md, Order files)
+    graph.md                        # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
+  system.md                         # written by `decree graph`: how machines emit to and invoke each other; committed
+  schema/v1/*.schema.json           # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)
   .env                              # optional, never committed: KEY=value variables every script gets, secrets included (scripts.md, .env files)
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
-  store/<machine name>/             # what the machine keeps between runs: $DECREE_STATE_DIR, declared under `store:`; never deleted by decree (scripts.md, Store)
   cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree keeps only cache/plugins/ there, its record of each plugin install (plugins.md)
-  process.log                       # what `process` and `daemon` print as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
+  process.log                       # what `daemon` prints as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
   attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops every run (cli.md, Attention)
 ```
 
-`migrations/` and `processed.md` are committed to git; `inbox/`, `runs/`, `store/`, `cache/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
+`plugins/`, `system.md` and each machine's `order/`, `graph.md` and `state/*.git.txt` are committed to git; `inbox/`, `runs/`, the rest of `machines/`, `cache/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
 
 ### No configuration file
 
@@ -129,14 +129,14 @@ Every file decree reads or writes, and every document a command prints with `--f
 
 | Schema | Covers | Documented in |
 | --- | --- | --- |
-| `machine.schema.json` | A machine file, `machines/<name>.yml`. Editors apply it by path ([Schema](machines.md#schema)). | [machines.md](machines.md) |
-| `message.schema.json` | The frontmatter of a migration, inbox message, cron file or reply. | [messages.md](messages.md#frontmatter-keys) |
+| `machine.schema.json` | A machine file, `machines/<name>/machine.yml`. Editors apply it by path ([Schema](machines.md#schema)). | [machines.md](machines.md) |
+| `message.schema.json` | The frontmatter of an inbox message, order file, cron file or reply. | [messages.md](messages.md#frontmatter-keys) |
 | `events.schema.json` | One line of `runs/<id>/events.jsonl`: the common fields, then one branch per `type`. | [runs.md](runs.md#eventsjsonl) |
 | `request.schema.json` | A router run's `request.json`, including `reply_schema`. | [runs.md](runs.md#model) |
 | `attention.schema.json` | The frontmatter of a file decree writes in `.decree/attention/`, for a run that needs a person. A `.md` file there that does not match it holds the queue. | [cli.md](cli.md#attention) |
 | `plugin.schema.json` | The frontmatter of a plugin, `plugins/<name>.md`. | [plugins.md](plugins.md) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
-| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `prune`, `graph`, `schema`, `upgrade`, `plugin` and `process` (`--dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
+| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `graph`, `schema`, `upgrade`, `plugin` and `daemon` (`--once --dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 
 The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
 

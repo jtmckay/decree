@@ -356,12 +356,18 @@ fn all_runs_done(project: &Path) -> usize {
     count
 }
 
-fn processed(project: &Path) -> Vec<String> {
-    fs::read_to_string(project.join(".decree/processed.md"))
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect()
+/// The order files `machine` has run, from its `state/order.git.txt`.
+fn ordered(project: &Path, machine: &str) -> Vec<String> {
+    fs::read_to_string(
+        project
+            .join(".decree/machines")
+            .join(machine)
+            .join("state/order.git.txt"),
+    )
+    .unwrap()
+    .lines()
+    .map(str::to_owned)
+    .collect()
 }
 
 /// jq is a real dependency of `text-to-media`'s scripts, not a stand-in.
@@ -385,8 +391,9 @@ fn text_to_media_readme_commands_run() {
         "mkdir -p renders/images && echo picture > renders/images/reference.png",
     );
     let project = dir.path().join("renders");
-    assert_eq!(processed(&project).len(), 4);
-    assert_eq!(all_runs_done(&project), 5);
+    assert_eq!(ordered(&project, "comfy").len(), 4);
+    // The four order files, the lighthouse, and the `order` run of each of the two daemon starts.
+    assert_eq!(all_runs_done(&project), 7);
     for render in [
         "unicorn_landscape",
         "character_lily_fullbody",
@@ -399,7 +406,7 @@ fn text_to_media_readme_commands_run() {
             "{render}"
         );
     }
-    let run = common::migration_run(&project.join(".decree"), "04-animate-character.md");
+    let run = common::run_of(&project.join(".decree"), "04-animate-character.md");
     let payload = fs::read_to_string(
         project
             .join(".decree/runs")

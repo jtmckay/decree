@@ -1,10 +1,10 @@
-//! `decree daemon [--interval <duration>] [--retry [<id>] [--state <s>]]`
-//! (docs/reference/cli.md): report plugins not installed, validate, `--retry` as `process` does, mark crashed runs
-//! `interrupted`, then loop: read the machines and `.env` files again, deliver replies and
-//! timeouts, continue `pending` runs, cron tick, drain the inbox, next migration, sleep. Every step is `process`'s own
-//! (`commands::process::Pipeline`); there is no second pipeline. A failed or interrupted
-//! inbox run does not stop it; a failed, interrupted or waiting migration blocks later
-//! migrations only. On SIGINT or SIGTERM it interrupts the current run and exits 0.
+//! `decree daemon [--interval <duration>] [--retry <id> [--state <s>]]`
+//! (docs/reference/cli.md): report plugins not installed, validate, `--retry`, mark crashed
+//! runs `interrupted`, fire the `@reboot` cron files, then loop: read the machines and `.env`
+//! files again, deliver replies and timeouts, continue `pending` runs, cron tick, drain the
+//! inbox, sleep. Every step is the pipeline's (`commands::process::Pipeline`), which `daemon
+//! --once` runs too. A failed or interrupted run does not stop it. On SIGINT or SIGTERM it
+//! interrupts the current run and exits 0.
 
 use crate::commands::check::Project;
 use crate::commands::process::{context, plugin_notices, reporting, Pipeline, Retry, Stop};
@@ -61,11 +61,9 @@ fn poll(
     interval: Duration,
 ) -> Result<(), DecreeError> {
     let mut cron_tracker = CronTracker::new();
-    // The last message a blocked migration printed, so each block is reported once; the
-    // same for a file in `.decree/attention/` that holds the queue.
-    let mut blocked = None;
+    // The last file in `.decree/attention/` that held the queue, so each is reported once.
     let mut held = None;
-    let mut result = report(pipeline.recover());
+    let mut result = pipeline.recover();
     // `@reboot` cron files fire once per daemon process, here, whether or not the queue is
     // held (docs/reference/messages.md, Cron files).
     fire_cron_jobs(
@@ -77,7 +75,7 @@ fn poll(
     loop {
         if result.is_ok() {
             pipeline.refresh();
-            result = pass(project_root, pipeline, &mut cron_tracker, &mut blocked);
+            result = pass(project_root, pipeline, &mut cron_tracker);
         }
         match result {
             Err(Stop::Interrupted) => {
@@ -119,47 +117,14 @@ fn pass(
     project_root: &Path,
     pipeline: &mut Pipeline,
     cron_tracker: &mut CronTracker,
-    blocked: &mut Option<String>,
 ) -> Result<(), Stop> {
-    report(pipeline.deliver_timeouts())?;
+    pipeline.deliver_timeouts()?;
     for id in pipeline.pending()? {
-        report(pipeline.continue_one(&id))?;
+        pipeline.continue_one(&id)?;
     }
     fire_due_cron_jobs(project_root, cron_tracker, pipeline.filter());
-    loop {
-        match pipeline.next_inbox() {
-            Ok(true) => {}
-            Ok(false) => break,
-            Err(stop) => report(Err(stop))?,
-        }
-    }
-    loop {
-        match pipeline.next_migration() {
-            Ok(true) => *blocked = None,
-            Ok(false) => break,
-            Err(Stop::Blocked(message)) => {
-                if blocked.as_ref() != Some(&message) {
-                    notice(format!("decree daemon: {message}"));
-                    *blocked = Some(message);
-                }
-                break;
-            }
-            Err(stop) => report(Err(stop))?,
-        }
-    }
+    while pipeline.next_inbox()? {}
     Ok(())
-}
-
-/// A blocked migration is printed and the daemon goes on; a signal or a fault stops it. The
-/// pipeline reports a failed run itself.
-fn report(result: Result<(), Stop>) -> Result<(), Stop> {
-    match result {
-        Err(Stop::Blocked(message)) => {
-            notice(format!("decree daemon: {message}"));
-            Ok(())
-        }
-        other => other,
-    }
 }
 
 /// Check cron directory and fire due jobs for the machines `filter` runs into inbox.

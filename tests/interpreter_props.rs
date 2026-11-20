@@ -471,7 +471,7 @@ struct Outcome {
 fn run_case(spec: &Spec) -> Outcome {
     let tmp = TempDir::new().unwrap();
     let decree = tmp.path().join(".decree");
-    for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+    for dir in ["machines", "scripts", "inbox", "runs"] {
         fs::create_dir_all(decree.join(dir)).unwrap();
     }
     fs::write(decree.join("processed.md"), "").unwrap();
@@ -495,12 +495,12 @@ fn run_case(spec: &Spec) -> Outcome {
     let decree_cmd = |arg: &str| {
         common::decree_at(tmp.path())
             .env("NO_COLOR", "1")
-            .arg(arg)
+            .args(arg.split_whitespace())
             .output()
             .unwrap()
     };
     let check = decree_cmd("check");
-    let process = decree_cmd("process");
+    let process = decree_cmd("daemon --once");
     let run = decree.join("runs/20260101T000000.000000Z-000000");
     let log = fs::read_to_string(run.join("events.jsonl")).unwrap_or_default();
     let schema_errors = schema::events_errors(events_validator(), &log);

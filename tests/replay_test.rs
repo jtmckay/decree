@@ -130,12 +130,9 @@ struct Replay {
     /// The project's `.decree/`.
     recorded: PathBuf,
     run: String,
-    /// The run's id in the replay, for an inbox message: the recorded id in the form decree
-    /// makes ids now, so the queued file keeps it. A migration's run gets a new time id as
-    /// it starts (`id`).
+    /// The run's id in the replay: the recorded id in the form decree makes ids now, so the
+    /// queued file keeps it.
     id: String,
-    /// The recorded run's migration file, for a migration's run.
-    migration: Option<String>,
 }
 
 impl Replay {
@@ -143,20 +140,21 @@ impl Replay {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
         let recorded = repo().join(project).join(".decree");
-        // The plugins (or the machine folders); no runs, queue or migrations, and nothing
-        // installed or cached locally.
+        // The plugins (or the machine folders); no runs or queue, and nothing installed or
+        // cached locally. Not the `order` plugin: no recorded run is its, and its run at start
+        // would be one the recording does not have.
         let has_plugins = recorded.join("plugins").is_dir();
         copy_dir(&recorded, &decree, &|p| {
-            p.parent() == Some(recorded.as_path())
-                && (["runs", "inbox", "migrations", "processed.md", "cache"]
-                    .iter()
-                    .any(|n| p.file_name().unwrap() == *n)
-                    || has_plugins && p.file_name().unwrap() == "machines")
+            p == recorded.join("plugins/order.md")
+                || p.parent() == Some(recorded.as_path())
+                    && (["runs", "inbox", "cache"]
+                        .iter()
+                        .any(|n| p.file_name().unwrap() == *n)
+                        || has_plugins && p.file_name().unwrap() == "machines")
         });
-        for dir in ["runs", "inbox", "migrations"] {
+        for dir in ["runs", "inbox"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
-        fs::write(decree.join("processed.md"), "").unwrap();
         // A project with plugins (examples/project) has its machines and scripts installed
         // from them, as in a fresh clone; the stubs below are then edits in place, which
         // `process` keeps.
@@ -180,15 +178,11 @@ impl Replay {
             }
             _ => run.to_string(),
         };
-        let claim = &read_events(&recorded.join("runs").join(run))[0];
-        let migration =
-            (claim["trigger"] == "migration").then(|| claim["file"].as_str().unwrap().to_string());
         let r = Replay {
             tmp,
             recorded,
             run: run.to_string(),
             id,
-            migration,
         };
         r.write_plan();
         r.queue();
@@ -197,10 +191,7 @@ impl Replay {
 
     /// The run's id in the replay, once it has started.
     fn id(&self) -> String {
-        match &self.migration {
-            Some(file) => common::migration_run(&self.decree(), file),
-            None => self.id.clone(),
-        }
+        self.id.clone()
     }
 
     fn recorded_run(&self, id: &str) -> PathBuf {
@@ -252,18 +243,12 @@ impl Replay {
         }
     }
 
-    /// Queue the run's message as the project received it: a migration from `migrations/`,
-    /// anything else in `inbox/` as it was queued, `<id>.md` with `id` the replay's id,
-    /// without the `state` mirror. A file a person wrote is queued as decree left it when
-    /// it arrived: its `arrived_as`, recorded in `message.md`, is kept.
+    /// Queue the run's message as the project received it: in `inbox/` as it was queued,
+    /// `<id>.md` with `id` the replay's id, without the `state` mirror. A file a person wrote
+    /// is queued as decree left it when it arrived: its `arrived_as`, recorded in
+    /// `message.md`, is kept.
     fn queue(&self) {
-        if let Some(file) = &self.migration {
-            fs::copy(
-                self.recorded.join("migrations").join(file),
-                self.decree().join("migrations").join(file),
-            )
-            .unwrap();
-        } else {
+        {
             let message =
                 fs::read_to_string(self.recorded_run(&self.run).join("message.md")).unwrap();
             let message: String = message
@@ -288,7 +273,7 @@ impl Replay {
     fn spawn_process(&self) -> Child {
         common::std_decree_at(self.tmp.path())
             .env("NO_COLOR", "1")
-            .arg("process")
+            .args(["daemon", "--once"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -485,21 +470,17 @@ fn normalise_span(mut line: Value, ids: &BTreeMap<String, String>) -> String {
 }
 
 #[test]
-fn project_migration_01_tries_claude_after_local_and_finishes_done_as_recorded() {
+fn project_rate_limit_run_tries_claude_after_local_and_finishes_done_as_recorded() {
     let r = Replay::new("examples/project", "20261001T143005.000000Z-189ed2");
-    let process = r.cmd(&["process"]).assert();
+    let process = r.cmd(&["daemon", "--once"]).assert();
     r.assert_matches_recorded();
     process.code(0);
-    assert_eq!(
-        fs::read_to_string(r.decree().join("processed.md")).unwrap(),
-        "01-rate-limit-upload.md\n"
-    );
 }
 
 #[test]
 fn project_deploy_run_waits_for_a_person_as_recorded() {
     let r = Replay::new("examples/project", "20261001T153012Z-7b4e2a");
-    let process = r.cmd(&["process"]).assert();
+    let process = r.cmd(&["daemon", "--once"]).assert();
     r.assert_matches_recorded();
     let stdout = String::from_utf8_lossy(&process.code(0).get_output().stdout).into_owned();
     let run = fs::read_dir(r.decree().join("runs"))
@@ -532,21 +513,17 @@ fn project_cron_run_interrupted_by_sigint_as_recorded() {
 }
 
 #[test]
-fn feature_migration_01_finishes_done_as_recorded() {
+fn feature_rate_limit_run_finishes_done_as_recorded() {
     let r = Replay::new("tests/fixtures/feature", "20261001T143005.000000Z-4b7d10");
-    let process = r.cmd(&["process"]).assert();
+    let process = r.cmd(&["daemon", "--once"]).assert();
     r.assert_matches_recorded();
     process.code(0);
-    assert_eq!(
-        fs::read_to_string(r.decree().join("processed.md")).unwrap(),
-        "01-rate-limit-upload.md\n"
-    );
 }
 
 #[test]
-fn feature_migration_02_waits_for_a_person_as_recorded() {
+fn feature_quota_run_waits_for_a_person_as_recorded() {
     let r = Replay::new("tests/fixtures/feature", "20261001T145120.000000Z-9c2e57");
-    let process = r.cmd(&["process"]).assert();
+    let process = r.cmd(&["daemon", "--once"]).assert();
     r.assert_matches_recorded();
     let stdout = String::from_utf8_lossy(&process.code(0).get_output().stdout).into_owned();
     assert!(
@@ -558,7 +535,7 @@ fn feature_migration_02_waits_for_a_person_as_recorded() {
 #[test]
 fn feature_triage_run_picks_small_change_as_recorded() {
     let r = Replay::new("tests/fixtures/feature", "20261001T151455Z-5d2e90");
-    let process = r.cmd(&["process"]).assert();
+    let process = r.cmd(&["daemon", "--once"]).assert();
     r.assert_matches_recorded();
     process.code(0);
 }
@@ -566,9 +543,9 @@ fn feature_triage_run_picks_small_change_as_recorded() {
 #[test]
 fn escalation_run_climbs_to_a_person_and_files_the_reply_as_recorded() {
     let r = Replay::new("tests/fixtures/escalation", "20261001T170412Z-3f9a51");
-    let waiting = r.cmd(&["process"]).assert();
+    let waiting = r.cmd(&["daemon", "--once"]).assert();
     r.deliver_reply();
-    let process = r.cmd(&["process"]).assert();
+    let process = r.cmd(&["daemon", "--once"]).assert();
     r.assert_matches_recorded();
     waiting.code(0);
     process.code(0);

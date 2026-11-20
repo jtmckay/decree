@@ -44,7 +44,7 @@ person installs it).
   is only a log: decree never reads an event from it.
 - On stop or timeout, decree sends SIGTERM to the group, then SIGKILL after 10 s.
 - Scripts must be safe to re-run: an interrupted or failed step runs again after
-  `decree process --retry`. Check that a result works, not that its file exists: a step that
+  `decree daemon --once --retry`. Check that a result works, not that its file exists: a step that
   failed halfway may have left the file.
 
 ## Reporting an event (invoke only)
@@ -111,7 +111,7 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
   reads it and continues.
 - `STOP`: a question instead of a guess. A script that finds it prints it and writes `stop` to
   `$DECREE_EVENT_FILE`; it keeps stopping retries until a person answers in `plan.md`, deletes
-  it and runs `decree process --retry`.
+  it and runs `decree daemon --once --retry`.
 - `gate.log`: the output of the project's checks (`machines/develop/scripts/gate.sh`), for the step that
   fixes them. The gate names `pass` or `fail`; a non-zero exit (`error`) means the checks could
   not run, such as a missing tool, and its message is here.
@@ -120,12 +120,12 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
   `verify` keeps the last one if an attempt dies.
 - `hold`, in the run's own `$DECREE_RUN_DIR`: written by a step whose failure must stop every
   run (the official plugins' `keep`, in `failed`). decree puts its text in the run's file in
-  `.decree/attention/` with `holds: true`, and nothing runs until `decree process --retry <id>`
+  `.decree/attention/` with `holds: true`, and nothing runs until `decree daemon --once --retry <id>`
   removes both or a person deletes the attention file.
 - `leftovers`, in the run's own `$DECREE_RUN_DIR`: written by the official plugins' `clean_tree` when it
   finds uncommitted changes. It names each run that passed `clean_tree` and is now
   `interrupted` or `failed` (from `"${DECREE}" status --all --format json`, read with `jq`),
-  with `decree process --retry <id>` and `git stash push --include-untracked -m "decree <id>"
+  with `decree daemon --once --retry <id>` and `git stash push --include-untracked -m "decree <id>"
   -- .`; `clean_tree` prints the same lines. decree quotes it in the run's attention file.
 
 ## Environment
@@ -139,12 +139,12 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
 | `DECREE_MACHINE`, `DECREE_STATE` | Machine and state (`_root` for root `onentry`/`onexit`). |
 | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
 | `DECREE_VISITS` | Times this state has been entered, including now, since the run's last retry. |
-| `DECREE_RUN_ATTEMPT` | The run's attempt: 1, then one more per `decree process --retry`. |
+| `DECREE_RUN_ATTEMPT` | The run's attempt: 1, then one more per `decree daemon --once --retry`. |
 | `DECREE_RUN_DIR` | `runs/<id>/`. |
 | `DECREE_STATE_DIR` | `.decree/machines/<machine>/state/`: what this machine keeps between runs; created before the script runs. |
 | `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS`, `DECREE_FINAL_ATTEMPT` | Attempt number, the limit, and `true` on the last one. |
 | `DECREE_ATTEMPT_VALUE`, `DECREE_ATTEMPT_VALUES` | With an `attempts` list: this attempt's entry, and the whole list, space-separated. Unset with `attempts: <n>`; no value for `onentry`/`onexit`. |
-| `DECREE_TRIGGER` | `migration`, `cron`, `emit`, `inbox` or `invoke`. |
+| `DECREE_TRIGGER` | `cron`, `emit`, `inbox` or `invoke`. |
 | `DECREE_EVENTS` | Events the current state accepts, space-separated. |
 | `DECREE_EVENT_FILE` | For an invoke: the file to write its event to. Empty for other scripts. |
 | `DECREE_PARENT` | In a child run, the parent run's id. |
@@ -171,7 +171,7 @@ interpolated as Compose's `env_file` does: `${VAR}`, `$VAR`, `${VAR:-default}`,
 `HOST=box` then `COMFY_URL=http://${HOST}:8188`. An unknown variable is empty and
 `decree check` warns. Never source them by hand. `DECREE_*`, `TRACEPARENT` and `TRACESTATE`
 cannot be set in them, except `DECREE_MACHINES` and `DECREE_EXCLUDE_MACHINES` in `.decree/.env`,
-which pick the machines `process` and `daemon` run and never reach scripts, and
+which pick the machines `daemon` run and never reach scripts, and
 `DECREE_MAX_DEPTH` (default 10), the deepest chain of emits and child runs. When two set a name, the first wins: decree's own `DECREE_*`, the
 machine's `env_file`, the process environment, `.decree/.env`.
 

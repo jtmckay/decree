@@ -18,7 +18,8 @@ fn decree_cmd(dir: &TempDir) -> Command {
 // --- decree init ---
 
 /// After `init`, `.decree/` holds exactly the entries of docs/reference/README.md, File layout:
-/// no plugin is installed, so `plugins/` is empty and there is no `machines/` or `scripts/`.
+/// the default plugins `order` and `prune` (D86), installed into `machines/`, their graphs and
+/// install records, and no `scripts/`.
 #[test]
 fn test_init_creates_directory_structure() {
     let dir = TempDir::new().unwrap();
@@ -40,26 +41,35 @@ fn test_init_creates_directory_structure() {
         [
             ".env.example",
             ".gitignore",
+            "cache",
             "inbox",
-            "migrations",
+            "machines",
             "plugins",
-            "processed.md",
             "runs",
             "system.md",
         ]
     );
-    for d in ["inbox", "migrations", "plugins", "runs"] {
-        assert!(decree.join(d).is_dir(), "{d}");
-    }
-    for d in ["inbox", "migrations", "plugins", "runs"] {
+    for d in ["inbox", "runs"] {
         assert_eq!(fs::read_dir(decree.join(d)).unwrap().count(), 0, "{d}");
     }
+    let mut plugins: Vec<String> = fs::read_dir(decree.join("plugins"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    plugins.sort();
+    assert_eq!(plugins, ["order.md", "prune.md"]);
+    for name in ["order", "prune"] {
+        let dir = decree.join("machines").join(name);
+        assert!(dir.join("machine.yml").is_file(), "{name}");
+        assert!(dir.join("graph.md").is_file(), "{name}");
+    }
+    assert!(!decree.join("scripts").exists());
     assert!(decree.join("system.md").is_file());
     assert!(!decree.join("lib").exists());
 }
 
 /// The official plugins `init` lists: every one, by name.
-const OFFICIAL: [&str; 15] = [
+const OFFICIAL: [&str; 16] = [
     "comfy",
     "develop",
     "develop_by_size",
@@ -73,19 +83,10 @@ const OFFICIAL: [&str; 15] = [
     "newsletter",
     "order",
     "plugin_install",
+    "prune",
     "qa",
     "router",
 ];
-
-#[test]
-fn test_init_processed_md_is_empty() {
-    let dir = TempDir::new().unwrap();
-
-    decree_cmd(&dir).arg("init").assert().success();
-
-    let content = fs::read_to_string(dir.path().join(".decree/processed.md")).unwrap();
-    assert!(content.is_empty());
-}
 
 /// Snapshot of every file under `root` with its contents, for "changes nothing" checks.
 fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
@@ -127,8 +128,7 @@ fn test_init_stdin_closed_asks_nothing() {
     assert!(!all.contains("[y/N]") && !all.contains("[Y/n]"));
 
     let decree = dir.path().join(".decree");
-    assert_eq!(fs::read_dir(decree.join("plugins")).unwrap().count(), 0);
-    assert!(!decree.join("machines").exists());
+    assert_eq!(fs::read_dir(decree.join("plugins")).unwrap().count(), 2);
     assert!(!decree.join("scripts").exists());
     // Every official plugin, one line each with its description, then the line that adds one.
     let listed: Vec<&str> = stdout
@@ -229,7 +229,6 @@ fn test_init_ai_opencode_and_copilot_write_their_ai_cli() {
         let decree = dir.path().join(".decree");
         let env = fs::read_to_string(decree.join(".env.example")).unwrap();
         assert!(env.ends_with(&format!("\nAI_CLI={ai}\n")), "{env}");
-        assert!(!decree.join("machines").exists());
         assert_check_passes(&dir);
     }
 }
@@ -374,7 +373,7 @@ states:
     let id = String::from_utf8(out).unwrap().trim().to_string();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     decree_cmd(&dir)
-        .arg("process")
+        .args(["daemon", "--once"])
         .env("PATH", path)
         .env("AI_CLI", "claude")
         .assert()
@@ -485,19 +484,15 @@ fn test_status_empty_project() {
         .arg("status")
         .assert()
         .success()
-        .stdout("Runs: 0\nQueued:\n  inbox/: 0\n  migrations/: 0 pending\n");
+        .stdout("Runs: 0\nQueued:\n  inbox/: 0\n");
 }
 
 #[test]
-fn test_status_lists_queued_messages_and_pending_migrations() {
+fn test_status_lists_queued_messages() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
     let decree = dir.path().join(".decree");
-    for name in ["01-add-auth.md", "02-add-db.md", "03-add-api.md"] {
-        fs::write(decree.join("migrations").join(name), "# Migration\n").unwrap();
-    }
-    fs::write(decree.join("processed.md"), "01-add-auth.md\n").unwrap();
     fs::write(decree.join("inbox/a.md"), "Do a.\n").unwrap();
     fs::write(decree.join("inbox/.b.md.tmp"), "Being written.\n").unwrap();
 
@@ -505,9 +500,7 @@ fn test_status_lists_queued_messages_and_pending_migrations() {
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "Queued:\n  inbox/: 1\n    a.md\n  migrations/: 2 pending\n    02-add-db.md\n    03-add-api.md\n",
-        ));
+        .stdout(predicate::str::contains("Queued:\n  inbox/: 1\n    a.md\n"));
 }
 
 #[test]
@@ -526,6 +519,26 @@ fn test_status_unknown_id_says_so_and_exits_1() {
 fn test_status_cron_lists_files_and_next_fire_time() {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
+    // The default plugins' cron files: `order` at daemon start, `prune` weekly.
+    let out = decree_cmd(&dir)
+        .args(["status", "--cron"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert!(
+        lines[1].starts_with("order/boot.md") && lines[1].ends_with("daemon start"),
+        "{out}"
+    );
+    assert!(
+        lines[2].starts_with("prune/weekly.md") && lines[2].contains("0 3 * * Sun"),
+        "{out}"
+    );
+    common::drop_default_plugins(dir.path());
     decree_cmd(&dir)
         .args(["status", "--cron"])
         .assert()
@@ -718,7 +731,7 @@ fn test_init_skill_says_describe_the_outcome_not_the_steps() {
         .success();
     let text = fs::read_to_string(dir.path().join(".claude/skills/decree/SKILL.md")).unwrap();
     for want in [
-        "**One concern per migration**",
+        "**One concern per message**",
         "**Describe the outcome, not the steps.**",
         "**Outcome** (belongs in a message): behaviour a user or another program can observe",
         "**Steps** (left out): which functions, modules or files to change, in what order",
@@ -755,7 +768,7 @@ fn test_init_skill_messages_reference_gives_the_body_shape_and_a_step_rewritten(
     )
     .unwrap();
     let section = text
-        .split("### Writing a good migration")
+        .split("### Writing a good message")
         .nth(1)
         .unwrap()
         .split("\n## ")
@@ -788,7 +801,6 @@ fn test_message_with_requirements_heading_checks_and_runs() {
     let dir = TempDir::new().unwrap();
     let decree = dir.path().join(".decree");
     fs::create_dir_all(decree.join("machines")).unwrap();
-    fs::create_dir_all(decree.join("migrations")).unwrap();
     fs::create_dir_all(decree.join("scripts")).unwrap();
     common::write_file(&decree.join("machines/hello/machine.yml"), "name: hello\ndescription: Run one script.\ninitial: greet\nstates:\n  greet:\n    invoke: greet\n    \
          transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n");
@@ -796,23 +808,18 @@ fn test_message_with_requirements_heading_checks_and_runs() {
         &decree.join("scripts/greet.sh"),
         "#!/bin/sh\ngrep -q '^## Requirements' \"$DECREE_MESSAGE\"\n",
     );
-    fs::write(
-        decree.join("migrations/01-old-shape.md"),
+    common::write_file(
+        &decree.join("inbox/01-old-shape.md"),
         "---\nmachine: hello\n---\n# Old shape\n\n## Requirements\n\n1. Say hello.\n\n\
          ## Acceptance Criteria\n\n- **Given** nothing **When** it runs **Then** it exits 0\n",
-    )
-    .unwrap();
+    );
     decree_cmd(&dir).arg("graph").assert().success();
     assert_check_passes(&dir);
     decree_cmd(&dir)
-        .args(["process", "--quiet"])
+        .args(["daemon", "--once", "--quiet"])
         .assert()
         .code(0);
-    assert_eq!(
-        fs::read_to_string(decree.join("processed.md")).unwrap(),
-        "01-old-shape.md\n"
-    );
-    let run = common::migration_run(&decree, "01-old-shape.md");
+    let run = common::run_of(&decree, "01-old-shape.md");
     let events = fs::read_to_string(decree.join("runs").join(run).join("events.jsonl")).unwrap();
     assert!(events.contains("\"to\":\"done\""), "{events}");
 }

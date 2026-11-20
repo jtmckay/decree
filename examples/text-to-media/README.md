@@ -73,9 +73,10 @@ You need a running ComfyUI with the FLUX2 and WAN2.2 models the workflows load, 
 mkdir -p renders && cd renders
 decree init
 decree plugin add comfy
-cp ../examples/text-to-media/messages/*.md .decree/migrations/
+mkdir -p .decree/machines/comfy/order
+cp ../examples/text-to-media/messages/*.md .decree/machines/comfy/order/
 decree check
-decree process
+decree daemon --once
 decree status
 ```
 
@@ -160,6 +161,6 @@ METHOD=image_flux2_text_landscape exec "$(dirname "$0")/build.sh"
 
 ```text
 examples/text-to-media/
-  messages/                          four renders to try it with, as migrations
+  messages/                          four renders to try it with, as order files
 plugins/comfy.md                     the machine, its scripts and its workflows: the official plugin
 ```

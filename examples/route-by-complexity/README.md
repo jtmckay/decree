@@ -58,12 +58,13 @@ From a clone of decree, in a new project beside `examples/`, add the plugins and
 mkdir -p sized && cd sized
 decree init
 decree plugin add develop_by_size llm_router
-cp ../examples/route-by-complexity/messages/01-raise-upload-limit.md .decree/migrations/
+mkdir -p .decree/machines/develop_by_size/order
+cp ../examples/route-by-complexity/messages/01-raise-upload-limit.md .decree/machines/develop_by_size/order/
 decree check
 decree graph
 ```
 
-`decree process` then runs it. It needs three things running: the classifier, Ollama with a coding model, and OpenCode and Claude Code on `PATH`.
+`decree daemon --once` then runs it: the `order` plugin, which `decree init` adds, runs each order file at start. It needs three things running: the classifier, Ollama with a coding model, and OpenCode and Claude Code on `PATH`.
 
 ### The classifier, GLiNER2.5-Decide
 
@@ -124,7 +125,7 @@ If `small` picks above the threshold often fail the tests, raise it; if `unsure`
 ```text
 examples/route-by-complexity/
   gliner/decide_server.py              the classifier server (the one copy of it in the repository)
-  messages/01-raise-upload-limit.md    a small change to try it with, as a migration
+  messages/01-raise-upload-limit.md    a small change to try it with, as an order file
 plugins/
   develop_by_size.md                   size up, then implement and test: locally first, or with Claude only
   gliner_router.md                     a typed router: asks the classifier server

@@ -10,6 +10,7 @@ use crate::message::{create_run_dir, lock_state, LockState};
 use crate::runtime::executor_tests::install;
 use serde_json::Map;
 use std::collections::{BTreeSet, HashSet};
+use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -529,18 +530,6 @@ fn failing_onentry_on_failed_itself_is_only_logged() {
 // ---------------------------------------------------------------
 // Migrations: the ledger line (docs/reference/messages.md, rule 5; docs/reference/runs.md, step 7)
 // ---------------------------------------------------------------
-
-#[test]
-fn migration_ledger_line_is_written_before_final_onentry() {
-    let p = Project::new("step_normal", &[("done_entry", "copy_ledger")]);
-    fs::write(p.root().join(".decree/processed.md"), "44-prev.md").unwrap();
-    let outcome = p.run_with("migration", "45-next.md", &serde_norway::Mapping::new());
-    assert_eq!(outcome, Outcome::Finished("done".into()));
-    let seen = fs::read_to_string(p.root().join("ledger.txt")).unwrap();
-    assert_eq!(seen, "44-prev.md\n45-next.md\n");
-    assert_eq!(p.processed(), "44-prev.md\n45-next.md\n");
-    assert!(!p.root().join(".decree/.processed.md.tmp").exists());
-}
 
 #[test]
 fn migration_ledger_line_is_removed_when_final_onentry_fails() {
@@ -1470,18 +1459,6 @@ fn nested_final_state_raises_done_state_at_once_and_the_run_goes_on() {
         RunStatus::Interrupted
     );
     assert_eq!(visits(&events)["finished"], 1);
-}
-
-#[test]
-fn nested_final_state_writes_no_ledger_line() {
-    let p = Project::new("step_nested_final", &[("after_invoke", "copy_ledger")]);
-    fs::write(p.root().join(".decree/processed.md"), "45-prev.md\n").unwrap();
-    let outcome = p.run_with("migration", "46-next.md", &serde_norway::Mapping::new());
-    assert_eq!(outcome, Outcome::Finished("done".into()));
-    // `copy_ledger` ran after `finished` was entered, before the root `done`.
-    let seen = fs::read_to_string(p.root().join("ledger.txt")).unwrap();
-    assert_eq!(seen, "45-prev.md\n");
-    assert_eq!(p.processed(), "45-prev.md\n46-next.md\n");
 }
 
 #[test]

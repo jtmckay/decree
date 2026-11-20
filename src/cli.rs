@@ -34,55 +34,6 @@ pub enum Command {
         permissions: bool,
     },
 
-    /// Process everything once: replies and timeouts, pending runs, the inbox, then migrations in order
-    Process {
-        /// Show what would be processed without executing
-        #[arg(long, conflicts_with = "retry")]
-        dry_run: bool,
-
-        /// First continue an interrupted or finished run: ID, or the migration that blocks
-        /// the queue
-        #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
-        retry: Option<String>,
-
-        /// Atomic state the retried run continues in [default: the interrupted run's state,
-        /// or the state a finished run last left]
-        #[arg(long = "state", value_name = "STATE", requires = "retry")]
-        state: Option<String>,
-
-        /// Print no run output, status line or run summaries: only what needs attention (for cron and CI)
-        #[arg(long, short = 'q', conflicts_with = "dry_run")]
-        quiet: bool,
-
-        /// Run only these machines: repeatable, comma-separated [env: DECREE_MACHINES]
-        #[arg(
-            long = "machine",
-            value_name = "MACHINE",
-            value_delimiter = ',',
-            conflicts_with = "exclude_machines"
-        )]
-        machines: Vec<String>,
-
-        /// Run every machine but these: repeatable, comma-separated [env:
-        /// DECREE_EXCLUDE_MACHINES]
-        #[arg(
-            long = "exclude-machine",
-            value_name = "MACHINE",
-            value_delimiter = ','
-        )]
-        exclude_machines: Vec<String>,
-
-        /// Output format of --dry-run
-        #[arg(
-            long,
-            value_enum,
-            default_value_t,
-            requires = "dry_run",
-            conflicts_with = "retry"
-        )]
-        format: Format,
-    },
-
     /// Validate machines and pending messages; prints one line per error
     Check {
         /// Output format: text, a JSON document, or a SARIF 2.1.0 log
@@ -161,16 +112,21 @@ pub enum Command {
         dry_run: bool,
 
         /// Output format of --dry-run
-        #[arg(long, value_enum, default_value_t, requires = "dry_run")]
+        #[arg(
+            long,
+            value_enum,
+            default_value_t,
+            requires = "dry_run",
+            conflicts_with = "retry"
+        )]
         format: Format,
 
         /// Polling interval: a whole number and s, m, h or d (2s, 1m)
         #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]
         interval: std::time::Duration,
 
-        /// First continue an interrupted or finished run: ID, or the migration that blocks
-        /// the queue
-        #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
+        /// First continue an interrupted or finished run
+        #[arg(long, value_name = "ID")]
         retry: Option<String>,
 
         /// Atomic state the retried run continues in [default: the interrupted run's state,
@@ -235,22 +191,6 @@ pub enum Command {
     Tail {
         /// Run id
         id: Option<String>,
-    },
-
-    /// Delete the folders of finished runs older than an age; only this command deletes runs
-    Prune {
-        /// Age of the run's `run_finished` event: a whole number and s, m, h or d (30d, 12h,
-        /// 90m); 0s means every finished run
-        #[arg(long, value_name = "AGE", value_parser = crate::duration::parse)]
-        older_than: std::time::Duration,
-
-        /// List the runs it would delete, and delete nothing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Output format
-        #[arg(long, value_enum, default_value_t)]
-        format: Format,
     },
 
     /// Print how to upgrade decree: the install line, pinned and `cargo install` forms, and what to run in each project after

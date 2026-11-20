@@ -176,7 +176,7 @@ scripts:
           {
             echo "Claude's usage limit is reached and resets $(reset_note "${wait}" "")."
             echo "That is more than AI_LIMIT_WAIT (${AI_LIMIT_WAIT}) away, so the run stopped instead of waiting."
-            echo "After the reset, delete this file and run \`decree process --retry ${DECREE_MESSAGE_ID:-<id>}\`."
+            echo "After the reset, delete this file and run \`decree daemon --once --retry ${DECREE_MESSAGE_ID:-<id>}\`."
           } > "${DECREE_ROOT_RUN_DIR:-${DECREE_RUN_DIR}}/STOP"
           return 1
         fi
@@ -294,7 +294,7 @@ scripts:
     #!/usr/bin/env bash
     # Root onentry script: the run starts from a clean git work tree, so the commit at `done`
     # holds this run's work only, and a failed run's changes never mix into the next one.
-    # It runs again when `decree process --retry` continues the run; by then the tree holds
+    # It runs again when `decree daemon --once --retry` continues the run; by then the tree holds
     # the run's own work, so it checks only the first time. Only the project folder counts
     # (`-- .`): a decree project can be a subfolder of a larger repository.
     # When it finds changes, it names each run that passed here and is now `interrupted` or
@@ -332,7 +332,7 @@ scripts:
         [ -f "${dir}/clean_tree" ] || continue
         title=$(sed -n 's/^# //p' "${dir}/message.md" 2>/dev/null | head -n 1)
         echo "run ${id} (${title:-no heading}) started from a clean tree and is ${status}; it may have left them:"
-        echo "  to continue it on them: \`decree process --retry ${id}\`"
+        echo "  to continue it on them: \`decree daemon --once --retry ${id}\`"
         echo "  to set them aside: \`git stash push --include-untracked -m \"decree ${id}\" -- .\`"
       done < <(stopped_runs)
     }
@@ -349,7 +349,7 @@ scripts:
         echo "${named}" >&2
         echo "${named}" > "${leftovers}"
       fi
-      echo "if a failed run left them, its file in .decree/attention/ names it; continue it with \`decree process --retry <id>\`" >&2
+      echo "if a failed run left them, its file in .decree/attention/ names it; continue it with \`decree daemon --once --retry <id>\`" >&2
       exit 1
     fi
     git rev-parse HEAD > "${mark}"
@@ -357,9 +357,9 @@ scripts:
   commit.sh: |
     #!/usr/bin/env bash
     # onentry script of `done`: commit the run's work, titled with the message's first `# `
-    # heading. For a migration, decree has already added it to processed.md, so the one commit
-    # holds the work and the ledger line, and the title ends with the migration's file name
-    # (`migration:` in the run's message.md), as its run id is a time id. Nothing changed is
+    # heading. For a run of an order file (`order: <machine>/<file>` in its message.md), it
+    # records the file in its machine's state/order.git.txt first, so the one commit holds the
+    # work and the record, and the title ends with the file. Nothing changed is
     # nothing to commit. If the commit fails, the run ends in `failed`, not `done`. Only the
     # project folder is committed (`-- .`), even if something else in a larger repository is
     # staged.
@@ -370,6 +370,11 @@ scripts:
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
     "${DECREE}" plugin export
+    order=$(sed -n '2,/^---$/s/^order: //p' "${DECREE_MESSAGE}" | head -n 1)
+    record=.decree/machines/order/scripts/record.sh
+    if [ -n "${order}" ] && [ -x "${record}" ]; then
+      "${record}" "${order%%/*}" "${order#*/}"
+    fi
     git add -A -- .
     if git diff --cached --quiet -- .; then
       echo "nothing to commit"
@@ -377,9 +382,8 @@ scripts:
     fi
     title=$(sed -n 's/^# //p' "${DECREE_MESSAGE}" | head -n 1)
     title=${title:-${DECREE_MACHINE}: ${DECREE_MESSAGE_ID}}
-    migration=$(sed -n '2,/^---$/s/^migration: //p' "${DECREE_MESSAGE}" | head -n 1)
-    if [ -n "${migration}" ]; then
-      title="${title} (${migration})"
+    if [ -n "${order}" ]; then
+      title="${title} (${order})"
     fi
     git commit -q -m "${title}" \
       -m "decree run ${DECREE_MESSAGE_ID} (${DECREE_MACHINE})" -- .
@@ -453,7 +457,7 @@ scripts:
     # each in progress.md, so a retry continues where the last attempt stopped. If
     # the message is unclear, it writes the question to STOP instead of guessing;
     # the run fails until a person answers it in plan.md, deletes STOP and runs
-    # `decree process --retry`. Its notes live in the root run's folder
+    # `decree daemon --once --retry`. Its notes live in the root run's folder
     # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
     # whose steps are develop's scripts shares them.
     set -euo pipefail
@@ -490,7 +494,7 @@ scripts:
     # onentry script of `failed`: leave the run's changes in the work tree, so a retry builds on
     # the last attempt (the agent sees them in `git status` and decides what to keep), and write
     # the run's `hold`, so its file in .decree/attention/ holds the queue and no other run starts
-    # on them. `decree process --retry` of this run removes both; to set the changes aside
+    # on them. `decree daemon --once --retry` of this run removes both; to set the changes aside
     # instead, stash them and delete the run's attention file.
     # Only the project folder counts (`-- .`): a decree project can be a subfolder of a larger
     # repository. A run that failed because a person's own changes were there from the start
@@ -512,7 +516,7 @@ scripts:
       echo "run ${DECREE_MESSAGE_ID} (${title:-${DECREE_MACHINE}}) failed and kept its changes in the work tree:"
       [ -z "${changes}" ] || echo "${changes}"
       [ -z "${edited}" ] || echo "${edited}" | sed 's/^/installed copy edited, not exported: /'
-      echo "to continue the run on them: \`decree process --retry ${DECREE_MESSAGE_ID}\`"
+      echo "to continue the run on them: \`decree daemon --once --retry ${DECREE_MESSAGE_ID}\`"
       echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree plugin install <name>\` for an installed copy), then delete ${attention}"
     } > "${DECREE_RUN_DIR}/hold"
     cat "${DECREE_RUN_DIR}/hold"
@@ -577,7 +581,7 @@ scripts:
 ---
 # develop
 
-Implements a message, such as a migration describing a change, with an AI coding agent, then runs your project's checks and has the agent check the message's acceptance criteria. Each run ends in one git commit, or in `failed` with its changes left in the work tree.
+Implements a message, such as an order file describing a change, with an AI coding agent, then runs your project's checks and has the agent check the message's acceptance criteria. Each run ends in one git commit, or in `failed` with its changes left in the work tree.
 
 ## What it does
 
@@ -586,7 +590,7 @@ Implements a message, such as a migration describing a change, with an AI coding
 3. `implement`: the agent implements the message in small steps, logging each in the run's `progress.md`. If the message is ambiguous it writes `STOP` with its question instead of guessing, and the run ends in `failed`.
 4. `gate`: your project's checks, `.decree/machines/develop/scripts/gate.sh`. Passing goes to `verify`; failing goes to `fix`, where the agent fixes what `gate.log` reports, then to `final_gate`, whose failure ends the run.
 5. `verify`: the agent checks every acceptance criterion and ends its reply with `VERDICT: pass` or `VERDICT: fail`.
-6. `done`: `commit` exports every plugin a run edited (`decree plugin export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree process --retry <id>`, and holds the queue.
+6. `done`: `commit` exports every plugin a run edited (`decree plugin export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree daemon --once --retry <id>`, and holds the queue.
 
 ## What it needs
 
@@ -597,5 +601,5 @@ Implements a message, such as a migration describing a change, with an AI coding
 ## How to use it
 
 1. Put your project's checks in `.decree/machines/develop/scripts/gate.sh` (it prints `gate: no checks configured` until you do), for instance `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. The edit is kept in this file by `decree plugin export develop`, or by the next run's `commit`.
-2. Write a migration, `.decree/migrations/01-<what>.md`, with `machine: develop` in its frontmatter, saying what to change and how to tell it is done.
-3. Run `decree process`.
+2. Write an order file, `.decree/machines/develop/order/A01-<what>.md`, saying what to change and how to tell it is done.
+3. Run `decree daemon --once`, or keep `decree daemon` running: the official `order` plugin runs the file at start.

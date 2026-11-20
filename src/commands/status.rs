@@ -1,8 +1,8 @@
 //! `decree status [<id>] [--cron]` (docs/reference/cli.md). Reads runs and queues; never touches
 //! a run.
 //!
-//! - No id: first `.decree/attention/`, its files, those that hold the queue first, then the
-//!   migration that blocks the queue, with the command that continues it; then the runs by status, with the script each `active`
+//! - No id: first `.decree/attention/`, its files, those that hold the queue first; then the
+//!   runs by status, with the script each `active`
 //!   run is running now (from `.running`, docs/reference/scripts.md) and the wait of each
 //!   `waiting` run; then the queued messages. Runs finished in a state other than `failed`
 //!   are counted, not listed, and each list shows its last `SHOWN` entries, unless `--all`.
@@ -25,18 +25,16 @@ use crate::attention;
 use crate::cli::Format;
 use crate::commands::check::{md_files, Project};
 use crate::commands::print_json;
-use crate::commands::process::{blocking_migration, context, held_back};
+use crate::commands::process::context;
 use crate::cron;
 use crate::error::DecreeError;
 use crate::events::{current_state, strings, text, Event};
-use crate::filter::MachineFilter;
 use crate::interpreter::recover::RunStatus;
 use crate::interpreter::Context;
 use crate::layout::MESSAGE_FILE;
-use crate::layout::{ATTENTION_DIR, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR, RUNS_DIR};
+use crate::layout::{ATTENTION_DIR, DECREE_DIR, INBOX_DIR, RUNS_DIR};
 use crate::machine::FAILED;
 use crate::message::{run_ids, Message};
-use crate::migration;
 use crate::runtime::Running;
 
 /// How deep below a folder `decree status` looks for nested projects.
@@ -91,11 +89,9 @@ pub fn run(
     let Some(name) = id else {
         return overview(&ctx, &project, all, format);
     };
-    // A migration's file name or stem means its newest run.
-    let id = migration::resolve(&ctx.runs_dir(), name)?.ok_or_else(|| no_run(name))?;
     match format {
-        Format::Text => show_run(&ctx, &project, &id),
-        Format::Json => run_json(&ctx, &id),
+        Format::Text => show_run(&ctx, name),
+        Format::Json => run_json(&ctx, name),
     }
 }
 
@@ -106,8 +102,6 @@ fn no_run(id: &str) -> DecreeError {
 /// One run, as the overview lists it.
 struct Row {
     id: String,
-    /// The migration file, for a migration's run.
-    migration: Option<String>,
     machine: String,
     state: String,
     detail: Option<Detail>,
@@ -119,9 +113,8 @@ enum Detail {
     Running(Running),
     /// A `waiting` run's last event, a `waiting` event.
     Wait(Event),
-    /// An `interrupted` run, or one finished in `failed`: `blocking` when it is the
-    /// migration that blocks the queue.
-    Retry { blocking: bool },
+    /// An `interrupted` run, or one finished in `failed`.
+    Retry,
 }
 
 impl Row {
@@ -131,7 +124,7 @@ impl Row {
         self.detail.as_ref().map(|detail| match detail {
             Detail::Running(r) => running_line(id, r),
             Detail::Wait(last) => wait_line(last),
-            Detail::Retry { blocking } => retry_line(id, *blocking),
+            Detail::Retry => retry_line(id),
         })
     }
 
@@ -139,9 +132,6 @@ impl Row {
     /// or `child`, where they apply.
     fn json(&self) -> Value {
         let mut out = json!({ "id": self.id, "machine": self.machine, "state": self.state });
-        if let Some(file) = &self.migration {
-            out["migration"] = file.as_str().into();
-        }
         match &self.detail {
             Some(Detail::Running(r)) => {
                 out["running"] = json!({
@@ -162,7 +152,7 @@ impl Row {
                     out["child"] = child.into();
                 }
             }
-            Some(Detail::Retry { .. }) | None => {}
+            Some(Detail::Retry) | None => {}
         }
         out
     }
@@ -179,17 +169,13 @@ fn overview(
     let mut groups: Vec<(RunStatus, Row)> = Vec::new();
     let mut finished: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let ids = run_ids(&ctx.runs_dir())?;
-    let blocking = blocking_migration(ctx, project)?;
-    let retry = |id: &str| Detail::Retry {
-        blocking: blocking.as_ref().is_some_and(|b| b.run == id),
-    };
+    let retry = |_: &str| Detail::Retry;
     for id in &ids {
         // A finished run: its last line, `run_finished`, names its machine and final state.
         if let Some(last) = ctx.run_finished(id)? {
             let state = field(Some(&last), "state").to_string();
             let row = Row {
                 id: id.clone(),
-                migration: migration::of_run(&ctx.runs_dir(), id),
                 machine: field(Some(&last), "machine").to_string(),
                 detail: (state == FAILED).then(|| retry(id)),
                 state,
@@ -209,7 +195,6 @@ fn overview(
         };
         let row = Row {
             id: id.clone(),
-            migration: migration::of_run(&ctx.runs_dir(), id),
             machine: field(events.first(), "machine").to_string(),
             state: state.clone(),
             detail,
@@ -221,7 +206,6 @@ fn overview(
     }
 
     let inbox = md_files(&project.decree_dir.join(INBOX_DIR))?;
-    let pending = project.pending_migrations()?;
     // The files that hold the queue first, each group by name.
     let mut attention = attention::list(&ctx.project_root)?;
     attention.sort_by_key(|e| !e.holds());
@@ -256,16 +240,8 @@ fn overview(
             "attention": attention.iter().map(attention::Entry::json).collect::<Vec<_>>(),
             "counts": counts,
             "runs": runs,
-            "queued": { "inbox": inbox, "migrations": pending },
+            "queued": { "inbox": inbox },
         });
-        if let Some(b) = &blocking {
-            out["blocked"] = json!({
-                "migration": b.file,
-                "run": b.run,
-                "status": b.status.as_str(),
-                "state": b.state,
-            });
-        }
         let nested: Vec<Value> = nested_projects(&ctx.project_root)?
             .into_iter()
             .filter(|n| !n.active.is_empty())
@@ -292,17 +268,6 @@ fn overview(
     for entry in &attention {
         println!("  {}", entry.summary());
     }
-    if let Some(b) = &blocking {
-        println!(
-            "{} migration {} {}; later migrations wait",
-            "Blocked:".bold(),
-            b.file,
-            b.what()
-        );
-        println!("  {}", retry_line(&b.run, true));
-    } else if let Some(why) = held_back(ctx, project, &MachineFilter::All)? {
-        println!("{} {why}", "Held back:".bold());
-    }
     println!("{} {}", "Runs:".bold(), ids.len());
     for status in unfinished {
         let rows = of(status);
@@ -326,13 +291,7 @@ fn overview(
     }
 
     println!("{}", "Queued:".bold());
-    for (label, files) in [
-        (format!("{INBOX_DIR}/: {}", inbox.len()), &inbox),
-        (
-            format!("{MIGRATIONS_DIR}/: {} pending", pending.len()),
-            &pending,
-        ),
-    ] {
+    for (label, files) in [(format!("{INBOX_DIR}/: {}", inbox.len()), &inbox)] {
         println!("  {label}");
         // The next to run come first.
         let more = if all {
@@ -425,7 +384,6 @@ fn active_rows(root: &Path) -> Result<Vec<Row>, DecreeError> {
             continue;
         }
         rows.push(Row {
-            migration: migration::of_run(&ctx.runs_dir(), &id),
             machine: field(events.first(), "machine").to_string(),
             state: current_state(&events).unwrap_or("-").to_string(),
             detail: Running::read(&ctx.runs_dir().join(&id))?.map(Detail::Running),
@@ -474,13 +432,8 @@ fn shown<'r>(rows: &[&'r Row], all: bool, indent: &str) -> Vec<&'r Row> {
 
 fn print_rows(rows: &[&Row], indent: &str) {
     for row in rows {
-        let file = row
-            .migration
-            .as_ref()
-            .map(|f| format!(" ({f})"))
-            .unwrap_or_default();
         println!(
-            "{indent}{}{file}  {}  `{}`",
+            "{indent}{}  {}  `{}`",
             row.id.dimmed(),
             row.machine,
             row.state
@@ -491,14 +444,9 @@ fn print_rows(rows: &[&Row], indent: &str) {
     }
 }
 
-/// The command that continues an `interrupted` or `failed` run: `--retry` alone for the
-/// migration that blocks the queue, else with its id.
-fn retry_line(id: &str, blocking: bool) -> String {
-    if blocking {
-        "continue with `decree process --retry`".to_string()
-    } else {
-        format!("continue with `decree process --retry {id}`")
-    }
+/// The command that continues an `interrupted` or `failed` run.
+fn retry_line(id: &str) -> String {
+    format!("continue with `decree daemon --once --retry {id}`")
 }
 
 /// The script an `active` run is running now: name, pid, how long, and log path.
@@ -538,30 +486,24 @@ fn run_json(ctx: &Context, id: &str) -> Result<(), DecreeError> {
         return Err(no_run(id));
     }
     let (status, events) = ctx.status_of(id)?;
-    let mut out = json!({
+    let out = json!({
         "id": id,
         "machine": field(events.first(), "machine"),
         "status": status.as_str(),
         "state": current_state(&events),
         "events": events,
     });
-    if let Some(file) = migration::of_run(&ctx.runs_dir(), id) {
-        out["migration"] = file.into();
-    }
     print_json(&out)
 }
 
 /// One run: frontmatter, status, and the events as a table.
-fn show_run(ctx: &Context, project: &Project, id: &str) -> Result<(), DecreeError> {
+fn show_run(ctx: &Context, id: &str) -> Result<(), DecreeError> {
     let run_dir = ctx.runs_dir().join(id);
     if id.is_empty() || id.contains('/') || !run_dir.is_dir() {
         return Err(no_run(id));
     }
     let (status, events) = ctx.status_of(id)?;
     println!("{} {id}", "Run".bold());
-    if let Some(file) = migration::of_run(&ctx.runs_dir(), id) {
-        println!("  migration: {file}");
-    }
     println!("  machine: {}", field(events.first(), "machine"));
     let state = current_state(&events).unwrap_or("-");
     println!("  status: {} in `{state}`", status.as_str());
@@ -574,8 +516,7 @@ fn show_run(ctx: &Context, project: &Project, id: &str) -> Result<(), DecreeErro
         }
     }
     if status == RunStatus::Interrupted || (status == RunStatus::Finished && state == FAILED) {
-        let blocking = blocking_migration(ctx, project)?.is_some_and(|b| b.run == id);
-        println!("  {}", retry_line(id, blocking));
+        println!("  {}", retry_line(id));
     }
 
     println!("{}", "Frontmatter:".bold());

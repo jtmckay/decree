@@ -47,11 +47,8 @@ pub const PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/plugin.schema.json
 /// The schema of `decree plugin export|import|install --format json`.
 pub const CLI_PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/cli/plugin.schema.json");
 
-/// The schema of `decree process --format json`.
-pub const CLI_PROCESS_SCHEMA: &str = include_str!("../../schema/v1/cli/process.schema.json");
-
-/// The schema of `decree prune --format json`.
-pub const CLI_PRUNE_SCHEMA: &str = include_str!("../../schema/v1/cli/prune.schema.json");
+/// The schema of `decree daemon --once --dry-run --format json`.
+pub const CLI_DAEMON_SCHEMA: &str = include_str!("../../schema/v1/cli/daemon.schema.json");
 
 /// The schema of `decree schema --format json`.
 pub const CLI_SCHEMA_SCHEMA: &str = include_str!("../../schema/v1/cli/schema.schema.json");
@@ -70,15 +67,14 @@ pub const CLI_UPGRADE_SCHEMA: &str = include_str!("../../schema/v1/cli/upgrade.s
 
 /// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
 /// `.schema.json`.
-pub const ALL: [(&str, &str); 19] = [
+pub const ALL: [(&str, &str); 18] = [
     ("attention", ATTENTION_SCHEMA),
     ("cli/check", CLI_CHECK_SCHEMA),
+    ("cli/daemon", CLI_DAEMON_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
     ("cli/event", CLI_EVENT_SCHEMA),
     ("cli/graph", CLI_GRAPH_SCHEMA),
     ("cli/plugin", CLI_PLUGIN_SCHEMA),
-    ("cli/process", CLI_PROCESS_SCHEMA),
-    ("cli/prune", CLI_PRUNE_SCHEMA),
     ("cli/schema", CLI_SCHEMA_SCHEMA),
     ("cli/skill", CLI_SKILL_SCHEMA),
     ("cli/status", CLI_STATUS_SCHEMA),

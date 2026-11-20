@@ -2,18 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/message.schema.json",
   "title": "decree message frontmatter",
-  "description": "The YAML frontmatter of a decree message: a migration (.decree/migrations/*.md), an inbox message (.decree/inbox/*.md) or a cron file (.decree/cron/*.md). The body below the frontmatter is the task, in markdown; decree never changes it. A message has one of two shapes: a message that starts a run of a machine (`machine`, with `params`), or a reply to a run waiting in a `reply` state (`to` and `event`). Any other key is kept as written and ignored by decree. `decree check` checks the rest (M1-M3): that the machine exists, that `params` fit its `data`, and that a cron expression parses. Reference: docs/reference/messages.md.",
+  "description": "The YAML frontmatter of a decree message: an inbox message (.decree/inbox/*.md), a cron file (.decree/machines/<name>/cron/*.md, whose `machine` defaults to <name>) or an order file (.decree/machines/<name>/order/*.md). The body below the frontmatter is the task, in markdown; decree never changes it. A message has one of two shapes: a message that starts a run of a machine (`machine`, with `params`), or a reply to a run waiting in a `reply` state (`to` and `event`). Any other key is kept as written and ignored by decree. `decree check` checks the rest (M1-M3): that the machine exists, that `params` fit its `data`, and that a cron expression parses. Reference: docs/reference/messages.md.",
   "type": "object",
   "properties": {
     "id": {
       "type": "string",
-      "description": "Names the queued file, inbox/<id>.md, and the run folder, runs/<id>/. Written by decree only: `decree emit`, `decree event` and cron set it as they queue, and decree replaces it as a file written into inbox/ arrives: YYYYMMDDTHHMMSS.ffffffZ-xxxxxx, the UTC time to the microsecond plus 6 lowercase hex chars, so ids sort in the order messages arrived. A migration's id is its file stem.",
+      "description": "Names the queued file, inbox/<id>.md, and the run folder, runs/<id>/. Written by decree only: `decree emit`, `decree event` and cron set it as they queue, and decree replaces it as a file written into inbox/ arrives: YYYYMMDDTHHMMSS.ffffffZ-xxxxxx, the UTC time to the microsecond plus 6 lowercase hex chars, so ids sort in the order messages arrived.",
       "examples": ["20261001T143005.218734Z-3fa9c1"]
     },
     "machine": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "The machine that runs this message: the name of .decree/machines/<name>.yml (M1-M3). Required on every message that is not a reply.",
+      "description": "The machine that runs this message: the name of .decree/machines/<name>/machine.yml (M2, M3). Required on every inbox message that is not a reply; a cron file or order file without one runs the machine whose folder holds it.",
       "examples": ["feature"]
     },
     "state": {
@@ -30,18 +30,13 @@
       "description": "Written by `decree emit`: the parent's depth plus 1. Absent means 0. `decree emit` refuses a depth above 10."
     },
     "trigger": {
-      "enum": ["migration", "cron", "emit", "inbox", "invoke"],
-      "description": "Written by decree only: how the run started. `migration`, `cron`, `emit`, `inbox`, or `invoke` (a child run). Scripts read it as DECREE_TRIGGER."
+      "enum": ["cron", "emit", "inbox", "invoke"],
+      "description": "Written by decree only: how the run started. `cron`, `emit`, `inbox`, or `invoke` (a child run, as an `order` file's run is). Scripts read it as DECREE_TRIGGER."
     },
     "arrived_as": {
       "type": "string",
       "description": "Written by decree only: the name a file written into inbox/ had when it arrived, before decree gave it its id, kept in the queued file and in runs/<id>/message.md.",
       "examples": ["01-hi.md"]
-    },
-    "migration": {
-      "type": "string",
-      "description": "Written by decree only, in runs/<id>/message.md of a migration's run: the migration's file name, by which the run is found. A file placed in inbox/ loses it.",
-      "examples": ["01-rate-limit-upload.md"]
     },
     "params": {
       "type": "object",
@@ -80,8 +75,7 @@
   "oneOf": [
     {
       "title": "message",
-      "description": "A message that starts a run of a machine: `machine`, and no `to`.",
-      "required": ["machine"],
+      "description": "A message that starts a run of a machine: no `to`. An inbox message names its `machine` (M2); a cron file or order file without one runs its folder's machine (M3).",
       "not": { "required": ["to"] }
     },
     {

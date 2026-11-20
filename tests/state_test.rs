@@ -1,7 +1,7 @@
 //! A machine's state folder, `.decree/machines/<machine>/state/` (docs/reference/scripts.md, State): every
 //! script gets its own machine's folder as `DECREE_STATE_DIR`, a child machine's scripts the child's,
 //! decree creates it before the script runs, what a script keeps there survives the next run,
-//! and `decree prune` leaves it. Each test builds its own `.decree/` in a temp directory and
+//! and deleting runs leaves it. Each test builds its own `.decree/` in a temp directory and
 //! drives the `decree` binary.
 
 use assert_cmd::Command;
@@ -61,7 +61,7 @@ echo "$DECREE_MACHINE invoke $DECREE_STATE_DIR" >> "$DECREE_PROJECT_ROOT/where.l
 fn project() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let decree = tmp.path().join(".decree");
-    for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+    for dir in ["machines", "scripts", "inbox", "runs"] {
         fs::create_dir_all(decree.join(dir)).unwrap();
     }
     fs::write(decree.join("processed.md"), "").unwrap();
@@ -85,7 +85,7 @@ fn run(root: &Path, n: usize) {
         "---\nmachine: parent\n---\nCount.\n",
     )
     .unwrap();
-    decree(root, &["process"]).assert().code(0);
+    decree(root, &["daemon", "--once"]).assert().code(0);
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn each_script_gets_its_own_machines_state_and_a_child_the_childs() {
 }
 
 #[test]
-fn the_state_survives_runs_and_prune() {
+fn the_state_survives_runs_and_their_folders() {
     let tmp = project();
     let root = tmp.path();
     let count = root.join(".decree/machines/parent/state/count");
@@ -118,11 +118,8 @@ fn the_state_survives_runs_and_prune() {
     run(root, 2);
     assert_eq!(fs::read_to_string(&count).unwrap(), "2\n");
 
-    decree(root, &["prune", "--older-than", "0s"])
-        .assert()
-        .code(0);
-    let runs = fs::read_dir(root.join(".decree/runs")).unwrap().count();
-    assert_eq!(runs, 0, "prune deleted the finished runs");
+    fs::remove_dir_all(root.join(".decree/runs")).unwrap();
+    fs::create_dir_all(root.join(".decree/runs")).unwrap();
     assert_eq!(fs::read_to_string(&count).unwrap(), "2\n");
     assert!(root.join(".decree/machines/child/state").is_dir());
 

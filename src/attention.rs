@@ -1,14 +1,13 @@
 //! `.decree/attention/` (docs/reference/cli.md, Attention): one markdown file per run that
-//! needs a person, as `processed.md` records what is done. decree writes `<id>.md` when run
-//! `<id>` becomes `failed`, `interrupted` or `waiting` in a `reply` state, and for a
-//! migration that waits for an interrupted child run; it deletes the file when the run
-//! becomes `active` or `pending`, finishes in another state, or is pruned. It does so as the
+//! needs a person. decree writes `<id>.md` when run
+//! `<id>` becomes `failed`, `interrupted` or `waiting` in a `reply` state; it deletes the file
+//! when the run becomes `active` or `pending`, finishes in another state, or is pruned. It does so as the
 //! status changes, never by rescanning, so a file a person deleted stays deleted.
 //!
 //! The files are read-only for people: answers go through `decree event` or a reply, and a
-//! run continues with `decree process --retry`. A file with `holds: true` (its run has a
+//! run continues with `decree daemon --once --retry`. A file with `holds: true` (its run has a
 //! `hold` file), or any `.md` file decree cannot read as one of its own, holds the queue:
-//! `process` and `daemon` start and continue no runs until it is gone. decree never rewrites
+//! `daemon` starts and continues no runs until it is gone. decree never rewrites
 //! or deletes a file it did not write.
 //!
 //! `decree stop` writes the one file that is not about a run, `manual-stop.md`
@@ -361,8 +360,7 @@ fn release_dropped_holds(ctx: &Context) -> Result<(), InterpreterError> {
 }
 
 /// Write or delete run `id`'s attention file for its status now, then do the same for each
-/// run above it, whose status may follow from it (a migration waiting for an interrupted
-/// child). The caller holds the run's lock, or knows no process is stepping it.
+/// run above it, whose status may follow from it. The caller holds the run's lock, or knows no process is stepping it.
 pub fn record(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
     let mut next = Some(id.to_string());
     let mut seen = std::collections::HashSet::new();
@@ -380,7 +378,7 @@ pub fn record(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
     Ok(())
 }
 
-/// `decree process --retry` of run `id`: delete its `hold` and its attention file.
+/// `decree daemon --once --retry` of run `id`: delete its `hold` and its attention file.
 pub fn release(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
     let hold = ctx.runs_dir().join(id).join(HOLD_FILE);
     if remove_if_present(&hold).map_err(io_err(&hold))? {
@@ -423,8 +421,6 @@ enum Need {
     Interrupted,
     /// Waits in a `reply` state for a reply.
     Reply,
-    /// A migration waiting for child run `.0`, interrupted in state `.1`.
-    Child(String, String),
 }
 
 fn record_one(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
@@ -436,7 +432,6 @@ fn record_one(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
         None => RunStatus::Interrupted,
     };
     let message = Message::read(&run_dir.join(MESSAGE_FILE)).ok();
-    let trigger = first_text(&events, "trigger").unwrap_or_default();
     let has_parent = message.as_ref().and_then(|m| m.text("parent")).is_some();
     let held = run_dir.join(HOLD_FILE).is_file();
     let need = match status {
@@ -451,9 +446,6 @@ fn record_one(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
                 .filter(|e| is_type(e, "waiting") && text(e, "wait_id").is_some())
                 .filter(|e| wants_attention(e))
                 .map(|_| Need::Reply),
-            Some(_) if trigger == "migration" => ctx
-                .stalled_child(&events)?
-                .map(|(child, state)| Need::Child(child, state)),
             Some(_) => None,
         },
         _ => None,
@@ -500,20 +492,12 @@ fn render(
         .and_then(|e| text(e, "ts"))
         .map(String::from)
         .unwrap_or_else(|| crate::events::timestamp(chrono::Utc::now()));
-    let migration = first_text(events, "trigger") == Some("migration");
-    let file = migration
-        .then(|| {
-            crate::events::claim_event(events)
-                .and_then(|e| text(e, "file"))
-                .map(String::from)
-        })
-        .flatten();
     let status = match need {
         Need::Failed => "failed",
         Need::Interrupted => "interrupted",
-        Need::Reply | Need::Child(..) => "waiting",
+        Need::Reply => "waiting",
     };
-    let message_name = file.clone().unwrap_or_else(|| "inbox".to_string());
+    let message_name = "inbox".to_string();
     let mut frontmatter = serde_norway::Mapping::new();
     for (key, value) in KEYS.into_iter().zip([
         Some(KIND_RUN.into()),
@@ -544,7 +528,7 @@ fn render(
         })
         .unwrap_or_else(|| format!("Run {id}"));
     let mut body = format!("# {heading}\n\n");
-    let retry = |run: &str| format!("    decree process --retry {run}\n\n");
+    let retry = |run: &str| format!("    decree daemon --once --retry {run}\n\n");
     match need {
         Need::Failed => {
             body.push_str(&format!(
@@ -566,19 +550,6 @@ fn render(
             ));
         }
         Need::Reply => body.push_str(&reply(ctx, id, events, &state, &since)),
-        Need::Child(child, child_state) => {
-            body.push_str(&format!(
-                "{who} waits in `{state}` for child run \
-                 `{child}`, which was interrupted in `{child_state}`. Continue the child \
-                 with:\n\n{}",
-                retry(child)
-            ));
-        }
-    }
-    if let Some(file) = &file {
-        body.push_str(&format!(
-            "This is migration `{file}`: later migrations are blocked until it finishes.\n\n"
-        ));
     }
     if held {
         let hold = run_dir.join(HOLD_FILE);
@@ -602,7 +573,7 @@ fn render(
         body.push_str(&format!(
             "## {STOP_FILE}\n\nThe agent asked, in `.decree/runs/{id}/{STOP_FILE}`:\n\n{}\n\n\
              In `.decree/runs/{id}/`, answer it in plan.md, delete STOP, then \
-             decree process --retry {id}\n\n",
+             decree daemon --once --retry {id}\n\n",
             text.trim()
         ));
     }

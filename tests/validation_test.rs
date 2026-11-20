@@ -1,5 +1,5 @@
 //! `decree check` for each validation rule of docs/reference/machines.md (Validation), V1–V21
-//! and M1–M3, as a table. Each case is a rule, a name, the files of `.decree/` inline, and the
+//! and M2–M3, as a table. Each case is a rule, a name, the files of `.decree/` inline, and the
 //! exact stdout of `decree check` (or `PASSES`: exit 0 and no output). The helper writes the
 //! case into a temp project and adds a stub executable for every script the machines
 //! reference, except where the case places a script itself or says it is missing.
@@ -1503,76 +1503,6 @@ states:
         scripts: &[],
         expected: "machines/m/machine.yml: work: events `done` and `done.state.work` overlap: `done` also matches `done.state.work`, so at most one transition per state may match an event (V21)\n",
     },
-    // M1
-    Case {
-        rule: "M1",
-        name: "pending migrations name m with valid params; processed ones are not checked",
-        files: &[
-            ("machines/m/machine.yml", TYPED),
-            ("processed.md", "00-done.md\n"),
-            (
-                "migrations/00-done.md",
-                "---\nmachine: gone\n---\n# Already processed, so not checked\n",
-            ),
-            (
-                "migrations/01-first.md",
-                "---\nmachine: m\nparams:\n  max_rounds: 3\n  strict: false\n---\n# First\n",
-            ),
-            (
-                "migrations/02-second.md",
-                "---\nmachine: m\n---\n# Second\n",
-            ),
-        ],
-        scripts: &[],
-        expected: PASSES,
-    },
-    Case {
-        rule: "M1",
-        name: "an unknown param, an unknown machine, no machine key",
-        files: &[
-            ("machines/m/machine.yml", TYPED),
-            ("processed.md", ""),
-            (
-                "migrations/01-first.md",
-                "---\nmachine: m\nparams:\n  rounds: 3\n---\n# First\n",
-            ),
-            (
-                "migrations/02-second.md",
-                "---\nmachine: nope\n---\n# Unknown machine\n",
-            ),
-            ("migrations/03-third.md", "# No machine key\n"),
-        ],
-        scripts: &[],
-        expected: "\
-migrations/01-first.md: line 3: unknown param `rounds`: machine `m` has no data `rounds` (M1)
-migrations/02-second.md: line 2: unknown machine `nope` (M1)
-migrations/03-third.md: line 1: no `machine` key (M1)
-",
-    },
-    Case {
-        rule: "M1",
-        name: "a param outside the enum, a number param that is not a number",
-        files: &[
-            ("machines/m/machine.yml", CHOICES),
-            (
-                "processed.md",
-                "",
-            ),
-            (
-                "migrations/01-first.md",
-                "---\nmachine: m\nparams:\n  need: review\n---\n# First\n",
-            ),
-            (
-                "migrations/02-second.md",
-                "---\nmachine: m\nparams:\n  megapixels: x\n---\n# Second\n",
-            ),
-        ],
-        scripts: &[],
-        expected: "\
-migrations/01-first.md: line 3: param `need` is `review`, not one of the allowed values: plan, fix (M1)
-migrations/02-second.md: line 3: param `megapixels` must be of type `number` (M1)
-",
-    },
     // M2
     Case {
         rule: "M2",
@@ -2200,9 +2130,9 @@ fn run_rule(rule: &str) {
     }
 }
 
-const RULES: [&str; 28] = [
+const RULES: [&str; 27] = [
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15",
-    "V16", "V17", "V18", "V19", "V20", "V21", "M1", "M2", "M3", "E1", "P1", "P2", "P3",
+    "V16", "V17", "V18", "V19", "V20", "V21", "M2", "M3", "E1", "P1", "P2", "P3",
 ];
 
 #[test]
@@ -2248,7 +2178,6 @@ rule_tests! {
     v19_scxml => "V19",
     v20_cycles => "V20",
     v21_overlapping_events => "V21",
-    m1_migrations => "M1",
     m2_inbox => "M2",
     m3_cron => "M3",
     p1_plugin_schema => "P1",
@@ -2259,6 +2188,12 @@ rule_tests! {
 /// Files of failing cases that the schemas accept: what is wrong is beyond what a JSON Schema
 /// of one file can say, so only `decree check` catches it. (rule, case name, file, reason).
 const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
+    (
+        "M2",
+        "no machine, a param of the wrong type, no closing fence, a duplicate key",
+        "inbox/a.md",
+        "one schema covers inbox messages, cron files and order files, and only the last two may leave out `machine`, which is told by where the file is",
+    ),
     (
         "P1",
         "name differs from the file stem",
@@ -2350,18 +2285,6 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
         "a schema cannot compare one key of a map with the others",
     ),
     (
-        "M1",
-        "an unknown param, an unknown machine, no machine key",
-        "migrations/01-first.md",
-        "valid params depend on the machine's `data`, in another file",
-    ),
-    (
-        "M1",
-        "an unknown param, an unknown machine, no machine key",
-        "migrations/02-second.md",
-        "which machines exist depends on other files",
-    ),
-    (
         "M2",
         "no machine, a param of the wrong type, no closing fence, a duplicate key",
         "inbox/b.md",
@@ -2396,18 +2319,6 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
         "a reserved key, a line that is not a pair, a bad key, an unclosed quote",
         ".env",
         "`.decree/.env` is a dotenv file, not YAML or JSON; no schema covers it",
-    ),
-    (
-        "M1",
-        "a param outside the enum, a number param that is not a number",
-        "migrations/01-first.md",
-        "valid params depend on the machine's `data`, in another file",
-    ),
-    (
-        "M1",
-        "a param outside the enum, a number param that is not a number",
-        "migrations/02-second.md",
-        "valid params depend on the machine's `data`, in another file",
     ),
     (
         "M2",
@@ -2455,7 +2366,7 @@ fn schema_errors(
     }
     match path.split('/').next() {
         Some("machines") => schema::machine_errors(machine, text),
-        Some("migrations" | "inbox") => schema::message_errors(message, text),
+        Some("inbox") => schema::message_errors(message, text),
         Some("plugins") => schema::frontmatter_to_json(text)
             .map(|json| schema::errors(&schema::plugin_validator(), &json)),
         _ => None,

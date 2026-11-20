@@ -4,23 +4,23 @@
 
 ## Document
 
-`decree graph` writes one Markdown file per machine, `.decree/graph/<machine name>.md`:
+`decree graph` writes one Markdown file per machine, in its folder, `.decree/machines/<machine name>/graph.md`:
 
 ````markdown
 # <machine name>
 
 <machine description>
 
-Machine: [machines/<machine name>.yml](../machines/<machine name>.yml)
+Machine: [machines/<machine name>/machine.yml](machine.yml)
 
 ```mermaid
 <diagram>
 ```
 ````
 
-and `.decree/graph/system.md`, whose heading is `# All machines`, whose line under it is ``Every machine, the `emits` and `invokes` edges between them, and cron entry points.``, followed by one line per machine in name order, `- [<name>](<name>.md): <description>`, a blank line, and the `<diagram>` block. Every file ends with one newline after the closing fence. Files are deterministic, so committing them shows real changes only. The sections below define `<diagram>`.
+and `.decree/system.md`, whose heading is `# All machines`, whose line under it is ``Every machine, the `emits` and `invokes` edges between them, and cron entry points.``, followed by one line per machine in name order, `- [<name>](machines/<name>/graph.md): <description>`, a blank line, and the `<diagram>` block. Every file ends with one newline after the closing fence. Files are deterministic, so committing them shows real changes only. The sections below define `<diagram>`.
 
-**Linking back.** YAML has no link type, so a machine links to its graph with a comment, which decree ignores: `# Graph: ../graph/<machine name>.md`, on the line after the `$schema` comment ([Schema](machines.md#schema)). `decree init` writes both into the machines it creates.
+**Linking back.** YAML has no link type, so a machine links to its graph with a comment, which decree ignores: `# Graph: graph.md`, on the line after the `$schema` comment ([Schema](machines.md#schema)). `decree init` writes both into the machines it creates.
 
 ## Single machine: emission order
 
@@ -33,7 +33,7 @@ For each container (the root, then each compound state recursively), with 4-spac
 
 After the root's last line, emit notes, also at root level:
 
-- For the root: `note left of <root initial>` with lines `machine onentry: <scripts>`, `machine onexit: <scripts>` and `store: <names>` (the `store:` names in name order, [Store](machines.md#store)), then `end note`. Omit empty lines and omit the note if all three are empty.
+- For the root: `note left of <root initial>` with lines `machine onentry: <scripts>`, `machine onexit: <scripts>` and `state_files: <names>` (the `state_files:` names in name order, [State](machines.md#state)), then `end note`. Omit empty lines and omit the note if all three are empty.
 - For each state with `onentry`, `onexit` or a decision invoke, in name order: `note right of <state>` with, in this order and only when present, `check: <condition>` (as `<subject> <name> <op> <value>`, e.g. `visits implement less_than data.max_rounds`, `data file matches '<regex>'`, `confidence big_model at_least 0.4`, or `output read_text matches '<regex>'`), `model: <router machine>` plus `, min_confidence <n>`, `machine: <name>`, `reply: <notify script>`, `onentry: <scripts>` and `onexit: <scripts>`, then `end note`.
 
 Labels are the event name plus these suffixes, in this order:
@@ -113,7 +113,7 @@ flowchart LR
 
 `decree graph --help` and the [README](../../README.md) give the same instructions:
 
-1. Run `decree graph`, then open `.decree/graph/<machine>.md` (or `system.md`).
+1. Run `decree graph`, then open `.decree/machines/<machine>/graph.md` (or `.decree/system.md`).
 2. In VS Code, press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS) for the preview; VS Code 1.121 and later render Mermaid in Markdown without an extension. GitHub, GitLab and Obsidian render the committed files as they are.
 3. Without any of those, copy the lines inside the `mermaid` fence into https://mermaid.live.
 

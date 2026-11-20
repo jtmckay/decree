@@ -68,13 +68,19 @@ fn graph_files(decree_dir: &Path) -> Result<Vec<String>, DecreeError> {
 }
 
 /// Write every document, `machines/<id>/graph.md` and `system.md`, and remove a `graph.md`
-/// in a folder with no machine. Returns the files written, relative to `.decree/`, sorted.
+/// in a folder with no machine, and that folder once it is empty. Returns the files written,
+/// relative to `.decree/`, sorted.
 pub fn write(project_root: &Path) -> Result<Vec<String>, DecreeError> {
     let documents = render(project_root)?;
     let decree_dir = project_root.join(DECREE_DIR);
     for name in graph_files(&decree_dir)? {
         if !documents.contains_key(&name) {
-            std::fs::remove_file(decree_dir.join(&name))?;
+            let path = decree_dir.join(&name);
+            std::fs::remove_file(&path)?;
+            if let Some(dir) = path.parent() {
+                // Fails, as it should, unless the folder is now empty.
+                let _ = std::fs::remove_dir(dir);
+            }
         }
     }
     for (name, text) in &documents {

@@ -21,7 +21,7 @@ const HELP_URI: &str =
 
 /// Every rule of docs/reference/machines.md (Validation) with its check, as the table
 /// states it (a test holds the two equal).
-pub(crate) const RULES: [(&str, &str); 28] = [
+pub(crate) const RULES: [(&str, &str); 27] = [
     (
         "V1",
         "`name` equals the file stem and matches `^[a-z][a-z0-9_]*$`.",
@@ -76,7 +76,7 @@ pub(crate) const RULES: [(&str, &str); 28] = [
     ),
     (
         "V14",
-        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `store` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the store folder, and has a non-empty description. An `env_file` matches `^\\.env\\.[A-Za-z0-9][A-Za-z0-9._-]*$` and is not `.env.example`: a file directly in `.decree/` that `.gitignore`'s `.env*` keeps out of git.",
+        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `state_files` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the state folder, and has a non-empty description. An `env_file` matches `^\\.env\\.[A-Za-z0-9][A-Za-z0-9._-]*$` and is not `.env.example`: a file directly in `.decree/` that `.gitignore`'s `.env*` keeps out of git.",
     ),
     (
         "V15",
@@ -107,16 +107,12 @@ pub(crate) const RULES: [(&str, &str); 28] = [
         "Within one state, no transition's event equals another's followed by `.` and more (`done` and `done.state.work`), so at most one of a state's transitions matches any event.",
     ),
     (
-        "M1",
-        "Every pending migration (not in `processed.md`) parses, names a known machine in `machine:`, and has valid `params` for that machine's `data`.",
-    ),
-    (
         "M2",
-        "Every `inbox/*.md` passes the same checks.",
+        "Every `inbox/*.md` parses, names a known machine in `machine:` (or is a reply, with `to:`), and has valid `params` for that machine's `data`.",
     ),
     (
         "M3",
-        "Every `cron/*.md` passes the same checks, and its `cron:` expression parses or is `@reboot`.",
+        "Every cron file, `machines/<name>/cron/*.md`, passes the same checks, with `machine` defaulting to `<name>`, and its `cron:` expression parses or is `@reboot`.",
     ),
     (
         "E1",
@@ -132,7 +128,7 @@ pub(crate) const RULES: [(&str, &str); 28] = [
     ),
     (
         "P3",
-        "No plugin changed while its installed copy (`machines/<name>.yml` or `scripts/<name>/`) was edited in place.",
+        "No plugin changed while its installed copy (`machine.yml`, `scripts/` or `cron/` in `machines/<name>/`) was edited in place.",
     ),
 ];
 

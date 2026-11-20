@@ -92,7 +92,7 @@ scripts:
   idle.sh: |
     #!/usr/bin/env bash
     # order's idle: `idle` when inbox/ is empty, so the next file starts only once everything
-    # before it has been processed, its follow-ups included, as migrations did; `busy`
+    # before it has been processed, its follow-ups included; `busy`
     # otherwise. One order run works at a time: if another is still going (active, waiting or
     # pending), this one ends with `other`.
     set -euo pipefail
@@ -173,8 +173,19 @@ scripts:
     # order's record: the file next found ran; put `<file> <sha256>` in its machine's
     # state/order.git.txt, in place of any line for that file, sorted. Commit that file:
     # a fresh clone then runs nothing that already ran.
+    #   record.sh                  the file in $DECREE_RUN_DIR/next (order's own state)
+    #   record.sh <machine> <file> that order file, hashed now: a `commit` script calls it for a
+    #                              run with `order:` so the line is in the run's one commit
     set -euo pipefail
-    IFS="$(printf '\t')" read -r machine file hash < "${DECREE_RUN_DIR}/next"
+    if [ $# -ge 2 ]; then
+      machine=$1
+      file=$2
+      path=".decree/machines/${machine}/order/${file}"
+      [ -f "${path}" ] || exit 0
+      hash=$(sha256sum "${path}" | cut -d' ' -f1)
+    else
+      IFS="$(printf '\t')" read -r machine file hash < "${DECREE_RUN_DIR}/next"
+    fi
     record=".decree/machines/${machine}/state/order.git.txt"
     mkdir -p "$(dirname "${record}")"
     {

@@ -3,8 +3,8 @@
 //! the next script's log as the run proceeds, including into child runs. With an id it stops
 //! when that run finishes, waits or is interrupted. Without one it follows the active run,
 //! then each run after it, behind a run header (`▶ <id> · <machine>`), until stopped. Reads
-//! the log files, events and `.running` only; it never touches a run. `decree process` and
-//! `daemon` print the same output through `Follower`.
+//! the log files, events and `.running` only; it never touches a run. `decree daemon` prints the
+//! same output through `Follower`.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -23,7 +23,6 @@ use crate::interpreter::recover::RunStatus;
 use crate::interpreter::Context;
 use crate::layout::MESSAGE_FILE;
 use crate::message::{is_valid_id, run_ids, Message};
-use crate::migration;
 use crate::runtime::Running;
 
 /// How often the run folder is read again.
@@ -35,11 +34,10 @@ pub fn run(project_root: &Path, id: Option<&str>) -> Result<(), DecreeError> {
     let ctx = context(project_root, &project, Arc::new(AtomicBool::new(false)));
     let mut out = io::stdout().lock();
     let result = match id {
-        // A migration's file name or stem means its newest run.
-        Some(name) => match migration::resolve(&ctx.runs_dir(), name)? {
-            Some(id) if is_valid_id(&id) => follow(&ctx, Follower::join(&ctx, &id)?, &mut out),
-            _ => return Err(DecreeError::MessageNotFound(name.to_string())),
-        },
+        Some(id) if is_valid_id(id) && ctx.runs_dir().join(id).is_dir() => {
+            follow(&ctx, Follower::join(&ctx, id)?, &mut out)
+        }
+        Some(id) => return Err(DecreeError::MessageNotFound(id.to_string())),
         None => follow_all(&ctx, &mut out),
     };
     match result {
@@ -95,15 +93,10 @@ fn next_run(ctx: &Context, seen: &mut HashSet<String>) -> Result<Option<Follower
     })
 }
 
-/// `▶ <id> · <machine>`, the line `tail` prints as it moves to a run; `<id> (<file>)` for a
-/// migration's run.
+/// `▶ <id> · <machine>`, the line `tail` prints as it moves to a run.
 pub(crate) fn run_header(ctx: &Context, id: &str) -> Result<String, DecreeError> {
     let (machine, _) = machine_and_state(ctx, id)?;
-    Ok(format!(
-        "▶ {} · {}",
-        migration::label(&ctx.runs_dir(), id),
-        machine.as_deref().unwrap_or("?")
-    ))
+    Ok(format!("▶ {id} · {}", machine.as_deref().unwrap_or("?")))
 }
 
 /// The machine of run `id`, from its events or else its message, and its current state.

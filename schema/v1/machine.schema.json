@@ -47,7 +47,7 @@
     },
     "onentry": {
       "$ref": "#/$defs/scriptList",
-      "description": "Extension (SCXML's <scxml> has none): scripts run once when the run starts, in order, and again when `decree process --retry` continues it. They produce no event; a failure raises `error`."
+      "description": "Extension (SCXML's <scxml> has none): scripts run once when the run starts, in order, and again when `decree daemon --once --retry` continues it. They produce no event; a failure raises `error`."
     },
     "onexit": {
       "$ref": "#/$defs/scriptList",
@@ -132,7 +132,7 @@
           "items": { "type": "string" },
           "minItems": 1,
           "uniqueItems": true,
-          "description": "JSON Schema `enum`, on `string` data only: the values allowed. The `default` and every message's `params` value must be one of them (V14, M1-M3)."
+          "description": "JSON Schema `enum`, on `string` data only: the values allowed. The `default` and every message's `params` value must be one of them (V14, M2, M3)."
         },
         "default": {
           "description": "The value when a message's `params` does not set it. Required, and of the entry's `type` (V14)."

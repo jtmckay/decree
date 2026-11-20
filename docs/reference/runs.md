@@ -6,20 +6,20 @@ The interpreter is deterministic everywhere except `model` and `reply` states, a
 
 The run's current state is always an atomic state, `S`.
 
-1. **Start or continue.** New run: append the claim event (`type: "transition"`, `from: null`, `event: "claimed"`, `to`: root `initial` followed down to an atomic state), mirror `state`, run root `onentry`, then the `onentry` of each state from root `initial` down to `S`. A `pending` run after `decree process --retry`: run root `onentry`, then the `onentry` of every ancestor of `S` and of `S` itself, outermost first; scripts must be safe to re-run. A `pending` run after a `received` event (a reply or a timeout): go to step 4 with that event; nothing is re-run, because the run only paused.
+1. **Start or continue.** New run: append the claim event (`type: "transition"`, `from: null`, `event: "claimed"`, `to`: root `initial` followed down to an atomic state), mirror `state`, run root `onentry`, then the `onentry` of each state from root `initial` down to `S`. A `pending` run after `decree daemon --once --retry`: run root `onentry`, then the `onentry` of every ancestor of `S` and of `S` itself, outermost first; scripts must be safe to re-run. A `pending` run after a `received` event (a reply or a timeout): go to step 4 with that event; nothing is re-run, because the run only paused.
 2. **Invoke.** Run `S`'s function ([Invoke](machines.md#invoke-the-states-function)): a script ([scripts.md](scripts.md)), a check, a model, a reply, or a child machine (below). A `machine` or `model` invoke appends `waiting` for its child run and steps the child; when the child finishes, the parent continues at step 4. A `reply` invoke appends `waiting`, releases the lock and ends this step; a reply or timeout continues at step 4 ([Replies](messages.md#replies)).
 3. **The event.** An `onentry` failure gives `error`. Otherwise the event is what the function produced. A state with no `invoke` produces `done`.
 4. **Find the target.** Select the transition for the event ([Rules](machines.md#rules)): the state's own, else the nearest ancestor's. An `error` that matches nothing targets `failed`. If the target is compound, follow `initial` down to an atomic or final state. That state is `T`.
 5. **Exit.** Run `onexit` scripts from `S` outward, up to but not including the transition domain ([Rules](machines.md#rules)).
 6. **Record.** Append a `transition` event, then mirror `state: T` into `message.md`.
-7. **Enter.** For a migration entering a root-level final state other than `failed`, write the ledger line first ([Migrations](messages.md#migrations-ordered-run-once-stop-on-error), rule 5). Run `onentry` scripts from the first state below the transition domain down to `T`.
+7. **Enter.** Run `onentry` scripts from the first state below the transition domain down to `T`.
 8. **Finish or loop.** If `T` is a final state inside a compound state `P`, raise `done.state.<P>` and go to step 4 with it, from `T`. If `T` is a root-level final state, run root `onexit`, append `run_finished`, delete the lock and end the run. Otherwise set `S = T` and go to step 2.
 
 **Final-state `onentry` failure.** If an `onentry` script of a final state other than `failed` exits non-zero, append a `transition` event with event `error` and `to: failed`, mirror `state: failed`, remove the ledger line if one was written, run `failed`'s `onentry`, then root `onexit`. A failing `onentry` script on `failed` itself is only logged.
 
 **Visits.** `visits.<state>` counts the `transition` events whose `to` is that state, excluding `source: "attempt"`, since the run's last `retry` event. The claim event counts, and so does a `retry` event (it re-enters the state), which starts the count again: a retried run gets every round of a `check` on `visits` again, so a person's retry is not spent on rounds the run already used. Only atomic states have visits.
 
-**Run attempts.** A run's first attempt starts at its claim; each `decree process --retry` starts the next, and its `retry` event records the number as `run_attempt` (2, 3, …). Scripts get it as `DECREE_RUN_ATTEMPT`. It is GitHub Actions' `run_attempt`, which numbers a workflow run's re-runs. It is not `DECREE_ATTEMPT`, the attempt of one invoke inside a visit ([Invoke](machines.md#invoke-the-states-function)).
+**Run attempts.** A run's first attempt starts at its claim; each `decree daemon --once --retry` starts the next, and its `retry` event records the number as `run_attempt` (2, 3, …). Scripts get it as `DECREE_RUN_ATTEMPT`. It is GitHub Actions' `run_attempt`, which numbers a workflow run's re-runs. It is not `DECREE_ATTEMPT`, the attempt of one invoke inside a visit ([Invoke](machines.md#invoke-the-states-function)).
 
 ## Check
 
@@ -117,8 +117,8 @@ An `invoke: { machine: <name> }` state, and every `model` invoke, runs a **child
 
 - It is an ordinary run in its own folder, `runs/<child id>/`, so its events and logs are separate and it shows in `decree status` and Grafana like any other. Its `message.md` has `machine`, `parent` (the parent run's id), `depth` (the parent's + 1), and `traceparent`: the parent's trace, under the span of the router's `decision` or of the `machine` invoke's wait, so the child's run span nests under it ([Traces](observability.md#traces)). If that would exceed `max_depth`, no child starts: the state's event is `error`, with `router_error: "max_depth <n> reached"` on the `decision` event for `model`, and `error: "max_depth <n> reached"` on the `transition` for `machine`, `trigger: invoke`, any `params`, and the parent message's body.
 - The parent appends a `waiting` event naming the child (`child: <id>`), and the same process steps the child at once. When the child reaches a root final state, decree continues the parent: for a `machine` invoke it appends a `received` event whose event is the child's final state (`failed` becomes `error`); for a router it appends the `decision` event (above). A parent left waiting on a child that has already finished (a crash in between) is `pending`, and continues the same way.
-- If the child pauses (a `reply` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree process --retry` on the child continues both. The child's file in `.decree/attention/` says so, and so does a waiting migration's, naming the child; a child that ends in `failed` has none unless it holds the queue, since the parent takes its failure as `error` ([Attention](cli.md#attention)).
-- Child runs are never claimed from the inbox, and never count as migrations.
+- If the child pauses (a `reply` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree daemon --once --retry` on the child continues both. The child's file in `.decree/attention/` says so; a child that ends in `failed` has none unless it holds the queue, since the parent takes its failure as `error` ([Attention](cli.md#attention)).
+- Child runs are never claimed from the inbox.
 
 ## Reply
 
@@ -128,13 +128,13 @@ See [Replies](messages.md#replies). The options and their descriptions are writt
 
 One JSON object per line (JSON Lines), appended with a single `write` call on a file opened with `O_APPEND`. This file is both the run's record ([Lifecycle](messages.md#lifecycle), Source of truth) and its telemetry: it is designed to be shipped to Loki as it is ([observability.md](observability.md)). `.decree/schema/v1/events.schema.json` states every type below as a JSON Schema for one line ([Schemas](README.md#schemas)).
 
-Four lines of the recorded `develop` migration in [`examples/project/`](../../examples/project/.decree/runs/20261001T143005.000000Z-189ed2/events.jsonl): the claim, the `implement` script's `local` attempt, which failed, the transition that started the `claude` attempt in place, and `run_finished`:
+Four lines of the recorded `develop` run in [`examples/project/`](../../examples/project/.decree/runs/20261001T143005.000000Z-189ed2/events.jsonl): the claim, the `implement` script's `local` attempt, which failed, the transition that started the `claude` attempt in place, and `run_finished`:
 
 ```json
-{"v":1,"seq":1,"ts":"2026-10-01T14:30:05.000Z","type":"transition","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","from":null,"event":"claimed","to":"implement","source":"claim","exit_code":null,"file":"01-rate-limit-upload.md","span_id":"189ed21326b51409"}
-{"v":1,"seq":2,"ts":"2026-10-01T14:38:22.400Z","type":"script","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"implement","phase":"invoke","script":"implement","path":".decree/machines/develop/scripts/implement.sh","attempt":1,"attempt_value":"local","started_at":"2026-10-01T14:30:05.010Z","duration_ms":497390,"exit_code":1,"log":"0001-implement-implement.log","span_id":"0b43a796c9019427"}
-{"v":1,"seq":3,"ts":"2026-10-01T14:38:22.405Z","type":"transition","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","attempt_value":"claude","from":"implement","event":"error","to":"implement","source":"attempt","exit_code":1}
-{"v":1,"seq":8,"ts":"2026-10-01T14:51:11.910Z","type":"run_finished","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"done","duration_ms":1266910}
+{"v":1,"seq":1,"ts":"2026-10-01T14:30:05.000Z","type":"transition","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"inbox","trace_id":"b872e2142bcdeefd1e77db420727a461","from":null,"event":"claimed","to":"implement","source":"claim","exit_code":null,"file":"01-rate-limit-upload.md","span_id":"189ed21326b51409"}
+{"v":1,"seq":2,"ts":"2026-10-01T14:38:22.400Z","type":"script","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"inbox","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"implement","phase":"invoke","script":"implement","path":".decree/machines/develop/scripts/implement.sh","attempt":1,"attempt_value":"local","started_at":"2026-10-01T14:30:05.010Z","duration_ms":497390,"exit_code":1,"log":"0001-implement-implement.log","span_id":"0b43a796c9019427"}
+{"v":1,"seq":3,"ts":"2026-10-01T14:38:22.405Z","type":"transition","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"inbox","trace_id":"b872e2142bcdeefd1e77db420727a461","attempt_value":"claude","from":"implement","event":"error","to":"implement","source":"attempt","exit_code":1}
+{"v":1,"seq":8,"ts":"2026-10-01T14:51:11.910Z","type":"run_finished","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"inbox","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"done","duration_ms":1266910}
 ```
 
 Every event carries these fields, so each line stands alone in a log pipeline:
@@ -162,14 +162,14 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `attempt_value` | string | `source: "attempt"`, when the state's `attempts` is a list | The value of the attempt about to run: its `DECREE_ATTEMPT_VALUE`. |
 | `invalid_event` | string | [Events from an invoke](scripts.md#events-from-an-invoke), step 4 | The undeclared event the invoke named. |
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
-| `file` | string | A claim from the inbox or migrations | Original inbox or migration filename: for a file written into `inbox/` under another name, the name it arrived with (`arrived_as`, [Lifecycle](messages.md#lifecycle) step 1). Absent for a child run, which has none. |
+| `file` | string | A claim from the inbox | Original inbox filename: for a file written into `inbox/` under another name, the name it arrived with (`arrived_as`, [Lifecycle](messages.md#lifecycle) step 1). Absent for a child run, which has none. |
 | `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
 | `run_attempt` | integer | `retry` | The run attempt this retry starts: 2 for the first retry ([Step loop](#step-loop), Run attempts). |
-| `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree process --retry` starts a new run span, linked to the previous one. |
+| `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree daemon --once --retry` starts a new run span, linked to the previous one. |
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
 | `decree_version` | string | The claim (`claim` or `invalid_message`), and `retry` | The version of the decree that started or retried the run, for example `0.5.0-beta.11`. Runs recorded before decree wrote it have none. `decree status <id>` shows it on these rows. |
 
-`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree process --retry`.
+`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree daemon --once --retry`.
 
 **`script`**: one script execution finished. Written after the script exits, before any `transition` it causes.
 
@@ -229,7 +229,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `timed_out` | bool | A timeout | Always `true` when present; `event` is `error`. |
 | `span_id` | string | Always | The wait's span, from the `waiting` event to this one. For a child that finished, the parent of its run span. |
 
-**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree process --retry` continues it.
+**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree daemon --once --retry` continues it.
 
 | Field | Type | Meaning |
 | --- | --- | --- |

@@ -8,14 +8,11 @@ Model servers, ComfyUI and other long-running processes are not scripts and are 
 
 ## Resolution
 
-Scripts live in one flat directory shared by every machine, with an optional per-machine directory that overrides it. Script `X` used by machine `M` resolves by checking these directories in order, and the first directory that holds a match wins:
+A machine's scripts live in its own folder, `.decree/machines/<machine>/scripts/`, and only there ([D86](../decisions.md#d86-machines-own-their-folders-order-replaces-migrations)): script `X` used by machine `M` is `.decree/machines/M/scripts/X`. A child machine's states run the child's scripts.
 
-1. `.decree/scripts/M/`
-2. `.decree/scripts/`
+A match is a file named exactly `X`, or `X.<ext>` with one extension (`verify.sh`, `verify.py`). The folder must hold exactly one match, it must be a regular file, and `mode & 0o111` must be non-zero. Anything else fails V12. There is no other search path. Script names match `^[a-z][a-z0-9_]*$`.
 
-A match is a file named exactly `X`, or `X.<ext>` with one extension (`verify.sh`, `verify.py`). The winning directory must hold exactly one match, it must be a regular file, and `mode & 0o111` must be non-zero. Anything else fails V12. There is no other search path. Script names match `^[a-z][a-z0-9_]*$`, so a script can never be confused with a per-machine directory.
-
-The order means a generic script (`commit`, `notify`) is written once in `scripts/`, a machine that needs its own version puts it in `scripts/<machine>/`. Every `script` event records the path that was run ([events.jsonl](runs.md#eventsjsonl)), so an override is always visible.
+Code several machines share is a library: a machine (or a plugin with no machine) whose scripts the others source by path, `source .decree/machines/<library>/scripts/<file>`, listing it in their plugin's `needs` ([Libraries](plugins.md#the-plugin-file)). Every `script` event records the path that was run ([events.jsonl](runs.md#eventsjsonl)).
 
 ## Execution
 
@@ -28,7 +25,7 @@ The same executor runs invokes and `onentry`/`onexit` scripts.
 - The log of a state's latest script run is that state's output: what a `{ output: <state>, matches: … }` check tests and what a `model` with `output: <state>` reads ([Invoke](machines.md#invoke-the-states-function), Output).
 - **Timeout.** If the script invoke sets `timeout` ([Durations](machines.md#durations)) and the invoke runs longer, decree stops it and treats it as a non-zero exit. Its `script` event records `"timed_out": true`.
 - **Attempts.** If the invoke exits non-zero (or times out) and the state has attempts left, decree runs it again without leaving the state: no `onexit` or `onentry`, one `transition` event with `event: "error"`, `from` and `to` equal, `source: "attempt"`, and the next attempt's `attempt_value` when it has one. The attempts are the script invoke's `attempts` ([Invoke](machines.md#invoke-the-states-function)): a number, or a list whose entries run in order, each as `DECREE_ATTEMPT_VALUE`; default 1. The first attempt that does not end in `error` decides the event; only when attempts run out does `error` take its transition. Each visit starts again at attempt 1. `onentry` failures are not retried.
-- **Signals.** If decree receives SIGINT or SIGTERM while a script runs, it stops the script, writes no `script` event for it, and interrupts the run ([Replies](messages.md#replies), Stopping). `decree process --retry` re-runs the step, so scripts must be safe to re-run.
+- **Signals.** If decree receives SIGINT or SIGTERM while a script runs, it stops the script, writes no `script` event for it, and interrupts the run ([Replies](messages.md#replies), Stopping). `decree daemon --once --retry` re-runs the step, so scripts must be safe to re-run.
 - **Logs** are capped at 2 MiB (2097152 bytes). After the script exits, a larger log keeps only its last 2 MiB, behind the line `[log truncated — showing last 2MB of output]`.
 
 ## Environment
@@ -53,9 +50,9 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
 | `DECREE_VISITS` | `visits.<state>` for this state, including the current visit, since the run's last retry. `0` for `_root`. |
 | `DECREE_MAX_DEPTH` | The project's `max_depth` in effect: `DECREE_MAX_DEPTH` from decree's environment, else `.decree/.env`, else `10` ([Environment](cli.md#environment)). `decree emit` in the script checks against it. |
-| `DECREE_RUN_ATTEMPT` | The run's attempt: `1`, then one more for each `decree process --retry` ([Run attempts](runs.md#step-loop)). |
+| `DECREE_RUN_ATTEMPT` | The run's attempt: `1`, then one more for each `decree daemon --once --retry` ([Run attempts](runs.md#step-loop)). |
 | `DECREE_RUN_DIR` | Absolute path of `runs/<id>/`. |
-| `DECREE_STATE_DIR` | Absolute path of `.decree/store/<machine>/`, what this machine keeps between runs ([Store](#store)); a child machine's scripts get the child's. decree creates it before the script runs. |
+| `DECREE_STATE_DIR` | Absolute path of `.decree/machines/<machine>/state/`, what this machine keeps between runs ([State](#state)); a child machine's scripts get the child's. decree creates it before the script runs. |
 | `DECREE_ATTEMPT` | Attempt number of the invoke in this visit, from 1. `1` for `onentry` and `onexit` scripts. |
 | `DECREE_ATTEMPT_VALUE` | This attempt's entry in the invoke's `attempts` list, e.g. `claude`. Unset with the integer form, and for `onentry` and `onexit` scripts. |
 | `DECREE_ATTEMPT_VALUES` | The whole `attempts` list, space-separated. Unset with the integer form. |
@@ -109,7 +106,7 @@ They are dotenv files, read as Docker Compose's `env_file` and systemd's `Enviro
 
   `HOST=192.168.1.30 decree daemon` moves both URLs of `.decree/.env`.
 - Keys match `^[A-Za-z_][A-Za-z0-9_]*$`. `DECREE_*`, `TRACEPARENT` and `TRACESTATE` belong to decree and are errors, except `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES` and `DECREE_MAX_DEPTH` in `.decree/.env`, which decree reads itself ([Environment](cli.md#environment)); the first two never reach scripts, and scripts get `DECREE_MAX_DEPTH` as decree resolves it. A later line wins over an earlier one with the same key.
-- `process` and `daemon` read them at start and again before each run, so an edit applies without a restart ([Edits while running](cli.md#edits-while-running)). A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `process` and `daemon` refuse to start with the same error, and one that finds it later prints it once and keeps the variables it read last. Other commands that run no scripts read none of them, except `decree emit`, which reads `.decree/.env` for `DECREE_MAX_DEPTH` when its own environment does not set it ([Environment](cli.md#environment)).
+- `daemon` read them at start and again before each run, so an edit applies without a restart ([Edits while running](cli.md#edits-while-running)). A malformed line is a `decree check` error naming the file and line (E1, [Validation](machines.md#validation)); `daemon` refuse to start with the same error, and one that finds it later prints it once and keeps the variables it read last. Other commands that run no scripts read none of them, except `decree emit`, which reads `.decree/.env` for `DECREE_MAX_DEPTH` when its own environment does not set it ([Environment](cli.md#environment)).
 - `decree check` warns when one of them exists and `.decree/.gitignore` has no `.env*` line.
 
 ### One script, several states
@@ -124,7 +121,7 @@ METHOD=image_text exec "$(dirname "$0")/build.sh"
 
 ## A machine's files
 
-A machine's helpers, config and data sit beside its scripts, in `.decree/scripts/<machine>/`: bash functions its scripts source, a prompt template, ComfyUI workflow files. decree runs only a file a state names ([Resolution](#resolution)); any other file there is never run and never an error. A script reaches them by path from the project root, its working directory, or from its own location:
+A machine's helpers, config and data sit beside its scripts, in `.decree/machines/<machine>/scripts/`: bash functions its scripts source, a prompt template, ComfyUI workflow files. decree runs only a file a state names ([Resolution](#resolution)); any other file there is never run and never an error. A script reaches them by path from the project root, its working directory, or from its own location:
 
 ```bash
 #!/usr/bin/env bash
@@ -137,9 +134,9 @@ ai "Summarize $DECREE_MESSAGE" > summary.md
 workflow = Path(__file__).parent / f"{os.environ['METHOD']}.json"
 ```
 
-A project may keep code its machines share in any folder it likes (`lib/`, `tools/`); decree does not look at it.
+A project may keep code its machines share in any folder it likes (`lib/`, `tools/`); decree does not look at it. To share it as decree files, make it a library machine ([Resolution](#resolution)).
 
-What a machine keeps between runs goes in its store instead ([Store](#store)).
+What a machine keeps between runs goes in its state folder instead ([State](#state)).
 
 ### The AI helper
 
@@ -164,7 +161,7 @@ pip       hypothesis   6.112.0
 
 `machines/infra/scripts/run.sh check` reports each line `ok` or `missing`, ending with the file it came from (`missing  command cargo (machines/develop/scripts/requirements)`), and changes nothing; `run.sh apply` installs what is missing, checks it again (`changed`) and stops at the first line that fails, naming it. A kind is a file with two bash functions, `check` and `install`, each called with the line's name, version and source. The official `infra` plugin ships one kind, `command` (on `PATH`, at the version if the line gives one, from `<name> --version`; `install` names it for a person and fails), and a requirements file with `git`, its comment saying to add the AI CLI's line. A project adds kinds as it needs them (`pip` into a project venv, `release` for a pinned binary into `.tools/bin`). An edit to `requirements` or `kinds/` is kept in the `infra` plugin file by `decree plugin export infra`, or by the next run's `commit`.
 
-A kind installs into the project, never with `sudo`. A step only a person can do, such as a system package, prints the exact command and returns 1; the person runs it, then `decree process --retry`. The built-in `infra` machine changes the environment ([D61](../decisions.md#d61-the-environment-is-declared)): `declare`, where the AI edits only `machines/infra/scripts/requirements` (and adds a kind only if none fits), then `apply`. The built-in `develop` machine's `precheck` runs `run.sh check`, so a run stops before the AI starts when the environment is short. A fresh checkout or CI runs `.decree/machines/infra/scripts/run.sh apply` directly.
+A kind installs into the project, never with `sudo`. A step only a person can do, such as a system package, prints the exact command and returns 1; the person runs it, then `decree daemon --once --retry`. The built-in `infra` machine changes the environment ([D61](../decisions.md#d61-the-environment-is-declared)): `declare`, where the AI edits only `machines/infra/scripts/requirements` (and adds a kind only if none fits), then `apply`. The built-in `develop` machine's `precheck` runs `run.sh check`, so a run stops before the AI starts when the environment is short. A fresh checkout or CI runs `.decree/machines/infra/scripts/run.sh apply` directly.
 
 A kind that downloads must check what it downloaded: its line's source carries the file's SHA-256 in the URL's fragment, `<url>#sha256=<hex>`, as pip's hash-checking and PyPI's simple index do, and `install` fails on a mismatch. The hash comes from what the project publishes (a `SHA256SUMS` file, the release page), never from downloading the file and hashing it, which proves only that the download matches itself. `infra`'s `declare` prompt says so. A `release` kind, for a pinned binary from a release archive:
 
@@ -191,11 +188,11 @@ install() {
 release   shellcheck   0.10.0   https://github.com/koalaman/shellcheck/releases/download/v{version}/shellcheck-v{version}.linux.x86_64.tar.xz#sha256=6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
 ```
 
-## Store
+## State
 
-`.decree/store/<machine>/` holds what a machine remembers from one run to the next: the links a newsletter already sent, the last item a feed reader saw, a counter. Every script of the machine, in every phase, finds it through `DECREE_STATE_DIR`; decree creates it before a script runs. It survives runs: `decree prune` never touches it, and nothing else in decree deletes it. It is not committed: `decree init`'s `.decree/.gitignore` lists `store/`. The idea is the *state* directory of the XDG Base Directory spec, n8n's workflow static data and Node-RED's persistent flow context; it is called the store because "state" already means a machine's state (`DECREE_STATE`).
+`.decree/machines/<machine>/state/` holds what a machine remembers from one run to the next: the links a newsletter already sent, the last item a feed reader saw, a counter. Every script of the machine, in every phase, finds it through `DECREE_STATE_DIR`; decree creates it before a script runs. It survives runs and installs: the `prune` plugin never touches it, and nothing in decree deletes it. It is not committed, except each file whose name ends in `.git.txt`: `decree init`'s `.decree/.gitignore` ignores `machines/**` but `machines/**/*.git.txt`. The idea is the *state* directory of the XDG Base Directory spec, n8n's workflow static data and Node-RED's persistent flow context. `DECREE_STATE` is another thing: the id of the state the run is in.
 
-**The convention:** anything a script keeps between runs goes in `$DECREE_STATE_DIR` and is declared under the machine's `store:` ([Store](machines.md#store)), with what it is and which states read or write it. A run's own files go in `$DECREE_RUN_DIR` ([Run-directory files](#run-directory-files)); a machine's helpers, config and data beside its scripts ([A machine's files](#a-machines-files)); outputs for people wherever the user wants them.
+**The convention:** anything a script keeps between runs goes in `$DECREE_STATE_DIR` and is declared under the machine's `state_files:` ([State](machines.md#state)), with what it is and which states read or write it. Name a file `<name>.git.txt` when the project should commit it with the run's work, as the `order` plugin's `order.git.txt` is. A run's own files go in `$DECREE_RUN_DIR` ([Run-directory files](#run-directory-files)); a machine's helpers, config and data beside its scripts ([A machine's files](#a-machines-files)); outputs for people wherever the user wants them.
 
 ```bash
 seen="$DECREE_STATE_DIR/seen.tsv"
@@ -203,7 +200,7 @@ touch "$seen"
 printf '%s\t%s\n' "$link" "$(date +%F)" >> "$seen"
 ```
 
-`decree check` warns, without failing, about a file or folder in `store/<machine>/` that the machine's `store:` does not declare, and about a folder in `store/` with no machine. Files that no machine owns go elsewhere: project-wide files such as a test tool's downloaded browsers in `.decree/cache/`, which git ignores and `decree check` never looks at, and what `process` prints in `.decree/process.log`, which decree writes itself ([Output](cli.md#output)). That is all decree can check: a script that writes outside its store, or into another machine's, is not detectable.
+`decree check` warns, without failing, about a file or folder in a machine's `state/` that its `state_files:` does not declare. Files that no machine owns go elsewhere: project-wide files such as a test tool's downloaded browsers in `.decree/cache/`, which git ignores and `decree check` never looks at, and what `daemon` prints in `.decree/process.log`, which decree writes itself ([Output](cli.md#output)). That is all decree can check: a script that writes outside its state folder, or into another machine's, is not detectable.
 
 ## Run-directory files
 
@@ -212,12 +209,12 @@ Scripts that hand work to one another, or to a person, do it through files in th
 | File | Written by | Meaning |
 | --- | --- | --- |
 | `progress.md` | The AI, one line per step | The step log: what is done and what is next. A retry reads it and continues where the last attempt stopped. |
-| `STOP` | The AI, instead of guessing | A question the message does not answer. A script that finds it prints it and names the event `stop`, before asking the AI and after; it stops every later attempt and retry until a person answers in `plan.md`, deletes it and runs `decree process --retry`. The run's file in `.decree/attention/` quotes it. |
+| `STOP` | The AI, instead of guessing | A question the message does not answer. A script that finds it prints it and names the event `stop`, before asking the AI and after; it stops every later attempt and retry until a person answers in `plan.md`, deletes it and runs `decree daemon --once --retry`. The run's file in `.decree/attention/` quotes it. |
 | `gate.log` | The `gate` script | The output of the project's own checks, which the step that fixes them reads. The gate names `pass` or `fail` from the checks; a missing tool, or anything else that stops them from running, is a non-zero exit (`error`) with its message here. |
 | `plan.md` | Any step, or a person | A plan for later steps to follow, and a person's answer to a `STOP`. |
 | `gaps.md` | `verify`, on `fail` | What is still missing, one line per unmet requirement or failing test. A retry's `implement` closes each first. `verify` sets the last one aside before asking the AI and puts it back if the attempt ends without a verdict; a `pass` removes it. |
 | `hold` | A script whose failure must stop every run (the built-in `keep`), in its own `DECREE_RUN_DIR` | The only one that holds the queue: when decree writes the run's file in `.decree/attention/`, it sets `holds: true` and includes this text, and nothing runs until the run is retried or the file deleted ([Attention](cli.md#attention)). |
-| `leftovers` | The built-in `clean_tree`, in its own `DECREE_RUN_DIR`, when it finds uncommitted changes | The runs that may have left them: each run that passed `clean_tree` and is now `interrupted` or `failed` (an interrupted run never reaches `keep`, so nothing else names it), found with `"${DECREE}" status --all --format json` read by `jq` (without `jq` on `PATH` it names none), each with its id and first heading, `decree process --retry <id>` to continue it on the changes, and `git stash push --include-untracked -m "decree <id>" -- .` to set them aside. `clean_tree` prints the same lines, after at most 20 of the paths, and still names `.decree/attention/`; with no such run it writes no file. decree includes the text in the run's file in `.decree/attention/`, as it does `hold`, and runs no git command itself. |
+| `leftovers` | The built-in `clean_tree`, in its own `DECREE_RUN_DIR`, when it finds uncommitted changes | The runs that may have left them: each run that passed `clean_tree` and is now `interrupted` or `failed` (an interrupted run never reaches `keep`, so nothing else names it), found with `"${DECREE}" status --all --format json` read by `jq` (without `jq` on `PATH` it names none), each with its id and first heading, `decree daemon --once --retry <id>` to continue it on the changes, and `git stash push --include-untracked -m "decree <id>" -- .` to set them aside. `clean_tree` prints the same lines, after at most 20 of the paths, and still names `.decree/attention/`; with no such run it writes no file. decree includes the text in the run's file in `.decree/attention/`, as it does `hold`, and runs no git command itself. |
 
 ## Events from an invoke
 

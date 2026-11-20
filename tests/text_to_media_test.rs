@@ -54,9 +54,9 @@ const PNG: &[u8] = b"\x89PNG\r\n\x1a\nstub image";
 fn add_plugins(root: &Path, plugins: &[&str]) {
     let mut add = vec!["plugin", "add"];
     add.extend_from_slice(plugins);
-    for args in [vec!["init"], add] {
-        common::decree_at(root).args(&args).assert().success();
-    }
+    common::decree_at(root).arg("init").assert().success();
+    common::drop_default_plugins(root);
+    common::decree_at(root).args(&add).assert().success();
 }
 
 /// The history entry of a finished prompt, with one saved image and one preview.
@@ -133,7 +133,7 @@ impl Project {
             .env("PATH", path)
             .env("COMFY_POLL_S", "0")
             .env("NO_COLOR", "1")
-            .arg("process")
+            .args(["daemon", "--once"])
             .assert()
             .code(code);
     }

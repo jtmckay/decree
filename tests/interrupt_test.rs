@@ -73,7 +73,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -155,7 +155,7 @@ impl Project {
         fs::write(path, text).unwrap();
     }
 
-    /// The `transition` event `decree process --retry <id>` appends for an interrupted run
+    /// The `transition` event `decree daemon --once --retry <id>` appends for an interrupted run
     /// (docs/reference/cli.md): back into the state it was in, without continuing it. The
     /// command itself is tested in `cli_test.rs` and `process_test.rs`.
     fn retry(&self, id: &str, machine: &str, trigger: &str, state: &str) {
@@ -168,7 +168,7 @@ impl Project {
 
     fn process(&self) -> Command {
         let mut cmd = common::decree_at(self.tmp.path());
-        cmd.env("NO_COLOR", "1").arg("process");
+        cmd.env("NO_COLOR", "1").args(["daemon", "--once"]);
         cmd
     }
 
@@ -176,7 +176,7 @@ impl Project {
     fn spawn_process(&self) -> Child {
         common::std_decree_at(self.tmp.path())
             .env("NO_COLOR", "1")
-            .arg("process")
+            .args(["daemon", "--once"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -332,7 +332,7 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
 
     let out = p.process().output().unwrap();
     assert!(
-        stderr(&out).contains("`decree process --retry 20260101T000000.000000Z-000000`"),
+        stderr(&out).contains("`decree daemon --once --retry 20260101T000000.000000Z-000000`"),
         "{}",
         stderr(&out)
     );
@@ -355,7 +355,7 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     assert_eq!(p.events("20260101T000000.000000Z-000000").len(), before + 1);
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
 
-    // `decree process --retry 20260101T000000.000000Z-000000`: root `onentry` and the state's `onentry` run again,
+    // `decree daemon --once --retry 20260101T000000.000000Z-000000`: root `onentry` and the state's `onentry` run again,
     // then the invoke, and the run finishes.
     p.process()
         .args(["--retry", "20260101T000000.000000Z-000000"])
@@ -396,31 +396,6 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     assert!(!exists(
         &p.run_dir("20260101T000000.000000Z-000000").join(".lock")
     ));
-}
-
-#[test]
-fn interrupted_migration_blocks_the_next_and_exits_1_naming_retry() {
-    let p = Project::new();
-    p.write("migrations/01-a.md", "---\nmachine: slow\n---\n");
-    p.write("migrations/02-b.md", "---\nmachine: slow\n---\n");
-    p.crash_during_sleep("01-a.md");
-    let a = common::migration_run(&p.tmp.path().join(".decree"), "01-a.md");
-
-    let out = p.process().assert().code(1).get_output().clone();
-    let err = stderr(&out);
-    assert!(err.contains("migration 01-a.md is interrupted"), "{err}");
-    assert!(
-        err.contains("Fix the cause, then run `decree process --retry`."),
-        "{err}"
-    );
-    assert_eq!(p.runs(), [a.as_str()], "02-b.md has no run");
-    assert_eq!(p.read("processed.md"), "");
-    let events = p.events(&a);
-    assert_eq!(events.last().unwrap()["cause"], "crash");
-
-    // Still blocked on the next pass.
-    p.process().assert().code(1);
-    assert_eq!(p.runs(), [a.as_str()]);
 }
 
 #[test]
@@ -576,7 +551,8 @@ fn finished_run_retried_continues_after_run_finished() {
     decree(
         &p,
         &[
-            "process",
+            "daemon",
+            "--once",
             "--retry",
             "20260101T000000.000000Z-000000",
             "--state",

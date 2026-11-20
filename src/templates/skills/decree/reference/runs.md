@@ -39,34 +39,32 @@ To find out why a run failed, read its `events.jsonl` from the end, then the log
 
 | Status | Meaning | What to do |
 | --- | --- | --- |
-| `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; for `failed`, what its file in `.decree/attention/` says, `decree process --retry <id>`; or that to run it again from a state. |
+| `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; for `failed`, what its file in `.decree/attention/` says, `decree daemon --once --retry <id>`; or that to run it again from a state. |
 | `active` | A live process holds its lock. | `decree tail` to watch it. |
-| `waiting` | Paused for a person, or for a child run. | `decree event <wait id> <event>`; the run's file in `.decree/attention/` and `decree process` give the commands. |
-| `pending` | A reply arrived, or a `retry` transition was written. | `decree process` continues it. |
-| `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree process --retry <id>`, as its file in `.decree/attention/` says. decree never continues it on its own. |
+| `waiting` | Paused for a person, or for a child run. | `decree event <wait id> <event>`; the run's file in `.decree/attention/` and `decree daemon --once` give the commands. |
+| `pending` | A reply arrived, or a `retry` transition was written. | `decree daemon --once` continues it. |
+| `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree daemon --once --retry <id>`, as its file in `.decree/attention/` says. decree never continues it on its own. |
 
-A failed, interrupted or waiting migration blocks every later migration; `decree process` exits 1
-ending ``Fix the cause, then run `decree process --retry`.`` (or 0 while only waiting). A
-migration waiting for an interrupted child run counts as interrupted: the message names the
-child, and `--retry` alone continues it. `decree status` shows the blocker under `Blocked:`.
+A failed order file stops the order files after it: the `order` run fails, and the next start
+runs that file again. `decree daemon --once` exits 1 when a run failed in its pass, naming
+`decree daemon --once --retry <id>` for each.
 
 ## Attention
 
 `.decree/attention/<id>.md` is decree's list of what needs a person: a file per run that is
-`failed`, `interrupted` or `waiting` in a `reply` state, and per migration waiting for an
-interrupted child (naming the child). Frontmatter `kind: run`, `run`, `machine`, `message`,
+`failed`, `interrupted` or `waiting` in a `reply` state. Frontmatter `kind: run`, `run`, `machine`, `message`,
 `status`, `state`, `since`, `holds` (`.decree/schema/v1/attention.schema.json`), then what
-happened, the exact command (`decree process --retry <id>`, or one `decree event <wait id>
+happened, the exact command (`decree daemon --once --retry <id>`, or one `decree event <wait id>
 <option>` per option), the run's `hold` text, its `leftovers` and its `STOP` question. decree
 writes and deletes the files as each run's status changes; a file a person deleted stays deleted
-until it changes again. `decree process` ends with `<n> run(s) need attention: .decree/attention/`, and
+until it changes again. `decree daemon --once` ends with `<n> run(s) need attention: .decree/attention/`, and
 `decree status` starts with `Attention:` (`attention` in `--format json`).
 
-- Read-only: answer with `decree event` or a reply, continue with `decree process --retry`;
+- Read-only: answer with `decree event` or a reply, continue with `decree daemon --once --retry`;
   editing a file answers nothing, and no script writes one.
 - While a file has `holds: true` (its run wrote `hold`), or a `.md` file there cannot be read
-  as one (no frontmatter, invalid frontmatter), `process` and `daemon` start and continue no
-  runs; `process` exits 1 naming it. `decree process --retry <id>` removes the run's `hold`
+  as one (no frontmatter, invalid frontmatter), `daemon` starts and continues no
+  runs; `daemon --once` exits 1 naming it. `decree daemon --once --retry <id>` removes the run's `hold`
   and its file; deleting the file drops the run (stash its changes first), and decree then
   deletes the `hold`. Other files and subfolders there are ignored.
 

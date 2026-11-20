@@ -13,7 +13,7 @@ It is more machinery than the simplest machine, which is where a project should 
 ```
 
 - `verify` writes `gaps.md` when it fails ([Run-directory files](reference/scripts.md#run-directory-files)), and `gate_gaps` writes it from `gate.log` when the gate still fails after `fix`. `gaps.md` is what each round works on.
-- `rounds_left` is a `check` on `visits`: `fill_gaps` runs `max_gap_rounds` times. A `decree process --retry` counts visits again from the retry, so a retried run gets every round again ([Visits](reference/runs.md#step-loop)).
+- `rounds_left` is a `check` on `visits`: `fill_gaps` runs `max_gap_rounds` times. A `decree daemon --once --retry` counts visits again from the retry, so a retried run gets every round again ([Visits](reference/runs.md#step-loop)).
 - Each round is a child run of the `gaps` machine: fill, gate, fix, final gate, verify. Its steps are `develop`'s own scripts, through symlinks. They keep their files (`progress.md`, `gaps.md`, `gate.log`, `plan.md`, `STOP`) in the root run's folder, `$DECREE_ROOT_RUN_DIR`, so every round reads and adds to the same notes as `develop`.
 - `gaps`' data entry `ai_cli` picks the backend: `ai.sh`'s `ai` calls the one it names ([The AI helper](reference/scripts.md#the-ai-helper)). `fill_gaps` uses the default; `claude_round` passes `params: { ai_cli: claude }`. Every call is a line in `.decree/ai-use.md`, so you can see what each round cost.
 - `ask_human` is a `reply` state that asks a person: the run waits for `decree event <wait id> accept|retry|fail`. After 30 days with no answer its event is `error`, which, like a round that ends in `failed`, goes to `failed`.

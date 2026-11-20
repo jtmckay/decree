@@ -42,6 +42,7 @@ impl Project {
             tmp: TempDir::new().unwrap(),
         };
         p.decree(&["init", "--ai", "claude"]).assert().success();
+        common::drop_default_plugins(p.tmp.path());
         fs::create_dir_all(p.decree_dir().join("machines")).unwrap();
         common::write_file(&p.decree_dir().join("machines/boot/machine.yml"), BOOT);
         common::write_script(
@@ -180,14 +181,20 @@ fn reboot_fires_once_per_daemon_start() {
     assert_eq!(p.boot_messages().len(), 2);
 }
 
-/// AC: `decree process` fires no cron file, `@reboot` included.
+/// AC (D86): `decree daemon --once` is a daemon start: it fires `@reboot` each time, and no
+/// scheduled cron file.
 #[test]
-fn process_never_fires_reboot() {
+fn daemon_once_fires_reboot_at_each_start() {
     let p = Project::new();
     p.reboot_file();
-    p.decree(&["process"]).assert().success();
-    p.decree(&["process"]).assert().success();
-    assert!(p.boot_messages().is_empty());
+    common::write_file(
+        &p.decree_dir().join("machines/boot/cron/minutely.md"),
+        "---\ncron: \"* * * * *\"\n---\nEvery minute.\n",
+    );
+    p.decree(&["daemon", "--once"]).assert().success();
+    assert_eq!(p.boot_messages().len(), 1);
+    p.decree(&["daemon", "--once"]).assert().success();
+    assert_eq!(p.boot_messages().len(), 2);
 }
 
 /// AC: a `@reboot` file added while the daemon runs waits for the next start.

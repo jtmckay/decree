@@ -17,13 +17,13 @@ Install or update:
 3. Write a machine that runs it:
        `.decree/machines/hello/machine.yml`
 
-4. Write a message for that machine: 
-       `.decree/migrations/01-hello.md`
+4. Write a message for that machine:
+       `.decree/inbox/hello.md`
 
 5. Some more commands:
-       decree check         validate machines
-       decree graph         create mermaid charts
-       decree process       process all messages
-       decree status        what ran, and what needs you
-       decree tail          follow runs' output as they go
-       decree help          or https://github.com/jtmckay/decree#readme
+       decree check          validate machines
+       decree graph          create mermaid charts
+       decree daemon --once  process the queue, then exit
+       decree status         what ran, and what needs you
+       decree tail           follow runs' output as they go
+       decree help           or https://github.com/jtmckay/decree#readme

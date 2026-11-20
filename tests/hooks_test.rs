@@ -62,7 +62,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -108,7 +108,7 @@ impl Project {
 
     fn process(&self) -> Command {
         let mut cmd = common::decree_at(self.tmp.path());
-        cmd.env("NO_COLOR", "1").arg("process");
+        cmd.env("NO_COLOR", "1").args(["daemon", "--once"]);
         cmd
     }
 }

@@ -79,10 +79,10 @@ impl Project {
             tmp: TempDir::new().unwrap(),
         };
         add_plugins(p.root(), &["develop_by_size", "llm_router"]);
-        // As the README says: the demo message, queued as a migration.
+        // As the README says: the demo message, queued.
         fs::copy(
             example().join("messages").join(MIGRATION),
-            p.root().join(".decree/migrations").join(MIGRATION),
+            p.root().join(".decree/inbox").join(MIGRATION),
         )
         .unwrap();
         fs::create_dir(p.root().join("src")).unwrap();
@@ -131,14 +131,14 @@ impl Project {
             .env("PATH", path)
             .env("TEST_CMD", test_cmd)
             .env("NO_COLOR", "1")
-            .arg("process")
+            .args(["daemon", "--once"])
             .assert()
             .code(code);
     }
 
     /// The migration's run.
     fn run(&self) -> String {
-        common::migration_run(&self.root().join(".decree"), MIGRATION)
+        common::run_of(&self.root().join(".decree"), MIGRATION)
     }
 
     fn run_dir(&self, id: &str) -> PathBuf {

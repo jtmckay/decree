@@ -81,7 +81,7 @@ scripts:
 Helps.
 ";
 
-const MIGRATION: &str = "---\nmachine: develop\n---\nDo the thing.\n";
+const MESSAGE: &str = "---\nmachine: develop\n---\nDo the thing.\n";
 
 struct Project {
     _tmp: TempDir,
@@ -205,9 +205,8 @@ fn installed_plugins_run_as_if_written_by_hand() {
     let p = Project::new();
     p.put("plugins/develop.md", DEVELOP);
     p.put("plugins/helper.md", HELPER);
-    p.put("migrations/01-a.md", MIGRATION);
-    let (code, _, err) = p.decree(&["process"], "");
-    assert_eq!(code, 1, "{err}");
+    let (code, _, err) = p.decree(&["daemon", "--once"], "");
+    assert_eq!(code, 0, "{err}");
     assert!(
         err.contains("plugins/develop.md: not installed, or changed since it was installed: run `decree plugin install`"),
         "{err}"
@@ -219,7 +218,8 @@ fn installed_plugins_run_as_if_written_by_hand() {
         out,
         "installed .decree/plugins/develop.md\ninstalled .decree/plugins/helper.md\n"
     );
-    let (code, out, err) = p.decree(&["process"], "");
+    p.put("inbox/01-a.md", MESSAGE);
+    let (code, out, err) = p.decree(&["daemon", "--once"], "");
     assert_eq!(code, 0, "{out}{err}");
     assert!(p.exists("machines/develop/machine.yml") && p.exists("machines/helper/machine.yml"));
     assert_eq!(
@@ -260,8 +260,8 @@ fn installed_plugins_run_as_if_written_by_hand() {
         "machines/helper/scripts/help",
         "#!/usr/bin/env bash\necho helped\n",
     );
-    hand.put("migrations/01-a.md", MIGRATION);
-    let (code, out, err) = hand.decree(&["process"], "");
+    hand.put("inbox/01-a.md", MESSAGE);
+    let (code, out, err) = hand.decree(&["daemon", "--once"], "");
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(with_plugins, hand.run_logs());
 }
@@ -341,8 +341,8 @@ states:
     }
     assert_eq!(mode(&p.path("machines/hello/scripts/tidy")), 0o755);
 
-    p.put("migrations/01-a.md", "---\nmachine: hello\n---\nhi\n");
-    let (code, out, err) = p.decree(&["process"], "");
+    p.put("inbox/01-a.md", "---\nmachine: hello\n---\nhi\n");
+    let (code, out, err) = p.decree(&["daemon", "--once"], "");
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("hi world") && out.contains("tidy"), "{out}");
     // The run resolved the script in the machine's folder.
@@ -379,8 +379,8 @@ fn an_edited_script_runs_and_is_not_overwritten() {
     assert_eq!(p.decree(&["plugin", "install"], "").0, 0);
     let edited = "#!/usr/bin/env bash\necho edited in place\n";
     p.put_exec("machines/helper/scripts/help", edited);
-    p.put("migrations/01-a.md", "---\nmachine: helper\n---\nhi\n");
-    let (code, out, err) = p.decree(&["process"], "");
+    p.put("inbox/01-a.md", "---\nmachine: helper\n---\nhi\n");
+    let (code, out, err) = p.decree(&["daemon", "--once"], "");
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("edited in place"), "{out}");
     assert_eq!(p.get("machines/helper/scripts/help"), edited);
@@ -415,9 +415,9 @@ fn a_changed_plugin_over_an_edit_fails_check_and_touches_nothing() {
     assert_eq!(p.get("machines/helper/scripts/help"), edited);
 
     // `process` keeps running the edited copy and prints the conflict once.
-    p.put("migrations/01-a.md", "---\nmachine: helper\n---\nhi\n");
+    p.put("inbox/01-a.md", "---\nmachine: helper\n---\nhi\n");
     p.put("inbox/a.md", "---\nmachine: helper\n---\nhi\n");
-    let (code, out, err) = p.decree(&["process"], "");
+    let (code, out, err) = p.decree(&["daemon", "--once"], "");
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("edited in place"), "{out}");
     assert_eq!(err.matches("plugin `helper` changed").count(), 1, "{err}");
@@ -738,7 +738,7 @@ fn the_plugin_install_plugin_installs_the_plugins() {
     let out = common::decree_at(&p.root)
         .env("NO_COLOR", "1")
         .env("PATH", path)
-        .arg("process")
+        .args(["daemon", "--once"])
         .output()
         .unwrap();
     let text = format!(

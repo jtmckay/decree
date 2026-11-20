@@ -1,8 +1,8 @@
 ---
 machine: feature
 id: 20261001T143005.000000Z-4b7d10
-trigger: migration
-migration: 01-rate-limit-upload.md
+arrived_as: 01-rate-limit-upload.md
+trigger: inbox
 state: done
 ---
 # Rate-limit /api/upload

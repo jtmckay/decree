@@ -322,7 +322,7 @@ fn cli() -> Cli {
         }
         commands.insert(name.to_string(), accepts(&text, Some(name)));
     }
-    assert!(commands.contains_key("process"), "{top}");
+    assert!(commands.contains_key("daemon"), "{top}");
     Cli {
         commands,
         top: accepts(&top, None),
@@ -606,8 +606,8 @@ fn a_flag_decree_does_not_have_fails_naming_the_file_and_the_flag() {
     for ok in [
         "```bash\ndecree event 02-a.w15 retry -m \"a --note\"   # --nothing\n```\n",
         "```bash\necho x | decree emit --machine m --param a=1 <<'EOF'\n--x\nEOF\n```\n",
-        "```bash\ndecree process --retry 01-a --state implement > out.txt || true\n```\n",
-        "`decree status <id> --format json`, `decree prune --older-than 30d --dry-run`\n",
+        "```bash\ndecree daemon --once --retry 01-a --state implement > out.txt || true\n```\n",
+        "`decree status <id> --format json`, `decree daemon --once --dry-run --format json`\n",
         "`decree event ID EVENT [-m NOTE]`, `cd projects/decree`, `.decree/inbox/`\n",
     ] {
         let errors = command_errors(&cli, "docs/scratch.md", ok);
@@ -1331,7 +1331,7 @@ fn the_skill_has_the_files_env_runs_and_timeout_rules() {
         "A machine's helpers, config and data go in `machines/<machine>/scripts/`**, beside the scripts its states invoke",
         "What a machine keeps between runs goes in `$DECREE_STATE_DIR`**",
         "Variables and secrets go in `.decree/.env` (every script) or a machine's `env_file: .env.<name>` (that machine's scripts only); both are gitignored,",
-        "Never delete run folders to clean up**; they are the record. Use `decree prune --older-than <age>`.",
+        "Never delete run folders to clean up**; they are the record. The official `prune` plugin deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.",
         "A step that waits for a shared resource is an invoked state with a `timeout`**",
         "Declare the environment.** A command, package or tool the project needs is a line in `.decree/machines/infra/scripts/requirements`,",
         "Nothing runs `sudo`: a step only a person can do prints the exact command and fails,",

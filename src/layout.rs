@@ -24,8 +24,6 @@ pub const GRAPH_FILE: &str = "graph.md";
 pub const SYSTEM_GRAPH_FILE: &str = "system.md";
 pub const INBOX_DIR: &str = "inbox";
 pub const RUNS_DIR: &str = "runs";
-pub const MIGRATIONS_DIR: &str = "migrations";
-pub const PROCESSED_FILE: &str = "processed.md";
 pub const GITIGNORE_FILE: &str = ".gitignore";
 
 /// `.decree/cache/`: what decree and scripts keep that git ignores, such as the record of

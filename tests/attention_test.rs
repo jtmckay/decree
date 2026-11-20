@@ -65,7 +65,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -135,7 +135,7 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
         "inbox/20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: ask\n---\n# Release 1.2\n",
     );
-    let (code, stdout, stderr) = p.output(&["process"]);
+    let (code, stdout, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert!(
         stdout.contains("Waiting: run 20260101T000000.000000Z-000000"),
@@ -183,7 +183,7 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
         "inbox/20260101T000000.000001Z-000001.md",
         "---\nid: 20260101T000000.000001Z-000001\nmachine: hello\n---\n",
     );
-    assert_eq!(p.output(&["process"]).0, Some(0));
+    assert_eq!(p.output(&["daemon", "--once"]).0, Some(0));
     assert_eq!(
         p.last_event("20260101T000000.000001Z-000001")["state"],
         "done"
@@ -201,7 +201,7 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
     // Once the reply is delivered, the file is gone.
     p.cmd(&["event", &wait_id, "approve"]).assert().success();
     assert!(path.exists(), "a queued reply is not delivered yet");
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
@@ -216,7 +216,7 @@ fn sleeping(p: &Project, id: &str) -> Child {
     fs::write(p.tmp.path().join("sleep.flag"), "").unwrap();
     let child = common::std_decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
-        .arg("process")
+        .args(["daemon", "--once"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -256,12 +256,17 @@ fn a_run_interrupted_by_sigint_has_a_file_and_status_starts_with_attention() {
     assert_eq!(fm["holds"], false);
     let text = fs::read_to_string(p.attention("20260101T000000.000000Z-000000")).unwrap();
     assert!(
-        text.contains("    decree process --retry 20260101T000000.000000Z-000000\n"),
+        text.contains("    decree daemon --once --retry 20260101T000000.000000Z-000000\n"),
         "{text}"
     );
 
     // The retry continues it; the file goes as it starts, and it ends in `done`.
-    let (code, _, stderr) = p.output(&["process", "--retry", "20260101T000000.000000Z-000000"]);
+    let (code, _, stderr) = p.output(&[
+        "daemon",
+        "--once",
+        "--retry",
+        "20260101T000000.000000Z-000000",
+    ]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
@@ -287,7 +292,7 @@ fn a_run_killed_and_found_later_has_a_file_naming_the_crash() {
         "a killed run writes nothing"
     );
 
-    p.output(&["process"]);
+    p.output(&["daemon", "--once"]);
     let fm = frontmatter(&p.attention("20260101T000000.000000Z-000000"));
     assert_eq!(fm["status"], "interrupted");
     let text = fs::read_to_string(p.attention("20260101T000000.000000Z-000000")).unwrap();
@@ -313,7 +318,7 @@ fn md_files_decree_cannot_read_hold_the_queue_until_deleted() {
         "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
     );
 
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(p.runs(), 0, "nothing started");
     assert!(
@@ -357,9 +362,13 @@ fn md_files_decree_cannot_read_hold_the_queue_until_deleted() {
     );
 
     fs::remove_file(p.path("attention/notes.md")).unwrap();
-    assert_eq!(p.output(&["process"]).0, Some(1), "bad.md still holds");
+    assert_eq!(
+        p.output(&["daemon", "--once"]).0,
+        Some(1),
+        "bad.md still holds"
+    );
     fs::remove_file(p.path("attention/bad.md")).unwrap();
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
@@ -376,7 +385,7 @@ fn other_files_and_folders_in_attention_are_ignored() {
         "inbox/20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
     );
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
@@ -394,7 +403,7 @@ fn a_run_that_ends_in_done_has_no_file() {
         "inbox/20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: hello\n---\n",
     );
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
@@ -402,24 +411,6 @@ fn a_run_that_ends_in_done_has_no_file() {
     );
     assert!(!p.attention("20260101T000000.000000Z-000000").exists());
     assert!(!stderr.contains("need attention"), "{stderr}");
-}
-
-#[test]
-fn prune_deletes_the_file_of_the_run_it_deletes() {
-    let p = Project::new();
-    // An invalid message fails at its claim, with nothing to hold.
-    p.write(
-        "inbox/20260101T000000.000000Z-000000.md",
-        "---\nid: 20260101T000000.000000Z-000000\nmachine: nope\n---\n",
-    );
-    p.output(&["process"]);
-    assert_eq!(
-        frontmatter(&p.attention("20260101T000000.000000Z-000000"))["status"],
-        "failed"
-    );
-    p.cmd(&["prune", "--older-than", "0s"]).assert().success();
-    assert!(!p.path("runs/20260101T000000.000000Z-000000").exists());
-    assert!(!p.attention("20260101T000000.000000Z-000000").exists());
 }
 
 /// Runs `decree stop` from inside its run, as a person would while it goes.
@@ -452,7 +443,7 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
         "---\nid: 20260101T000000.000001Z-000001\nmachine: hello\n---\n",
     );
 
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
@@ -498,11 +489,15 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     );
 
     // A new `process` starts nothing; a retried run waits as `pending`, and the file stays.
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(p.runs(), 1);
-    let (code, stdout, stderr) =
-        p.output(&["process", "--retry", "20260101T000000.000000Z-000000"]);
+    let (code, stdout, stderr) = p.output(&[
+        "daemon",
+        "--once",
+        "--retry",
+        "20260101T000000.000000Z-000000",
+    ]);
     assert_eq!(code, Some(1), "{stderr}");
     assert!(
         stdout.contains("run 20260101T000000.000000Z-000000 continues in `work`"),
@@ -520,7 +515,7 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
 
     // Deleting it resumes: the next `process` runs the queue.
     fs::remove_file(&path).unwrap();
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     // 20260101T000000.000000Z-000000 stops the queue again as it is retried; it ends in `done` first.
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(
@@ -528,7 +523,7 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
         "done"
     );
     fs::remove_file(&path).unwrap();
-    let (code, _, stderr) = p.output(&["process"]);
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000001Z-000001")["state"],

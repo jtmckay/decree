@@ -210,7 +210,7 @@ fn every_machine_in_the_repository_validates() {
 #[test]
 fn every_official_plugin_validates() {
     let paths = files_in(&repo().join("plugins"), ".md");
-    assert_eq!(paths.len(), 15);
+    assert_eq!(paths.len(), 16);
     let plugin_validator = schema::validator(schema::PLUGIN_SCHEMA);
     let mut machines = Vec::new();
     for (name, text) in read(&paths) {
@@ -233,8 +233,8 @@ fn every_official_plugin_validates() {
     assert!(found.is_empty(), "{found}");
 }
 
-/// AC (A10): a fresh `init` installs no machine; every machine `decree plugin add` installs
-/// validates, whichever backend `init` was given.
+/// AC (A10): every machine a fresh `init` (its default plugins) and `decree plugin add`
+/// install validates, whichever backend `init` was given.
 #[test]
 fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
     for ai in ["claude", "copilot", "opencode"] {
@@ -247,9 +247,8 @@ fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
                 .success();
         };
         decree(&["init", "--ai", ai]);
-        assert!(!tmp.path().join(".decree/machines").exists(), "{ai}");
         decree(&["plugin", "add", "develop", "qa", "router"]);
-        let paths: Vec<PathBuf> = ["develop", "infra", "qa", "router"]
+        let paths: Vec<PathBuf> = ["develop", "infra", "qa", "router", "order", "prune"]
             .iter()
             .map(|m| {
                 tmp.path()
@@ -293,15 +292,16 @@ fn init_writes_no_schema_folder_and_check_does_not_ask_for_one() {
     );
 }
 
-/// Migrations, inbox messages, cron files, and the messages and replies in the recorded runs
-/// of every example project.
+/// Order files, inbox messages, cron files, and the messages and replies in the recorded
+/// runs of every example project.
 #[test]
 fn every_message_in_examples_validates() {
     let mut paths = Vec::new();
     for project in example_projects() {
         let decree = project.join(".decree");
-        for dir in ["migrations", "inbox"] {
-            paths.extend(files_in(&decree.join(dir), ".md"));
+        paths.extend(files_in(&decree.join("inbox"), ".md"));
+        for machine in fs::read_dir(decree.join("machines")).into_iter().flatten() {
+            paths.extend(files_in(&machine.unwrap().path().join("order"), ".md"));
         }
         // Cron files are a plugin's, `cron:` in its file.
         for plugin in files_in(&decree.join("plugins"), ".md") {
@@ -340,7 +340,7 @@ fn every_message_in_examples_validates() {
         ("reply", "/received/"),
         ("inbox message", "/inbox/"),
         ("cron file", "/cron/"),
-        ("migration", "/migrations/"),
+        ("order file", "/order/"),
         ("run", "/runs/"),
     ] {
         assert!(
@@ -579,7 +579,7 @@ fn common_script(path: &Path) {
 fn decree(dir: &Path, cmd: &str) -> (i32, String, String) {
     let out = common::decree_at(dir)
         .env("NO_COLOR", "1")
-        .arg(cmd)
+        .args(cmd.split_whitespace())
         .output()
         .unwrap();
     (
@@ -932,7 +932,7 @@ fn a_model_run_writes_files_that_validate() {
         "---\nid: 20260101T000000.000000Z-000000\nmachine: ask\n---\nPick a way.\n",
     )
     .unwrap();
-    let (code, stdout, stderr) = decree(tmp.path(), "process");
+    let (code, stdout, stderr) = decree(tmp.path(), "daemon --once");
     assert_eq!(code, 0, "{stdout}{stderr}");
 
     let runs = decree_dir.join("runs");

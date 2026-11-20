@@ -721,6 +721,10 @@ fn uninstall(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
         }
     }
     let dir = layout::machine_dir(decree_dir, name);
+    // An empty `state/` or `order/` holds nothing of the project's.
+    if dir.is_dir() {
+        remove_empty_dirs(&dir)?;
+    }
     if dir.is_dir()
         && std::fs::read_dir(&dir)
             .map_err(|e| io_error(&dir, e))?
@@ -972,7 +976,7 @@ pub fn conflict_message(name: &str) -> String {
 /// (if any), every file of `scripts/<name>/` and `cron/<name>/`, every flat `scripts/` file
 /// the machine's states run, as a file of `scripts/<name>/`, and `needs`, every other machine
 /// it invokes, emits to or routes through. An existing plugin file keeps its body, its
-/// `needs`, its migrations, its store seeds and its `x-` keys; a new one gets `# <name>` and
+/// `needs`, its state and order seeds and its `x-` keys; a new one gets `# <name>` and
 /// the machine's description.
 pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
     if !is_ident(name) {

@@ -12,7 +12,7 @@
 //!
 //! Each run is stepped under its run lock (docs/reference/messages.md, Run lock). `recover` is what
 //! `process` and `daemon` do first: it marks runs a crash left behind `interrupted` and
-//! lists the `pending` runs to continue. Only `decree process --retry` makes an interrupted run
+//! lists the `pending` runs to continue. Only `decree daemon --once --retry` makes an interrupted run
 //! `pending` again; `continue_run` then re-runs its `onentry` scripts (docs/reference/runs.md, step 1).
 
 pub(crate) mod child;
@@ -20,7 +20,6 @@ pub(crate) mod decide;
 pub(crate) mod recover;
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -35,7 +34,7 @@ use crate::events::{
     EVENTS_FILE,
 };
 use crate::layout::MESSAGE_FILE;
-use crate::layout::{DECREE_DIR, PROCESSED_FILE, RUNS_DIR};
+use crate::layout::{DECREE_DIR, RUNS_DIR};
 use crate::machine::{event_matches, Attempts, DataType, Invoke, LoadedMachine, FAILED};
 use crate::message::{Message, MessageError, RunLock, LOCK_FILE};
 use crate::runtime::{
@@ -96,8 +95,7 @@ pub struct RunInput {
     pub params: serde_norway::Mapping,
     /// The message body, for a model's request and for child runs.
     pub message_body: String,
-    /// Original inbox or migration filename, recorded on the claim event; `None` for a child
-    /// run. For a migration (`trigger: migration`) it is also the `processed.md` ledger line.
+    /// Original inbox filename, recorded on the claim event; `None` for a child run.
     pub file: Option<String>,
     /// Frontmatter `depth`: 0 unless the message was emitted or is a child run.
     pub depth: u32,
@@ -239,7 +237,7 @@ impl<'a> Interpreter<'a> {
         Ok(outcome)
     }
 
-    /// Continue a `pending` run (step 1), under its run lock. After `decree process --retry` (the
+    /// Continue a `pending` run (step 1), under its run lock. After `decree daemon --once --retry` (the
     /// last event is a `transition` with `source: "retry"`), root `onentry` and the
     /// `onentry` of every ancestor of the state and of the state itself run again, then
     /// its invoke. Otherwise the last event is `received`, or `waiting` for a child run
@@ -304,7 +302,7 @@ impl<'a> Interpreter<'a> {
             "source": "claim",
             "exit_code": null,
         });
-        // A child run was never a file in the inbox or migrations, so it has none.
+        // A child run was never a file in the inbox, so it has none.
         if let Some(file) = &self.file {
             fields["file"] = json!(file);
         }
@@ -349,7 +347,7 @@ impl<'a> Interpreter<'a> {
         self.current = s;
         repair_mirror(&self.executor.info().run_dir, &events)?;
 
-        // After `decree process --retry`: enter the state again, from the root.
+        // After `decree daemon --once --retry`: enter the state again, from the root.
         if last_type == Some("transition") && text(last, "source") == Some("retry") {
             return self.enter_from_root(s);
         }
@@ -437,9 +435,6 @@ impl<'a> Interpreter<'a> {
             self.current = t;
             self.mirror(t)?;
             // 7. Enter.
-            if let Some(line) = self.ledger_line(t) {
-                self.ledger_add(&line)?;
-            }
             let entry_failed = self.run_entry(&path_below(m, domain, t))?;
             // 8. Finish or loop.
             match self.after_entry(t, entry_failed)? {
@@ -556,9 +551,6 @@ impl<'a> Interpreter<'a> {
             )?;
             self.current = failed;
             self.mirror(failed)?;
-            if let Some(line) = self.ledger_line(t) {
-                self.ledger_remove(&line)?;
-            }
             // A failing `onentry` script on `failed` itself is only logged.
             self.run_entry(&[failed])?;
             last = failed;
@@ -682,44 +674,6 @@ impl<'a> Interpreter<'a> {
         mirror_state(&path, &self.machine.nodes[state].id)
     }
 
-    /// The `processed.md` line to write before entering `t`: a migration entering a final
-    /// state other than `failed` (docs/reference/messages.md, Migrations, rule 5). Only a root-level final
-    /// state finishes the run, so a nested one writes nothing.
-    fn ledger_line(&self, t: usize) -> Option<String> {
-        let finishes = self.machine.is_root_final(t) && self.machine.nodes[t].id != FAILED;
-        let migration = self.executor.info().trigger == "migration";
-        self.file.clone().filter(|_| migration && finishes)
-    }
-
-    fn ledger_path(&self) -> PathBuf {
-        self.executor
-            .info()
-            .project_root
-            .join(DECREE_DIR)
-            .join(PROCESSED_FILE)
-    }
-
-    fn ledger_add(&self, line: &str) -> Result<(), InterpreterError> {
-        let path = self.ledger_path();
-        let mut text = read_or_empty(&path)?;
-        if !text.is_empty() && !text.ends_with('\n') {
-            text.push('\n');
-        }
-        text.push_str(line);
-        text.push('\n');
-        write_replace(&path, text.as_bytes())
-    }
-
-    fn ledger_remove(&self, line: &str) -> Result<(), InterpreterError> {
-        let path = self.ledger_path();
-        let text: String = read_or_empty(&path)?
-            .lines()
-            .filter(|l| l.trim() != line)
-            .map(|l| format!("{l}\n"))
-            .collect();
-        write_replace(&path, text.as_bytes())
-    }
-
     fn invalid(&self, message: String) -> InterpreterError {
         InterpreterError::Invalid {
             machine: self.machine.id.clone(),
@@ -835,14 +789,6 @@ fn path_below(m: &LoadedMachine, domain: usize, t: usize) -> Vec<usize> {
     let mut path: Vec<usize> = m.chain(t).take_while(|&n| n != domain).collect();
     path.reverse();
     path
-}
-
-fn read_or_empty(path: &Path) -> Result<String, InterpreterError> {
-    match fs::read_to_string(path) {
-        Ok(text) => Ok(text),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(io_err(path)(e)),
-    }
 }
 
 /// Write `.<name>.tmp` in the same directory, then rename it over `path`.

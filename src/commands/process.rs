@@ -1,25 +1,22 @@
-//! `decree process` (docs/reference/messages.md, docs/reference/cli.md): validate the machines and pending migrations,
-//! mark runs a crash left behind `interrupted` and continue `pending` runs, then repeat
-//! until nothing is left: claim the next `inbox/` message and run it through its machine,
-//! or start the next migration once the inbox is empty. Never continues an `interrupted`
-//! run. A run that is not a migration and ends in `failed` is reported and the pass goes on;
-//! a migration that ends in `failed` stops it, as does a `failed`, `interrupted` or `waiting`
-//! migration before it starts. Ends by printing every waiting run, then every run that failed
-//! in the pass, and exits 1 if there was one.
+//! The pipeline `decree daemon` runs (docs/reference/cli.md): validate the machines, mark runs
+//! a crash left behind `interrupted` and continue `pending` runs, then repeat until nothing is
+//! left: deliver replies and timeouts, and claim the next `inbox/` message and run it through
+//! its machine. Never continues an `interrupted` run. A run that ends in `failed` is reported
+//! and the pass goes on. `daemon --once` ends by printing every waiting run, then every run
+//! that failed, and exits 1 if there was one.
 //!
-//! `--retry [<id>] [--state <s>]` first makes one `interrupted` or finished run `pending`
-//! again: run `<id>`, or the migration that blocks the queue. It appends a `transition`
-//! event with `source: "retry"` and mirrors `state`; the pipeline then continues it,
-//! re-running root `onentry` and the `onentry` of every ancestor of `<s>` and of `<s>`
-//! (docs/reference/runs.md, step 1).
+//! `--retry <id> [--state <s>]` first makes one `interrupted` or finished run `pending`
+//! again. It appends a `transition` event with `source: "retry"` and mirrors `state`; the
+//! pipeline then continues it, re-running root `onentry` and the `onentry` of every ancestor
+//! of `<s>` and of `<s>` (docs/reference/runs.md, step 1).
 //!
 //! A queued message with `to:` is a reply: it is delivered to its waiting run instead,
-//! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
-//! `timeout` deadlines that have passed (docs/reference/messages.md, Replies).
+//! or, failing a check, becomes a failed `invalid_message` run (docs/reference/messages.md,
+//! Replies).
 //!
 //! Before each run it reports plugins that are not installed as their files say, installing
-//! nothing (docs/reference/plugins.md), and reads the machines and `.env` files again (`Pipeline::refresh`), so an edit applies to
-//! the next run without a restart.
+//! nothing (docs/reference/plugins.md), and reads the machines and `.env` files again
+//! (`Pipeline::refresh`), so an edit applies to the next run without a restart.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
@@ -35,42 +32,37 @@ use crate::commands::print_json;
 use crate::commands::report::{self, Reporter};
 use crate::error::DecreeError;
 use crate::events::{
-    current_state, first_text, is_transition, is_type, run_attempt, strings, text, waiting_child,
-    Event, EventLog,
+    current_state, first_text, is_transition, is_type, run_attempt, strings, text, Event, EventLog,
 };
 use crate::filter::{self, MachineFilter, Select};
 use crate::interpreter::child::continue_run;
 use crate::interpreter::recover::{self, mirror_state, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
 use crate::layout::MESSAGE_FILE;
-use crate::layout::{self, ATTENTION_DIR, DECREE_DIR, INBOX_DIR, MIGRATIONS_DIR};
+use crate::layout::{self, ATTENTION_DIR, DECREE_DIR, INBOX_DIR};
 use crate::machine::FAILED;
-use crate::message::{self, is_valid_id, Claim, LockState, Message, RunLock, ARRIVED_AS};
-use crate::migration::{self, MIGRATION_KEY};
+use crate::message::{self, is_valid_id, Claim, Message, RunLock, ARRIVED_AS};
 use crate::reply::{self, Delivery};
 use crate::runtime::{self};
 
-/// What `--retry` continues: run `id`, or with `None` the migration that blocks the queue.
+/// What `--retry` continues: run `id`.
 pub struct Retry {
-    pub id: Option<String>,
+    pub id: String,
     /// The atomic state to continue in, from `--state`.
     pub state: Option<String>,
 }
 
 impl Retry {
-    /// From `--retry [<id>]` and `--state`: `--retry` alone names no run, the blocking
-    /// migration.
+    /// From `--retry <id>` and `--state`.
     pub fn from_args(retry: Option<String>, state: Option<String>) -> Option<Retry> {
-        retry.map(|id| Retry {
-            id: Some(id).filter(|id| !id.is_empty()),
-            state,
-        })
+        retry.map(|id| Retry { id, state })
     }
 }
 
-/// Run `decree process [--dry-run | --retry [<id>] [--state <s>]] [--quiet]
-/// [--machine <m> | --exclude-machine <m>]`. Unless `quiet`, each run's output is printed as
-/// it goes (`commands::report`).
+/// Run `decree daemon --once [--dry-run | --retry <id> [--state <s>]] [--quiet]
+/// [--machine <m> | --exclude-machine <m>]`: a daemon start, which fires the `@reboot` cron
+/// files, then works until only a person or a program can move a run on. Unless `quiet`,
+/// each run's output is printed as it goes (`commands::report`).
 pub fn run(
     project_root: &Path,
     dry_run: bool,
@@ -78,7 +70,6 @@ pub fn run(
     format: Format,
     quiet: bool,
     select: &Select,
-    boot: bool,
 ) -> Result<(), DecreeError> {
     let mut plugin_notes = BTreeSet::new();
     plugin_notices(project_root, &mut plugin_notes, "");
@@ -105,11 +96,6 @@ pub fn run(
     }
     let result = reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
         pipeline.recover()?;
-        if !boot {
-            return pipeline.drain();
-        }
-        // `daemon --once` is a daemon start: its `@reboot` cron files fire, then it works
-        // until only a person or a program can move a run on.
         crate::commands::daemon::fire_cron_jobs(
             project_root,
             pipeline.filter(),
@@ -119,11 +105,6 @@ pub fn run(
         pipeline.drain_with_timers()
     });
     print_waiting(&pipeline.ctx, &pipeline.filter)?;
-    if result.is_ok() {
-        if let Some(why) = held_back(&pipeline.ctx, &pipeline.project, &pipeline.filter)? {
-            println!("Held back: {why}");
-        }
-    }
     let failed = pipeline.take_failed();
     print_failed(&failed);
     print_attention(project_root)?;
@@ -159,8 +140,6 @@ pub(crate) fn reporting<R>(
 /// Why a pass of the pipeline stopped short.
 #[derive(Debug)]
 pub(crate) enum Stop {
-    /// A migration is `failed` or `interrupted`: later migrations wait for `decree process --retry`.
-    Blocked(String),
     /// SIGINT or SIGTERM: the current run is `interrupted`.
     Interrupted,
     /// A file in `.decree/attention/` holds the queue: nothing runs until it is gone. Holds
@@ -173,7 +152,7 @@ pub(crate) enum Stop {
 impl Stop {
     pub(crate) fn into_error(self) -> DecreeError {
         match self {
-            Stop::Blocked(message) | Stop::Held(message) => DecreeError::Other(message),
+            Stop::Held(message) => DecreeError::Other(message),
             Stop::Interrupted => DecreeError::Interrupted,
             Stop::Error(e) => e,
         }
@@ -186,8 +165,8 @@ impl<E: Into<DecreeError>> From<E> for Stop {
     }
 }
 
-/// The steps `process` and `daemon` share (docs/reference/cli.md): one pipeline, so the daemon has
-/// no copy of its own. Each step runs to the end of one run before it returns.
+/// The steps `daemon` and `daemon --once` share (docs/reference/cli.md): one pipeline. Each
+/// step runs to the end of one run before it returns.
 pub(crate) struct Pipeline {
     ctx: Context,
     project: Project,
@@ -195,9 +174,9 @@ pub(crate) struct Pipeline {
     lost: HashSet<String>,
     /// The machines this process runs (`--machine`, `--exclude-machine`).
     filter: MachineFilter,
-    /// Put before each failed run's report: `process` prints none, `daemon` its name.
+    /// Put before each failed run's report: `daemon --once` prints none, `daemon` its name.
     prefix: &'static str,
-    /// Runs that are not migrations and ended in `failed` since the last `take_failed`.
+    /// Runs that ended in `failed` since the last `take_failed`.
     failed: Vec<String>,
     /// Told when each run starts and stops, unless `--quiet`.
     pub(crate) report: Option<Reporter>,
@@ -209,8 +188,8 @@ pub(crate) struct Pipeline {
 }
 
 /// Print, once each, every plugin `decree plugin install` would install or remove and every
-/// problem that would stop one (a conflict, a plugin that fails its schema): `process` and
-/// `daemon` install nothing (docs/reference/plugins.md, Installing). `printed` holds the
+/// problem that would stop one (a conflict, a plugin that fails its schema): `daemon`
+/// installs nothing (docs/reference/plugins.md, Installing). `printed` holds the
 /// lines already printed, and keeps those still there.
 pub(crate) fn plugin_notices(project_root: &Path, printed: &mut BTreeSet<String>, prefix: &str) {
     let now: BTreeSet<String> = match crate::plugin::status(&project_root.join(DECREE_DIR)) {
@@ -224,8 +203,7 @@ pub(crate) fn plugin_notices(project_root: &Path, printed: &mut BTreeSet<String>
 }
 
 impl Pipeline {
-    /// Validate every machine and pending migration (docs/reference/messages.md, Migrations, rule 6), and
-    /// set up the context runs are stepped in, and the machines `select` runs. Nothing runs if
+    /// Validate every machine, and set up the context runs are stepped in, and the machines `select` runs. Nothing runs if
     /// anything is invalid.
     pub(crate) fn new(
         project_root: &Path,
@@ -243,7 +221,6 @@ impl Pipeline {
                 project.problems.len()
             )));
         }
-        validate_migrations(&project)?;
         let mut ctx = context(project_root, &project, shutdown);
         ctx.env = check::load_env(&project)?;
         let filter = select.filter(&ctx.env.decree, |m| project.machine_ids.contains(m))?;
@@ -261,13 +238,13 @@ impl Pipeline {
         })
     }
 
-    /// `--retry`: make run `id`, or the migration that blocks the queue, `pending` again.
+    /// `--retry`: make run `id` `pending` again.
     pub(crate) fn retry(&self, retry: &Retry) -> Result<(), DecreeError> {
         retry_run(
             &self.ctx,
             &self.project,
             &self.filter,
-            retry.id.as_deref(),
+            &retry.id,
             retry.state.as_deref(),
         )
     }
@@ -387,13 +364,13 @@ impl Pipeline {
         }
     }
 
-    /// Report run `id`, not a migration, that ended in `failed`, with its `--retry` command.
+    /// Report run `id`, which ended in `failed`, with its `--retry` command.
     /// Inbox messages are independent, so the pass goes on (docs/reference/messages.md, Lifecycle).
     fn fail(&mut self, id: &str, file: Option<&str>) {
         let file = file.map(|f| format!(" ({f})")).unwrap_or_default();
         report::notice(format!(
             "{}run {id}{file} ended in `{FAILED}`; see .decree/runs/{id}/, \
-             then continue it with `decree process --retry {id}`",
+             then continue it with `decree daemon --once --retry {id}`",
             self.prefix
         ));
         self.failed.push(id.to_string());
@@ -411,26 +388,22 @@ impl Pipeline {
         for (id, state) in &recovery.crashed {
             eprintln!(
                 "run {id} was interrupted in `{state}` (crash); \
-                 continue it with `decree process --retry {id}`"
+                 continue it with `decree daemon --once --retry {id}`"
             );
         }
         self.continue_runs(&recovery.pending)
     }
 
-    /// `process`: repeat until nothing is left: deliver timeouts, continue `pending` runs
-    /// (`decree process --retry` may have made more), claim the next inbox message, and start the
-    /// next migration once the inbox is empty. A failed inbox run is reported and the loop goes
-    /// on; a failed migration stops it.
+    /// Repeat until nothing is left: deliver timeouts, continue `pending` runs (`--retry` may
+    /// have made more), and claim the next inbox message. A failed run is reported and the
+    /// loop goes on.
     pub(crate) fn drain(&mut self) -> Result<(), Stop> {
         loop {
             self.refresh();
             self.deliver_timeouts()?;
             let pending = self.pending()?;
             self.continue_runs(&pending)?;
-            if self.next_inbox()? {
-                continue;
-            }
-            if !self.next_migration()? {
+            if !self.next_inbox()? {
                 return Ok(());
             }
         }
@@ -456,7 +429,7 @@ impl Pipeline {
         }
     }
 
-    /// Continue `ids` in order; stops at the first migration that ends in `failed`.
+    /// Continue `ids` in order.
     fn continue_runs(&mut self, ids: &[String]) -> Result<(), Stop> {
         for id in ids {
             self.continue_one(id)?;
@@ -464,7 +437,7 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Every `pending` run this process runs, in `id` order: after `decree process --retry`,
+    /// Every `pending` run this process runs, in `id` order: after `--retry`,
     /// or a delivery another process made. A run another process holds is `active`, not
     /// `pending`.
     pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
@@ -480,11 +453,11 @@ impl Pipeline {
         Ok(pending)
     }
 
-    /// Continue `pending` run `id`. A run another process holds now is skipped. A migration
-    /// that ends in `failed` blocks the queue; any other run is reported and the pass goes on.
+    /// Continue `pending` run `id`. A run another process holds now is skipped; one that ends
+    /// in `failed` is reported and the pass goes on.
     pub(crate) fn continue_one(&mut self, id: &str) -> Result<(), Stop> {
         self.may_run()?;
-        let outcome = match reported(self.report.as_ref(), &self.ctx, &self.project, id, || {
+        let outcome = match reported(self.report.as_ref(), &self.ctx, id, || {
             continue_run(&self.ctx, id)
         }) {
             Ok(outcome) => outcome,
@@ -493,9 +466,6 @@ impl Pipeline {
         };
         match outcome {
             Outcome::Finished(state) if state == FAILED => {
-                if let Some(file) = migration::of_run(&self.ctx.runs_dir(), id) {
-                    return Err(blocked(&file, &format!("ended in `{FAILED}`")));
-                }
                 self.fail(id, None);
                 Ok(())
             }
@@ -604,7 +574,7 @@ impl Pipeline {
         };
         let id = claim.id.clone();
         let report = self.report.as_ref();
-        match reported(report, &self.ctx, &self.project, &id, || {
+        match reported(report, &self.ctx, &id, || {
             run_claim(&self.ctx, &self.project, claim, problem)
         })? {
             Outcome::Finished(state) if state == FAILED => {
@@ -613,28 +583,6 @@ impl Pipeline {
             }
             ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
             _ => Ok(Taken::Other),
-        }
-    }
-
-    /// Start or continue the first pending migration (docs/reference/messages.md, Migrations). Returns
-    /// whether it finished, so the next may start; `false` when there is none, or it
-    /// waits, also when it is for a machine this process does not run: migrations keep one
-    /// order for every process.
-    pub(crate) fn next_migration(&mut self) -> Result<bool, Stop> {
-        self.may_run()?;
-        self.refresh();
-        match self.project.pending_migrations()?.into_iter().next() {
-            Some(migration)
-                if !self
-                    .filter
-                    .runs(migration_machine(&self.project, &migration).as_deref()) =>
-            {
-                Ok(false)
-            }
-            Some(migration) => {
-                step_migration(&self.ctx, &self.project, &migration, self.report.as_ref())
-            }
-            None => Ok(false),
         }
     }
 }
@@ -664,39 +612,25 @@ fn inbox_machine(runs_dir: &Path, inbox: &Path, file: &str) -> Option<String> {
     message.machine().map(String::from)
 }
 
-/// The machine pending migration `file` names, `None` when it cannot be read.
-fn migration_machine(project: &Project, file: &str) -> Option<String> {
-    let message = Message::read(&project.decree_dir.join(MIGRATIONS_DIR).join(file)).ok()?;
-    message.machine().map(String::from)
-}
-
 /// Run `run`, the steps of run `id`, telling `report` when it starts and stops.
 fn reported<E>(
     report: Option<&Reporter>,
     ctx: &Context,
-    project: &Project,
     id: &str,
     run: impl FnOnce() -> Result<Outcome, E>,
 ) -> Result<Outcome, E> {
     let Some(report) = report else {
         return run();
     };
-    report.start(id, &ctx.runs_dir().join(id), queued(ctx, project, id));
+    report.start(id, &ctx.runs_dir().join(id), queued(ctx));
     let outcome = run();
     report.end(id, outcome.as_ref().ok());
     outcome
 }
 
-/// How many inbox messages and pending migrations wait, besides run `id`.
-fn queued(ctx: &Context, project: &Project, id: &str) -> usize {
-    let inbox = md_files(&ctx.project_root.join(DECREE_DIR).join(INBOX_DIR)).map_or(0, |f| f.len());
-    let migrations = project.pending_migrations().unwrap_or_default();
-    let own = migration::of_run(&ctx.runs_dir(), id);
-    let others = migrations
-        .iter()
-        .filter(|m| own.as_ref() != Some(*m))
-        .count();
-    inbox + others
+/// How many inbox messages wait.
+fn queued(ctx: &Context) -> usize {
+    md_files(&ctx.project_root.join(DECREE_DIR).join(INBOX_DIR)).map_or(0, |f| f.len())
 }
 
 /// The context runs of `project` are stepped, or their status derived, in.
@@ -720,7 +654,7 @@ fn print_failed(failed: &[String]) {
     }
     eprintln!("{} run(s) ended in `{FAILED}` in this pass:", failed.len());
     for id in failed {
-        eprintln!("  run {id}: decree process --retry {id}");
+        eprintln!("  run {id}: decree daemon --once --retry {id}");
     }
 }
 
@@ -731,28 +665,6 @@ fn print_attention(project_root: &Path) -> Result<(), DecreeError> {
         eprintln!("{n} run(s) need attention: {DECREE_DIR}/{ATTENTION_DIR}/");
     }
     Ok(())
-}
-
-/// docs/reference/messages.md, Migrations, rule 6: parse every pending migration (frontmatter, machine,
-/// `params` against the machine's `data`) before any runs. Prints every error.
-fn validate_migrations(project: &Project) -> Result<(), DecreeError> {
-    let mut invalid = 0;
-    for name in project.pending_migrations()? {
-        let mut problems = Vec::new();
-        project.check_file(MIGRATIONS_DIR, &name, "M1", None, &mut problems)?;
-        if !problems.is_empty() {
-            invalid += 1;
-            for problem in problems {
-                eprintln!("{problem}");
-            }
-        }
-    }
-    match invalid {
-        0 => Ok(()),
-        n => Err(DecreeError::Other(format!(
-            "{n} migration(s) are invalid; nothing was processed."
-        ))),
-    }
 }
 
 /// Lifecycle steps 2 to 4 for a claimed inbox message: set `id` and `trigger` if missing,
@@ -785,8 +697,6 @@ fn run_claim(
     if !message.frontmatter.contains_key("trigger") {
         message.set("trigger", trigger.as_str());
     }
-    // Only decree marks a migration's run: a queued copy is a run of its own.
-    message.frontmatter.remove(MIGRATION_KEY);
     message.write(&run_dir.join(MESSAGE_FILE))?;
 
     let name = message.machine().unwrap_or_default().to_string();
@@ -854,69 +764,6 @@ fn reject(
     Ok(Outcome::Finished(FAILED.to_string()))
 }
 
-/// docs/reference/messages.md, Migrations: start migration `file`, or continue or report the run it has.
-/// Returns whether later migrations may start once this one is in `processed.md`; `false`
-/// means it waits.
-fn step_migration(
-    ctx: &Context,
-    project: &Project,
-    file: &str,
-    report: Option<&Reporter>,
-) -> Result<bool, Stop> {
-    let outcome = if let Some(id) = migration::newest_run(&ctx.runs_dir(), file)? {
-        // Rule 4: the migration has a run already.
-        let id = id.as_str();
-        let run_dir = ctx.runs_dir().join(id);
-        let events = ctx.events(id)?;
-        let alive = matches!(message::lock_state(&run_dir)?, LockState::Live(_));
-        let status = ctx
-            .run_machine(&events)
-            .map_or(RunStatus::Interrupted, |m| ctx.status(m, &events, alive));
-        match status {
-            RunStatus::Pending => {
-                match reported(report, ctx, project, id, || continue_run(ctx, id)) {
-                    Ok(outcome) => outcome,
-                    Err(InterpreterError::Active(_)) => return Ok(false),
-                    Err(e) => return Err(e.into()),
-                }
-            }
-            RunStatus::Waiting => {
-                // A child that was interrupted never continues its parent by itself.
-                return match ctx.stalled_child(&events)? {
-                    Some((child, state)) => Err(blocked(
-                        file,
-                        &format!("waits for child run {child}, interrupted in `{state}`"),
-                    )),
-                    None => Ok(false),
-                };
-            }
-            RunStatus::Active => return Ok(false),
-            RunStatus::Finished | RunStatus::Interrupted => {
-                let state = current_state(&events).unwrap_or("no state");
-                return Err(blocked(
-                    file,
-                    &format!("is {} in `{state}`", status.as_str()),
-                ));
-            }
-        }
-    } else {
-        let (id, _) = message::create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
-        reported(report, ctx, project, &id, || {
-            start_migration(ctx, project, file, &id)
-        })?
-    };
-    match outcome {
-        Outcome::Finished(state) if state == FAILED => {
-            Err(blocked(file, &format!("ended in `{FAILED}`")))
-        }
-        // Rule 5 wrote the ledger line; the loop moves on to the next migration.
-        Outcome::Finished(_) => Ok(true),
-        ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
-        // It waits for a reply, or for a child run.
-        _ => Ok(false),
-    }
-}
-
 /// Whether a signal stopped the run, or the child run it waits for, child after child.
 fn interrupted(outcome: &Outcome) -> bool {
     match outcome {
@@ -926,190 +773,16 @@ fn interrupted(outcome: &Outcome) -> bool {
     }
 }
 
-/// Rule 1: copy the migration to `runs/<id>/message.md`, `runs/<id>/` just made with a time
-/// id, setting `id`, `trigger: migration` and `migration: <file>`, then start the run.
-fn start_migration(
-    ctx: &Context,
-    project: &Project,
-    file: &str,
-    id: &str,
-) -> Result<Outcome, DecreeError> {
-    let runs = ctx.runs_dir();
-    let source = ctx
-        .project_root
-        .join(DECREE_DIR)
-        .join(layout::MIGRATIONS_DIR)
-        .join(file);
-    let mut message = Message::read(&source)?;
-    message.set("id", id);
-    message.set("trigger", "migration");
-    message.set(MIGRATION_KEY, file);
-    message.write(&runs.join(id).join(MESSAGE_FILE))?;
-    start(ctx, project, id, "migration", file, &message)
-}
-
-/// Rule 4: a migration that blocks every later one, and the command that continues it.
-fn blocked(file: &str, what: &str) -> Stop {
-    Stop::Blocked(format!(
-        "migration {file} {what}; later migrations are blocked. \
-         Fix the cause, then run `decree process --retry`."
-    ))
-}
-
-/// The migration that blocks the queue, and the run `decree process --retry` continues for it.
-pub(crate) struct Blocker {
-    /// The migration's file name.
-    pub(crate) file: String,
-    /// The migration's run, or the interrupted child run it waits for.
-    pub(crate) run: String,
-    /// Whether `run` is a child run the migration's run waits for.
-    pub(crate) child: bool,
-    /// The state `run` is in.
-    pub(crate) state: String,
-    pub(crate) status: RunStatus,
-}
-
-impl Blocker {
-    /// Why the migration blocks: `is interrupted in `work``, or `waits for child run <id>,
-    /// interrupted in `work``.
-    pub(crate) fn what(&self) -> String {
-        let (status, state) = (self.status.as_str(), &self.state);
-        if self.child {
-            format!("waits for child run {}, {status} in `{state}`", self.run)
-        } else {
-            format!("is {status} in `{state}`")
-        }
-    }
-}
-
-/// docs/reference/messages.md, Migrations, rule 4: the migration that blocks the queue, the
-/// earliest pending one whose run is `failed` or `interrupted`, or `waiting` for a child run
-/// that is `interrupted`. A finished run of a pending migration blocks too, as `process`
-/// reports it, so `--retry` can continue it.
-pub(crate) fn blocking_migration(
-    ctx: &Context,
-    project: &Project,
-) -> Result<Option<Blocker>, DecreeError> {
-    let mut runs = migration::newest_runs(&ctx.runs_dir())?;
-    for file in project.pending_migrations()? {
-        let Some(id) = runs.remove(&file) else {
-            continue;
-        };
-        let (status, events) = ctx.status_of(&id)?;
-        let (run, child, state, status) = match status {
-            RunStatus::Finished | RunStatus::Interrupted => {
-                let state = current_state(&events).unwrap_or("no state").to_string();
-                (id, false, state, status)
-            }
-            RunStatus::Waiting => match ctx.stalled_child(&events)? {
-                Some((child, state)) => (child, true, state, RunStatus::Interrupted),
-                None => continue,
-            },
-            RunStatus::Active | RunStatus::Pending => continue,
-        };
-        return Ok(Some(Blocker {
-            file,
-            run,
-            child,
-            state,
-            status,
-        }));
-    }
-    Ok(None)
-}
-
-/// Why the first pending migration has not finished, when nothing blocks it
-/// (`blocking_migration`): it is for a machine a process that runs `filter` does not run;
-/// it, or the child run it waits for, waits for a reply or is active in another process;
-/// or it waits for `inbox/` to empty. `None` when no migration is pending, or the pass
-/// would start or continue it.
-pub(crate) fn held_back(
-    ctx: &Context,
-    project: &Project,
-    filter: &MachineFilter,
-) -> Result<Option<String>, DecreeError> {
-    let pending = project.pending_migrations()?;
-    let Some(file) = pending.first() else {
-        return Ok(None);
-    };
-    let machine = migration_machine(project, file);
-    if !filter.runs(machine.as_deref()) {
-        let machine = machine.unwrap_or_default();
-        return Ok(Some(format!(
-            "migration {file} is for machine `{machine}`, which this process does not run"
-        )));
-    }
-    let behind = match pending.len() - 1 {
-        0 => String::new(),
-        n => format!("; {n} later migration(s) wait behind it"),
-    };
-    let Some(id) = migration::newest_run(&ctx.runs_dir(), file)? else {
-        let inbox = md_files(&ctx.project_root.join(DECREE_DIR).join(INBOX_DIR))?.len();
-        return Ok((inbox > 0).then(|| {
-            format!("migration {file} starts once the {inbox} file(s) in inbox/ have run{behind}")
-        }));
-    };
-    let mut run = id.clone();
-    let mut seen = HashSet::new();
-    let reason = loop {
-        let (status, events) = ctx.status_of(&run)?;
-        match (status, waiting_child(&events)) {
-            (RunStatus::Waiting, Some(child)) if seen.insert(child.to_string()) => {
-                run = child.to_string();
-            }
-            (RunStatus::Waiting, _) => {
-                let Some(last) = events.last() else {
-                    return Ok(None);
-                };
-                let wait_id = text(last, "wait_id").unwrap_or_default();
-                break format!(
-                    "waits for a reply: `decree event {wait_id} <{}>`",
-                    strings(last, "options").join("|")
-                );
-            }
-            (RunStatus::Active, _) => {
-                let pid = match message::lock_state(&ctx.runs_dir().join(&run))? {
-                    LockState::Live(pid) => format!(" (pid {pid})"),
-                    _ => String::new(),
-                };
-                break format!("is active in another process{pid}");
-            }
-            // Blocked, or the pass continues it.
-            _ => return Ok(None),
-        }
-    };
-    Ok(Some(if run == id {
-        format!("migration {file} {reason}{behind}")
-    } else {
-        format!("migration {file} waits for child run {run}, which {reason}{behind}")
-    }))
-}
-
 /// `--retry` (docs/reference/cli.md): make an `interrupted` or finished run `pending` again,
-/// run `id` or else the blocking migration, in `state` or by default the state it was in
-/// (for a finished run, the state it last left). The pipeline then continues it.
+/// in `state` or by default the state it was in (for a finished run, the state it last
+/// left). The pipeline then continues it.
 fn retry_run(
     ctx: &Context,
     project: &Project,
     filter: &MachineFilter,
-    id: Option<&str>,
+    id: &str,
     state: Option<&str>,
 ) -> Result<(), DecreeError> {
-    let id = match id {
-        // A migration's file name or stem means its newest run.
-        Some(name) => migration::resolve(&ctx.runs_dir(), name)?
-            .ok_or_else(|| DecreeError::MessageNotFound(name.to_string()))?,
-        None => {
-            blocking_migration(ctx, project)?
-                .ok_or_else(|| {
-                    DecreeError::Other(
-                        "nothing to retry: no migration is failed or interrupted".to_string(),
-                    )
-                })?
-                .run
-        }
-    };
-    let id = id.as_str();
     let run_dir = ctx.runs_dir().join(id);
     if !is_valid_id(id) || !run_dir.is_dir() {
         return Err(DecreeError::MessageNotFound(id.to_string()));
@@ -1181,10 +854,7 @@ fn retry_run(
         }),
     )?;
     mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
-    println!(
-        "run {} continues in `{target}`",
-        migration::label(&ctx.runs_dir(), id)
-    );
+    println!("run {id} continues in `{target}`");
     attention::release(ctx, id)?;
     attention::record(ctx, id)?;
     Ok(())
@@ -1232,8 +902,7 @@ fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeErro
             .and_then(|node| node.description.as_deref())
             .unwrap_or(state);
         let options = strings(last, "options");
-        let run = migration::label(&ctx.runs_dir(), &id);
-        println!("Waiting: run {run} in `{state}`: {question}");
+        println!("Waiting: run {id} in `{state}`: {question}");
         println!("  wait id {wait_id}, options: {}", options.join(", "));
         for option in options {
             println!("  decree event {wait_id} {option}");
@@ -1242,43 +911,25 @@ fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeErro
     Ok(())
 }
 
-/// `decree process --dry-run`: list what would run, and run nothing. Pending migrations
-/// in order with their machine, then queued inbox messages; invalid ones with their errors.
-/// With a machine filter, only what this process would run: the migrations up to the first
-/// one for a machine it does not run, which holds back the rest, and the inbox messages for
-/// its machines.
+/// `decree daemon --once --dry-run`: list the queued inbox messages and run nothing; invalid
+/// ones with their errors. With a machine filter, only those for its machines.
 fn run_dry(project: &Project, format: Format, filter: &MachineFilter) -> Result<(), DecreeError> {
     let mut problems = project.problems.clone();
     let mut document = serde_json::Map::new();
-    let mut migrations = project.pending_migrations()?;
-    let mut held = None;
-    if let Some(n) = migrations
-        .iter()
-        .position(|m| !filter.runs(migration_machine(project, m).as_deref()))
-    {
-        let machine = migration_machine(project, &migrations[n]).unwrap_or_default();
-        held = Some(format!(
-            "migration {} is for machine `{machine}`, which this process does not run",
-            migrations[n]
-        ));
-        migrations.truncate(n);
-    }
     let inbox_dir = project.decree_dir.join(INBOX_DIR);
     let runs_dir = project.decree_dir.join(layout::RUNS_DIR);
     let mut inbox = md_files(&inbox_dir)?;
     if !filter.is_all() {
         inbox.retain(|f| filter.runs(inbox_machine(&runs_dir, &inbox_dir, f).as_deref()));
     }
-    let lists = [(MIGRATIONS_DIR, migrations), (INBOX_DIR, inbox)];
-    for (dir, files) in lists {
-        let text = format == Format::Text;
-        if text && files.is_empty() {
-            println!("{dir}/: nothing queued");
-            continue;
-        }
-        if text {
-            println!("{dir}/:");
-        }
+    let (dir, files) = (INBOX_DIR, inbox);
+    let text = format == Format::Text;
+    if text && files.is_empty() {
+        println!("{dir}/: nothing queued");
+    } else if text {
+        println!("{dir}/:");
+    }
+    {
         let mut items = Vec::new();
         for file in files {
             let path = project.decree_dir.join(dir).join(&file);
@@ -1308,8 +959,7 @@ fn run_dry(project: &Project, format: Format, filter: &MachineFilter) -> Result<
                     if text {
                         println!("  {file:<24} → invalid");
                     }
-                    let rule = if dir == MIGRATIONS_DIR { "M1" } else { "M2" };
-                    project.check_file(dir, &file, rule, None, &mut problems)?;
+                    project.check_file(dir, &file, "M2", None, &mut problems)?;
                 }
             }
             items.push(item);
@@ -1318,8 +968,6 @@ fn run_dry(project: &Project, format: Format, filter: &MachineFilter) -> Result<
     }
     if format == Format::Json {
         print_json(&document.into())?;
-    } else if let Some(held) = held {
-        println!("Held back: {held}");
     }
     for problem in &problems {
         eprintln!("{problem}");

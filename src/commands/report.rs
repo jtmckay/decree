@@ -1,4 +1,4 @@
-//! What `decree process` and `daemon` print as runs go, unless `--quiet` (docs/reference/cli.md,
+//! What `decree daemon` prints as runs go, unless `--quiet` (docs/reference/cli.md,
 //! Output): each run's script output as `decree tail` prints it, behind the run's header; on
 //! a terminal, a status line below it (`▶ <id> · <machine> · <state> · 3m 12s · 4/31`); and
 //! one line as each run stops (`✓ <id> done in 7m 31s`). The pipeline tells a thread when
@@ -17,7 +17,6 @@ use crate::commands::tail::{machine_and_state, Follower, POLL};
 use crate::console::{self, Console};
 use crate::interpreter::{Context, Outcome};
 use crate::machine::FAILED;
-use crate::migration;
 
 /// What the pipeline tells the thread.
 pub(crate) enum Note {
@@ -89,7 +88,7 @@ impl Reporter {
         (reporter, rx)
     }
 
-    /// Run `id`, in `run_dir`, starts or continues, with `queued` messages and migrations
+    /// Run `id`, in `run_dir`, starts or continues, with `queued` messages
     /// left after it.
     pub(crate) fn start(&self, id: &str, run_dir: &Path, queued: usize) {
         let position = self.started.get() + 1;
@@ -127,7 +126,7 @@ impl Drop for Reporter {
 /// The run being printed.
 struct Current {
     follower: Follower,
-    /// How the run is shown: `<id>`, or `<id> (<file>)` for a migration's run, known once
+    /// How the run is shown, `<id>`, known once
     /// its header is printed.
     label: String,
     started: Instant,
@@ -218,7 +217,7 @@ fn print_header(ctx: &Context, console: &mut Console, run: &mut Current, now: bo
         .ok()
         .and_then(|(machine, _)| machine);
     if machine.is_some() || now {
-        run.label = migration::label(&ctx.runs_dir(), run.follower.root());
+        run.label = run.follower.root().to_string();
         let _ = console.run_line(&format!(
             "▶ {} · {}",
             run.label,
@@ -229,8 +228,7 @@ fn print_header(ctx: &Context, console: &mut Console, run: &mut Current, now: bo
 }
 
 /// `▶ <run> · <machine> · <state> · <elapsed> · <position>/<total>`: the innermost run's
-/// machine and state, so a child run shows where the work is. A migration's run is
-/// `<id> (<file>)`.
+/// machine and state, so a child run shows where the work is.
 fn status_line(ctx: &Context, run: &Current) -> String {
     let (machine, state) = machine_and_state(ctx, run.follower.current()).unwrap_or_default();
     format!(

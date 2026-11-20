@@ -36,7 +36,7 @@ quantile_over_time(0.95, {job="decree", type="script"} | json | unwrap duration_
 # runs that ended in failed, per machine, per day
 sum by (machine) (count_over_time({job="decree", type="run_finished"} | json | state="failed" [1d]))
 
-# interrupted runs waiting for `decree process --retry`
+# interrupted runs waiting for `decree daemon --once --retry`
 {job="decree", type="interrupted"} | json
 
 # model decisions below a confidence floor
@@ -73,4 +73,4 @@ docker run -d --name jaeger --network decree-observability -p 16686:16686 jaeger
 docker run -d --name otelcol --network decree-observability -v "$PWD/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" -v "$PWD/../project:/srv/project:ro" otel/opentelemetry-collector-contrib
 ```
 
-Open Jaeger at http://localhost:16686, pick the service `decree`, and set the time range to include 2026-10-01. Each run is one trace, whose spans are written as they end: `run develop` holds the migration's scripts, its failed `local` attempt marked as an error, and the waiting `deploy` run shows its scripts so far. In a machine with a `model` decision, the router run sits under the `decision model <state>` span that started it. A script that calls an instrumented service or model with the `TRACEPARENT` decree gives it adds its own spans under its `script` span.
+Open Jaeger at http://localhost:16686, pick the service `decree`, and set the time range to include 2026-10-01. Each run is one trace, whose spans are written as they end: `run develop` holds the run's scripts, its failed `local` attempt marked as an error, and the waiting `deploy` run shows its scripts so far. In a machine with a `model` decision, the router run sits under the `decision model <state>` span that started it. A script that calls an instrumented service or model with the `TRACEPARENT` decree gives it adds its own spans under its `script` span.

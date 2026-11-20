@@ -14,7 +14,6 @@ pub(crate) mod interpreter;
 pub(crate) mod layout;
 pub(crate) mod machine;
 pub(crate) mod message;
-pub(crate) mod migration;
 pub(crate) mod official;
 pub(crate) mod plugin;
 pub(crate) mod reply;
@@ -56,19 +55,6 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         Command::Init { ai, permissions } => commands::init::run(ai, permissions),
         Command::Help => commands::help(),
         Command::Upgrade { format } => commands::upgrade::run(format),
-        Command::Process {
-            dry_run,
-            retry,
-            state,
-            format,
-            quiet,
-            machines,
-            exclude_machines,
-        } => {
-            let retry = commands::process::Retry::from_args(retry, state);
-            let select = filter::Select::new(machines, exclude_machines);
-            commands::process::run(&root()?, dry_run, retry, format, quiet, &select, false)
-        }
         Command::Check { format } => commands::check::run(&root()?, format),
         Command::Graph { format } => commands::graph::run(&root()?, format),
         Command::Schema { format } => commands::schema::run(&root()?, format),
@@ -98,7 +84,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             let retry = commands::process::Retry::from_args(retry, state);
             let select = filter::Select::new(machines, exclude_machines);
             if once {
-                commands::process::run(&root()?, dry_run, retry, format, quiet, &select, true)
+                commands::process::run(&root()?, dry_run, retry, format, quiet, &select)
             } else {
                 commands::daemon::run(&root()?, interval, retry, quiet, &select)
             }
@@ -129,11 +115,6 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         },
         Command::Stop { note, format } => commands::stop::run(&root()?, note.as_deref(), format),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
-        Command::Prune {
-            older_than,
-            dry_run,
-            format,
-        } => commands::prune::run(&root()?, older_than, dry_run, format),
         Command::Status {
             id,
             cron,

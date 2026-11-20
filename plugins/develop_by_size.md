@@ -172,7 +172,7 @@ scripts:
           {
             echo "Claude's usage limit is reached and resets $(reset_note "${wait}" "")."
             echo "That is more than AI_LIMIT_WAIT (${AI_LIMIT_WAIT}) away, so the run stopped instead of waiting."
-            echo "After the reset, delete this file and run \`decree process --retry ${DECREE_MESSAGE_ID:-<id>}\`."
+            echo "After the reset, delete this file and run \`decree daemon --once --retry ${DECREE_MESSAGE_ID:-<id>}\`."
           } > "${DECREE_ROOT_RUN_DIR:-${DECREE_RUN_DIR}}/STOP"
           return 1
         fi
@@ -324,7 +324,7 @@ scripts:
     #           continues where this one stopped. If the message is unclear, it
     #           writes the question to STOP instead of guessing; the state's event
     #           is then `stop`, and the run fails until a person answers it,
-    #           deletes STOP and runs `decree process --retry`.
+    #           deletes STOP and runs `decree daemon --once --retry`.
     set -euo pipefail
     . .decree/machines/develop_by_size/scripts/ai.sh
     OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3-coder:30b}"
@@ -390,4 +390,4 @@ Sends each change to the cheapest model that can do it. A local classifier (thro
 
 ## How to use it
 
-Write a migration with `machine: develop_by_size`, then `decree process`. To have a local model judge the size instead of the classifier, add `llm_router` and point `size_up`'s `router:` at it. decree's repository has a demo message and the routing walkthrough (tuning `min_confidence` from the decision events) in `examples/route-by-complexity/`.
+Write an order file in `.decree/machines/develop_by_size/order/`, then run `decree daemon --once`. To have a local model judge the size instead of the classifier, add `llm_router` and point `size_up`'s `router:` at it. decree's repository has a demo message and the routing walkthrough (tuning `min_confidence` from the decision events) in `examples/route-by-complexity/`.

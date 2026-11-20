@@ -684,7 +684,7 @@ fn a_bad_request_fails_at_once() {
     let t = p.ask(&["resource=tpu", "mode=x"]);
     let m = p.ask(&["resource=gpu"]);
     let n = p.ask(&["mode=x"]);
-    let _ = p.decree(&["process"]).output().unwrap();
+    let _ = p.decree(&["daemon", "--once"]).output().unwrap();
     for id in [&t, &m, &n] {
         assert_eq!(p.state(id), ("finished".into(), "failed".into()), "{id}");
     }

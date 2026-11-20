@@ -25,24 +25,37 @@ pub fn write_script(path: &Path, text: &str) {
     assert!(sh.wait().unwrap().success(), "{}", path.display());
 }
 
-/// The id of the run of migration `file` in `decree_dir` (`.decree/`): the one whose
-/// `message.md` has `migration: <file>`. Panics unless there is exactly one.
+/// The id of the run of `file` in `decree_dir` (`.decree/`): an inbox message's, whose claim
+/// event names the file it arrived as, or an order file's, whose `message.md` has `order:
+/// <machine>/<file>`. Panics unless there is exactly one.
 #[allow(dead_code)]
-pub fn migration_run(decree_dir: &Path, file: &str) -> String {
-    let line = format!("\nmigration: {file}\n");
-    let mut runs: Vec<String> = std::fs::read_dir(decree_dir.join("runs"))
+pub fn run_of(decree_dir: &Path, file: &str) -> String {
+    let runs = decree_dir.join("runs");
+    let mut ids: Vec<String> = std::fs::read_dir(&runs)
         .unwrap()
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
         .filter(|id| {
-            std::fs::read_to_string(decree_dir.join("runs").join(id).join("message.md"))
-                .is_ok_and(|text| text.contains(&line))
+            let dir = runs.join(id);
+            let claim = std::fs::read_to_string(dir.join("events.jsonl"))
+                .ok()
+                .and_then(|t| t.lines().next().map(String::from))
+                .and_then(|l| serde_json::from_str::<serde_json::Value>(&l).ok());
+            let arrived = claim.is_some_and(|c| c["file"] == file);
+            let order = std::fs::read_to_string(dir.join("message.md")).is_ok_and(|m| {
+                m.lines()
+                    .skip(1)
+                    .take_while(|l| *l != "---")
+                    .filter_map(|l| l.strip_prefix("order: "))
+                    .any(|o| o.ends_with(&format!("/{file}")))
+            });
+            arrived || order
         })
         .collect();
-    assert_eq!(runs.len(), 1, "runs of {file}: {runs:?}");
-    runs.remove(0)
+    ids.sort();
+    assert_eq!(ids.len(), 1, "runs of {file}: {ids:?}");
+    ids.remove(0)
 }
 
-/// Whether `id` is a time id, as decree names every run: `YYYYMMDDTHHMMSS.ffffffZ-xxxxxx`.
 #[allow(dead_code)]
 pub fn is_time_id(id: &str) -> bool {
     let b = id.as_bytes();
@@ -200,4 +213,21 @@ pub fn std_decree_at(root: impl AsRef<Path>) -> std::process::Command {
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_decree"));
     cmd.current_dir(root.as_ref());
     cmd
+}
+
+#[allow(dead_code)]
+/// Drop the official plugins `decree init` adds (`order`, `prune`) from the project at `root`
+/// the documented way: delete their files, `decree plugin install`, `decree graph`. For a test
+/// whose runs and machines are its own.
+pub fn drop_default_plugins(root: &Path) {
+    for name in ["order", "prune"] {
+        let file = root.join(format!(".decree/plugins/{name}.md"));
+        if file.exists() {
+            std::fs::remove_file(&file).unwrap();
+        }
+    }
+    for args in [&["plugin", "install"][..], &["graph"][..]] {
+        let out = std_decree_at(root).args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+    }
 }

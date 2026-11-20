@@ -20,7 +20,7 @@
       "items": {
         "$ref": "#/$defs/error"
       },
-      "description": "Every error, in the order the text prints them: machines by id, then pending migrations, inbox/ and cron/, each by filename."
+      "description": "Every error, in the order the text prints them: machines by id, then inbox/ and the cron files, each by filename."
     },
     "warnings": {
       "type": "array",
@@ -89,7 +89,6 @@
             "V19",
             "V20",
             "V21",
-            "M1",
             "M2",
             "M3",
             "E1",
@@ -98,11 +97,11 @@
             "P3",
             null
           ],
-          "description": "The rule that failed, V1–V21, M1–M3, E1 or P1–P3 (docs/reference/machines.md, Validation), or null for an error no rule names, such as YAML that does not parse."
+          "description": "The rule that failed, V1–V21, M2, M3, E1 or P1–P3 (docs/reference/machines.md, Validation), or null for an error no rule names, such as YAML that does not parse."
         },
         "file": {
           "type": "string",
-          "description": "The file, relative to .decree/, as in the text: machines/<id>.yml, migrations/<name>.md, inbox/<name>.md or cron/<name>.md."
+          "description": "The file, relative to .decree/, as in the text: machines/<id>/machine.yml, inbox/<name>.md or machines/<id>/cron/<name>.md."
         },
         "line": {
           "type": "integer",

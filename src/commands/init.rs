@@ -128,8 +128,9 @@ fn create_permissions_file(ai_name: &str) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// Run `decree init`. Never prompts; refuses to touch an existing `.decree/`. Installs no
-/// plugin: it prints the official ones and the line that adds one.
+/// Run `decree init`. Never prompts; refuses to touch an existing `.decree/`. Adds and installs
+/// the default official plugins (`official::DEFAULTS`), then prints the others and the line
+/// that adds one.
 pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> {
     let decree_dir = Path::new(layout::DECREE_DIR);
     if decree_dir.exists() {
@@ -150,7 +151,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 
     write_layout(decree_dir, ai.map(|_| backend))?;
     write_skill(Path::new("."), backend)?;
-    // Draw the machines (none yet), so `.decree/graph/` is current from the start.
+    add_defaults(decree_dir)?;
+    // Draw the machines, so each graph is current from the start.
     graph::write(Path::new("."))?;
 
     println!("Decree initialized successfully.");
@@ -160,22 +162,32 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     Ok(())
 }
 
+/// Write each default official plugin into `plugins/` and install it.
+fn add_defaults(decree_dir: &Path) -> Result<(), DecreeError> {
+    for name in crate::official::DEFAULTS {
+        let o = crate::official::get(name).ok_or_else(|| {
+            DecreeError::Other(format!("official plugin `{name}` is not built in"))
+        })?;
+        let p = o.plugin().map_err(DecreeError::Other)?;
+        std::fs::write(decree_dir.join(crate::plugin::plugin_file(name)), o.text)?;
+        crate::plugin::install(decree_dir, &p, o.text.as_bytes())?;
+        println!(
+            "Added the official plugin `{name}` (delete .decree/plugins/{name}.md to drop it)."
+        );
+    }
+    Ok(())
+}
+
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
-/// `.env.example`, `processed.md`, the empty queues and the empty `plugins/`. No plugin is
+/// `.env.example`, the empty queues and the empty `plugins/`. No plugin is
 /// installed, so `machines/` is not written. `decree graph` writes each machine's `graph.md`
 /// and `system.md`; `schema/` only `decree schema`, on request.
 fn write_layout(decree_dir: &Path, ai: Option<Backend>) -> Result<(), DecreeError> {
-    for dir in [
-        layout::MIGRATIONS_DIR,
-        layout::INBOX_DIR,
-        layout::RUNS_DIR,
-        PLUGINS_DIR,
-    ] {
+    for dir in [layout::INBOX_DIR, layout::RUNS_DIR, PLUGINS_DIR] {
         std::fs::create_dir_all(decree_dir.join(dir))?;
     }
     std::fs::write(decree_dir.join(layout::GITIGNORE_FILE), DECREE_GITIGNORE)?;
     std::fs::write(decree_dir.join(layout::ENV_EXAMPLE_FILE), env_example(ai))?;
-    std::fs::write(decree_dir.join(layout::PROCESSED_FILE), "")?;
     Ok(())
 }
 

@@ -171,8 +171,8 @@ fn mermaid(graph: &str) -> String {
         .unwrap_or_else(|| panic!("no mermaid block:\n{graph}"))
 }
 
-/// AC: after a fresh `init`, `decree plugin add develop_rust develop_react` adds both with
-/// `infra`, which they need; `decree check` passes, and `decree graph` draws both machines with
+/// AC: after a fresh `init` (which adds `order` and `prune`), `decree plugin add develop_rust
+/// develop_react` adds both with `infra`, which they need; `decree check` passes, and `decree graph` draws both machines with
 /// `develop`'s states and transitions.
 #[test]
 fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
@@ -183,7 +183,16 @@ fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     files.sort();
-    assert_eq!(files, ["develop_react.md", "develop_rust.md", "infra.md"]);
+    assert_eq!(
+        files,
+        [
+            "develop_react.md",
+            "develop_rust.md",
+            "infra.md",
+            "order.md",
+            "prune.md"
+        ]
+    );
     let (code, stdout, stderr) = decree(p.path(), &["check"]);
     assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
     ok(p.path(), &["graph"]);

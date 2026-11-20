@@ -1,5 +1,5 @@
 //! Failure scenarios through the binary (docs/reference/runs.md, scripts.md, messages.md):
-//! signals and `decree process --retry`, two `decree process` at once, router replies decree
+//! signals and `decree daemon --once --retry`, two `decree process` at once, router replies decree
 //! rejects or doubts, `max_depth`, `onexit` failures and the log cap. Scenarios other files
 //! already cover: SIGKILL and the stale lock (`interrupt_test.rs`), stale or wrong replies
 //! and `timeout` (`reply_test.rs`), a failed migration (`process_test.rs`, rule 4). Each
@@ -157,7 +157,7 @@ impl Project {
     fn new(machines: &[(&str, &str)], scripts: &[(&str, &str)]) -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -223,7 +223,7 @@ impl Project {
     fn spawn_process(&self) -> Child {
         common::std_decree_at(self.root())
             .env("NO_COLOR", "1")
-            .arg("process")
+            .args(["daemon", "--once"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -241,27 +241,6 @@ impl Project {
             assert!(Instant::now() < deadline, "work never started");
             thread::sleep(Duration::from_millis(5));
         }
-        let pid = fs::read_to_string(pid).unwrap().trim().parse().unwrap();
-        (decree, pid)
-    }
-
-    /// `working`, for the one migration queued: its run's id is made as it starts.
-    fn working_migration(&self) -> (Child, i32) {
-        fs::write(self.root().join("wait.flag"), "").unwrap();
-        let decree = self.spawn_process();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        let pid = loop {
-            let pid = self
-                .runs()
-                .into_iter()
-                .map(|id| self.run_dir(&id).join("work.pid"))
-                .find(|pid| pid.exists());
-            if let Some(pid) = pid {
-                break pid;
-            }
-            assert!(Instant::now() < deadline, "work never started");
-            thread::sleep(Duration::from_millis(5));
-        };
         let pid = fs::read_to_string(pid).unwrap().trim().parse().unwrap();
         (decree, pid)
     }
@@ -333,9 +312,14 @@ fn sigterm_during_a_script_interrupts_the_run_and_decree_retry_reruns_the_script
     );
 
     fs::remove_file(p.root().join("wait.flag")).unwrap();
-    p.cmd(&["process", "--retry", "20260101T000000.000000Z-000000"])
-        .assert()
-        .code(0);
+    p.cmd(&[
+        "daemon",
+        "--once",
+        "--retry",
+        "20260101T000000.000000Z-000000",
+    ])
+    .assert()
+    .code(0);
     // Root and state `onentry` run again, then the invoke, then the exits.
     assert_eq!(
         p.order(),
@@ -360,154 +344,9 @@ fn sigterm_during_a_script_interrupts_the_run_and_decree_retry_reruns_the_script
     );
 }
 
-/// A migration whose `machine` invoke runs `slow` as a child run.
-const PARENT: &str = "\
-name: parent
-description: Run slow as a child run.
-initial: call
-states:
-  call:
-    invoke: { machine: slow }
-    transitions: { done: done }
-  done: { final: true }
-  failed: { final: true }
-";
-
-#[test]
-fn a_migration_waiting_for_an_interrupted_child_blocks_and_retry_continues_the_child() {
-    let p = Project::new(
-        &[("slow", SLOW), ("parent", PARENT)],
-        &[("record", RECORD), ("work", WORK)],
-    );
-    fs::write(
-        p.root().join(".decree/migrations/01-call.md"),
-        "---\nmachine: parent\n---\n",
-    )
-    .unwrap();
-    fs::write(
-        p.root().join(".decree/migrations/02-next.md"),
-        "---\nmachine: slow\n---\n",
-    )
-    .unwrap();
-    fs::write(p.root().join("wait.flag"), "").unwrap();
-    let mut decree = p.spawn_process();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let child = loop {
-        let started = p
-            .runs()
-            .into_iter()
-            .find(|id| p.run_dir(id).join("work.pid").exists());
-        if let Some(id) = started {
-            break id;
-        }
-        assert!(Instant::now() < deadline, "work never started");
-        thread::sleep(Duration::from_millis(5));
-    };
-    // SAFETY: sends SIGTERM to the decree process.
-    unsafe { libc::kill(decree.id() as i32, libc::SIGTERM) };
-    assert_eq!(
-        wait_with_timeout(&mut decree, Duration::from_secs(15)).code(),
-        Some(130)
-    );
-    fs::remove_file(p.root().join("wait.flag")).unwrap();
-
-    // `process` says why nothing runs, and how to continue, instead of exiting 0.
-    let blocked = format!(
-        "migration 01-call.md waits for child run {child}, interrupted in `work`; \
-         later migrations are blocked. Fix the cause, then run `decree process --retry`."
-    );
-    p.cmd(&["process"])
-        .assert()
-        .code(1)
-        .stderr(predicates::str::contains(blocked.as_str()));
-    let status = p
-        .cmd(&["status"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let status = String::from_utf8(status).unwrap();
-    // The child and the migration that waits for it each have an attention file; the
-    // migration's names the child.
-    assert!(
-        status.starts_with("Attention: .decree/attention/: 2 file(s)\n"),
-        "{status}"
-    );
-    let call = common::migration_run(&p.root().join(".decree"), "01-call.md");
-    let file = fs::read_to_string(
-        p.root()
-            .join(".decree")
-            .join(format!("attention/{call}.md")),
-    )
-    .unwrap();
-    assert!(file.contains("\nstatus: waiting\n"), "{file}");
-    assert!(file.contains("\nmessage: 01-call.md\n"), "{file}");
-    assert!(file.contains(&format!("child run `{child}`")), "{file}");
-    assert!(
-        file.contains(&format!("    decree process --retry {child}\n")),
-        "{file}"
-    );
-    assert!(
-        file.contains("later migrations are blocked until it finishes"),
-        "{file}"
-    );
-    let file = fs::read_to_string(
-        p.root()
-            .join(".decree")
-            .join(format!("attention/{child}.md")),
-    )
-    .unwrap();
-    assert!(file.contains("\nstatus: interrupted\n"), "{file}");
-    assert!(
-        status.contains(&format!(
-            "\nBlocked: migration 01-call.md waits for child run {child}, interrupted in `work`; \
-             later migrations wait\n  continue with `decree process --retry`\n"
-        )),
-        "{status}"
-    );
-
-    // `--retry` alone continues the child; its parent and the next migration follow.
-    p.cmd(&["process", "--retry"]).assert().code(0);
-    assert_eq!(
-        fs::read_to_string(p.root().join(".decree/processed.md")).unwrap(),
-        "01-call.md\n02-next.md\n"
-    );
-    // Both finished: neither needs anyone now.
-    assert_eq!(
-        fs::read_dir(p.root().join(".decree").join("attention"))
-            .unwrap()
-            .count(),
-        0
-    );
-}
-
 // ---------------------------------------------------------------
 // The run lock (docs/reference/messages.md, Run lock)
 // ---------------------------------------------------------------
-
-#[test]
-fn a_second_process_says_the_migration_is_active_in_the_first() {
-    let p = Project::new(&[("slow", SLOW)], &[("record", RECORD), ("work", WORK)]);
-    fs::write(
-        p.root().join(".decree/migrations/01-slow.md"),
-        "---\nmachine: slow\n---\n",
-    )
-    .unwrap();
-    let (mut first, _) = p.working_migration();
-    let pid = first.id();
-    p.cmd(&["process"])
-        .assert()
-        .code(0)
-        .stdout(predicates::str::ends_with(format!(
-            "Held back: migration 01-slow.md is active in another process (pid {pid})\n"
-        )));
-    fs::remove_file(p.root().join("wait.flag")).unwrap();
-    assert_eq!(
-        wait_with_timeout(&mut first, Duration::from_secs(15)).code(),
-        Some(0)
-    );
-}
 
 #[test]
 fn two_processes_at_once_the_second_skips_the_active_run() {
@@ -519,7 +358,7 @@ fn two_processes_at_once_the_second_skips_the_active_run() {
     let (mut first, _) = p.working("20260101T000000.000000Z-000000");
     let before = p.events("20260101T000000.000000Z-000000");
 
-    p.cmd(&["process"]).assert().code(0);
+    p.cmd(&["daemon", "--once"]).assert().code(0);
     assert_eq!(
         p.events("20260101T000000.000000Z-000000"),
         before,
@@ -560,7 +399,7 @@ fn pick_with(reply: Value) -> (Project, Value, Value) {
         "20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: pick\n---\nShip it?\n",
     );
-    let process = p.cmd(&["process"]).assert();
+    let process = p.cmd(&["daemon", "--once"]).assert();
     let decision = p
         .of_type("20260101T000000.000000Z-000000", "decision")
         .pop()
@@ -629,7 +468,7 @@ fn machine_invoke_past_max_depth_gives_error_without_a_child() {
         "20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: nest\ndepth: 10\n---\n",
     );
-    p.cmd(&["process"]).assert().code(0);
+    p.cmd(&["daemon", "--once"]).assert().code(0);
     let last = p
         .of_type("20260101T000000.000000Z-000000", "transition")
         .pop()
@@ -651,7 +490,7 @@ fn machine_invoke_past_max_depth_gives_error_without_a_child() {
         "20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: nest\ndepth: 9\n---\n",
     );
-    p.cmd(&["process"]).assert().code(0);
+    p.cmd(&["daemon", "--once"]).assert().code(0);
     assert_eq!(
         p.of_type("20260101T000000.000000Z-000000", "transition")
             .pop()
@@ -675,7 +514,7 @@ fn model_past_max_depth_gives_error_without_a_router_run() {
         "20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: pick\ndepth: 10\n---\n",
     );
-    p.cmd(&["process"]).assert().code(1);
+    p.cmd(&["daemon", "--once"]).assert().code(1);
     let decision = p
         .of_type("20260101T000000.000000Z-000000", "decision")
         .pop()
@@ -705,7 +544,7 @@ fn onexit_failure_is_recorded_in_exit_failures_and_the_target_is_unchanged() {
         "20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: exits\n---\n",
     );
-    p.cmd(&["process"]).assert().code(0);
+    p.cmd(&["daemon", "--once"]).assert().code(0);
     let events = p.events("20260101T000000.000000Z-000000");
     let left = events
         .iter()
@@ -748,7 +587,7 @@ fn loud(lines: usize) -> (Vec<u8>, Vec<u8>) {
         "20260101T000000.000000Z-000000.md",
         &format!("---\nid: 20260101T000000.000000Z-000000\nmachine: loud\nparams: {{ lines: {lines} }}\n---\n"),
     );
-    p.cmd(&["process"]).assert().code(0);
+    p.cmd(&["daemon", "--once"]).assert().code(0);
     let script = &p.of_type("20260101T000000.000000Z-000000", "script")[0];
     assert_eq!(script["exit_code"], 0);
     let log = fs::read(

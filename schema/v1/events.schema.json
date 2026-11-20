@@ -94,7 +94,7 @@
         },
         "source": {
           "enum": ["claim", "exit_code", "script", "attempt", "check", "model", "reply", "machine", "timeout", "internal", "invalid_message", "retry"],
-          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `reply`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `reply` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree process --retry`."
+          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `reply`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `reply` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree daemon --once --retry`."
         },
         "exit_code": {
           "type": ["integer", "null"],
@@ -119,7 +119,7 @@
         },
         "file": {
           "type": "string",
-          "description": "On a claim from the inbox or migrations: the original filename. Absent for a child run (trigger `invoke`), which has no file."
+          "description": "On a claim from the inbox: the original filename. Absent for a child run (trigger `invoke`), which has no file."
         },
         "error": {
           "type": "string",
@@ -467,7 +467,7 @@
     },
     "run_finished": {
       "title": "run_finished",
-      "description": "The run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree process --retry` continues it.",
+      "description": "The run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree daemon --once --retry` continues it.",
       "required": ["type", "state", "duration_ms"],
       "properties": {
         "type": { "const": "run_finished", "description": "Always `run_finished`." },

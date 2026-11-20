@@ -62,14 +62,14 @@ fn bare_decree_with_no_color_prints_the_synopsis() {
     assert_eq!(stdout, SYNOPSIS);
 }
 
-/// A pending migration stays pending: no run, no `processed.md` line, no file written.
+/// A queued message stays queued: no run, no file written.
 #[test]
 fn bare_decree_in_a_project_starts_no_run() {
     let dir = TempDir::new().unwrap();
     assert_eq!(run(dir.path(), &["init"]).0, 0);
     let decree = dir.path().join(".decree");
     fs::write(
-        decree.join("migrations/01-a.md"),
+        decree.join("inbox/a.md"),
         "---\nmachine: develop\n---\n# A\n",
     )
     .unwrap();
@@ -83,7 +83,7 @@ fn bare_decree_in_a_project_starts_no_run() {
     assert!(fs::read_dir(decree.join("runs")).map_or(true, |mut d| d.next().is_none()));
 
     let (_, status, _) = run(dir.path(), &["status"]);
-    assert!(status.contains("migrations/: 1 pending"), "{status}");
+    assert!(status.contains("inbox/: 1\n    a.md"), "{status}");
 }
 
 /// The synopsis's numbered steps, by number: the indented lines under each, trimmed.
@@ -194,12 +194,18 @@ fn synopsis_steps_run_as_written() {
         .iter()
         .map(|l| l.trim_start_matches('`'))
         .filter(|l| l.starts_with("decree "))
-        .map(|l| l.split(['`', ' ']).take(2).collect::<Vec<_>>().join(" "))
+        .map(|l| {
+            l.split("  ")
+                .next()
+                .unwrap_or(l)
+                .trim_end_matches('`')
+                .to_string()
+        })
         .collect();
     for want in [
         "decree check",
         "decree graph",
-        "decree process",
+        "decree daemon --once",
         "decree status",
     ] {
         assert!(commands.iter().any(|c| c == want), "step 5 has no `{want}`");
@@ -208,14 +214,14 @@ fn synopsis_steps_run_as_written() {
         decree(command);
     }
 
-    let stem = Path::new(&message).file_stem().unwrap().to_str().unwrap();
-    let (code, stdout, stderr) = run(dir.path(), &["status", stem, "--format", "json"]);
+    let file = Path::new(&message).file_name().unwrap().to_str().unwrap();
+    let id = common::run_of(&dir.path().join(".decree"), file);
+    let (code, stdout, stderr) = run(dir.path(), &["status", &id, "--format", "json"]);
     assert_eq!(code, 0, "{stderr}");
     let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(doc["state"], "done", "{stdout}");
     assert_eq!(doc["status"], "finished", "{stdout}");
     assert_eq!(doc["machine"], "hello", "{stdout}");
-    let id = common::migration_run(&dir.path().join(".decree"), "01-hello.md");
     assert_eq!(doc["id"], id.as_str());
 }
 

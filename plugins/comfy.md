@@ -3443,7 +3443,7 @@ params:
 A unicorn running along a rainbow into a pink sunset, fantasy art.
 ```
 
-Put a message like this in `.decree/migrations/` and run `decree process`, or queue one and keep a daemon running:
+Put a message like this in `.decree/machines/comfy/order/` and run `decree daemon --once`, or queue one and keep a daemon running:
 
 ```sh
 echo "A lighthouse at dawn, oil painting" | decree emit --machine comfy --param method=image_flux2_text_landscape --param output=output/lighthouse

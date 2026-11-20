@@ -53,7 +53,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -97,14 +97,9 @@ impl Project {
         events(&self.decree().join("runs").join(id))
     }
 
-    /// The run of migration `file`.
-    fn run_of(&self, file: &str) -> String {
-        common::migration_run(&self.decree(), file)
-    }
-
     fn process(&self) -> Command {
         let mut cmd = common::decree_at(self.tmp.path());
-        cmd.env("NO_COLOR", "1").arg("process");
+        cmd.env("NO_COLOR", "1").args(["daemon", "--once"]);
         cmd
     }
 
@@ -274,7 +269,7 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
     let err = stderr(&out);
     assert!(err.contains("run 20260101T000000.000001Z-000001 (20260101T000000.000001Z-000001.md) ended in `failed`"), "{err}");
     assert!(
-        err.contains("`decree process --retry 20260101T000000.000001Z-000001`"),
+        err.contains("`decree daemon --once --retry 20260101T000000.000001Z-000001`"),
         "{err}"
     );
     // After the queue is empty: every run that failed in the pass, with its retry command.
@@ -283,7 +278,7 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
         .unwrap_or_else(|| panic!("{err}"))
         .1;
     assert!(
-        summary.contains("run 20260101T000000.000001Z-000001: decree process --retry 20260101T000000.000001Z-000001"),
+        summary.contains("run 20260101T000000.000001Z-000001: decree daemon --once --retry 20260101T000000.000001Z-000001"),
         "{err}"
     );
     assert!(
@@ -358,26 +353,6 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
             t("work", "done", "exit_code"),
         ]
     );
-}
-
-#[test]
-fn a_failed_inbox_run_does_not_block_migrations() {
-    let p = Project::new();
-    p.write(
-        "inbox/20260101T000000.000000Z-000000.md",
-        "---\nid: 20260101T000000.000000Z-000000\nmachine: flow\nparams: { fail: true }\n---\n",
-    );
-    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
-    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
-    let out = p.process().assert().code(1).get_output().clone();
-    let err = stderr(&out);
-    assert!(
-        err.contains("run 20260101T000000.000000Z-000000: decree process --retry 20260101T000000.000000Z-000000"),
-        "{err}"
-    );
-    let (a, b) = (p.run_of("01-a.md"), p.run_of("02-b.md"));
-    assert_eq!(p.runs(), ["20260101T000000.000000Z-000000", &a, &b]);
-    assert_eq!(p.read("processed.md"), "01-a.md\n02-b.md\n");
 }
 
 // ---------------------------------------------------------------
@@ -581,161 +556,6 @@ fn status_lists_an_arrived_file_by_its_new_name() {
 // Migrations (docs/reference/messages.md, Migrations, rules 1–6)
 // ---------------------------------------------------------------
 
-#[test]
-fn rule1_migration_runs_from_a_copy() {
-    let p = Project::new();
-    let text = "---\nmachine: flow\nid: ignored\ntrigger: inbox\n---\n# Task\n";
-    p.write("migrations/01-a.md", text);
-    p.process().assert().success();
-    assert_eq!(p.read("migrations/01-a.md"), text);
-    // The run has a time id, like every other run, and records the file it came from.
-    let id = p.run_of("01-a.md");
-    assert!(is_time_id(&id), "{id}");
-    assert_eq!(p.runs(), [id.as_str()]);
-    assert_eq!(
-        p.read(&format!("runs/{id}/message.md")),
-        format!("---\nmachine: flow\nid: {id}\ntrigger: migration\nmigration: 01-a.md\nstate: done\n---\n# Task\n")
-    );
-    let events = p.events(&id);
-    assert_eq!(events[0]["trigger"], "migration");
-    assert_eq!(events[0]["file"], "01-a.md");
-    assert_eq!(p.read("processed.md"), "01-a.md\n");
-}
-
-#[test]
-fn rule2_migration_in_processed_md_is_skipped() {
-    let p = Project::new();
-    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
-    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
-    p.write("processed.md", "01-a.md\n01-a.md\n");
-    p.process().assert().success();
-    let b = p.run_of("02-b.md");
-    assert_eq!(p.runs(), [b.as_str()]);
-    assert_eq!(p.order(), [format!("start {b}"), format!("end {b}")]);
-    assert_eq!(p.read("processed.md"), "01-a.md\n01-a.md\n02-b.md\n");
-}
-
-#[test]
-fn rule3_follow_up_finishes_before_the_next_migration() {
-    let p = Project::new();
-    p.write(
-        "migrations/01-a.md",
-        "---\nmachine: flow\nparams: { followup: true }\n---\n",
-    );
-    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
-    p.process().assert().success();
-    let order = p.order();
-    let (a, b) = (p.run_of("01-a.md"), p.run_of("02-b.md"));
-    assert_eq!(order.len(), 6, "{order:?}");
-    assert_eq!(order[..2], [format!("start {a}"), format!("end {a}")]);
-    let followup = order[2].strip_prefix("start ").unwrap();
-    assert_ne!(followup, b);
-    assert_eq!(order[3], format!("end {followup}"));
-    assert_eq!(order[4..], [format!("start {b}"), format!("end {b}")]);
-    // Run ids sort in the order the runs were made, migrations' included.
-    assert_eq!(p.runs(), [a.as_str(), followup, &b]);
-    assert_eq!(p.read("processed.md"), "01-a.md\n02-b.md\n");
-}
-
-#[test]
-fn rule4_failed_migration_blocks_the_next_and_exits_1() {
-    let p = Project::new();
-    p.write(
-        "migrations/01-a.md",
-        "---\nmachine: flow\nparams: { fail: true }\n---\n",
-    );
-    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
-    let out = p.process().assert().code(1).get_output().clone();
-    let err = stderr(&out);
-    assert!(err.contains("migration 01-a.md ended in `failed`"), "{err}");
-    assert!(
-        err.contains("Fix the cause, then run `decree process --retry`."),
-        "{err}"
-    );
-    let a = p.run_of("01-a.md");
-    assert_eq!(p.runs(), [a.as_str()]);
-    assert_eq!(p.order(), [format!("start {a}")]);
-    assert_eq!(p.read("processed.md"), "");
-
-    // The failed run still blocks the next pass; nothing re-runs.
-    let out = p.process().assert().code(1).get_output().clone();
-    let err = stderr(&out);
-    assert!(
-        err.contains("migration 01-a.md is finished in `failed`"),
-        "{err}"
-    );
-    assert!(err.contains("`decree process --retry`"), "{err}");
-    assert_eq!(p.runs(), [a.as_str()]);
-    assert_eq!(p.order(), [format!("start {a}")]);
-}
-
-#[test]
-fn rule4_process_retry_continues_the_blocking_migration_then_the_rest() {
-    let p = Project::new();
-    p.write(
-        "migrations/01-a.md",
-        "---\nmachine: flow\nparams: { fail: true }\n---\n",
-    );
-    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
-    p.process().assert().code(1);
-    let a = p.run_of("01-a.md");
-    let before = p.events(&a);
-
-    // `--retry` alone continues the blocking migration in its own folder, keeping its
-    // events, then runs the later migration in the same invocation.
-    p.fix();
-    let out = p
-        .process()
-        .arg("--retry")
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains(&format!("run {a} (01-a.md) continues in `work`")),
-        "{stdout}"
-    );
-    let b = p.run_of("02-b.md");
-    assert_eq!(p.runs(), [a.as_str(), &b]);
-    let after = p.events(&a);
-    assert_eq!(after[..before.len()], before[..]);
-    assert_eq!(
-        transitions(&after),
-        [
-            t("-", "work", "claim"),
-            t("work", "failed", "exit_code"),
-            t("failed", "work", "retry"),
-            t("work", "done", "exit_code"),
-        ]
-    );
-    assert_eq!(
-        p.order(),
-        [
-            format!("start {a}"),
-            format!("start {a}"),
-            format!("end {a}"),
-            format!("start {b}"),
-            format!("end {b}"),
-        ]
-    );
-    assert_eq!(p.read("processed.md"), "01-a.md\n02-b.md\n");
-
-    // Nothing blocks now.
-    let out = p
-        .process()
-        .arg("--retry")
-        .assert()
-        .code(1)
-        .get_output()
-        .clone();
-    let err = stderr(&out);
-    assert!(
-        err.contains("nothing to retry: no migration is failed or interrupted"),
-        "{err}"
-    );
-}
-
 /// `decree <args>` in the project, with its output.
 fn decree(p: &Project, args: &[&str]) -> std::process::Output {
     common::decree_at(p.tmp.path())
@@ -745,55 +565,11 @@ fn decree(p: &Project, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-/// AC: `01-a.md` failed; `--retry 01-a`, and separately `--retry 01-a.md`, continue its
-/// run, and `decree status 01-a` shows it.
 #[test]
-fn a_migrations_file_name_or_stem_names_its_run() {
-    for name in ["01-a", "01-a.md"] {
-        let p = Project::new();
-        p.write(
-            "migrations/01-a.md",
-            "---\nmachine: flow\nparams: { fail: true }\n---\n",
-        );
-        p.process().assert().code(1);
-        let a = p.run_of("01-a.md");
-
-        let status = decree(&p, &["status", name]);
-        assert!(status.status.success(), "{}", stderr(&status));
-        let stdout = String::from_utf8_lossy(&status.stdout);
-        assert!(stdout.contains(&format!("Run {a}\n")), "{stdout}");
-        assert!(stdout.contains("  migration: 01-a.md\n"), "{stdout}");
-        assert!(stdout.contains("finished in `failed`"), "{stdout}");
-        let json = decree(&p, &["status", name, "--format", "json"]);
-        let json: Value = serde_json::from_slice(&json.stdout).unwrap();
-        assert_eq!(json["id"], a.as_str());
-        assert_eq!(json["migration"], "01-a.md");
-
-        p.fix();
-        let out = p
-            .process()
-            .args(["--retry", name])
-            .assert()
-            .success()
-            .get_output()
-            .clone();
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(
-            stdout.contains(&format!("run {a} (01-a.md) continues in `work`")),
-            "{stdout}"
-        );
-        assert_eq!(p.runs(), [a.as_str()], "the same run continued");
-        assert_eq!(last_state(&p.events(&a)), "done");
-        assert_eq!(p.read("processed.md"), "01-a.md\n");
-    }
-}
-
-#[test]
-fn a_name_that_is_neither_a_run_nor_a_migrations_run_is_not_found() {
+fn a_name_that_is_not_a_run_is_not_found() {
     let p = Project::new();
-    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
     for args in [
-        &["process", "--retry", "01-a"][..],
+        &["daemon", "--once", "--retry", "01-a"][..],
         &["status", "01-a.md"],
         &["status", "nope"],
         &["tail", "01-a"],
@@ -803,139 +579,6 @@ fn a_name_that_is_neither_a_run_nor_a_migrations_run_is_not_found() {
         let err = stderr(&out);
         assert!(err.contains(args[args.len() - 1]), "{args:?}: {err}");
     }
-}
-
-/// AC: an emitted message, then a migration, then another emitted message: `decree status
-/// --all` lists their runs in that order.
-#[test]
-fn status_lists_emitted_and_migration_runs_in_the_order_they_ran() {
-    let p = Project::new();
-    let emit = |body: &str| {
-        let out = common::decree_at(p.tmp.path())
-            .args(["emit", "--machine", "flow"])
-            .write_stdin(body.to_string())
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    };
-    let first = emit("first\n");
-    p.process().assert().success();
-    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
-    p.process().assert().success();
-    let a = p.run_of("01-a.md");
-    let last = emit("last\n");
-    p.process().assert().success();
-    assert_eq!(p.runs(), [first.as_str(), &a, &last]);
-
-    let out = decree(&p, &["status", "--all"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let at = |s: &str| stdout.find(s).unwrap_or_else(|| panic!("{s}: {stdout}"));
-    assert!(at(&first) < at(&a) && at(&a) < at(&last), "{stdout}");
-    assert!(stdout.contains(&format!("{a} (01-a.md)  flow")), "{stdout}");
-}
-
-/// Make migration `file`'s run look like one from before migration runs had time ids:
-/// named by the file's stem, its `message.md` without `migration:`.
-fn as_stem_named_run(p: &Project, file: &str) -> String {
-    let id = p.run_of(file);
-    let stem = file.strip_suffix(".md").unwrap();
-    let runs = p.decree().join("runs");
-    fs::rename(runs.join(&id), runs.join(stem)).unwrap();
-    for name in ["message.md", "events.jsonl"] {
-        let path = runs.join(stem).join(name);
-        let text = fs::read_to_string(&path)
-            .unwrap()
-            .replace(&format!("migration: {file}\n"), "")
-            .replace(&id, stem);
-        fs::write(&path, text).unwrap();
-    }
-    stem.to_string()
-}
-
-/// AC: a migration run folder named by its stem, from before this change: `process` and
-/// `status` still recognise the migration as run, and it is not started again.
-#[test]
-fn a_stem_named_migration_run_is_still_the_migrations_run() {
-    let p = Project::new();
-    p.write(
-        "migrations/01-a.md",
-        "---\nmachine: flow\nparams: { fail: true }\n---\n",
-    );
-    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
-    p.process().assert().code(1);
-    let stem = as_stem_named_run(&p, "01-a.md");
-    assert_eq!(p.runs(), ["01-a"]);
-
-    // It still blocks: nothing new starts.
-    let out = p.process().assert().code(1).get_output().clone();
-    let err = stderr(&out);
-    assert!(
-        err.contains("migration 01-a.md is finished in `failed`"),
-        "{err}"
-    );
-    assert_eq!(p.runs(), ["01-a"]);
-    let out = decree(&p, &["status"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("Blocked: migration 01-a.md is finished in `failed`"),
-        "{stdout}"
-    );
-    for name in ["01-a", "01-a.md"] {
-        let out = decree(&p, &["status", name]);
-        assert!(
-            String::from_utf8_lossy(&out.stdout).contains("Run 01-a\n"),
-            "{name}"
-        );
-    }
-
-    // `--retry 01-a.md` continues it in its own folder; the next migration gets a time id.
-    p.fix();
-    p.process().args(["--retry", "01-a.md"]).assert().success();
-    assert_eq!(last_state(&p.events(&stem)), "done");
-    let b = p.run_of("02-b.md");
-    assert!(is_time_id(&b), "{b}");
-    let mut runs = vec!["01-a".to_string(), b];
-    runs.sort();
-    assert_eq!(p.runs(), runs);
-    assert_eq!(p.read("processed.md"), "01-a.md\n02-b.md\n");
-
-    // A finished one, in the ledger, is not started again either.
-    p.process().assert().success();
-    assert_eq!(p.runs(), runs);
-}
-
-/// `migration:` is decree's alone: a copy of a migration's run placed in `inbox/` loses
-/// it, and its run is not a run of that migration.
-#[test]
-fn a_copy_of_a_migrations_run_is_not_a_run_of_the_migration() {
-    let p = Project::new();
-    p.write(
-        "migrations/01-a.md",
-        "---\nmachine: flow\nparams: { fail: true }\n---\n",
-    );
-    p.process().assert().code(1);
-    let a = p.run_of("01-a.md");
-    p.write("inbox/copy.md", &p.read(&format!("runs/{a}/message.md")));
-    // Queued under an id, as `decree emit` would, the key is dropped at claim.
-    let queued = "20260101T000000.000000Z-000000";
-    let text = p
-        .read(&format!("runs/{a}/message.md"))
-        .replace(&format!("id: {a}"), &format!("id: {queued}"))
-        .replace("trigger: migration", "trigger: emit");
-    p.write(&format!("inbox/{queued}.md"), &text);
-    p.fix();
-    // The migration blocks, but the inbox drains first.
-    p.process().assert().code(1);
-    assert_eq!(p.runs().len(), 3);
-    assert_eq!(p.run_of("01-a.md"), a, "only the migration's own run");
-    for id in p.runs().into_iter().filter(|id| *id != a) {
-        let message = p.read(&format!("runs/{id}/message.md"));
-        assert!(!message.contains("migration:"), "{message}");
-        assert_eq!(last_state(&p.events(&id)), "done");
-    }
-    let out = decree(&p, &["status", "01-a"]);
-    assert!(String::from_utf8_lossy(&out.stdout).contains(&format!("Run {a}\n")));
 }
 
 /// Two steps; `step` fails in `second` until `fixed.flag` exists, and logs each state.
@@ -995,76 +638,8 @@ fn process_retry_state_resumes_at_the_named_state() {
 }
 
 #[test]
-fn rule5_ledger_is_written_before_the_final_onentry() {
-    let p = Project::new();
-    p.write("processed.md", "00-old.md\n");
-    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
-    p.process().assert().success();
-    let a = p.run_of("01-a.md");
-    assert_eq!(
-        p.read(&format!("runs/{a}/ledger-at-commit.txt")),
-        "00-old.md\n01-a.md\n"
-    );
-    assert_eq!(p.read("processed.md"), "00-old.md\n01-a.md\n");
-}
-
-#[test]
-fn rule5_failing_final_onentry_removes_the_ledger_line() {
-    let p = Project::new();
-    p.write("processed.md", "00-old.md\n");
-    p.write(
-        "migrations/01-a.md",
-        "---\nmachine: flow\nparams: { commit_fails: true }\n---\n",
-    );
-    p.write("migrations/02-b.md", "---\nmachine: flow\n---\n");
-    p.process().assert().code(1);
-    // The commit saw the line; it is gone again, and the run ended in `failed`.
-    let a = p.run_of("01-a.md");
-    assert_eq!(
-        p.read(&format!("runs/{a}/ledger-at-commit.txt")),
-        "00-old.md\n01-a.md\n"
-    );
-    assert_eq!(p.read("processed.md"), "00-old.md\n");
-    assert_eq!(last_state(&p.events(&a)), "failed");
-    assert_eq!(p.runs(), [a.as_str()]);
-}
-
-#[test]
-fn rule6_invalid_pending_migration_runs_nothing() {
-    let p = Project::new();
-    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
-    p.write("migrations/02-b.md", "---\nmachine: nope\n---\n");
-    p.write(
-        "migrations/03-c.md",
-        "---\nmachine: flow\nparams: { rounds: 2 }\n---\n",
-    );
-    p.write("migrations/04-d.md", "---\nmachine: flow\n");
-    p.write("inbox/a.md", "---\nmachine: flow\n---\n");
-    let out = p.process().assert().code(1).get_output().clone();
-    let err = stderr(&out);
-    assert!(
-        err.contains("migrations/02-b.md: line 2: unknown machine `nope`"),
-        "{err}"
-    );
-    assert!(
-        err.contains("migrations/03-c.md: line 3: unknown param `rounds`"),
-        "{err}"
-    );
-    assert!(err.contains("migrations/04-d.md: line 1: "), "{err}");
-    assert!(
-        err.contains("3 migration(s) are invalid; nothing was processed."),
-        "{err}"
-    );
-    assert!(p.runs().is_empty());
-    assert!(p.order().is_empty());
-    assert!(p.decree().join("inbox/a.md").exists());
-    assert_eq!(p.read("processed.md"), "");
-}
-
-#[test]
 fn dry_run_lists_and_runs_nothing() {
     let p = Project::new();
-    p.write("migrations/01-a.md", "---\nmachine: flow\n---\n");
     p.write("inbox/a.md", "---\nmachine: flow\n---\n");
     let out = p
         .process()
@@ -1074,23 +649,18 @@ fn dry_run_lists_and_runs_nothing() {
         .get_output()
         .clone();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("01-a.md"), "{stdout}");
     assert!(stdout.contains("→ flow"), "{stdout}");
     assert!(stdout.contains("a.md"), "{stdout}");
     assert!(p.runs().is_empty());
     assert!(p.order().is_empty());
 }
 
-/// A migration, an inbox message and a cron file without `machine:`: `decree check` fails
-/// M1, M2 and M3 for them, and `decree process --dry-run` runs nothing.
+/// An inbox message without `machine:`: `decree check` fails M2 for it, and
+/// `decree daemon --once --dry-run` runs nothing.
 #[test]
-fn messages_without_machine_fail_m1_m2() {
+fn a_message_without_machine_fails_m2() {
     let p = Project::new();
     p.write("inbox/task.md", "# No machine key\n");
-    p.write(
-        "migrations/01-first.md",
-        "---\nparams: {}\n---\n# No machine key\n",
-    );
 
     let out = common::decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
@@ -1100,8 +670,7 @@ fn messages_without_machine_fail_m1_m2() {
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "migrations/01-first.md: line 1: no `machine` key (M1)\n\
-         inbox/task.md: line 1: no `machine` key (M2)\n"
+        "inbox/task.md: line 1: no `machine` key (M2)\n"
     );
 
     let out = p.process().arg("--dry-run").output().unwrap();

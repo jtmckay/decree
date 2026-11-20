@@ -64,10 +64,7 @@
         }
       },
       "queued": {
-        "inbox": [],
-        "migrations": [
-          "01-add-login.md"
-        ]
+        "inbox": []
       }
     },
     {
@@ -102,24 +99,12 @@
               "kind": { "enum": ["run", "manual-stop"], "description": "As in attention.schema.json: the file is about a run, or `decree stop` wrote it." },
               "run": { "type": "string", "description": "The run's id." },
               "machine": { "type": "string", "description": "The run's machine." },
-              "message": { "type": "string", "description": "The migration's file name, or `inbox`." },
+              "message": { "type": "string", "description": "Where the run came from: `inbox`." },
               "status": { "enum": ["failed", "interrupted", "waiting"], "description": "Why the run needs a person." },
               "state": { "type": "string", "description": "The state the run is in." },
               "since": { "type": "string", "description": "When the run's status changed, or when `decree stop` wrote the file, RFC 3339 UTC." }
             },
             "additionalProperties": false
-          }
-        },
-        "blocked": {
-          "type": "object",
-          "description": "The migration that blocks the queue (docs/reference/messages.md, Migrations, rule 4), and the run `decree process --retry` continues for it: the migration's own, or the interrupted child run it waits for. Absent when none blocks.",
-          "required": ["migration", "run", "status", "state"],
-          "additionalProperties": false,
-          "properties": {
-            "migration": { "type": "string", "description": "The migration's filename." },
-            "run": { "type": "string", "description": "The run `decree process --retry` continues." },
-            "status": { "enum": ["interrupted", "finished"], "description": "That run's status." },
-            "state": { "type": "string", "description": "That run's state." }
           }
         },
         "nested": {
@@ -236,8 +221,7 @@
           "type": "object",
           "description": "Messages waiting to run.",
           "required": [
-            "inbox",
-            "migrations"
+            "inbox"
           ],
           "additionalProperties": false,
           "properties": {
@@ -247,13 +231,6 @@
                 "type": "string"
               },
               "description": "Filenames in inbox/, in filename order."
-            },
-            "migrations": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Migrations not in processed.md, in filename order."
             }
           }
         }
@@ -272,10 +249,6 @@
         "id": {
           "type": "string",
           "description": "The run id."
-        },
-        "migration": {
-          "type": "string",
-          "description": "For a migration's run: the migration's file name, from `migration:` in its message.md."
         },
         "machine": {
           "type": "string",
@@ -361,10 +334,6 @@
         "id": {
           "type": "string",
           "description": "The run id."
-        },
-        "migration": {
-          "type": "string",
-          "description": "For a migration's run: the migration's file name, from `migration:` in its message.md. `<id>` may be that file name or its stem, meaning the migration's newest run."
         },
         "machine": {
           "type": "string",

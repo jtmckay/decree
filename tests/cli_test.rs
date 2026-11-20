@@ -115,12 +115,13 @@ struct Project {
 }
 
 impl Project {
-    /// `decree init --ai claude` in a new temp directory.
+    /// `decree init --ai claude` in a new temp directory, without the default plugins.
     fn init() -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
         p.decree(&["init", "--ai", "claude"]).assert().success();
+        common::drop_default_plugins(&p.root());
         p
     }
 
@@ -263,7 +264,7 @@ fn init_emit_process_status_shows_the_run_done() {
     let id = p.emit("hello", "Say hello.\n");
     assert!(p.decree_dir().join(format!("inbox/{id}.md")).is_file());
 
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
 
     let status = p.stdout(&["status", &id], 0);
     assert!(status.contains("  machine: hello\n"), "{status}");
@@ -298,7 +299,7 @@ fn init_emit_process_status_shows_the_run_done() {
     assert!(overview.contains("  inbox/: 0\n"), "{overview}");
 }
 
-/// AC: a failed run; `decree process --retry <id>` resumes it at the retried state, in
+/// AC: a failed run; `decree daemon --once --retry <id>` resumes it at the retried state, in
 /// the same invocation. Also the docs/reference/cli.md exit codes of `--retry`.
 #[test]
 fn process_retry_resumes_a_failed_run_at_the_retried_state() {
@@ -308,11 +309,11 @@ fn process_retry_resumes_a_failed_run_at_the_retried_state() {
     let id = p.emit("flaky", "Do the work.\n");
 
     // The run fails: `process` stops on it with 1 and names the command that continues it.
-    let out = p.decree(&["process"]).output().unwrap();
+    let out = p.decree(&["daemon", "--once"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains(&format!("`decree process --retry {id}`")),
+        err.contains(&format!("`decree daemon --once --retry {id}`")),
         "{err}"
     );
     assert_eq!(
@@ -323,28 +324,30 @@ fn process_retry_resumes_a_failed_run_at_the_retried_state() {
     assert!(
         status.contains(&format!(
             "    failed: 1\n      {id}  flaky  `failed`\n        \
-             continue with `decree process --retry {id}`\n"
+             continue with `decree daemon --once --retry {id}`\n"
         )),
         "{status}"
     );
     let one = p.stdout(&["status", &id], 0);
     assert!(
-        one.contains(&format!("  continue with `decree process --retry {id}`\n")),
+        one.contains(&format!(
+            "  continue with `decree daemon --once --retry {id}`\n"
+        )),
         "{one}"
     );
     // A finished run cannot be retried into a final, unknown or compound state.
     for bad in ["done", "nowhere"] {
-        p.decree(&["process", "--retry", &id, "--state", bad])
+        p.decree(&["daemon", "--once", "--retry", &id, "--state", bad])
             .assert()
             .code(1);
     }
-    p.decree(&["process", "--retry", "no-such-run"])
+    p.decree(&["daemon", "--once", "--retry", "no-such-run"])
         .assert()
         .code(1);
     assert_eq!(p.events(&id).len(), 4, "a refused retry appends nothing");
 
     fs::write(p.root().join("ok.flag"), "").unwrap();
-    let out = p.stdout(&["process", "--retry", &id], 0);
+    let out = p.stdout(&["daemon", "--once", "--retry", &id], 0);
     assert!(
         out.contains(&format!("run {id} continues in `work`")),
         "{out}"
@@ -380,7 +383,9 @@ fn process_retry_resumes_a_failed_run_at_the_retried_state() {
         status.contains(&format!("  pending: 1\n    {id}  flaky  `work`\n")),
         "{status}"
     );
-    p.decree(&["process", "--retry", &id]).assert().code(1);
+    p.decree(&["daemon", "--once", "--retry", &id])
+        .assert()
+        .code(1);
     assert_eq!(
         fs::read_to_string(&events_path).unwrap().lines().count(),
         events.len() + 1
@@ -405,7 +410,7 @@ states:
   failed: { final: true }
 ";
 
-/// AC: each `decree process --retry` is the run's next attempt: its `retry` event names
+/// AC: each `decree daemon --once --retry` is the run's next attempt: its `retry` event names
 /// `run_attempt`, scripts get `DECREE_RUN_ATTEMPT`, and `visits` count from the retry, so a
 /// run that used its rounds gets them all again.
 #[test]
@@ -417,9 +422,9 @@ fn a_retry_is_the_next_run_attempt_with_fresh_visits() {
         "#!/usr/bin/env bash\necho \"$DECREE_RUN_ATTEMPT $DECREE_VISITS\" >> rounds.log\n",
     );
     let id = p.emit("rounds", "Work.\n");
-    let out = p.decree(&["process"]).output().unwrap();
+    let out = p.decree(&["daemon", "--once"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
-    p.decree(&["process", "--retry", &id, "--state", "work"])
+    p.decree(&["daemon", "--once", "--retry", &id, "--state", "work"])
         .assert()
         .code(1);
     assert_eq!(
@@ -445,13 +450,15 @@ fn the_claim_and_each_retry_record_the_decree_version() {
     p.machine("flaky", FLAKY);
     p.script("work", FLAKY_WORK);
     let id = p.emit("flaky", "Do the work.\n");
-    p.decree(&["process"]).assert().code(1);
+    p.decree(&["daemon", "--once"]).assert().code(1);
     let events = p.events(&id);
     assert_eq!(events[0]["source"], "claim");
     assert_eq!(events[0]["decree_version"], version);
 
     fs::write(p.root().join("ok.flag"), "").unwrap();
-    p.decree(&["process", "--retry", &id]).assert().success();
+    p.decree(&["daemon", "--once", "--retry", &id])
+        .assert()
+        .success();
     let events = p.events(&id);
     let retries: Vec<_> = events.iter().filter(|e| e["source"] == "retry").collect();
     assert_eq!(retries.len(), 1);
@@ -472,25 +479,32 @@ fn the_claim_and_each_retry_record_the_decree_version() {
     }
 }
 
-/// AC: `--retry` with nothing to retry exits 1 and says so; `--retry` with `--dry-run`,
-/// `--state` without `--retry`, and the removed `retry` command are usage errors (exit 2).
+/// AC: `--retry` of a run that does not exist exits 1; `--retry` without an id, with
+/// `--dry-run`, `--state` without `--retry`, the removed `retry` and `process` commands are
+/// usage errors (exit 2).
 #[test]
-fn process_retry_with_nothing_to_retry_and_its_usage_errors() {
+fn retry_of_no_run_and_its_usage_errors() {
     let p = Project::init();
-    let out = p.decree(&["process", "--retry"]).output().unwrap();
+    let out = p
+        .decree(&[
+            "daemon",
+            "--once",
+            "--retry",
+            "20260101T000000.000000Z-000000",
+        ])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("nothing to retry: no migration is failed or interrupted"),
-        "{err}"
-    );
     for args in [
-        &["process", "--retry", "--dry-run"][..],
-        &["process", "--dry-run", "--retry", "some-run"],
-        &["process", "--state", "work"],
-        &["process", "--retry", "--format", "json"],
+        &["daemon", "--once", "--retry"][..],
+        &["daemon", "--once", "--retry", "x", "--dry-run"],
+        &["daemon", "--once", "--dry-run", "--retry", "some-run"],
+        &["daemon", "--once", "--state", "work"],
+        &["daemon", "--once", "--retry", "--format", "json"],
         &["retry"],
         &["retry", "some-run"],
+        &["process"],
+        &["prune", "--older-than", "1d"],
     ] {
         p.decree(args).assert().code(2);
     }
@@ -503,22 +517,12 @@ fn dry_run_lists_pending_messages_and_runs_nothing() {
     p.machine("flaky", FLAKY);
     p.script("work", FLAKY_WORK);
     let id = p.emit("flaky", "Do the work.\n");
-    fs::write(
-        p.decree_dir().join("migrations/01-first.md"),
-        "---\nmachine: flaky\n---\nFirst.\n",
-    )
-    .unwrap();
 
-    let out = p.stdout(&["process", "--dry-run"], 0);
-    assert!(out.contains("migrations/:\n  01-first.md"), "{out}");
+    let out = p.stdout(&["daemon", "--once", "--dry-run"], 0);
     assert!(out.contains(&format!("inbox/:\n  {id}.md")), "{out}");
     assert!(out.contains("→ flaky"), "{out}");
     assert!(p.runs().is_empty());
     assert!(p.decree_dir().join(format!("inbox/{id}.md")).is_file());
-    assert_eq!(
-        fs::read_to_string(p.decree_dir().join("processed.md")).unwrap(),
-        ""
-    );
 }
 
 /// AC: `decree process` prints each run's output as `decree tail` does, behind its run
@@ -533,7 +537,7 @@ fn process_streams_each_run_and_a_line_as_it_stops() {
     p.script("ask_person", "#!/usr/bin/env bash\necho asking\n");
     let first = p.emit("quick", "Say it.\n");
     let second = p.emit("deploy", "Ship v1.\n");
-    let out = p.stdout(&["process"], 0);
+    let out = p.stdout(&["daemon", "--once"], 0);
     let (head, waiting) = out.split_once("Waiting: ").unwrap();
     let lines: Vec<&str> = head.lines().collect();
     assert_eq!(lines.len(), 9, "{out}");
@@ -572,7 +576,7 @@ fn process_streams_each_run_and_a_line_as_it_stops() {
     let log_path = p.decree_dir().join("process.log");
     assert_eq!(fs::read_to_string(&log_path).unwrap(), head, "{out}");
     let third = p.emit("quick", "Again.\n");
-    let quiet = p.stdout(&["process", "--quiet"], 0);
+    let quiet = p.stdout(&["daemon", "--once", "--quiet"], 0);
     assert!(!quiet.contains("said") && !quiet.contains('✓'), "{quiet}");
     let log = fs::read_to_string(&log_path).unwrap();
     let tail = log.strip_prefix(head).unwrap();
@@ -606,7 +610,7 @@ fn reply_prints_the_wait_and_a_reply_finishes_the_run() {
     p.script("ask_person", "#!/usr/bin/env bash\nexit 0\n");
     let id = p.emit("deploy", "Ship v1.\n");
 
-    let out = p.stdout(&["process", "--quiet"], 0);
+    let out = p.stdout(&["daemon", "--once", "--quiet"], 0);
     let wait_id = p.events(&id).last().unwrap()["wait_id"]
         .as_str()
         .unwrap()
@@ -627,12 +631,14 @@ fn reply_prints_the_wait_and_a_reply_finishes_the_run() {
         "{status}"
     );
     // A waiting run takes a reply, not a retry.
-    p.decree(&["process", "--retry", &id]).assert().code(1);
+    p.decree(&["daemon", "--once", "--retry", &id])
+        .assert()
+        .code(1);
 
     p.decree(&["event", &wait_id, "approve", "-m", "Go."])
         .assert()
         .success();
-    p.stdout(&["process"], 0);
+    p.stdout(&["daemon", "--once"], 0);
     assert_eq!(
         transitions(&p.events(&id)),
         ["- -> approval (claim)", "approval -> shipped (reply)"]
@@ -646,7 +652,7 @@ fn reply_prints_the_wait_and_a_reply_finishes_the_run() {
 }
 
 /// AC: SIGINT during a run under `decree process`: exit 130, the run is `interrupted`, and
-/// a later `decree process` leaves it alone until `decree process --retry` continues it.
+/// a later `decree process` leaves it alone until `decree daemon --once --retry` continues it.
 #[test]
 fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     let p = Project::init();
@@ -655,7 +661,7 @@ fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     let id = p.emit("tick", "Tick.\n");
     fs::write(p.root().join("tick.flag"), "").unwrap();
 
-    let mut decree = p.spawn(&["process"]);
+    let mut decree = p.spawn(&["daemon", "--once"]);
     assert_eq!(p.wait_running(), id);
     // SAFETY: sends SIGINT to the decree process only; the script has its own group.
     unsafe { libc::kill(decree.id() as i32, libc::SIGINT) };
@@ -671,17 +677,19 @@ fn sigint_under_process_exits_130_and_leaves_the_run_interrupted() {
     let overview = p.stdout(&["status"], 0);
     assert!(
         overview.contains(&format!(
-            "  interrupted: 1\n    {id}  tick  `work`\n      continue with `decree process --retry {id}`\n"
+            "  interrupted: 1\n    {id}  tick  `work`\n      continue with `decree daemon --once --retry {id}`\n"
         )),
         "{overview}"
     );
 
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
     assert_eq!(p.events(&id), events);
 
-    // `decree process --retry` continues it and finishes it.
+    // `decree daemon --once --retry` continues it and finishes it.
     fs::remove_file(p.root().join("tick.flag")).unwrap();
-    p.decree(&["process", "--retry", &id]).assert().success();
+    p.decree(&["daemon", "--once", "--retry", &id])
+        .assert()
+        .success();
     assert_eq!(p.events(&id).last().unwrap()["type"], "run_finished");
     assert!(p
         .stdout(&["status", &id], 0)
@@ -699,7 +707,7 @@ fn status_of_a_finished_run_shows_transitions_scripts_and_router_decisions() {
     p.script("reply", &format!("#!/usr/bin/env bash\n{REPLY_LINE}"));
     let id = p.emit("triage", "Build it.\n");
 
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
     let child = p
         .runs()
         .into_iter()
@@ -745,7 +753,7 @@ fn status_and_tail_follow_a_script_while_it_runs() {
     p.script("ticker", TICK_SH);
     let id = p.emit("tick", "Tick.\n");
 
-    let mut decree = p.spawn(&["process"]);
+    let mut decree = p.spawn(&["daemon", "--once"]);
     assert_eq!(p.wait_running(), id);
     let running: Value =
         serde_json::from_str(&fs::read_to_string(p.run_dir(&id).join(".running")).unwrap())
@@ -809,7 +817,9 @@ fn status_and_tail_follow_a_script_while_it_runs() {
     p.machine("quick", QUICK);
     p.script("say", "#!/usr/bin/env bash\necho said\n");
     let next = p.emit("quick", "Say it.\n");
-    p.decree(&["process", "--quiet"]).assert().success();
+    p.decree(&["daemon", "--once", "--quiet"])
+        .assert()
+        .success();
     let more: Vec<String> = (0..3)
         .map(|_| {
             lines
@@ -875,14 +885,14 @@ fn tail_of_a_stopped_run_exits_0() {
     p.machine("deploy", DEPLOY);
     p.script("ask_person", "#!/usr/bin/env bash\nexit 0\n");
     let id = p.emit("deploy", "Ship v1.\n");
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
     p.decree(&["tail", &id]).assert().success().stdout("");
 
     p.machine("flaky", FLAKY);
     p.script("work", FLAKY_WORK);
     fs::write(p.root().join("ok.flag"), "").unwrap();
     let done = p.emit("flaky", "Do the work.\n");
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
     p.decree(&["tail", &done]).assert().success().stdout("");
 }
 
@@ -902,7 +912,7 @@ fn tail_follows_into_child_runs() {
     );
     let id = p.emit("triage", "Build it.\n");
 
-    let mut decree = p.spawn(&["process"]);
+    let mut decree = p.spawn(&["daemon", "--once"]);
     assert_eq!(p.wait_running(), id);
     let tail = p.spawn(&["tail", &id]);
     let out = tail.wait_with_output().unwrap();
@@ -961,11 +971,11 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
     );
 }
 
-/// One duration format (docs/reference/machines.md, Durations): a machine's `timeout`,
-/// `prune --older-than` and `daemon --interval` accept and reject the same strings. A bad
+/// One duration format (docs/reference/machines.md, Durations): a machine's `timeout` and
+/// `daemon --interval` accept and reject the same strings. A bad
 /// one fails V16 in a machine and exits 2 on the command line.
 #[test]
-fn machine_prune_and_daemon_take_the_same_durations() {
+fn machine_and_daemon_take_the_same_durations() {
     let p = Project::init();
     p.script("keep", "#!/usr/bin/env bash\n");
     let machine = |timeout: &str| {
@@ -978,9 +988,6 @@ fn machine_prune_and_daemon_take_the_same_durations() {
     for good in ["90s", "10m", "12h", "7d"] {
         p.machine("t", &machine(good));
         p.decree(&["check"]).assert().code(0);
-        p.decree(&["prune", "--older-than", good, "--dry-run"])
-            .assert()
-            .code(0);
         let mut daemon = p.spawn(&["daemon", "--interval", good]);
         // Kept open until the daemon exits: it prints again on the way out.
         let mut stdout = BufReader::new(daemon.stdout.take().unwrap());
@@ -1005,22 +1012,14 @@ fn machine_prune_and_daemon_take_the_same_durations() {
             out.contains(&format!("timeout: `{bad}` is not a duration")) && out.contains("(V16)"),
             "{bad}: {out}"
         );
-        let flag = |name: &str| format!("--{name}={bad}");
-        for args in [
-            vec!["prune".to_string(), flag("older-than")],
-            vec!["daemon".to_string(), flag("interval")],
-        ] {
-            let out = p
-                .decree(&args.iter().map(String::as_str).collect::<Vec<_>>())
-                .output()
-                .unwrap();
-            assert_eq!(out.status.code(), Some(2), "{args:?}");
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            assert!(
-                stderr.contains(&format!("`{bad}` is not a duration")),
-                "{args:?}: {stderr}"
-            );
-        }
+        let interval = format!("--interval={bad}");
+        let out = p.decree(&["daemon", &interval]).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{interval}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("`{bad}` is not a duration")),
+            "{interval}: {stderr}"
+        );
     }
 }
 
@@ -1028,7 +1027,7 @@ fn machine_prune_and_daemon_take_the_same_durations() {
 #[test]
 fn commands_without_a_project_fail() {
     let tmp = TempDir::new().unwrap();
-    for cmd in ["process", "check", "graph", "status", "stop"] {
+    for cmd in ["daemon", "check", "graph", "status", "stop"] {
         common::decree_at(tmp.path()).arg(cmd).assert().failure();
     }
 }
@@ -1057,7 +1056,7 @@ fn emit_params_and_the_trigger_reach_the_script() {
         .stdout
         .clone();
     let id = String::from_utf8(out).unwrap().trim().to_string();
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
     assert_eq!(
         fs::read_to_string(p.run_dir(&id).join("0001-greet.log")).unwrap(),
         "hello decree from hello/greet trigger=emit attempt=1\n"
@@ -1106,7 +1105,7 @@ fn a_number_param_reaches_the_script_and_a_check() {
         .clone();
     let small = String::from_utf8(out).unwrap().trim().to_string();
     let big = p.emit("sized", "# Default\n");
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
     assert_eq!(
         fs::read_to_string(p.run_dir(&small).join("0001-small-render.log")).unwrap(),
         "megapixels=0.5 need=fix\n"
@@ -1128,7 +1127,7 @@ fn a_param_outside_the_enum_fails_at_claim() {
         "---\nid: 20260101T000000.000000Z-000000\nmachine: sized\nparams: { need: review }\n---\nbody\n",
     )
     .unwrap();
-    p.decree(&["process"]).assert().code(1);
+    p.decree(&["daemon", "--once"]).assert().code(1);
     let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(events[0]["source"], "invalid_message");
     let error = events[0]["error"].as_str().unwrap();
@@ -1155,7 +1154,7 @@ fn a_named_event_picks_the_transition() {
         "#!/usr/bin/env bash\necho checking\necho pass > \"$DECREE_EVENT_FILE\"\n",
     );
     let id = p.emit("verify", "# Verify\n");
-    p.decree(&["process"]).assert().success();
+    p.decree(&["daemon", "--once"]).assert().success();
     assert_eq!(
         transitions(&p.events(&id)),
         ["- -> verify (claim)", "verify -> passed (script)"]
@@ -1211,7 +1210,7 @@ fn scripts_get_no_decree_lib() {
         "#!/usr/bin/env bash\nenv > \"$DECREE_PROJECT_ROOT/env.txt\"\n",
     );
     p.emit("hello", "Say hello.\n");
-    p.decree(&["process"])
+    p.decree(&["daemon", "--once"])
         .env("DECREE_LIB", p.root().join(".decree/lib"))
         .assert()
         .success();
@@ -1295,7 +1294,7 @@ fn daemon_retry_continues_a_failed_run() {
     p.machine("flaky", FLAKY);
     p.script("work", FLAKY_WORK);
     let id = p.emit("flaky", "Fails, then works.\n");
-    p.decree(&["process"]).assert().code(1);
+    p.decree(&["daemon", "--once"]).assert().code(1);
     fs::write(p.root().join("ok.flag"), "").unwrap();
 
     let mut daemon = p.spawn(&["daemon", "--interval", "1s", "--retry", &id]);
@@ -1309,39 +1308,6 @@ fn daemon_retry_continues_a_failed_run() {
     assert_eq!(
         wait_exit(&mut daemon, Duration::from_secs(15)).code(),
         Some(0)
-    );
-}
-
-/// `decree daemon --retry <file>`: a migration's file name means its run, as for `process`.
-#[test]
-fn daemon_retry_takes_a_migrations_file_name() {
-    let p = Project::init();
-    p.machine("flaky", FLAKY);
-    p.script("work", FLAKY_WORK);
-    fs::write(
-        p.decree_dir().join("migrations/01-flaky.md"),
-        "---\nmachine: flaky\n---\nFails, then works.\n",
-    )
-    .unwrap();
-    p.decree(&["process"]).assert().code(1);
-    let id = common::migration_run(&p.decree_dir(), "01-flaky.md");
-    fs::write(p.root().join("ok.flag"), "").unwrap();
-
-    let mut daemon = p.spawn(&["daemon", "--interval", "1s", "--retry", "01-flaky.md"]);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while p.events(&id).last().unwrap()["state"] != "done" {
-        assert!(Instant::now() < deadline, "run {id} was never continued");
-        thread::sleep(Duration::from_millis(50));
-    }
-    // SAFETY: sends SIGTERM to the daemon.
-    unsafe { libc::kill(daemon.id() as i32, libc::SIGTERM) };
-    assert_eq!(
-        wait_exit(&mut daemon, Duration::from_secs(15)).code(),
-        Some(0)
-    );
-    assert_eq!(
-        fs::read_to_string(p.decree_dir().join("processed.md")).unwrap(),
-        "01-flaky.md\n"
     );
 }
 
@@ -1501,7 +1467,7 @@ fn status_lists_active_runs_in_nested_projects() {
         .clone();
     let id = String::from_utf8(out).unwrap().trim().to_string();
     let mut process = common::std_decree_at(&web)
-        .args(["process", "--quiet"])
+        .args(["daemon", "--once", "--quiet"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

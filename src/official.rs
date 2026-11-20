@@ -12,7 +12,7 @@ pub struct Official {
 }
 
 /// Every official plugin, by name.
-pub const OFFICIAL: [Official; 15] = [
+pub const OFFICIAL: [Official; 16] = [
     Official {
         name: "comfy",
         text: include_str!("../plugins/comfy.md"),
@@ -66,6 +66,10 @@ pub const OFFICIAL: [Official; 15] = [
         text: include_str!("../plugins/plugin_install.md"),
     },
     Official {
+        name: "prune",
+        text: include_str!("../plugins/prune.md"),
+    },
+    Official {
         name: "qa",
         text: include_str!("../plugins/qa.md"),
     },
@@ -76,6 +80,10 @@ pub const OFFICIAL: [Official; 15] = [
 ];
 
 /// The official plugin `name`.
+/// The official plugins `decree init` adds: a project removes one by deleting its file in
+/// `.decree/plugins/` (D86).
+pub const DEFAULTS: [&str; 2] = ["order", "prune"];
+
 pub fn get(name: &str) -> Option<Official> {
     OFFICIAL.iter().copied().find(|o| o.name == name)
 }

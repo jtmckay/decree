@@ -152,7 +152,7 @@ pub struct RunInfo {
     /// `DECREE_ROOT_RUN_DIR`: the folder of the run at the top of the chain, the run with
     /// no parent; `run_dir` itself in a top-level run.
     pub root_run_dir: PathBuf,
-    /// `DECREE_RUN_ATTEMPT`: 1, plus one for each `decree process --retry` of the run.
+    /// `DECREE_RUN_ATTEMPT`: 1, plus one for each `decree daemon --once --retry` of the run.
     pub run_attempt: u32,
     /// `DECREE_REQUEST` and `DECREE_REPLY`: in a router run, the request decree wrote and
     /// where the reply must go (docs/reference/runs.md, Model).

@@ -68,7 +68,7 @@ impl Project {
     fn new() -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -139,7 +139,7 @@ const REFUSED: &str = "(set DECREE_MAX_DEPTH to change it)";
 fn without_the_variable_a_chain_stops_at_depth_10_naming_it() {
     let p = Project::new();
     p.queue("chain");
-    let output = p.decree_cmd(&[], &["process"]).output().unwrap();
+    let output = p.decree_cmd(&[], &["daemon", "--once"]).output().unwrap();
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     let depths = p.depths();
     assert_eq!(depths.len(), 11, "{depths:?}");
@@ -158,7 +158,7 @@ fn dotenv_raises_max_depth_for_process_and_the_emits_in_its_runs() {
     let p = Project::new();
     p.write(".env", "DECREE_MAX_DEPTH=20\n");
     p.queue("chain");
-    let output = p.decree_cmd(&[], &["process"]).output().unwrap();
+    let output = p.decree_cmd(&[], &["daemon", "--once"]).output().unwrap();
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
     let depths = p.depths();
     let want: Vec<String> = (0..=20).map(|d| format!("{d} 20")).collect();
@@ -183,7 +183,7 @@ fn the_shell_beats_dotenv_and_stops_a_child_run() {
     p.write(".env", "DECREE_MAX_DEPTH=20\n");
     p.queue("nest");
     let output = p
-        .decree_cmd(&[("DECREE_MAX_DEPTH", "2")], &["process"])
+        .decree_cmd(&[("DECREE_MAX_DEPTH", "2")], &["daemon", "--once"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
@@ -232,7 +232,7 @@ fn a_bad_value_is_refused_before_anything_runs() {
             let named_in = |place: &str| format!("DECREE_MAX_DEPTH in {place} is `{value}`");
             let commands = [
                 &["check"][..],
-                &["process"],
+                &["daemon", "--once"],
                 &["daemon"],
                 &["emit", "--machine", "chain"],
             ];

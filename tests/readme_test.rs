@@ -17,12 +17,17 @@ const OLD_TERMS: &[&str] = &[
     "DECREE_PRE_CHECK",
     "message_file",
     "beforeEach",
+    "migration",
+    "processed.md",
+    "decree process",
+    "decree prune",
 ];
 
-/// The 16 commands of docs/reference/cli.md, `process --retry`, and `--version`.
+/// The 14 commands of docs/reference/cli.md, `daemon --once` and its `--retry`, and
+/// `--version`.
 const COMMANDS: &[&str] = &[
     "decree init",
-    "decree process",
+    "decree daemon --once",
     "decree daemon",
     "decree check",
     "decree graph",
@@ -31,8 +36,7 @@ const COMMANDS: &[&str] = &[
     "decree emit",
     "decree status",
     "decree tail",
-    "decree process --retry",
-    "decree prune",
+    "decree daemon --once --retry",
     "decree event",
     "decree stop",
     "decree upgrade",
@@ -169,13 +173,19 @@ fn test_every_readme_command_runs_as_written() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The walkthrough did what the README says it does.
+    // The walkthrough did what the README says it does: the run `decree emit` queued,
+    // answered by its id.
     let decree = dir.path().join(".decree");
-    let processed = std::fs::read_to_string(decree.join("processed.md")).unwrap();
-    assert!(processed.lines().any(|l| l == "01-hello.md"), "{processed}");
-    // The migration's run has a time id; `decree event 01-hello` and `decree status
-    // 01-hello` named it by the migration's stem.
-    let id = common::migration_run(&decree, "01-hello.md");
+    let mut ids: Vec<String> = std::fs::read_dir(decree.join("runs"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|id| {
+            std::fs::read_to_string(decree.join("runs").join(id).join("message.md"))
+                .is_ok_and(|m| m.contains("# Say hello"))
+        })
+        .collect();
+    assert_eq!(ids.len(), 1, "{ids:?}");
+    let id = ids.remove(0);
     let message =
         std::fs::read_to_string(decree.join("runs").join(&id).join("message.md")).unwrap();
     assert!(message.contains("state: done"), "{message}");
@@ -186,7 +196,7 @@ fn test_every_readme_command_runs_as_written() {
         "{stdout}"
     );
     assert!(
-        stdout.contains(&format!("Run {id}\n  migration: 01-hello.md\n")),
+        stdout.contains(&format!("Run {id}\n  machine: hello\n")),
         "{stdout}"
     );
 }

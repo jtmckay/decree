@@ -1,6 +1,6 @@
 # Machines
 
-A machine is a statechart in `.decree/machines/<name>.yml`: a W3C SCXML document written in
+A machine is a statechart in `.decree/machines/<name>/machine.yml`: a W3C SCXML document written in
 YAML. Keys are SCXML's names (`initial`, `states`, `transitions`, `onentry`, `onexit`, `invoke`,
 `data`, `final`); decree implements a strict subset of SCXML, plus a few marked extensions. If
 you know SCXML, you know how a machine behaves.
@@ -56,7 +56,7 @@ name is short for `{ name: <name> }`, and `invoke: implement` is short for
 | `reply: { question: ..., notify: <script>, timeout?: <duration> }` | The `notify` script tells someone (a person, a UI, a program); the run pauses for a reply. | An option; `error` on timeout. |
 | `machine: { name: <machine>, params?: {...} }` | The machine runs as a child run. | The child's root final state (`failed` becomes `error`). |
 
-A duration (`timeout`, and `decree prune --older-than` and `decree daemon --interval`) is a whole
+A duration (`timeout`, `decree daemon --interval` and the `prune` plugin's `PRUNE_OLDER_THAN`) is a whole
 number followed by one unit, `s`, `m`, `h` or `d`: `90s`, `10m`, `12h`, `7d`. No fractions, no
 combinations (`1h30m`) and no bare numbers.
 
@@ -245,7 +245,7 @@ states:
     invoke: spawn
     transitions: { done: done }
     emits: [feature]               # extension: machines its scripts may emit messages for
-  done:   { final: true, onentry: [commit] }   # migrations: processed.md is written first, so the commit includes it
+  done:   { final: true, onentry: [commit] }   # an order file's run: commit records it in order.git.txt first
   failed: { final: true }
 ```
 
@@ -277,8 +277,8 @@ person's time is worth it, then a `reply` from a person. Each threshold is a num
 
 `decree check` runs rules V1–V21 (names, targets, `failed` exists, reachability, every script
 name resolves, decision states cover their events, options have descriptions, `emits` and
-`router` name real machines, no invoke cycles, nothing outside the SCXML subset) and M1–M3 (every
-pending migration, inbox message and cron file parses and names a machine with valid `params`)
+`router` name real machines, no invoke cycles, nothing outside the SCXML subset) and M2–M3 (every
+inbox message and cron file parses and names a machine with valid `params`)
 and E1 (`.decree/.env` and each `env_file` are valid dotenv files without reserved keys). Errors look like `machines/feature/machine.yml: work.verify: <message>`. It also warns when
 a machine's `graph.md` or `.decree/system.md` is out of date, or `.decree/schema/` when it exists: run `decree graph` or
 `decree schema`.

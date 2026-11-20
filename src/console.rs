@@ -1,4 +1,4 @@
-//! What `decree process`, `daemon` and `tail` print as runs go (docs/reference/cli.md,
+//! What `decree daemon` and `tail` print as runs go (docs/reference/cli.md,
 //! Output): script output and lines on stdout, notices on stderr, and, on a terminal, one
 //! status line kept below them. Every write clears the status line, prints, and draws it
 //! again, so nothing is printed over it. `process` and `daemon` also append everything but

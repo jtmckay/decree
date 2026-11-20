@@ -1,11 +1,11 @@
-//! `decree check`: validate machines (V1–V21), pending messages (M1–M3) and the `.env`
+//! `decree check`: validate machines (V1–V21), queued messages and cron files (M2, M3) and the `.env`
 //! files (E1) before anything runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
-//! `.decree/schema/`, when it exists, from what `decree schema` would write, when `.decree/store/` holds
-//! what no machine's `store:` declares, when an `.env` file uses a variable that is not set,
-//! when a machine's `env_file` is missing, when `.decree/.gitignore` does not list `.env*`, and
-//! when a pending migration sorts before one that already ran.
+//! `.decree/schema/`, when it exists, from what `decree schema` would write, when a machine's
+//! `state/` holds what its `state_files:` does not declare, when an `.env` file uses a variable
+//! that is not set, when a machine's `env_file` is missing, and when `.decree/.gitignore` does
+//! not list `.env*`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -59,7 +59,7 @@ pub fn run(project_root: &Path, format: CheckFormat) -> Result<(), DecreeError> 
 /// Validation); the parts are kept apart for `--format json` and `sarif`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckError {
-    /// `V1`–`V21`, `M1`–`M3` or `E1`; `None` for an error no rule names, such as bad YAML.
+    /// `V1`–`V21`, `M2`, `M3` or `E1`; `None` for an error no rule names, such as bad YAML.
     pub(crate) rule: Option<String>,
     /// Path relative to `.decree/`.
     pub(crate) file: String,
@@ -118,7 +118,7 @@ impl std::fmt::Display for CheckError {
     }
 }
 
-/// `message` without a trailing ` (V4)` or ` (M1)`, and that rule.
+/// `message` without a trailing ` (V4)` or ` (M2)`, and that rule.
 fn split_rule(message: &str) -> (String, Option<String>) {
     let rule = message
         .strip_suffix(')')
@@ -130,10 +130,9 @@ fn split_rule(message: &str) -> (String, Option<String>) {
     }
 }
 
-/// A file in `.decree/graph/` or `.decree/schema/` that differs from what `decree graph`
-/// or `decree schema` would write, one in `.decree/store/` that no machine declares, or a
-/// problem with an `.env` file that does not stop it being read, or a pending migration
-/// that sorts before one that ran. `decree check` warns about it without failing.
+/// A graph file or a file in `.decree/schema/` that differs from what `decree graph` or
+/// `decree schema` would write, one in a machine's `state/` that it does not declare, or a
+/// problem with an `.env` file that does not stop it being read. `decree check` warns about it without failing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckWarning {
     /// Path relative to `.decree/`.
@@ -246,8 +245,7 @@ fn plugin_warnings(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> 
     )
 }
 
-/// Every warning: stale graphs, then stale schemas, then the store, then the `.env` files,
-/// then inserted migrations.
+/// Every warning: stale graphs, then stale schemas, then state files, then the `.env` files.
 fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
     let mut out = Vec::new();
     // A machine that fails to load cannot be drawn; its error is reported as an error.
@@ -267,37 +265,17 @@ fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>,
     );
     out.extend(state_warnings(&project_root.join(DECREE_DIR))?);
     out.extend(resolve_env(project)?.1);
-    out.extend(inserted_migrations(project)?);
     Ok(out)
-}
-
-/// Each pending migration whose filename sorts before the last one in `processed.md`, in
-/// the byte order `process` runs them (docs/reference/messages.md, Migrations): it runs
-/// next, after work that sorts later. Inserting one is allowed, so this only warns, and says
-/// how names keep their order: `100-` sorts before `99-`, a letter after any digit.
-fn inserted_migrations(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
-    let Some(last) = read_processed(&project.decree_dir)?.pop_last() else {
-        return Ok(Vec::new());
-    };
-    Ok(project
-        .pending_migrations()?
-        .into_iter()
-        .filter(|name| *name < last)
-        .map(|name| CheckWarning {
-            file: format!("{}/{name}", layout::MIGRATIONS_DIR),
-            message: format!(
-                "migration {name} sorts before {last}, which already ran; it runs next. \
-                 To keep the order, pad numbers to the width the project needs (`001-`) or \
-                 continue with a letter prefix (`A01-`), which sorts after digits"
-            ),
-        })
-        .collect())
 }
 
 /// What a machine's `state/` holds that its `state_files:` does not declare
 /// (docs/reference/machines.md, State): one warning per file or folder directly in
 /// `machines/<name>/state/`. A machine that fails to load is reported as an error, and its
 /// folder is not looked into.
+/// What the official `order` plugin writes in each machine's `state/`: the order files that
+/// ran, with their hashes (plugins/order.md).
+const ORDER_RECORD: &str = "order.git.txt";
+
 fn state_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
     let mut out = Vec::new();
     for (name, path) in machine::machine_paths(decree_dir)? {
@@ -318,7 +296,8 @@ fn state_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
         let file = format!("{}/{}", layout::machine_dir_rel(&name), layout::STATE_DIR);
         out.extend(
             kept.into_iter()
-                .filter(|kept| !m.state_files.contains_key(kept))
+                // `order.git.txt` is the `order` plugin's record of the machine's `order/`.
+                .filter(|kept| kept != ORDER_RECORD && !m.state_files.contains_key(kept))
                 .map(|kept| CheckWarning {
                     file: format!("{file}/{kept}"),
                     message: format!("is not declared in {name}'s `state_files:`"),
@@ -340,14 +319,11 @@ fn json_document(problems: &[CheckError], warnings: &[CheckWarning]) -> serde_js
     })
 }
 
-/// Every error `decree check` reports, in order: machines by id, then pending migrations,
-/// `inbox/` and `cron/`, each by filename, then the `.env` files by line.
+/// Every error `decree check` reports, in order: machines by id, then `inbox/` and the cron
+/// files, each by filename, then the `.env` files by line.
 fn check(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
     let mut problems = project.problems.clone();
     let decree_dir = &project.decree_dir;
-    for name in project.pending_migrations()? {
-        project.check_file(layout::MIGRATIONS_DIR, &name, "M1", None, &mut problems)?;
-    }
     for name in md_files(&decree_dir.join(layout::INBOX_DIR))? {
         project.check_file(layout::INBOX_DIR, &name, "M2", None, &mut problems)?;
     }
@@ -640,15 +616,6 @@ impl Project {
         })
     }
 
-    /// `migrations/*.md` not in `processed.md`, in byte order (docs/reference/messages.md, Migrations).
-    pub(crate) fn pending_migrations(&self) -> Result<Vec<String>, DecreeError> {
-        let processed = read_processed(&self.decree_dir)?;
-        Ok(md_files(&self.decree_dir.join(layout::MIGRATIONS_DIR))?
-            .into_iter()
-            .filter(|name| !processed.contains(name))
-            .collect())
-    }
-
     /// Check `.decree/<dir>/<name>` and append its errors, each tagged with `rule`.
     pub(crate) fn check_file(
         &self,
@@ -674,20 +641,6 @@ impl Project {
             });
         }
         Ok(())
-    }
-}
-
-/// `processed.md` as a set of filenames. A missing ledger is empty; `check` writes nothing.
-pub(crate) fn read_processed(decree_dir: &Path) -> Result<BTreeSet<String>, DecreeError> {
-    match std::fs::read_to_string(decree_dir.join(layout::PROCESSED_FILE)) {
-        Ok(text) => Ok(text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(String::from)
-            .collect()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
-        Err(e) => Err(e.into()),
     }
 }
 

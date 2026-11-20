@@ -55,7 +55,7 @@ impl Project {
     fn new(timeout: &str) -> Project {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
-        for dir in ["machines", "scripts", "migrations", "inbox", "runs"] {
+        for dir in ["machines", "scripts", "inbox", "runs"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
@@ -114,7 +114,7 @@ impl Project {
 
     fn process(&self) -> Command {
         let mut cmd = self.decree_cmd();
-        cmd.arg("process");
+        cmd.args(["daemon", "--once"]);
         cmd
     }
 
@@ -172,50 +172,6 @@ fn invalid_message(events: &[Value]) -> String {
 // ---------------------------------------------------------------
 // Delivery (docs/reference/messages.md, Replies, steps 2 and 3)
 // ---------------------------------------------------------------
-
-/// A migration whose child run waits for a reply: `process` and `status` say that is what
-/// holds the migrations back.
-#[test]
-fn a_migration_held_back_by_a_child_waiting_for_a_reply_is_named() {
-    let p = Project::new("1h");
-    fs::remove_file(p.decree().join(format!("inbox/{RUN}.md"))).unwrap();
-    p.write(
-        "machines/release/machine.yml",
-        "name: release\ndescription: Deploy as a child run.\ninitial: call\nstates:\n  \
-         call:\n    invoke: { machine: deploy }\n    transitions: { done: done, rejected: done, expired: done }\n  \
-         done: { final: true }\n  failed: { final: true }\n",
-    );
-    p.write("migrations/01-release.md", "---\nmachine: release\n---\n");
-    p.write("migrations/02-later.md", "---\nmachine: release\n---\n");
-    let out = p.process().assert().code(0).get_output().stdout.clone();
-    let out = String::from_utf8(out).unwrap();
-    let release = common::migration_run(&p.decree(), "01-release.md");
-    let child = p.runs().into_iter().find(|r| *r != release).unwrap();
-    let wait_id = p.events(&child).last().unwrap()["wait_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let why = format!(
-        "Held back: migration 01-release.md waits for child run {child}, which waits for a \
-         reply: `decree event {wait_id} <approve|reject>`; 1 later migration(s) wait behind it\n"
-    );
-    assert!(out.ends_with(&why), "{out}");
-    let status = p
-        .decree_cmd()
-        .arg("status")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    // The child waits for a person: its attention file comes first.
-    let status = String::from_utf8(status).unwrap();
-    assert!(
-        status.starts_with("Attention: .decree/attention/: 1 file(s)\n"),
-        "{status}"
-    );
-    assert!(status.contains(&format!("\n{why}")), "{status}");
-}
 
 #[test]
 fn reply_with_wait_id_and_option_continues_with_source_reply() {
@@ -697,7 +653,7 @@ fn of_two_early_replies_the_first_queued_wins() {
 
 /// AC: replies to a finished run and to a run id that does not exist each become a failed
 /// `invalid_message` run whose attention file is valid and does not hold; `status` lists
-/// them, nothing holds, and a migration queued behind them runs.
+/// them, nothing holds, and a message queued behind them runs.
 #[test]
 fn rejected_replies_never_hold_the_queue() {
     let p = Project::new("1h");
@@ -712,10 +668,10 @@ fn rejected_replies_never_hold_the_queue() {
          work:\n    invoke: ask_person\n    transitions: { done: done }\n  \
          done: { final: true }\n  failed: { final: true }\n",
     );
-    p.write("migrations/01-note.md", "---\nmachine: note\n---\n# Note\n");
     let (finished, unknown) = (BEFORE, AFTER);
     p.queue_reply(finished, RUN, "approve");
     p.queue_reply(unknown, "20250101T000000.000000Z-0000ff.w1", "approve");
+    p.write("inbox/zz-note.md", "---\nmachine: note\n---\n# Note\n");
     let out = p.process().assert().code(1).get_output().clone();
 
     assert!(invalid_message(&p.events(finished)).contains("is not waiting: it is finished"));
@@ -728,10 +684,11 @@ fn rejected_replies_never_hold_the_queue() {
     assert_eq!(unknown_file["holds"], false);
     assert!(unknown_file.get("machine").is_none(), "{unknown_file}");
 
-    let processed = fs::read_to_string(p.decree().join("processed.md")).unwrap();
-    assert!(
-        processed.contains("01-note.md"),
-        "{processed}\n{}",
+    let note = common::run_of(&p.decree(), "zz-note.md");
+    assert_eq!(
+        last_transition(&p.events(&note))["to"],
+        "done",
+        "{}",
         stderr(&out)
     );
 
