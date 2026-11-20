@@ -76,7 +76,7 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, attention/, process.log, cache/, ai-use.md, machines/ and scripts/ (installed from plugins/)
+  .gitignore                        # contains: inbox/, runs/, store/, schema/, the .env* files but .env.example, attention/, process.log, cache/, ai-use.md, machines/, scripts/ and cron/*/ (installed from plugins/)
   migrations/                       # ordered run-once messages, committed, never edited (messages.md)
   processed.md                      # committed ledger: one migration filename per line
   inbox/                            # queued messages: *.md; files starting with "." are ignored
@@ -89,8 +89,8 @@ Each building block has its own directory in `.decree/`:
     .running                        # the script running now: pid, state, phase, script, started_at, log (scripts.md)
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
     hold                            # written by a script (keep): the run's attention file holds the queue (cli.md, Attention)
-  cron/                             # *.md cron templates (messages.md, Cron files)
-  plugins/<machine name>.md           # committed (`decree init` writes the folder empty): a machine and its scripts folder as one file, installed into machines/ and scripts/<machine name>/ (plugins.md)
+  cron/                             # *.md cron templates (messages.md, Cron files); cron/<plugin>/*.md installed from plugins/
+  plugins/<machine name>.md           # committed (`decree init` writes the folder empty): any of a machine, its scripts folder, cron files, migrations and store seeds as one file, installed by `decree plugin install` into machines/, scripts/<name>/ and cron/<name>/ (plugins.md)
   machines/<machine name>.yml         # statecharts (machines.md); installed from plugins/, so `decree init`'s .gitignore lists machines/ and scripts/
   graph/<machine name>.md, system.md  # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
   schema/v1/*.schema.json             # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)

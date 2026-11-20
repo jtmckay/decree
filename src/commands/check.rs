@@ -27,11 +27,12 @@ use crate::plugin;
 mod sarif;
 
 pub fn run(project_root: &Path, format: CheckFormat) -> Result<(), DecreeError> {
-    let synced = plugin::sync(&project_root.join(DECREE_DIR))?;
+    let synced = plugin::status(&project_root.join(DECREE_DIR))?;
     let project = Project::load(project_root)?;
     let mut problems = plugin_problems(&synced);
     problems.extend(check(&project)?);
     let mut warnings = warnings(project_root, &project)?;
+    warnings.extend(pending_plugins(&synced));
     warnings.extend(plugin_warnings(&project)?);
     match format {
         CheckFormat::Text => {
@@ -202,6 +203,34 @@ fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
 }
 
 /// Each machine no plugin installed, in a project with `plugins/`.
+/// A warning for each plugin `decree plugin install` would install, remove, or leave as a
+/// machine no plugin installed: `check` installs nothing (docs/reference/plugins.md,
+/// Installing).
+fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
+    let mut out = Vec::new();
+    for name in &synced.installed {
+        out.push(CheckWarning {
+            file: plugin::plugin_file(name),
+            message:
+                "not installed, or changed since it was installed: run `decree plugin install`"
+                    .to_string(),
+        });
+    }
+    for name in &synced.removed {
+        out.push(CheckWarning {
+            file: plugin::plugin_file(name),
+            message: "deleted, but its installed copy is still there: run `decree plugin install` to remove it".to_string(),
+        });
+    }
+    for name in &synced.kept {
+        out.push(CheckWarning {
+            file: plugin::plugin_file(name),
+            message: "deleted, but its installed copy was edited: `decree plugin install` keeps it as files no plugin installed".to_string(),
+        });
+    }
+    out
+}
+
 fn plugin_warnings(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> {
     Ok(
         plugin::unplugged(&project.decree_dir, &project.machine_ids)?
@@ -345,7 +374,7 @@ fn check(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
     for name in md_files(&decree_dir.join(layout::INBOX_DIR))? {
         project.check_file(layout::INBOX_DIR, &name, "M2", false, &mut problems)?;
     }
-    for name in md_files(&decree_dir.join(layout::CRON_DIR))? {
+    for name in crate::cron::file_names(&decree_dir.join(layout::CRON_DIR))? {
         project.check_file(layout::CRON_DIR, &name, "M3", true, &mut problems)?;
     }
     let env_problems = env_problems(project)?;

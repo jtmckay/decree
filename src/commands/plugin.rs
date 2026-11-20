@@ -2,8 +2,8 @@
 //! as one file, `.decree/plugins/<name>.md`. `list` shows the official plugins built into
 //! decree, `add` copies official plugins into `plugins/` and installs them, `export` writes a
 //! plugin file from the installed copy, `import` checks a plugin file, copies it into
-//! `plugins/` and installs it, and `install` installs plugins now, replacing an installed copy
-//! that was edited. decree fetches nothing:
+//! `plugins/` and installs it, and `install` installs plugins: the only way they are installed
+//! but `add` and `import` (docs/reference/plugins.md, Installing). decree fetches nothing:
 //! `curl -fsSL <url> | decree plugin import -` imports from a URL.
 
 use std::collections::BTreeMap;
@@ -169,14 +169,18 @@ pub fn import(
     }
 }
 
-/// `decree plugin install [<name>...]`: install the named plugins, or every one, now,
-/// replacing an installed copy that was edited. Nothing is installed if one is missing or
-/// fails the schema.
+/// `decree plugin install [<name>...]`. With no name: install every plugin that is new or
+/// changed, remove the installed copy of each deleted one, and keep every edited copy,
+/// naming each conflict and exiting 1 on a conflict or a plugin that fails the schema
+/// (docs/reference/plugins.md, Installing). With names: install those now, replacing an
+/// installed copy that was edited; nothing is installed if one is missing or fails the
+/// schema.
 pub fn install(project_root: &Path, names: &[String], format: Format) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
-    let found = if names.is_empty() {
-        plugin::read_all(&decree_dir)?
-    } else {
+    if names.is_empty() {
+        return install_all(&decree_dir, format);
+    }
+    let found = {
         let mut out = Vec::new();
         for name in names {
             if !crate::machine::is_ident(name)
@@ -218,7 +222,12 @@ pub fn install(project_root: &Path, names: &[String], format: Format) -> Result<
         installed.push(p.name.clone());
     }
     match format {
-        Format::Json => print_json(&json!({ "action": "install", "installed": installed })),
+        Format::Json => print_json(&json!({
+            "action": "install",
+            "installed": installed,
+            "removed": [],
+            "conflicts": [],
+        })),
         Format::Text => {
             for name in &installed {
                 println!("installed {DECREE_DIR}/{}", plugin::plugin_file(name));
@@ -226,6 +235,45 @@ pub fn install(project_root: &Path, names: &[String], format: Format) -> Result<
             Ok(())
         }
     }
+}
+
+/// `decree plugin install` with no name: `plugin::sync`.
+fn install_all(decree_dir: &Path, format: Format) -> Result<(), DecreeError> {
+    let synced = plugin::sync(decree_dir)?;
+    match format {
+        Format::Json => print_json(&json!({
+            "action": "install",
+            "installed": synced.installed,
+            "removed": synced.removed,
+            "conflicts": synced.conflicts,
+        }))?,
+        Format::Text => {
+            for name in &synced.installed {
+                println!("installed {DECREE_DIR}/{}", plugin::plugin_file(name));
+            }
+            for name in &synced.removed {
+                println!(
+                    "removed the installed copy of {DECREE_DIR}/{}, which was deleted",
+                    plugin::plugin_file(name)
+                );
+            }
+            let quiet = synced.conflicts.is_empty() && synced.invalid.is_empty();
+            if quiet && synced.installed.is_empty() && synced.removed.is_empty() {
+                println!("every plugin is installed as its file says: nothing to install");
+            }
+        }
+    }
+    let notices = synced.notices();
+    for note in &notices {
+        eprintln!("{note}");
+    }
+    let failed = synced.conflicts.len() + synced.invalid.len();
+    if failed > 0 {
+        return Err(DecreeError::Other(format!(
+            "{failed} plugin(s) not installed; see above"
+        )));
+    }
+    Ok(())
 }
 
 /// What a plugin runs: each file it installs, relative to the project root, with its line
@@ -566,7 +614,7 @@ pub fn add(
                         print_line_changes(&a.changes);
                         if a.dropped_edits_in_place {
                             println!(
-                                "  and dropped the edits in place to {DECREE_DIR}/{MACHINES_DIR}/{0}.yml or {DECREE_DIR}/scripts/{0}/, which were not exported",
+                                "  and dropped the edits in place to {DECREE_DIR}/{MACHINES_DIR}/{0}.yml, {DECREE_DIR}/scripts/{0}/ or {DECREE_DIR}/cron/{0}/, which were not exported",
                                 a.name
                             );
                         }

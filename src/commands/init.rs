@@ -362,7 +362,7 @@ mod tests {
             .find(|yaml| yaml.lines().find(|l| !l.starts_with('#')) == Some("name: hello"))
             .expect("the skill shows `hello`");
         let shown: serde_norway::Value = serde_norway::from_str(shown).unwrap();
-        assert_eq!(shown, installed.machine_value(), "hello");
+        assert_eq!(shown, installed.machine_value().unwrap(), "hello");
         let verify = feature_fixture("scripts/feature/verify.sh");
         let body = verify
             .lines()

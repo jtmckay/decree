@@ -2,18 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/plugin.schema.json",
   "title": "decree plugin frontmatter",
-  "description": "The YAML frontmatter of a plugin, .decree/plugins/<name>.md: one machine and the files of its scripts folder, shared as one file. The markdown body below the frontmatter tells a person what the plugin is for; decree keeps it as written. decree installs a plugin into .decree/machines/<name>.yml and .decree/scripts/<name>/ before `process`, `daemon`, `check` and `graph` read machines, and never overwrites an installed copy that was edited in place. `decree check` checks the rest: that every `needs` is in plugins/ (P2), that no plugin changed over an edited copy (P3), and the installed machine itself (V1-V21). Reference: docs/reference/plugins.md.",
+  "description": "The YAML frontmatter of a plugin, .decree/plugins/<name>.md: any of decree's files, shared as one file: a machine, the files of its scripts folder, cron files, migrations and store seeds. The markdown body below the frontmatter tells a person what the plugin is for; decree keeps it as written. decree installs a plugin into .decree/machines/<name>.yml, .decree/scripts/<name>/ and .decree/cron/<name>/ (its installed copy) before `process`, `daemon`, `check` and `graph` read machines, writes its migrations and store seeds once, and never overwrites an installed copy that was edited in place. `decree check` checks the rest: that every `needs` is in plugins/ (P2), that no plugin changed over an edited copy (P3), the installed machine itself (V1-V21), and the cron files and migrations as messages (M1, M3). Reference: docs/reference/plugins.md.",
   "type": "object",
   "required": [
-    "name",
-    "machine"
+    "name"
   ],
   "additionalProperties": false,
   "properties": {
     "name": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "The plugin and machine name: equal to the file's stem, plugins/<name>.md, and the name of the installed machines/<name>.yml and scripts/<name>/ (P1).",
+      "description": "The plugin's name: equal to the file's stem, plugins/<name>.md, and the name of what it installs: machines/<name>.yml, scripts/<name>/, cron/<name>/ and store/<name>/ (P1).",
       "examples": [
         "develop"
       ]
@@ -39,7 +38,7 @@
           "name"
         ]
       },
-      "description": "The machine, as .decree/machines/<name>.yml holds it, without `name`: the plugin's `name` names it. Installed with `name` first; machine.schema.json describes the rest.",
+      "description": "The machine, as .decree/machines/<name>.yml holds it, without `name`: the plugin's `name` names it. Installed with `name` first; machine.schema.json describes the rest. Optional: a plugin of scripts only is a library other plugins `needs` and source from .decree/scripts/<name>/.",
       "examples": [
         {
           "description": "Says hello.",
@@ -76,6 +75,62 @@
           "kinds/command.sh": "#!/usr/bin/env bash\n"
         }
       ]
+    },
+    "cron": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[^/\\\\]+\\.md$",
+        "not": {
+          "pattern": "^\\."
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Every cron file of .decree/cron/<name>/, by its file name there (`<file>.md`), to its text: a cron file as messages.md describes it, with `cron:` and `machine:`. Part of the installed copy, like scripts: a file in cron/<name>/ the plugin does not ship is removed when it is installed, an edit in place counts as an edit, and the folder goes with the plugin.",
+      "examples": [
+        {
+          "weekly.md": "---\ncron: 0 9 * * 1\nmachine: newsletter\n---\nThis week's issue.\n"
+        }
+      ]
+    },
+    "migrations": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[^/\\\\]+\\.md$",
+        "not": {
+          "pattern": "^\\."
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Migrations, by file name in .decree/migrations/, to their text. Each is written once: only when no file of that name is there and processed.md does not list it, and never overwritten, since a migration is immutable. When the plugin drops one, or is deleted, a migration it wrote that never started (not edited, not in processed.md, no run) is removed; one that started stays as history.",
+      "examples": [
+        {
+          "A01-newsletter-setup.md": "---\nmachine: newsletter\n---\nCreate the subscriber list.\n"
+        }
+      ]
+    },
+    "store": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)(?:/(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+))*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Seed data for .decree/store/<name>/, by path there, to its text. Each file is written only when absent and is never overwritten or removed: the store is the project's data.",
+      "examples": [
+        {
+          "feeds.txt": "https://example.com/rss\n"
+        }
+      ]
+    }
+  },
+  "patternProperties": {
+    "^x-": {
+      "description": "An extension, for a tool built on decree (existential's `x-exist-services`, say): decree reads none, and keeps them on export, as Compose and OpenAPI keep `x-` keys."
     }
   }
 }

@@ -54,13 +54,7 @@ pub fn scan_cron_files(project_root: &Path) -> Result<Vec<CronFile>, DecreeError
         return Ok(Vec::new());
     }
 
-    let mut entries: Vec<String> = std::fs::read_dir(&cron_dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
-
-    entries.sort();
+    let entries = file_names(&cron_dir)?;
 
     let mut cron_files = Vec::new();
     for filename in entries {
@@ -76,6 +70,41 @@ pub fn scan_cron_files(project_root: &Path) -> Result<Vec<CronFile>, DecreeError
     }
 
     Ok(cron_files)
+}
+
+/// Every cron file in `cron_dir`, relative to it, sorted: each `*.md` there, and each `*.md`
+/// in a folder there, as `<folder>/<file>.md`: a plugin installs its cron files in
+/// `cron/<plugin>/` (docs/reference/plugins.md). Deeper folders are not read.
+pub fn file_names(cron_dir: &Path) -> std::io::Result<Vec<String>> {
+    let is_md = |p: &Path| p.is_file() && p.extension().is_some_and(|ext| ext == "md");
+    let mut out = Vec::new();
+    if !cron_dir.is_dir() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(cron_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        if is_md(&path) {
+            out.push(name);
+        } else if path.is_dir() {
+            for inner in std::fs::read_dir(&path)? {
+                let inner = inner?;
+                if let Ok(file) = inner.file_name().into_string() {
+                    if !file.starts_with('.') && is_md(&inner.path()) {
+                        out.push(format!("{name}/{file}"));
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 /// Parse a single cron file from its filename and content.

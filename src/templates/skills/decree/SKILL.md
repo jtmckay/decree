@@ -170,9 +170,12 @@ project in another ecosystem starts from `develop` and fills in its gate.
   until it is deleted. To pause the queue, `decree stop`: the runs going now finish, and
   nothing more runs until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the
   run instead.
-- **Plugins are the source.** Each `.decree/plugins/<name>.md` holds a machine and its
-  `scripts/<name>/`, and decree installs it before it reads machines. Edit the installed copy
-  (`machines/<name>.yml`, `scripts/<name>/`), run it, then keep the edit with
+- **Plugins are the source.** Each `.decree/plugins/<name>.md` holds a machine (or none: a
+  library of scripts), its `scripts/<name>/`, cron files (`cron/<name>/`), migrations and
+  store seeds; `x-` keys are for other tools. decree installs plugins only when asked:
+  `decree plugin install` (after a clone or a pull; `check` and `process` say when one is
+  due), `add` or `import`. Edit the installed copy
+  (`machines/<name>.yml`, `scripts/<name>/`, `cron/<name>/`), run it, then keep the edit with
   `decree plugin export <name>`, or let the next run's `commit` export it, and commit the
   plugin file. A machine written by hand in `machines/` is not committed until it is exported
   (`decree check` warns about it). A project's settings for a plugin (`gate.sh`,
@@ -183,7 +186,8 @@ project in another ecosystem starts from `develop` and fills in its gate.
 - **Never delete run folders to clean up**; they are the record. Use
   `decree prune --older-than <age>`.
 - Commit `.decree/plugins/` and `.decree/graph/`, never `.decree/machines/` or
-  `.decree/scripts/`: git ignores them, and decree installs them from `plugins/`. Do not commit
+  `.decree/scripts/` or `.decree/cron/<plugin>/`: git ignores them, and `decree plugin install`
+  installs them from `plugins/`. Do not commit
   `.decree/inbox/`, `.decree/runs/`, `.decree/store/` or `.decree/cache/`.
 
 ## Commands
@@ -219,7 +223,8 @@ until fixed (the old machines keep running and the errors are printed).
 A project may have added official plugins (`decree plugin list` marks them `added`): `develop`
 (or its variants `develop_rust`, `develop_node` and `develop_react`, which work as it does),
 `infra` and `qa` below, `router` (the default router), and `newsletter`, `comfy`,
-`develop_by_size`, `gliner_router`, `llm_router` and `lease`, each described in its plugin file. When one
+`develop_by_size`, `gliner_router`, `llm_router`, `lease` and `plugin_install` (installs the
+plugins each time the daemon starts), each described in its plugin file. When one
 of the three below is there, start from it before writing a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
 unless the git work tree is clean, naming each `interrupted` or `failed` run that may have left
 the changes, with its `--retry` and `git stash push` commands, also in its attention file) and

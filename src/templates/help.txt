@@ -42,8 +42,9 @@ Commands:
                               and install it (curl -fsSL URL | decree plugin
                               import -)
   decree plugin install [NAME...]
-                              Install plugins now, replacing an installed
-                              copy edited in place
+                              Install new and changed plugins, keeping
+                              edited copies; with NAMEs, install those over
+                              any edit. Nothing else installs plugins
   decree skill [--ai AI]      Refresh the decree skill (.claude/skills/decree/
                               or .github/skills/decree/) after an upgrade;
                               your own files there are kept
@@ -96,7 +97,8 @@ Commands:
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 
 Files (.decree/):
-  plugins/<name>.md           A machine and its scripts; committed
+  plugins/<name>.md           A machine, scripts, cron files, migrations and
+                              store seeds; committed
   machines/<name>.yml         Machines (installed from plugins/; gitignored)
   scripts/<name>              Scripts shared by every machine
   scripts/<machine>/<name>    A machine's own scripts, found before scripts/, and

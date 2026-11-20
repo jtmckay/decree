@@ -61,7 +61,7 @@ fn test_init_creates_directory_structure() {
 }
 
 /// The official plugins `init` lists: every one, by name.
-const OFFICIAL: [&str; 13] = [
+const OFFICIAL: [&str; 14] = [
     "comfy",
     "develop",
     "develop_by_size",
@@ -73,6 +73,7 @@ const OFFICIAL: [&str; 13] = [
     "lease",
     "llm_router",
     "newsletter",
+    "plugin_install",
     "qa",
     "router",
 ];
@@ -457,7 +458,7 @@ fn test_init_gitignore_content() {
     let gitignore = fs::read_to_string(dir.path().join(".decree/.gitignore")).unwrap();
     assert_eq!(
         gitignore,
-        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nattention/\nprocess.log\ncache/\nai-use.md\nmachines/\nscripts/\n"
+        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nattention/\nprocess.log\ncache/\nai-use.md\nmachines/\nscripts/\ncron/*/\n"
     );
 }
 

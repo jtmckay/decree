@@ -352,13 +352,15 @@
       "type": "object",
       "required": [
         "action",
-        "installed"
+        "installed",
+        "removed",
+        "conflicts"
       ],
       "additionalProperties": false,
       "properties": {
         "action": {
           "const": "install",
-          "description": "`decree plugin install [<name>...]`: the plugins installed, replacing any edited installed copy."
+          "description": "`decree plugin install [<name>...]`: with no name, every plugin that is new or changed installed, every deleted plugin's copy removed and every edited copy kept; with names, those plugins installed, replacing any edited installed copy."
         },
         "installed": {
           "type": "array",
@@ -367,6 +369,22 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "description": "The plugins installed, by name."
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "With no name: the plugins whose file was deleted, whose installed copy was removed. Empty with names."
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "With no name: the plugins that changed while their installed copy was edited, not installed (P3); the exit code is then 1. Empty with names."
         }
       }
     }
@@ -399,7 +417,9 @@
       "action": "install",
       "installed": [
         "develop"
-      ]
+      ],
+      "removed": [],
+      "conflicts": []
     }
   ]
 }

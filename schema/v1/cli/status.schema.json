@@ -398,7 +398,7 @@
     },
     "cron": {
       "type": "object",
-      "description": "`decree status --cron`: the files in .decree/cron/ that parse.",
+      "description": "`decree status --cron`: the files in .decree/cron/ and its folders (`cron/<plugin>/`) that parse.",
       "required": ["cron"],
       "additionalProperties": false,
       "properties": {
@@ -411,7 +411,7 @@
             "required": ["file", "cron", "machine", "next", "at_daemon_start"],
             "additionalProperties": false,
             "properties": {
-              "file": { "type": "string", "description": "The file name in .decree/cron/." },
+              "file": { "type": "string", "description": "The file's path in .decree/cron/: `<file>.md`, or `<plugin>/<file>.md` for a cron file a plugin installed." },
               "cron": { "type": "string", "description": "Its `cron:` value as written: a cron expression or `@reboot`." },
               "machine": { "type": ["string", "null"], "description": "Its `machine:`, or null when it names none." },
               "next": { "type": ["string", "null"], "description": "When it fires next, RFC 3339 UTC; null for `@reboot`, and for a schedule with no time left." },

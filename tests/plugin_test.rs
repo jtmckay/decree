@@ -1,6 +1,6 @@
-//! Plugins (docs/reference/plugins.md): install before machines are read, export from the
-//! installed copy, import, and never overwrite an installed copy edited in place. One test
-//! per acceptance criterion of migration A09, each in its own temp project.
+//! Plugins (docs/reference/plugins.md): installed only when asked, export from the installed
+//! copy, import, and never overwrite an installed copy edited in place. One test per
+//! acceptance criterion of migration A09 and decision D85, each in its own temp project.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
@@ -198,13 +198,27 @@ fn machine_yaml(plugin: &str, name: &str) -> String {
     serde_norway::to_string(&machine).unwrap()
 }
 
-/// A project of only plugins and a message runs as the same files written by hand do.
+/// `process` installs nothing; once `decree plugin install` has, a project of only plugins
+/// and a message runs as the same files written by hand do.
 #[test]
-fn process_installs_plugins_and_runs_as_if_written_by_hand() {
+fn installed_plugins_run_as_if_written_by_hand() {
     let p = Project::new();
     p.put("plugins/develop.md", DEVELOP);
     p.put("plugins/helper.md", HELPER);
     p.put("migrations/01-a.md", MIGRATION);
+    let (code, _, err) = p.decree(&["process"], "");
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("plugins/develop.md: not installed, or changed since it was installed: run `decree plugin install`"),
+        "{err}"
+    );
+    assert!(!p.exists("machines/develop.yml") && !p.exists("scripts/develop"));
+    let (code, out, err) = p.decree(&["plugin", "install"], "");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "installed .decree/plugins/develop.md\ninstalled .decree/plugins/helper.md\n"
+    );
     let (code, out, err) = p.decree(&["process"], "");
     assert_eq!(code, 0, "{out}{err}");
     assert!(p.exists("machines/develop.yml") && p.exists("machines/helper.yml"));
@@ -235,8 +249,8 @@ fn process_installs_plugins_and_runs_as_if_written_by_hand() {
 }
 
 /// Export of a hand-written machine holds its folder, a data file and a flat script; once
-/// the installed files are deleted, `check` installs them again with the same bytes, and the
-/// run resolves the same scripts.
+/// the installed files are deleted, `decree plugin install` installs them again with the same
+/// bytes, and the run resolves the same scripts.
 #[test]
 fn export_takes_the_folder_and_the_flat_scripts_and_installs_them_again() {
     let p = Project::new();
@@ -287,8 +301,12 @@ states:
     fs::remove_file(p.path("machines/hello.yml")).unwrap();
     fs::remove_dir_all(p.path("scripts/hello")).unwrap();
     fs::remove_file(p.path("scripts/tidy")).unwrap();
-    let (code, out, err) = p.decree(&["check"], "");
-    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+    let (code, out, err) = p.decree(&["plugin", "install"], "");
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "installed .decree/plugins/hello.md\n"),
+        "{err}"
+    );
     for (rel, text) in &scripts {
         assert_eq!(&p.get(rel), text, "{rel}");
     }
@@ -312,7 +330,7 @@ fn export_of_an_installed_plugin_is_byte_identical() {
     let p = Project::new();
     p.put("plugins/develop.md", DEVELOP);
     p.put("plugins/helper.md", HELPER);
-    let (code, _, err) = p.decree(&["check"], "");
+    let (code, _, err) = p.decree(&["plugin", "install"], "");
     assert_eq!(code, 0, "{err}");
     for _ in 0..2 {
         let (code, _, err) = p.decree(&["plugin", "export", "develop"], "");
@@ -329,7 +347,7 @@ fn export_of_an_installed_plugin_is_byte_identical() {
 fn an_edited_script_runs_and_is_not_overwritten() {
     let p = Project::new();
     p.put("plugins/helper.md", HELPER);
-    assert_eq!(p.decree(&["check"], "").0, 0);
+    assert_eq!(p.decree(&["plugin", "install"], "").0, 0);
     let edited = "#!/usr/bin/env bash\necho edited in place\n";
     p.put_exec("scripts/helper/help", edited);
     p.put("migrations/01-a.md", "---\nmachine: helper\n---\nhi\n");
@@ -343,7 +361,7 @@ fn an_edited_script_runs_and_is_not_overwritten() {
 fn conflict() -> (Project, String) {
     let p = Project::new();
     p.put("plugins/helper.md", HELPER);
-    assert_eq!(p.decree(&["check"], "").0, 0);
+    assert_eq!(p.decree(&["plugin", "install"], "").0, 0);
     let edited = "#!/usr/bin/env bash\necho edited in place\n";
     p.put_exec("scripts/helper/help", edited);
     p.put(
@@ -375,6 +393,12 @@ fn a_changed_plugin_over_an_edit_fails_check_and_touches_nothing() {
     assert!(out.contains("edited in place"), "{out}");
     assert_eq!(err.matches("plugin `helper` changed").count(), 1, "{err}");
     assert_eq!(p.get("scripts/helper/help"), edited);
+
+    // `decree plugin install` with no name keeps the edit too, names the conflict, exits 1.
+    let (code, _, err) = p.decree(&["plugin", "install"], "");
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("plugin `helper` changed"), "{err}");
+    assert_eq!(p.get("scripts/helper/help"), edited);
 }
 
 #[test]
@@ -402,11 +426,23 @@ fn a_deleted_plugin_removes_its_copy_and_keeps_hand_written_machines() {
         "name: extra\ndescription: By hand.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
     );
     p.put_exec("scripts/work", "#!/usr/bin/env bash\n");
-    assert_eq!(p.decree(&["check"], "").0, 0);
+    assert_eq!(p.decree(&["plugin", "install"], "").0, 0);
     assert!(p.exists("machines/helper.yml"));
     fs::remove_file(p.path("plugins/helper.md")).unwrap();
+    // `check` warns and removes nothing; `decree plugin install` removes it.
     let (code, _, err) = p.decree(&["check"], "");
     assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains("plugins/helper.md: deleted, but its installed copy is still there"),
+        "{err}"
+    );
+    assert!(p.exists("machines/helper.yml"));
+    let (code, out, err) = p.decree(&["plugin", "install"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("removed the installed copy of .decree/plugins/helper.md"),
+        "{out}"
+    );
     assert!(!p.exists("machines/helper.yml"));
     assert!(!p.exists("scripts/helper"));
     assert!(p.exists("machines/extra.yml") && p.exists("scripts/work"));
@@ -543,8 +579,138 @@ fn json_output_follows_the_cli_schema() {
 #[test]
 fn the_test_plugins_validate() {
     let validator = schema::plugin_validator();
-    for text in [DEVELOP, HELPER] {
+    for text in [DEVELOP, HELPER, KIT] {
         let json = schema::frontmatter_to_json(text).unwrap();
-        assert!(schema::errors(&validator, &json).is_empty());
+        assert!(schema::errors(&validator, &json).is_empty(), "{text}");
     }
+}
+
+/// A plugin with no machine, a cron file, a migration, a store seed and an `x-` key.
+const KIT: &str = "\
+---
+name: kit
+needs:
+- helper
+scripts:
+  lib.sh: |
+    kit() { echo kit; }
+cron:
+  daily.md: |
+    ---
+    cron: 0 9 * * *
+    machine: helper
+    ---
+    Daily.
+migrations:
+  A01-kit.md: |
+    ---
+    machine: helper
+    ---
+    Set up.
+store:
+  seeds.txt: |
+    a
+x-exist-services:
+- web
+---
+# kit
+";
+
+/// D85: `check` installs nothing and says so; `decree plugin install` installs the cron file
+/// into `cron/kit/`, which the daemon's scan and `check` read, writes the migration and the
+/// store seed once, and removing the plugin drops the unrun migration and keeps the store.
+#[test]
+fn a_plugin_carries_cron_migrations_and_store_and_installs_only_when_asked() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    p.put("plugins/kit.md", KIT);
+    let (code, _, err) = p.decree(&["check"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains("plugins/kit.md: not installed, or changed since it was installed: run `decree plugin install`"),
+        "{err}"
+    );
+    assert!(!p.exists("machines") && !p.exists("cron/kit") && !p.exists("migrations"));
+
+    let (code, out, err) = p.decree(&["plugin", "install"], "");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "installed .decree/plugins/helper.md\ninstalled .decree/plugins/kit.md\n"
+    );
+    assert!(!p.exists("machines/kit.yml"));
+    assert!(p.get("cron/kit/daily.md").contains("cron: 0 9 * * *"));
+    assert!(p.get("migrations/A01-kit.md").contains("Set up."));
+    assert_eq!(p.get("store/kit/seeds.txt"), "a\n");
+    let (code, out, err) = p.decree(&["check"], "");
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+    let (code, out, err) = p.decree(&["status", "--cron", "--format", "json"], "");
+    assert_eq!(code, 0, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["cron"][0]["file"], "kit/daily.md", "{doc}");
+
+    // A cron file a plugin installs is checked like any other (M3).
+    p.put(
+        "cron/kit/daily.md",
+        "---\ncron: 0 9 * * *\nmachine: nobody\n---\n",
+    );
+    let (code, out, _) = p.decree(&["check"], "");
+    assert_eq!(code, 1);
+    assert!(out.contains("cron/kit/daily.md"), "{out}");
+    p.put(
+        "cron/kit/daily.md",
+        "---\ncron: 0 9 * * *\nmachine: helper\n---\nDaily.\n",
+    );
+
+    // Export keeps the `x-` key, the migration and the store.
+    let (code, _, err) = p.decree(&["plugin", "export", "kit"], "");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(p.get("plugins/kit.md"), KIT);
+
+    p.put("store/kit/seeds.txt", "mine\n");
+    fs::remove_file(p.path("plugins/kit.md")).unwrap();
+    let (code, out, err) = p.decree(&["plugin", "install"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("removed the installed copy of .decree/plugins/kit.md"),
+        "{out}"
+    );
+    assert!(!p.exists("cron/kit") && !p.exists("scripts/kit"));
+    assert!(!p.exists("migrations/A01-kit.md"));
+    assert_eq!(p.get("store/kit/seeds.txt"), "mine\n");
+}
+
+/// The official `plugin_install`: its run installs what `process` only reports.
+#[test]
+fn the_plugin_install_plugin_installs_the_plugins() {
+    let p = Project::new();
+    let (code, _, err) = p.decree(&["plugin", "add", "plugin_install"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(p.get("cron/plugin_install/boot.md").contains("'@reboot'"));
+    p.put("plugins/helper.md", HELPER);
+    p.put(
+        "inbox/a.md",
+        "---\nmachine: plugin_install\n---\nInstall.\n",
+    );
+    let bin = Path::new(env!("CARGO_BIN_EXE_decree")).parent().unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(&p.root)
+        .env("NO_COLOR", "1")
+        .env("PATH", path)
+        .arg("process")
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("plugins/helper.md: not installed"), "{text}");
+    assert!(p.exists("machines/helper.yml"), "{text}");
 }

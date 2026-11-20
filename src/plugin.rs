@@ -1,13 +1,15 @@
-//! Plugins (docs/reference/plugins.md): one markdown file per machine, `.decree/plugins/<name>.md`,
-//! whose frontmatter holds the machine and the files of `scripts/<name>/`. decree installs a
-//! plugin into `machines/<name>.yml` and `scripts/<name>/`, exports an installed copy back to
-//! its file, and never overwrites an installed copy that was edited in place.
+//! Plugins (docs/reference/plugins.md): one markdown file, `.decree/plugins/<name>.md`, whose
+//! frontmatter holds any of decree's files: a machine, the files of `scripts/<name>/`, cron
+//! files, migrations and store seeds. decree installs a plugin into `machines/<name>.yml`,
+//! `scripts/<name>/` and `cron/<name>/` (its installed copy), writes its migrations and store
+//! seeds once, exports an installed copy back to its file, and never overwrites an installed
+//! copy that was edited in place.
 //!
 //! What decree records about an install is a copy of the plugin file as it was installed,
 //! `.decree/cache/plugins/<name>.md`. A plugin changed since its install when its file differs
 //! from that record; its installed copy was edited when it differs from what the record
 //! installs. The machine is compared as YAML, so a comment or a reordered key is no edit;
-//! every file of `scripts/<name>/` is compared byte for byte.
+//! every file of `scripts/<name>/` and `cron/<name>/` is compared byte for byte.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -18,7 +20,7 @@ use serde_norway::{Mapping, Value};
 
 use crate::commands::check::md_files;
 use crate::error::DecreeError;
-use crate::layout::CACHE_DIR;
+use crate::layout::{CACHE_DIR, CRON_DIR, MIGRATIONS_DIR, RUNS_DIR, STORE_DIR};
 use crate::machine::{self, is_ident, Invoke, MACHINES_DIR};
 use crate::message::{write_replace, Message};
 use crate::runtime::resolve::{resolve_script, SCRIPTS_DIR};
@@ -29,19 +31,36 @@ pub const PLUGINS_DIR: &str = "plugins";
 /// Directory under `.decree/cache/` holding the record of each install.
 const RECORDS_DIR: &str = "plugins";
 
-/// The keys a plugin's frontmatter may have.
-const KEYS: [&str; 4] = ["name", "machine", "scripts", "needs"];
+/// The keys a plugin's frontmatter may have, besides any `x-` key.
+const KEYS: [&str; 7] = [
+    "name",
+    "machine",
+    "scripts",
+    "cron",
+    "migrations",
+    "store",
+    "needs",
+];
 
 /// A plugin file, parsed and checked against the plugin schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plugin {
     pub name: String,
-    /// The machine as `machines/<name>.yml` holds it, without `name`.
-    pub machine: Mapping,
+    /// The machine as `machines/<name>.yml` holds it, without `name`; `None` for a plugin of
+    /// scripts or cron files only.
+    pub machine: Option<Mapping>,
     /// Each file of `scripts/<name>/`, by its path there.
     pub scripts: BTreeMap<String, String>,
+    /// Each file of `cron/<name>/`, by its file name there.
+    pub cron: BTreeMap<String, String>,
+    /// Each migration, by its file name in `migrations/`: written once, never overwritten.
+    pub migrations: BTreeMap<String, String>,
+    /// Each seed of `store/<name>/`, by its path there: written once, never overwritten.
+    pub store: BTreeMap<String, String>,
     /// The other plugins this one relies on, as written.
     pub needs: Vec<String>,
+    /// Every `x-` key, as written: decree keeps them and reads none.
+    pub extensions: Mapping,
     /// The markdown below the frontmatter.
     pub body: String,
 }
@@ -78,7 +97,7 @@ impl Plugin {
         let mut problems = Vec::new();
         for key in message.frontmatter.keys() {
             match key.as_str() {
-                Some(k) if KEYS.contains(&k) => {}
+                Some(k) if KEYS.contains(&k) || k.starts_with("x-") => {}
                 _ => {
                     let shown = key.as_str().map_or_else(
                         || serde_norway::to_string(key).unwrap_or_default(),
@@ -88,7 +107,7 @@ impl Plugin {
                     problems.push(Problem::at(
                         key.as_str().map_or(1, line),
                         format!(
-                            "unknown key `{shown}`: a plugin has `name`, `machine`, `scripts` and `needs`"
+                            "unknown key `{shown}`: a plugin has `name`, `machine`, `scripts`, `cron`, `migrations`, `store`, `needs` and `x-` keys"
                         ),
                     ));
                 }
@@ -97,7 +116,7 @@ impl Plugin {
 
         let name = match message.frontmatter.get("name") {
             None => {
-                problems.push(Problem::at(1, "no `name`: a plugin names its machine"));
+                problems.push(Problem::at(1, "no `name`: every plugin has one"));
                 None
             }
             Some(Value::String(name)) if is_ident(name) => {
@@ -125,10 +144,7 @@ impl Plugin {
         };
 
         let machine = match message.frontmatter.get("machine") {
-            None => {
-                problems.push(Problem::at(1, "no `machine`: a plugin holds one machine"));
-                Mapping::new()
-            }
+            None => None,
             Some(Value::Mapping(m)) => {
                 if m.contains_key("name") {
                     problems.push(Problem::at(
@@ -136,60 +152,29 @@ impl Plugin {
                         "`machine` has `name`: the plugin's `name` names the machine",
                     ));
                 }
-                m.clone()
+                Some(m.clone())
             }
             Some(_) => {
                 problems.push(Problem::at(line("machine"), "`machine` must be a mapping"));
-                Mapping::new()
+                None
             }
         };
 
-        let mut scripts = BTreeMap::new();
-        match message.frontmatter.get("scripts") {
-            None => {}
-            Some(Value::Mapping(map)) => {
-                for (path, text) in map {
-                    let Some(path) = path.as_str() else {
-                        problems.push(Problem::at(
-                            line("scripts"),
-                            "a `scripts` path must be a string",
-                        ));
-                        continue;
-                    };
-                    if !is_plain_path(path) {
-                        problems.push(Problem::at(
-                            line("scripts"),
-                            format!(
-                                "script path `{path}` is not a plain relative path: no `..`, `.`, empty parts or leading `/`"
-                            ),
-                        ));
-                        continue;
-                    }
-                    match text.as_str() {
-                        Some(text) => {
-                            scripts.insert(path.to_string(), text.to_string());
-                        }
-                        None => problems.push(Problem::at(
-                            line("scripts"),
-                            format!("script `{path}` must be a string, the file's text"),
-                        )),
-                    }
-                }
-                for path in scripts.keys() {
-                    let prefix = format!("{path}/");
-                    if scripts.keys().any(|other| other.starts_with(&prefix)) {
-                        problems.push(Problem::at(
-                            line("scripts"),
-                            format!("script path `{path}` is both a file and a folder"),
-                        ));
-                    }
-                }
-            }
-            Some(_) => problems.push(Problem::at(
-                line("scripts"),
-                "`scripts` must be a mapping of paths to their text",
-            )),
-        }
+        let mut files = |key: &str, what: &str, folders: bool, md: bool| {
+            file_map(
+                message.frontmatter.get(key),
+                key,
+                what,
+                folders,
+                md,
+                line(key),
+                &mut problems,
+            )
+        };
+        let scripts = files("scripts", "script", true, false);
+        let cron = files("cron", "cron file", false, true);
+        let migrations = files("migrations", "migration", false, true);
+        let store = files("store", "store file", true, false);
 
         let mut needs = Vec::new();
         match message.frontmatter.get("needs") {
@@ -220,20 +205,31 @@ impl Plugin {
             )),
         }
 
+        let extensions: Mapping = message
+            .frontmatter
+            .iter()
+            .filter(|(k, _)| k.as_str().is_some_and(|k| k.starts_with("x-")))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
         match name {
             Some(name) if problems.is_empty() => Ok(Plugin {
                 name,
                 machine,
                 scripts,
+                cron,
+                migrations,
+                store,
                 needs,
+                extensions,
                 body: message.body,
             }),
             _ => Err(problems),
         }
     }
 
-    /// The plugin file, as export writes it: `name`, `needs` (unless empty), `machine` and
-    /// `scripts` (unless empty), then the body.
+    /// The plugin file, as export writes it: `name`, `needs`, `machine`, `scripts`, `cron`,
+    /// `migrations` and `store` (each unless empty), the `x-` keys as written, then the body.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut message = Message::new(self.body.clone());
         message.set("name", self.name.as_str());
@@ -241,50 +237,79 @@ impl Plugin {
             let needs: Vec<Value> = self.needs.iter().map(|n| n.as_str().into()).collect();
             message.set("needs", Value::Sequence(needs));
         }
-        message.set("machine", Value::Mapping(self.machine.clone()));
-        if !self.scripts.is_empty() {
-            let mut scripts = Mapping::new();
-            for (path, text) in &self.scripts {
-                scripts.insert(path.as_str().into(), text.as_str().into());
+        if let Some(machine) = &self.machine {
+            message.set("machine", Value::Mapping(machine.clone()));
+        }
+        for (key, files) in [
+            ("scripts", &self.scripts),
+            ("cron", &self.cron),
+            ("migrations", &self.migrations),
+            ("store", &self.store),
+        ] {
+            if !files.is_empty() {
+                let mut map = Mapping::new();
+                for (path, text) in files {
+                    map.insert(path.as_str().into(), text.as_str().into());
+                }
+                message.set(key, Value::Mapping(map));
             }
-            message.set("scripts", Value::Mapping(scripts));
+        }
+        for (key, value) in &self.extensions {
+            if let Some(key) = key.as_str() {
+                message.set(key, value.clone());
+            }
         }
         message.to_bytes()
     }
 
     /// The machine with `name` first, as `machines/<name>.yml` holds it.
-    pub fn machine_value(&self) -> Value {
+    pub fn machine_value(&self) -> Option<Value> {
+        let machine = self.machine.as_ref()?;
         let mut out = Mapping::new();
         out.insert("name".into(), self.name.as_str().into());
-        for (key, value) in &self.machine {
+        for (key, value) in machine {
             out.insert(key.clone(), value.clone());
         }
-        Value::Mapping(out)
+        Some(Value::Mapping(out))
     }
 
     /// The text install writes to `machines/<name>.yml`.
-    pub fn machine_text(&self) -> String {
+    pub fn machine_text(&self) -> Option<String> {
         // A `Value` built from parsed YAML always serializes.
-        serde_norway::to_string(&self.machine_value()).unwrap_or_default()
+        self.machine_value()
+            .map(|v| serde_norway::to_string(&v).unwrap_or_default())
     }
 
     /// The machine's `description`, or an empty string.
     pub fn description(&self) -> &str {
         self.machine
-            .get("description")
+            .as_ref()
+            .and_then(|m| m.get("description"))
             .and_then(Value::as_str)
             .unwrap_or("")
     }
 
-    /// Every file install writes, relative to `.decree/`, with its text: the machine, then the
-    /// scripts in path order.
+    /// Every file the plugin writes, relative to `.decree/`, with its text: the machine, the
+    /// scripts, the cron files, the migrations and the store seeds, each in path order.
     pub fn files(&self) -> Vec<(String, String)> {
-        let mut out = vec![(machine_file(&self.name), self.machine_text())];
-        out.extend(
-            self.scripts
-                .iter()
-                .map(|(path, text)| (format!("{SCRIPTS_DIR}/{}/{path}", self.name), text.clone())),
-        );
+        let name = &self.name;
+        let mut out: Vec<(String, String)> = self
+            .machine_text()
+            .map(|text| (machine_file(name), text))
+            .into_iter()
+            .collect();
+        for (dir, files) in [
+            (format!("{SCRIPTS_DIR}/{name}"), &self.scripts),
+            (format!("{CRON_DIR}/{name}"), &self.cron),
+            (MIGRATIONS_DIR.to_string(), &self.migrations),
+            (format!("{STORE_DIR}/{name}"), &self.store),
+        ] {
+            out.extend(
+                files
+                    .iter()
+                    .map(|(path, text)| (format!("{dir}/{path}"), text.clone())),
+            );
+        }
         out
     }
 }
@@ -309,6 +334,85 @@ fn frontmatter_yaml(text: &str) -> Option<String> {
     None
 }
 
+/// Read a frontmatter map of `<path>: <its text>` (`scripts`, `cron`, `migrations`,
+/// `store`). Each path is plain (`is_plain_path`); with `folders` it may have `/`, else it is
+/// one file name; with `md` it ends in `.md` and does not start with `.`, which decree skips
+/// in `cron/` and `migrations/`. A path that is both a file and a folder is a
+/// problem.
+fn file_map(
+    value: Option<&Value>,
+    key: &str,
+    what: &str,
+    folders: bool,
+    md: bool,
+    line: usize,
+    problems: &mut Vec<Problem>,
+) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let map = match value {
+        None => return out,
+        Some(Value::Mapping(map)) => map,
+        Some(_) => {
+            problems.push(Problem::at(
+                line,
+                format!("`{key}` must be a mapping of paths to their text"),
+            ));
+            return out;
+        }
+    };
+    for (path, text) in map {
+        let Some(path) = path.as_str() else {
+            problems.push(Problem::at(
+                line,
+                format!("a `{key}` path must be a string"),
+            ));
+            continue;
+        };
+        if !is_plain_path(path) {
+            problems.push(Problem::at(
+                line,
+                format!(
+                    "{what} path `{path}` is not a plain relative path: no `..`, `.`, empty parts or leading `/`"
+                ),
+            ));
+            continue;
+        }
+        if !folders && path.contains('/') {
+            problems.push(Problem::at(
+                line,
+                format!("{what} `{path}` must be a file name, with no `/`"),
+            ));
+            continue;
+        }
+        if md && (!path.ends_with(".md") || path.starts_with('.')) {
+            problems.push(Problem::at(
+                line,
+                format!("{what} `{path}` must end in `.md` and not start with `.`"),
+            ));
+            continue;
+        }
+        match text.as_str() {
+            Some(text) => {
+                out.insert(path.to_string(), text.to_string());
+            }
+            None => problems.push(Problem::at(
+                line,
+                format!("{what} `{path}` must be a string, the file's text"),
+            )),
+        }
+    }
+    for path in out.keys() {
+        let prefix = format!("{path}/");
+        if out.keys().any(|other| other.starts_with(&prefix)) {
+            problems.push(Problem::at(
+                line,
+                format!("{what} path `{path}` is both a file and a folder"),
+            ));
+        }
+    }
+    out
+}
+
 /// `machines/<name>.yml`, relative to `.decree/`.
 fn machine_file(name: &str) -> String {
     format!("{MACHINES_DIR}/{name}.yml")
@@ -323,7 +427,7 @@ pub fn is_plain_path(path: &str) -> bool {
 }
 
 /// What is installed for one name: the machine file's bytes and every file of
-/// `scripts/<name>/`.
+/// `scripts/<name>/` and `cron/<name>/`.
 #[derive(Debug, Default)]
 struct Copy {
     machine: Option<Vec<u8>>,
@@ -331,6 +435,10 @@ struct Copy {
     scripts: Option<BTreeMap<String, Vec<u8>>>,
     /// `scripts/<name>` is a file, not a folder.
     scripts_is_file: bool,
+    /// `None` when `cron/<name>` does not exist.
+    cron: Option<BTreeMap<String, Vec<u8>>>,
+    /// `cron/<name>` is a file, not a folder.
+    cron_is_file: bool,
 }
 
 impl Copy {
@@ -340,45 +448,67 @@ impl Copy {
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(io_error(&decree_dir.join(machine_file(name)), e)),
         };
-        let dir = scripts_dir(decree_dir, name);
         let mut copy = Copy {
             machine,
             ..Copy::default()
         };
+        let dir = scripts_dir(decree_dir, name);
         if dir.is_dir() {
             copy.scripts = Some(read_tree(&dir)?);
         } else if dir.exists() {
             copy.scripts_is_file = true;
+        }
+        let dir = cron_dir(decree_dir, name);
+        if dir.is_dir() {
+            copy.cron = Some(read_tree(&dir)?);
+        } else if dir.exists() {
+            copy.cron_is_file = true;
         }
         Ok(copy)
     }
 
     /// Nothing is installed.
     fn is_absent(&self) -> bool {
-        self.machine.is_none() && self.scripts.is_none() && !self.scripts_is_file
+        self.machine.is_none()
+            && self.scripts.is_none()
+            && !self.scripts_is_file
+            && self.cron.is_none()
+            && !self.cron_is_file
     }
 
     /// Whether this is exactly what `plugin` installs.
     fn matches(&self, plugin: &Plugin) -> bool {
-        self.machine_matches(plugin) && !self.scripts_is_file && self.scripts_match(plugin)
+        self.machine_matches(plugin)
+            && !self.scripts_is_file
+            && same_files(self.scripts.as_ref(), &plugin.scripts)
+            && !self.cron_is_file
+            && same_files(self.cron.as_ref(), &plugin.cron)
     }
 
     fn machine_matches(&self, plugin: &Plugin) -> bool {
-        self.machine
-            .as_deref()
-            .and_then(|bytes| serde_norway::from_slice::<Value>(bytes).ok())
-            .is_some_and(|value| value == plugin.machine_value())
+        match (&self.machine, plugin.machine_value()) {
+            (None, None) => true,
+            (Some(bytes), Some(want)) => {
+                serde_norway::from_slice::<Value>(bytes).is_ok_and(|have| have == want)
+            }
+            _ => false,
+        }
     }
+}
 
-    fn scripts_match(&self, plugin: &Plugin) -> bool {
-        let empty = BTreeMap::new();
-        let have = self.scripts.as_ref().unwrap_or(&empty);
-        have.len() == plugin.scripts.len()
-            && plugin
-                .scripts
-                .iter()
-                .all(|(path, text)| have.get(path).map(Vec::as_slice) == Some(text.as_bytes()))
-    }
+/// Whether the files of a folder (`None`: no folder) are exactly `want`, byte for byte.
+fn same_files(have: Option<&BTreeMap<String, Vec<u8>>>, want: &BTreeMap<String, String>) -> bool {
+    let empty = BTreeMap::new();
+    let have = have.unwrap_or(&empty);
+    have.len() == want.len()
+        && want
+            .iter()
+            .all(|(path, text)| have.get(path).map(Vec::as_slice) == Some(text.as_bytes()))
+}
+
+/// `.decree/cron/<name>/`.
+fn cron_dir(decree_dir: &Path, name: &str) -> PathBuf {
+    decree_dir.join(CRON_DIR).join(name)
 }
 
 /// `.decree/scripts/<name>/`.
@@ -431,44 +561,149 @@ fn read_tree(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, DecreeError> {
 /// when its bytes differ. A file is executable when it starts with `#!`.
 pub fn install(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), DecreeError> {
     let copy = Copy::read(decree_dir, &plugin.name)?;
+    let path = decree_dir.join(machine_file(&plugin.name));
     if !copy.machine_matches(plugin) {
-        let path = decree_dir.join(machine_file(&plugin.name));
-        create_dir(path.parent())?;
-        write_replace(&path, plugin.machine_text().as_bytes())
-            .map_err(|(path, e)| io_error(&path, e))?;
-    }
-    let dir = scripts_dir(decree_dir, &plugin.name);
-    if copy.scripts_is_file {
-        return Err(DecreeError::Other(format!(
-            "{}: is a file, but plugin `{}` installs its scripts in a folder of that name; move it",
-            dir.display(),
-            plugin.name
-        )));
-    }
-    if plugin.scripts.is_empty() {
-        if dir.is_dir() {
-            std::fs::remove_dir_all(&dir).map_err(|e| io_error(&dir, e))?;
-        }
-    } else {
-        let have = copy.scripts.unwrap_or_default();
-        std::fs::create_dir_all(&dir).map_err(|e| io_error(&dir, e))?;
-        for path in have.keys().filter(|p| !plugin.scripts.contains_key(*p)) {
-            let full = dir.join(path);
-            std::fs::remove_file(&full).map_err(|e| io_error(&full, e))?;
-        }
-        remove_empty_dirs(&dir)?;
-        for (path, text) in &plugin.scripts {
-            let full = dir.join(path);
-            if have.get(path).map(Vec::as_slice) != Some(text.as_bytes()) {
-                create_dir(full.parent())?;
-                write_replace(&full, text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
+        match plugin.machine_text() {
+            Some(machine) => {
+                create_dir(path.parent())?;
+                write_replace(&path, machine.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
             }
+            None => std::fs::remove_file(&path).map_err(|e| io_error(&path, e))?,
+        }
+    }
+    let folders = [
+        (
+            scripts_dir(decree_dir, &plugin.name),
+            copy.scripts_is_file,
+            copy.scripts,
+            &plugin.scripts,
+            true,
+        ),
+        (
+            cron_dir(decree_dir, &plugin.name),
+            copy.cron_is_file,
+            copy.cron,
+            &plugin.cron,
+            false,
+        ),
+    ];
+    for (dir, is_file, have, want, scripts) in folders {
+        if is_file {
+            return Err(DecreeError::Other(format!(
+                "{}: is a file, but plugin `{}` installs a folder of that name; move it",
+                dir.display(),
+                plugin.name
+            )));
+        }
+        write_folder(&dir, have.unwrap_or_default(), want, scripts)?;
+    }
+    drop_migrations(decree_dir, &plugin.name, Some(plugin))?;
+    seed(decree_dir, plugin)?;
+    record(decree_dir, &plugin.name, text)
+}
+
+/// Make folder `dir`, holding `have`, hold exactly `want`: remove the files it does not
+/// ship, and write each that differs. With `scripts`, a file is executable when it starts
+/// with `#!`, else not. An empty `want` removes the folder.
+fn write_folder(
+    dir: &Path,
+    have: BTreeMap<String, Vec<u8>>,
+    want: &BTreeMap<String, String>,
+    scripts: bool,
+) -> Result<(), DecreeError> {
+    if want.is_empty() {
+        if dir.is_dir() {
+            std::fs::remove_dir_all(dir).map_err(|e| io_error(dir, e))?;
+        }
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| io_error(dir, e))?;
+    for path in have.keys().filter(|p| !want.contains_key(*p)) {
+        let full = dir.join(path);
+        std::fs::remove_file(&full).map_err(|e| io_error(&full, e))?;
+    }
+    remove_empty_dirs(dir)?;
+    for (path, text) in want {
+        let full = dir.join(path);
+        let same = have.get(path).map(Vec::as_slice) == Some(text.as_bytes());
+        if !same {
+            create_dir(full.parent())?;
+            write_replace(&full, text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
+        }
+        if scripts {
             let mode = if text.starts_with("#!") { 0o755 } else { 0o644 };
             std::fs::set_permissions(&full, std::fs::Permissions::from_mode(mode))
                 .map_err(|e| io_error(&full, e))?;
         }
     }
-    record(decree_dir, &plugin.name, text)
+    Ok(())
+}
+
+/// Write `plugin`'s migrations and store seeds that are not there yet: a migration that is
+/// absent from `migrations/` and not in `processed.md`, and a store file absent from
+/// `store/<name>/`. Neither is ever overwritten: a migration is immutable once written, and
+/// the store is the project's data.
+fn seed(decree_dir: &Path, plugin: &Plugin) -> Result<(), DecreeError> {
+    let processed = if plugin.migrations.is_empty() {
+        BTreeSet::new()
+    } else {
+        crate::commands::check::read_processed(decree_dir)?
+    };
+    let migrations = decree_dir.join(MIGRATIONS_DIR);
+    for (file, text) in &plugin.migrations {
+        let path = migrations.join(file);
+        if !processed.contains(file) && !path.exists() {
+            create_dir(path.parent())?;
+            write_replace(&path, text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
+        }
+    }
+    let store = decree_dir.join(STORE_DIR).join(&plugin.name);
+    for (file, text) in &plugin.store {
+        let path = store.join(file);
+        if !path.exists() {
+            create_dir(path.parent())?;
+            write_replace(&path, text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// Remove each migration plugin `name` was installed with (its record) that `now` does not
+/// have (`None`: the plugin is gone), if it never started: its file is as the plugin wrote
+/// it, it is not in `processed.md`, and it has no run. A migration that started is history,
+/// and stays.
+fn drop_migrations(decree_dir: &Path, name: &str, now: Option<&Plugin>) -> Result<(), DecreeError> {
+    let path = record_path(decree_dir, name);
+    let old = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(io_error(&path, e)),
+    };
+    let Some(old) = std::str::from_utf8(&old)
+        .ok()
+        .and_then(|t| Plugin::parse(t, None).ok())
+    else {
+        return Ok(());
+    };
+    let gone: Vec<(&String, &String)> = old
+        .migrations
+        .iter()
+        .filter(|(file, _)| now.is_none_or(|p| !p.migrations.contains_key(*file)))
+        .collect();
+    if gone.is_empty() {
+        return Ok(());
+    }
+    let processed = crate::commands::check::read_processed(decree_dir)?;
+    let runs = crate::migration::newest_runs(&decree_dir.join(RUNS_DIR))
+        .map_err(|e| io_error(&decree_dir.join(RUNS_DIR), e))?;
+    for (file, text) in gone {
+        let path = decree_dir.join(MIGRATIONS_DIR).join(file);
+        let untouched = std::fs::read(&path).is_ok_and(|b| b == text.as_bytes());
+        if untouched && !processed.contains(file) && !runs.contains_key(file) {
+            std::fs::remove_file(&path).map_err(|e| io_error(&path, e))?;
+        }
+    }
+    Ok(())
 }
 
 fn create_dir(dir: Option<&Path>) -> Result<(), DecreeError> {
@@ -520,16 +755,19 @@ fn stem(file: &str) -> &str {
     file.strip_suffix(".md").unwrap_or(file)
 }
 
-/// Remove plugin `name`'s installed copy and its record.
+/// Remove plugin `name`'s installed copy, the migrations it wrote that never started, and its
+/// record. Its store stays: it is the project's data.
 fn uninstall(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
     let machine = decree_dir.join(machine_file(name));
     if machine.exists() {
         std::fs::remove_file(&machine).map_err(|e| io_error(&machine, e))?;
     }
-    let dir = scripts_dir(decree_dir, name);
-    if dir.is_dir() {
-        std::fs::remove_dir_all(&dir).map_err(|e| io_error(&dir, e))?;
+    for dir in [scripts_dir(decree_dir, name), cron_dir(decree_dir, name)] {
+        if dir.is_dir() {
+            std::fs::remove_dir_all(&dir).map_err(|e| io_error(&dir, e))?;
+        }
     }
+    drop_migrations(decree_dir, name, None)?;
     forget(decree_dir, name)
 }
 
@@ -575,9 +813,12 @@ pub fn read_one(decree_dir: &Path, name: &str) -> Result<Found, DecreeError> {
     })
 }
 
-/// What `sync` did and found.
+/// What `sync` did and found, or what `status` found `sync` would do.
 #[derive(Debug, Default)]
 pub struct Synced {
+    /// Whether this is `status`: nothing was written, and `installed`, `removed` and `kept`
+    /// are what `decree plugin install` would do.
+    pub checked: bool,
     /// Plugins installed now.
     pub installed: Vec<String>,
     /// Plugins whose file was deleted, whose installed copy was removed.
@@ -595,10 +836,24 @@ pub struct Synced {
 
 /// Install every plugin in `plugins/` that is new or changed since it was installed, and
 /// remove the installed copy of each plugin whose file was deleted, never overwriting an
-/// installed copy that was edited (docs/reference/plugins.md, Installing). A project without
-/// `plugins/` and without records is left as it is.
+/// installed copy that was edited (docs/reference/plugins.md, Installing): what
+/// `decree plugin install` with no name does. A project without `plugins/` and without
+/// records is left as it is.
 pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
-    let mut out = Synced::default();
+    reconcile(decree_dir, true)
+}
+
+/// What `sync` would do, writing nothing: `check`, `process` and `daemon` report it, and
+/// never install.
+pub fn status(decree_dir: &Path) -> Result<Synced, DecreeError> {
+    reconcile(decree_dir, false)
+}
+
+fn reconcile(decree_dir: &Path, write: bool) -> Result<Synced, DecreeError> {
+    let mut out = Synced {
+        checked: !write,
+        ..Synced::default()
+    };
     let mut recorded = records(decree_dir)?;
     let found = read_all(decree_dir)?;
     let names: BTreeSet<String> = found.iter().map(|f| f.name.clone()).collect();
@@ -624,7 +879,9 @@ pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
         let record = recorded.remove(&plugin.name);
         let copy = Copy::read(decree_dir, &plugin.name)?;
         if copy.is_absent() {
-            install(decree_dir, &plugin, &f.text)?;
+            if write {
+                install(decree_dir, &plugin, &f.text)?;
+            }
             out.installed.push(plugin.name);
             continue;
         }
@@ -633,7 +890,9 @@ pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
             continue;
         }
         if copy.matches(&plugin) {
-            record_only(decree_dir, &plugin.name, &f.text)?;
+            if write {
+                record_only(decree_dir, &plugin, &f.text)?;
+            }
             continue;
         }
         let unedited = record
@@ -642,7 +901,9 @@ pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
             .and_then(|old| Plugin::parse(old, None).ok())
             .is_some_and(|old| copy.matches(&old));
         if unedited {
-            install(decree_dir, &plugin, &f.text)?;
+            if write {
+                install(decree_dir, &plugin, &f.text)?;
+            }
             out.installed.push(plugin.name);
         } else {
             out.conflicts.push(plugin.name);
@@ -655,7 +916,15 @@ pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
             .ok()
             .and_then(|old| Plugin::parse(old, None).ok())
             .is_some_and(|old| copy.matches(&old));
-        if copy.is_absent() {
+        if !write {
+            if copy.is_absent() {
+                continue;
+            } else if unedited {
+                out.removed.push(name);
+            } else {
+                out.kept.push(name);
+            }
+        } else if copy.is_absent() {
             forget(decree_dir, &name)?;
         } else if unedited {
             uninstall(decree_dir, &name)?;
@@ -668,15 +937,32 @@ pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
     Ok(out)
 }
 
-fn record_only(decree_dir: &Path, name: &str, text: &[u8]) -> Result<(), DecreeError> {
-    record(decree_dir, name, text)
+/// Record a plugin whose installed copy already matches it, and write what it seeds.
+fn record_only(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), DecreeError> {
+    seed(decree_dir, plugin)?;
+    record(decree_dir, &plugin.name, text)
 }
 
 impl Synced {
     /// One line per conflict, invalid plugin, and plugin whose edited copy was kept, for
-    /// `process`, `daemon` and `graph` to print.
+    /// `process`, `daemon` and `decree plugin install` to print; for `status`, also one per
+    /// plugin `decree plugin install` would install or remove.
     pub fn notices(&self) -> Vec<String> {
         let mut out = Vec::new();
+        if self.checked {
+            for name in &self.installed {
+                out.push(format!(
+                    "{}: not installed, or changed since it was installed: run `decree plugin install`",
+                    plugin_file(name)
+                ));
+            }
+            for name in &self.removed {
+                out.push(format!(
+                    "{}: deleted, but its installed copy is still there: run `decree plugin install` to remove it",
+                    plugin_file(name)
+                ));
+            }
+        }
         for (name, problems) in &self.invalid {
             for p in problems {
                 out.push(format!("{}: {} (P1)", problem_at(name, p.line), p.message));
@@ -715,99 +1001,122 @@ pub fn plugin_file(name: &str) -> String {
 /// What a conflict is and both ways out of it.
 pub fn conflict_message(name: &str) -> String {
     format!(
-        "plugin `{name}` changed, but its installed copy ({} or {SCRIPTS_DIR}/{name}/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export {name}` and merge with git; to take the plugin's version, run `decree plugin install {name}`",
+        "plugin `{name}` changed, but its installed copy ({}, {SCRIPTS_DIR}/{name}/ or {CRON_DIR}/{name}/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export {name}` and merge with git; to take the plugin's version, run `decree plugin install {name}`",
         machine_file(name)
     )
 }
 
-/// The plugin of the installed copy of machine `name` (docs/reference/plugins.md, Export): the
-/// machine, every file of `scripts/<name>/`, and every flat `scripts/` file its states run,
-/// as a file of `scripts/<name>/`, and `needs`, every other machine it invokes, emits to or
-/// routes through. An existing plugin file keeps its body and its `needs`; a new one gets
-/// `# <name>` and the machine's description.
+/// The plugin of the installed copy `name` (docs/reference/plugins.md, Export): the machine
+/// (if any), every file of `scripts/<name>/` and `cron/<name>/`, every flat `scripts/` file
+/// the machine's states run, as a file of `scripts/<name>/`, and `needs`, every other machine
+/// it invokes, emits to or routes through. An existing plugin file keeps its body, its
+/// `needs`, its migrations, its store seeds and its `x-` keys; a new one gets `# <name>` and
+/// the machine's description.
 pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
-    let path = decree_dir.join(machine_file(name));
     if !is_ident(name) {
         return Err(DecreeError::Other(format!(
             "plugin name `{name}` does not match ^[a-z][a-z0-9_]*$"
         )));
     }
+    let path = decree_dir.join(machine_file(name));
     let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(DecreeError::Other(format!(
-                "no machine `{name}`: {}/{} does not exist",
-                crate::layout::DECREE_DIR,
-                machine_file(name)
-            )))
-        }
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(io_error(&path, e)),
     };
-    let loaded = machine::load_machine_text(name, &text)
-        .map_err(|e| DecreeError::Other(format!("{e}; fix it first (`decree check`)")))?;
-    let mut machine = match serde_norway::from_str::<Value>(&text) {
-        Ok(Value::Mapping(m)) => m,
-        _ => {
+    let sdir = scripts_dir(decree_dir, name);
+    let cdir = cron_dir(decree_dir, name);
+    if text.is_none() && !sdir.is_dir() && !cdir.is_dir() {
+        return Err(DecreeError::Other(format!(
+            "nothing installed as `{name}`: none of {dir}/{}, {dir}/{SCRIPTS_DIR}/{name}/ and {dir}/{CRON_DIR}/{name}/ exists",
+            machine_file(name),
+            dir = crate::layout::DECREE_DIR,
+        )));
+    }
+    let loaded = text
+        .as_deref()
+        .map(|text| {
+            machine::load_machine_text(name, text)
+                .map_err(|e| DecreeError::Other(format!("{e}; fix it first (`decree check`)")))
+        })
+        .transpose()?;
+    let machine = match text.as_deref().map(serde_norway::from_str::<Value>) {
+        None => None,
+        Some(Ok(Value::Mapping(mut m))) => {
+            m.shift_remove("name");
+            Some(m)
+        }
+        Some(_) => {
             return Err(DecreeError::Other(format!(
                 "{}: not a YAML mapping",
                 machine_file(name)
             )))
         }
     };
-    machine.shift_remove("name");
 
-    let mut scripts = BTreeMap::new();
-    let dir = scripts_dir(decree_dir, name);
-    if dir.is_dir() {
-        for (path, bytes) in read_tree(&dir)? {
-            let text = String::from_utf8(bytes).map_err(|_| {
-                DecreeError::Other(format!(
-                    "{SCRIPTS_DIR}/{name}/{path}: not UTF-8 text; a plugin holds text files only"
-                ))
-            })?;
-            scripts.insert(path, text);
+    let text_files = |dir: &Path, shown: &str| -> Result<BTreeMap<String, String>, DecreeError> {
+        let mut out = BTreeMap::new();
+        if dir.is_dir() {
+            for (path, bytes) in read_tree(dir)? {
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    DecreeError::Other(format!(
+                        "{shown}/{name}/{path}: not UTF-8 text; a plugin holds text files only"
+                    ))
+                })?;
+                out.insert(path, text);
+            }
         }
-    }
+        Ok(out)
+    };
+    let mut scripts = text_files(&sdir, SCRIPTS_DIR)?;
+    let cron = text_files(&cdir, CRON_DIR)?;
     let flat = decree_dir.join(SCRIPTS_DIR);
-    for script in script_names(&loaded) {
-        let Ok(found) = resolve_script(decree_dir, name, &script) else {
-            continue;
-        };
-        if found.parent() != Some(flat.as_path()) {
-            continue;
-        }
-        let Some(file) = found.file_name().and_then(|f| f.to_str()) else {
-            continue;
-        };
-        let text = std::fs::read_to_string(&found).map_err(|e| io_error(&found, e))?;
-        scripts.insert(file.to_string(), text);
-    }
-
     let mut needs = BTreeSet::new();
-    for (_, child) in loaded.invoked_machines() {
-        needs.insert(child.to_string());
+    if let Some(loaded) = &loaded {
+        for script in script_names(loaded) {
+            let Ok(found) = resolve_script(decree_dir, name, &script) else {
+                continue;
+            };
+            if found.parent() != Some(flat.as_path()) {
+                continue;
+            }
+            let Some(file) = found.file_name().and_then(|f| f.to_str()) else {
+                continue;
+            };
+            let text = std::fs::read_to_string(&found).map_err(|e| io_error(&found, e))?;
+            scripts.insert(file.to_string(), text);
+        }
+        for (_, child) in loaded.invoked_machines() {
+            needs.insert(child.to_string());
+        }
+        for node in &loaded.nodes {
+            needs.extend(node.emits.iter().cloned());
+        }
     }
-    for node in &loaded.nodes {
-        needs.extend(node.emits.iter().cloned());
-    }
-    needs.remove(name);
 
     let existing = read_one(decree_dir, name).ok();
+    let old = existing.as_ref().and_then(|f| f.parsed.as_ref().ok());
     // An existing plugin file keeps its `needs`: a plugin may rely on another in a way the
     // machine does not show (develop's precheck runs infra's run.sh).
-    if let Some(Ok(old)) = existing.as_ref().map(|f| &f.parsed) {
+    if let Some(old) = old {
         needs.extend(old.needs.iter().cloned());
     }
     needs.remove(name);
-    let body = match existing {
-        Some(Found { text, .. }) => std::str::from_utf8(&text)
-            .ok()
-            .and_then(|t| Message::parse(t).ok())
-            .map(|m| m.body),
-        None => None,
+    let (migrations, store, extensions) = match old {
+        Some(old) => (
+            old.migrations.clone(),
+            old.store.clone(),
+            old.extensions.clone(),
+        ),
+        None => Default::default(),
     };
+    let body = existing
+        .as_ref()
+        .and_then(|f| std::str::from_utf8(&f.text).ok())
+        .and_then(|t| Message::parse(t).ok())
+        .map(|m| m.body);
     let body = body.unwrap_or_else(|| {
-        let description = loaded.description().trim();
+        let description = loaded.as_ref().map_or("", |l| l.description().trim());
         if description.is_empty() {
             format!("# {name}\n")
         } else {
@@ -818,7 +1127,11 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
         name: name.to_string(),
         machine,
         scripts,
+        cron,
+        migrations,
+        store,
         needs: needs.into_iter().collect(),
+        extensions,
         body,
     })
 }
@@ -935,6 +1248,7 @@ Says hello.
         assert_eq!(String::from_utf8(plugin.to_bytes()).unwrap(), PLUGIN);
         assert!(plugin
             .machine_text()
+            .unwrap()
             .starts_with("name: hello\ndescription: Says hello.\n"));
     }
 
@@ -976,9 +1290,9 @@ Says hello.
             ["Some(2): `name` is `other`, but the file is `hello.md`: they must be equal"]
         );
         assert_eq!(
-            problems("---\nname: hello\nmachine: { name: hello }\ncron: x\n---\n"),
+            problems("---\nname: hello\nmachine: { name: hello }\nwhen: x\nx-exist: y\n---\n"),
             [
-                "Some(4): unknown key `cron`: a plugin has `name`, `machine`, `scripts` and `needs`",
+                "Some(4): unknown key `when`: a plugin has `name`, `machine`, `scripts`, `cron`, `migrations`, `store`, `needs` and `x-` keys",
                 "Some(3): `machine` has `name`: the plugin's `name` names the machine",
             ]
         );
@@ -996,13 +1310,21 @@ Says hello.
         assert_eq!(
             problems("---\nmachine: []\n---\n"),
             [
-                "Some(1): no `name`: a plugin names its machine",
+                "Some(1): no `name`: every plugin has one",
                 "Some(2): `machine` must be a mapping",
             ]
         );
         assert_eq!(
             problems("---\nname: hello\nmachine: {}\nscripts: { a: x, a/b: y }\n---\n"),
             ["Some(4): script path `a` is both a file and a folder"]
+        );
+        assert_eq!(
+            problems("---\nname: hello\ncron: x\nmigrations: { a/b.md: x, c.txt: y }\n---\n"),
+            [
+                "Some(3): `cron` must be a mapping of paths to their text",
+                "Some(4): migration `a/b.md` must be a file name, with no `/`",
+                "Some(4): migration `c.txt` must end in `.md` and not start with `.`",
+            ]
         );
     }
 
@@ -1125,7 +1447,7 @@ Says hello.
         put(
             d,
             "machines/hello.yml",
-            &format!("# by hand\n{}", plugin.machine_text()),
+            &format!("# by hand\n{}", plugin.machine_text().unwrap()),
         );
         for (path, text) in &plugin.scripts {
             put(d, &format!("scripts/hello/{path}"), text);
@@ -1213,6 +1535,116 @@ Says hello.
         install(d, &found.parsed.unwrap(), &found.text).unwrap();
         assert_eq!(get(d, "shared/keep.txt").unwrap(), "mine");
         assert!(d.join("scripts/hello/shared").is_symlink());
+    }
+
+    const KIT: &str = "\
+---
+name: kit
+cron:
+  daily.md: |
+    ---
+    cron: 0 9 * * *
+    machine: hello
+    ---
+    Daily.
+migrations:
+  A01-kit.md: |
+    ---
+    machine: hello
+    ---
+    Set up.
+store:
+  seeds/list.txt: |
+    a
+scripts:
+  lib.sh: |
+    #!/usr/bin/env bash
+    kit() { :; }
+x-exist-services:
+- web
+---
+# kit
+";
+
+    #[test]
+    fn a_plugin_without_a_machine_installs_cron_migrations_and_store() {
+        let tmp = project();
+        let d = tmp.path();
+        put(d, "plugins/kit.md", KIT);
+        let s = sync(d).unwrap();
+        assert_eq!(s.installed, ["kit"]);
+        assert!(!d.join("machines/kit.yml").exists());
+        assert!(get(d, "scripts/kit/lib.sh").unwrap().starts_with("#!"));
+        assert!(get(d, "cron/kit/daily.md")
+            .unwrap()
+            .contains("cron: 0 9 * * *"));
+        assert!(get(d, "migrations/A01-kit.md").unwrap().contains("Set up."));
+        assert_eq!(get(d, "store/kit/seeds/list.txt").unwrap(), "a\n");
+        assert_eq!(
+            crate::cron::file_names(&d.join("cron")).unwrap(),
+            ["kit/daily.md"]
+        );
+
+        // The store and a written migration are never overwritten; the cron file is.
+        put(d, "store/kit/seeds/list.txt", "mine\n");
+        put(d, "migrations/A01-kit.md", "edited\n");
+        put(
+            d,
+            "plugins/kit.md",
+            &KIT.replace("a\n", "b\n")
+                .replace("Set up.", "Again.")
+                .replace("Daily.", "Each day."),
+        );
+        assert_eq!(sync(d).unwrap().installed, ["kit"]);
+        assert_eq!(get(d, "store/kit/seeds/list.txt").unwrap(), "mine\n");
+        assert_eq!(get(d, "migrations/A01-kit.md").unwrap(), "edited\n");
+        assert!(get(d, "cron/kit/daily.md").unwrap().contains("Each day."));
+
+        // An edited cron file is an edit: a plugin change over it is a conflict.
+        put(
+            d,
+            "cron/kit/daily.md",
+            "---\ncron: '@reboot'\nmachine: hello\n---\n",
+        );
+        put(d, "plugins/kit.md", KIT);
+        assert_eq!(sync(d).unwrap().conflicts, ["kit"]);
+
+        // Export keeps the x- keys, the migrations and the store, and takes the edited cron file.
+        let out = export(d, "kit").unwrap();
+        assert!(out.machine.is_none());
+        assert!(out.cron["daily.md"].contains("@reboot"));
+        assert_eq!(out.migrations, Plugin::parse(KIT, None).unwrap().migrations);
+        assert_eq!(out.store["seeds/list.txt"], "a\n");
+        let text = String::from_utf8(out.to_bytes()).unwrap();
+        assert!(text.contains("x-exist-services:\n- web\n"), "{text}");
+        assert_eq!(Plugin::parse(&text, Some("kit")).unwrap(), out);
+    }
+
+    #[test]
+    fn removing_a_plugin_drops_its_unrun_migrations_and_keeps_its_store() {
+        let tmp = project();
+        let d = tmp.path();
+        let two = KIT.replace(
+            "migrations:\n",
+            "migrations:\n  A00-ran.md: |\n    ---\n    machine: hello\n    ---\n    Ran.\n",
+        );
+        put(d, "plugins/kit.md", &two);
+        sync(d).unwrap();
+        assert!(d.join("migrations/A00-ran.md").exists());
+        put(d, "processed.md", "A00-ran.md\n");
+        std::fs::remove_file(d.join("plugins/kit.md")).unwrap();
+        assert_eq!(sync(d).unwrap().removed, ["kit"]);
+        assert!(!d.join("cron/kit").exists() && !d.join("scripts/kit").exists());
+        assert!(!d.join("migrations/A01-kit.md").exists());
+        assert!(d.join("migrations/A00-ran.md").exists());
+        assert!(d.join("store/kit/seeds/list.txt").exists());
+
+        // A processed migration is not written again.
+        std::fs::remove_file(d.join("migrations/A00-ran.md")).unwrap();
+        put(d, "plugins/kit.md", &two);
+        sync(d).unwrap();
+        assert!(!d.join("migrations/A00-ran.md").exists());
+        assert!(d.join("migrations/A01-kit.md").exists());
     }
 
     #[test]

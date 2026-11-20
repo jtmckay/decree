@@ -1791,7 +1791,7 @@ cron/c.md: line 1: no `machine` key (M3)
             ("plugins/m.md", PLUGIN_CHANGED),
         ],
         scripts: &[],
-        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m.yml or scripts/m/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export m` and merge with git; to take the plugin's version, run `decree plugin install m` (P3)\n",
+        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m.yml, scripts/m/ or cron/m/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export m` and merge with git; to take the plugin's version, run `decree plugin install m` (P3)\n",
     },
 ];
 

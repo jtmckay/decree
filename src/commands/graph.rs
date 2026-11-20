@@ -22,10 +22,6 @@ use crate::message::Message;
 const GRAPH_DIR: &str = "graph";
 
 pub fn run(project_root: &Path, format: Format) -> Result<(), DecreeError> {
-    let synced = crate::plugin::sync(&project_root.join(DECREE_DIR))?;
-    for note in synced.notices() {
-        eprintln!("{note}");
-    }
     let dir = project_root.join(DECREE_DIR).join(GRAPH_DIR);
     let before = md_files(&dir)?;
     let written = write(project_root)?;

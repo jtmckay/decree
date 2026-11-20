@@ -211,7 +211,7 @@ fn every_machine_in_the_repository_validates() {
 #[test]
 fn every_official_plugin_validates() {
     let paths = files_in(&repo().join("plugins"), ".md");
-    assert_eq!(paths.len(), 13);
+    assert_eq!(paths.len(), 14);
     let plugin_validator = schema::validator(schema::PLUGIN_SCHEMA);
     let mut machines = Vec::new();
     for (name, text) in read(&paths) {

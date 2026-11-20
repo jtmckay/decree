@@ -1,5 +1,5 @@
 //! `decree daemon [--interval <duration>] [--retry [<id>] [--state <s>]]`
-//! (docs/reference/cli.md): install plugins, validate, `--retry` as `process` does, mark crashed runs
+//! (docs/reference/cli.md): report plugins not installed, validate, `--retry` as `process` does, mark crashed runs
 //! `interrupted`, then loop: read the machines and `.env` files again, deliver replies and
 //! timeouts, continue `pending` runs, cron tick, drain the inbox, next migration, sleep. Every step is `process`'s own
 //! (`commands::process::Pipeline`); there is no second pipeline. A failed or interrupted
@@ -7,7 +7,7 @@
 //! migrations only. On SIGINT or SIGTERM it interrupts the current run and exits 0.
 
 use crate::commands::check::Project;
-use crate::commands::process::{context, reporting, sync_plugins, Pipeline, Retry, Stop};
+use crate::commands::process::{context, plugin_notices, reporting, Pipeline, Retry, Stop};
 use crate::commands::report::{line, notice};
 use crate::cron::{self, CronTracker};
 use crate::error::DecreeError;
@@ -31,7 +31,7 @@ pub fn run(
     select: &Select,
 ) -> Result<(), DecreeError> {
     let mut plugin_notes = std::collections::BTreeSet::new();
-    sync_plugins(project_root, &mut plugin_notes, "decree daemon: ");
+    plugin_notices(project_root, &mut plugin_notes, "decree daemon: ");
     let project = Project::load(project_root)?;
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;

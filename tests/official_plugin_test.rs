@@ -12,7 +12,7 @@ use tempfile::TempDir;
 #[path = "common/schema.rs"]
 mod schema;
 
-const OFFICIAL: [&str; 13] = [
+const OFFICIAL: [&str; 14] = [
     "comfy",
     "develop",
     "develop_by_size",
@@ -24,6 +24,7 @@ const OFFICIAL: [&str; 13] = [
     "lease",
     "llm_router",
     "newsletter",
+    "plugin_install",
     "qa",
     "router",
 ];

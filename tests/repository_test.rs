@@ -74,8 +74,8 @@ fn no_installed_copy_is_tracked_and_the_examples_machines_are_official_plugins()
     }
 }
 
-/// AC (A10): `decree check` passes, before any other command, in a fresh clone's root and in
-/// every directory under `examples/` that has a `.decree/`: it installs their plugins first.
+/// AC (A10, D85): in a fresh clone's root and in every directory under `examples/` that has a
+/// `.decree/`, `decree plugin install` installs the plugins, and `decree check` then passes.
 #[test]
 fn check_passes_in_a_fresh_clone() {
     let Some(files) = clone_files() else {
@@ -101,6 +101,17 @@ fn check_passes_in_a_fresh_clone() {
             !project.join(".decree/machines").exists(),
             "{}",
             project.display()
+        );
+        let install = Command::new(env!("CARGO_BIN_EXE_decree"))
+            .args(["plugin", "install"])
+            .current_dir(project)
+            .output()
+            .unwrap();
+        assert!(
+            install.status.success(),
+            "decree plugin install in {}:\n{}",
+            project.display(),
+            String::from_utf8_lossy(&install.stderr)
         );
         let out = Command::new(env!("CARGO_BIN_EXE_decree"))
             .arg("check")

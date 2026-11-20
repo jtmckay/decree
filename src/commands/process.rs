@@ -17,8 +17,8 @@
 //! or, failing a check, becomes a failed `invalid_message` run. Each pass also delivers
 //! `timeout` deadlines that have passed (docs/reference/messages.md, Replies).
 //!
-//! Before each run it installs plugins that are new or changed (docs/reference/plugins.md)
-//! and reads the machines and `.env` files again (`Pipeline::refresh`), so an edit applies to
+//! Before each run it reports plugins that are not installed as their files say, installing
+//! nothing (docs/reference/plugins.md), and reads the machines and `.env` files again (`Pipeline::refresh`), so an edit applies to
 //! the next run without a restart.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -80,7 +80,7 @@ pub fn run(
     select: &Select,
 ) -> Result<(), DecreeError> {
     let mut plugin_notes = BTreeSet::new();
-    sync_plugins(project_root, &mut plugin_notes, "");
+    plugin_notices(project_root, &mut plugin_notes, "");
     let project = Project::load(project_root)?;
     if dry_run {
         // The machine filter's variables are read only when no flag beats them; `load_env`
@@ -191,17 +191,18 @@ pub(crate) struct Pipeline {
     /// The last machine or `.env` problem `refresh` printed, so each is printed once.
     machine_error: Option<String>,
     env_error: Option<String>,
-    /// The plugin problems last printed (`sync_plugins`), so each is printed once.
+    /// The plugin problems last printed (`plugin_notices`), so each is printed once.
     pub(crate) plugin_notes: BTreeSet<String>,
 }
 
-/// Install every plugin that is new or changed (docs/reference/plugins.md, Installing), and
-/// print each problem that stops one (a conflict, a plugin that fails its schema) once:
-/// `printed` holds the problems already printed, and keeps those still there.
-pub(crate) fn sync_plugins(project_root: &Path, printed: &mut BTreeSet<String>, prefix: &str) {
-    let now: BTreeSet<String> = match crate::plugin::sync(&project_root.join(DECREE_DIR)) {
+/// Print, once each, every plugin `decree plugin install` would install or remove and every
+/// problem that would stop one (a conflict, a plugin that fails its schema): `process` and
+/// `daemon` install nothing (docs/reference/plugins.md, Installing). `printed` holds the
+/// lines already printed, and keeps those still there.
+pub(crate) fn plugin_notices(project_root: &Path, printed: &mut BTreeSet<String>, prefix: &str) {
+    let now: BTreeSet<String> = match crate::plugin::status(&project_root.join(DECREE_DIR)) {
         Ok(synced) => synced.notices().into_iter().collect(),
-        Err(e) => BTreeSet::from([format!("cannot install plugins: {e}")]),
+        Err(e) => BTreeSet::from([format!("cannot read plugins: {e}")]),
     };
     for note in now.difference(printed) {
         report::notice(format!("{prefix}{note}"));
@@ -273,7 +274,7 @@ impl Pipeline {
     /// `.env` file the variables last read; each problem is printed once, until it changes.
     /// A run already going keeps its machine until it stops.
     pub(crate) fn refresh(&mut self) {
-        sync_plugins(&self.ctx.project_root, &mut self.plugin_notes, self.prefix);
+        plugin_notices(&self.ctx.project_root, &mut self.plugin_notes, self.prefix);
         match self.reload_machines() {
             Ok(changed) => {
                 self.machine_error = None;
