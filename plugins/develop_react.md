@@ -58,7 +58,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -366,7 +366,7 @@ scripts:
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
-    # this one commit; git ignores machines/ and scripts/. A failed run exports nothing: `keep`
+    # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
     "${DECREE}" plugin export
@@ -407,7 +407,7 @@ scripts:
     # develop's fix: the AI fixes what the gate reported. Like implement, it
     # writes STOP instead of guessing.
     set -euo pipefail
-    . .decree/scripts/develop_react/ai.sh
+    . .decree/machines/develop_react/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -420,12 +420,12 @@ scripts:
     stopped && exit 0
 
     prompt="Read ${DECREE_MESSAGE}. The project's gate
-    (.decree/scripts/develop_react/gate.sh) failed; its output is in
+    (.decree/machines/develop_react/scripts/gate.sh) failed; its output is in
     ${DECREE_ROOT_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
     Fix the failures, append a line to ${progress} for each fix, and run the
     gate again. If ${plan} exists, follow it. If a failure needs a decision the
     message does not make, write the question to ${stop} and stop.
-    Follow the conventions in .decree/scripts/develop_react/conventions.md.
+    Follow the conventions in .decree/machines/develop_react/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== AI prompt (fix) ==="
     echo "${prompt}"
@@ -557,7 +557,7 @@ scripts:
     # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
     # whose steps are develop's scripts shares them.
     set -euo pipefail
-    . .decree/scripts/develop_react/ai.sh
+    . .decree/machines/develop_react/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -580,7 +580,7 @@ scripts:
     If the message is ambiguous or conflicts with the code, do not guess: write
     the question to ${stop} and stop.
     Logs of earlier attempts (if any) are in ${DECREE_RUN_DIR}.
-    Follow the conventions in .decree/scripts/develop_react/conventions.md.
+    Follow the conventions in .decree/machines/develop_react/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== AI prompt (implementation) ==="
     echo "${prompt}"
@@ -620,11 +620,11 @@ scripts:
     echo "no other run starts until then (${attention})"
   precheck.sh: |
     #!/usr/bin/env bash
-    # Fail fast if the environment every .decree/scripts/*/requirements declares is not all
+    # Fail fast if the environment every .decree/machines/*/scripts/requirements declares is not all
     # there, such as the AI CLI or git missing from PATH. An infra message adds what is missing;
     # develop does not.
     set -euo pipefail
-    .decree/scripts/infra/run.sh check
+    .decree/machines/infra/scripts/run.sh check
   requirements: |
     # What develop_react's gate needs, one resource per line, as in infra's requirements:
     # infra's `run.sh check` (develop_react's precheck) reports each, and `run.sh apply`
@@ -642,7 +642,7 @@ scripts:
     # writes STOP instead of guessing. On `fail` it leaves gaps.md, what is missing, for
     # the next round or retry; an attempt that dies keeps the last one.
     set -euo pipefail
-    . .decree/scripts/develop_react/ai.sh
+    . .decree/machines/develop_react/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -662,7 +662,7 @@ scripts:
     message does not make, write the question to ${stop} and stop.
     If anything fails, write ${gaps}: one line per unmet requirement or failing test,
     saying what is wrong.
-    Follow the conventions in .decree/scripts/develop_react/conventions.md.
+    Follow the conventions in .decree/machines/develop_react/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp).
     End your reply with one line: VERDICT: pass if everything passes, else
     VERDICT: fail."
@@ -695,17 +695,17 @@ scripts:
 As `develop` does (`clean_tree`, `precheck`, `implement`, `gate`, `fix`, `final_gate`, `verify`, then `commit` or `keep`), except:
 
 - `gate` runs `develop_node`'s checks (the lockfile's package manager installs for CI, then `lint`, `typecheck` and `test`, each only if `package.json` defines it), then `build`, which a React project must define: without a `build` script it names `fail`. Without `package.json`, or without the package manager on `PATH`, it exits non-zero, naming what is missing, and the run ends without `fix`.
-- `implement`, `fix` and `verify` tell the agent to follow `.decree/scripts/develop_react/conventions.md`: component tests with the project's own test runner and Testing Library (`@testing-library/react`), finding elements as a user would.
+- `implement`, `fix` and `verify` tell the agent to follow `.decree/machines/develop_react/scripts/conventions.md`: component tests with the project's own test runner and Testing Library (`@testing-library/react`), finding elements as a user would.
 
 ## What it needs
 
 - git, and a project that is a git work tree with at least one commit.
 - An AI CLI on `PATH`: `claude`, `opencode` or `copilot`, picked as `develop` picks it.
-- `node` and `npm`, which `.decree/scripts/develop_react/requirements` declares, so `precheck` fails fast without them. A project using pnpm or yarn adds that line (`command   pnpm`).
+- `node` and `npm`, which `.decree/machines/develop_react/scripts/requirements` declares, so `precheck` fails fast without them. A project using pnpm or yarn adds that line (`command   pnpm`).
 - The `infra` plugin, which `decree plugin add develop_react` adds with it.
 
 ## How to use it
 
-1. `decree plugin add develop_react`. Add the project's own checks to `.decree/scripts/develop_react/gate.sh`, and its own rules to `conventions.md` beside it, if it has any; `decree plugin export develop_react`, or the next run's `commit`, keeps the edit in this file. A project with a React front end and a Rust or Node back end adds both variants and names one in each message.
+1. `decree plugin add develop_react`. Add the project's own checks to `.decree/machines/develop_react/scripts/gate.sh`, and its own rules to `conventions.md` beside it, if it has any; `decree plugin export develop_react`, or the next run's `commit`, keeps the edit in this file. A project with a React front end and a Rust or Node back end adds both variants and names one in each message.
 2. Write a migration, `.decree/migrations/01-<what>.md`, with `machine: develop_react` in its frontmatter, saying what to change and how to tell it is done.
 3. Run `decree process`.

@@ -164,7 +164,7 @@ fn the_0_4_scan_matches_versions_not_thresholds() {
     );
     assert_eq!(old_words(doc, "In v0.4, a Routine"), ["routine", "v0.4"]);
     assert!(old_words(
-        Path::new("examples/text-to-media/.decree/scripts/comfy/a.json"),
+        Path::new("examples/text-to-media/.decree/machines/comfy/scripts/a.json"),
         "\"version\": 0.4"
     )
     .is_empty());
@@ -183,7 +183,7 @@ fn the_0_4_scan_matches_versions_not_thresholds() {
 fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded() {
     for name in projects() {
         let decree = examples().join(&name).join(".decree");
-        assert!(decree.join("graph/system.md").is_file(), "{name}: no graph");
+        assert!(decree.join("system.md").is_file(), "{name}: no graph");
         // Editors read the hosted schemas; a local copy is generated and ignored.
         assert!(!decree.join("schema").exists(), "{name}: .decree/schema");
         let gitignore = fs::read_to_string(decree.join(".gitignore")).unwrap();
@@ -212,8 +212,8 @@ fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded
                 assert!(!decree.join(gone).exists(), "{name}: .decree/{gone} exists");
             }
         }
-        // Its machines are plugins, each drawn in graph/; git ignores the installed copies.
-        for line in ["machines/", "scripts/"] {
+        // Its machines are plugins, each drawn in its graph.md; git ignores the installed copies.
+        for line in ["machines/**", "!machines/*/graph.md"] {
             assert!(
                 gitignore.lines().any(|l| l == line),
                 "{name}: .gitignore does not list {line}"
@@ -225,7 +225,7 @@ fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded
         for plugin in plugins {
             let stem = plugin.file_stem().unwrap().to_string_lossy();
             assert!(
-                decree.join(format!("graph/{stem}.md")).is_file(),
+                decree.join(format!("machines/{stem}/graph.md")).is_file(),
                 "{}: no graph",
                 plugin.display()
             );

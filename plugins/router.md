@@ -90,4 +90,4 @@ Add it, then write a state that asks a question:
       not_ready: { target: fix, description: Something is missing or broken. }
 ```
 
-A reply that is not one of the options fails the script, which runs once more (`attempts: 2`). To use another model, edit `.decree/scripts/router/ask.sh`, then keep the edit with `decree plugin export router`.
+A reply that is not one of the options fails the script, which runs once more (`attempts: 2`). To use another model, edit `.decree/machines/router/scripts/ask.sh`, then keep the edit with `decree plugin export router`.

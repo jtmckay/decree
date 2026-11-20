@@ -5,7 +5,6 @@
 //! and `timeout` (`reply_test.rs`), a failed migration (`process_test.rs`, rule 4). Each
 //! test builds its own `.decree/` in a temp directory.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::{json, Value};
 use std::fs;
@@ -163,7 +162,7 @@ impl Project {
         }
         fs::write(decree.join("processed.md"), "").unwrap();
         for (name, text) in machines {
-            fs::write(decree.join(format!("machines/{name}.yml")), text).unwrap();
+            common::write_file(&decree.join(format!("machines/{name}/machine.yml")), text);
         }
         for (name, text) in scripts {
             write_script(&decree.join("scripts").join(name), text);
@@ -216,14 +215,13 @@ impl Project {
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.root()).env("NO_COLOR", "1").args(args);
+        let mut cmd = common::decree_at(self.root());
+        cmd.env("NO_COLOR", "1").args(args);
         cmd
     }
 
     fn spawn_process(&self) -> Child {
-        std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-            .current_dir(self.root())
+        common::std_decree_at(self.root())
             .env("NO_COLOR", "1")
             .arg("process")
             .stdout(Stdio::null())

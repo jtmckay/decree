@@ -9,8 +9,7 @@ use common::write_script;
 
 /// Helper: run decree in a temp directory.
 fn decree_cmd(dir: &TempDir) -> Command {
-    let mut cmd = cargo_bin_cmd!("decree");
-    cmd.current_dir(dir.path());
+    let mut cmd = common::decree_at(dir.path());
     // Force non-TTY behavior + no color for predictable output
     cmd.env("NO_COLOR", "1");
     cmd
@@ -41,22 +40,21 @@ fn test_init_creates_directory_structure() {
         [
             ".env.example",
             ".gitignore",
-            "cron",
-            "graph",
             "inbox",
             "migrations",
             "plugins",
             "processed.md",
             "runs",
+            "system.md",
         ]
     );
-    for d in ["cron", "graph", "inbox", "migrations", "plugins", "runs"] {
+    for d in ["inbox", "migrations", "plugins", "runs"] {
         assert!(decree.join(d).is_dir(), "{d}");
     }
-    for d in ["cron", "inbox", "migrations", "plugins", "runs"] {
+    for d in ["inbox", "migrations", "plugins", "runs"] {
         assert_eq!(fs::read_dir(decree.join(d)).unwrap().count(), 0, "{d}");
     }
-    assert!(decree.join("graph/system.md").is_file());
+    assert!(decree.join("system.md").is_file());
     assert!(!decree.join("lib").exists());
 }
 
@@ -273,7 +271,7 @@ fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
     });
     fs::write(run.join("request.json"), request.to_string()).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let out = std::process::Command::new(dir.path().join(".decree/scripts/router/ask.sh"))
+    let out = std::process::Command::new(dir.path().join(".decree/machines/router/scripts/ask.sh"))
         .current_dir(dir.path())
         .env("PATH", path)
         .env("AI_CLI", "claude")
@@ -340,8 +338,8 @@ fn test_default_router_through_decree_takes_a_bare_json_reply() {
         .args(["plugin", "add", "router"])
         .assert()
         .success();
-    fs::write(
-        dir.path().join(".decree/machines/pick.yml"),
+    common::write_file(
+        &dir.path().join(".decree/machines/pick/machine.yml"),
         "name: pick
 description: Pick retry or split.
 initial: triage
@@ -357,8 +355,7 @@ states:
   split_up: { final: true }
   failed: { final: true }
 ",
-    )
-    .unwrap();
+    );
     let bin = dir.path().join("bin");
     fs::create_dir(&bin).unwrap();
     write_script(
@@ -447,8 +444,8 @@ fn test_init_permissions_keeps_existing_settings() {
     );
 }
 
-/// AC (A10): the `.gitignore` `init` writes is the previous template plus `machines/` and
-/// `scripts/`: a project commits `plugins/` and `graph/`, and nothing installed from `plugins/`.
+/// AC (A10, D86): the `.gitignore` `init` writes keeps installed machine folders out of git,
+/// but each machine's `order/`, `graph.md` and `*.git.txt` state files.
 #[test]
 fn test_init_gitignore_content() {
     let dir = TempDir::new().unwrap();
@@ -456,10 +453,24 @@ fn test_init_gitignore_content() {
     decree_cmd(&dir).arg("init").assert().success();
 
     let gitignore = fs::read_to_string(dir.path().join(".decree/.gitignore")).unwrap();
-    assert_eq!(
-        gitignore,
-        "inbox/\nruns/\nstore/\nschema/\n.env*\n!.env.example\nattention/\nprocess.log\ncache/\nai-use.md\nmachines/\nscripts/\ncron/*/\n"
-    );
+    for line in [
+        "inbox/",
+        "runs/",
+        "schema/",
+        ".env*",
+        "!.env.example",
+        "attention/",
+        "process.log",
+        "cache/",
+        "ai-use.md",
+        "machines/**",
+        "!machines/**/",
+        "!machines/*/order/**",
+        "!machines/*/graph.md",
+        "!machines/**/*.git.txt",
+    ] {
+        assert!(gitignore.lines().any(|l| l == line), "{line}:\n{gitignore}");
+    }
 }
 
 // --- decree status ---
@@ -520,8 +531,9 @@ fn test_status_cron_lists_files_and_next_fire_time() {
         .success()
         .stdout("No cron files.\n");
 
+    fs::create_dir_all(dir.path().join(".decree/machines/hello/cron")).unwrap();
     fs::write(
-        dir.path().join(".decree/cron/hourly.md"),
+        dir.path().join(".decree/machines/hello/cron/hourly.md"),
         "---\ncron: \"0 * * * *\"\nmachine: hello\n---\nHourly task.\n",
     )
     .unwrap();
@@ -537,7 +549,7 @@ fn test_status_cron_lists_files_and_next_fire_time() {
     assert_eq!(lines.len(), 2, "{out}");
     assert!(lines[0].starts_with("CRON FILE"), "{out}");
     assert!(lines[0].contains("MACHINE") && lines[0].ends_with("NEXT RUN"));
-    assert!(lines[1].starts_with("hourly.md"), "{out}");
+    assert!(lines[1].starts_with("hello/hourly.md"), "{out}");
     assert!(lines[1].contains("0 * * * *") && lines[1].contains("hello"));
     assert!(lines[1].contains(":00 (in "), "{out}");
 }
@@ -578,8 +590,8 @@ fn status_output(configure: impl FnOnce(&mut Command)) -> Vec<u8> {
     let dir = TempDir::new().unwrap();
     decree_cmd(&dir).arg("init").assert().success();
 
-    let mut cmd = cargo_bin_cmd!("decree");
-    cmd.current_dir(dir.path()).arg("status");
+    let mut cmd = common::decree_at(dir.path());
+    cmd.arg("status");
     configure(&mut cmd);
     let out = cmd.assert().success().get_output().clone();
     [out.stdout, out.stderr].concat()
@@ -777,12 +789,8 @@ fn test_message_with_requirements_heading_checks_and_runs() {
     fs::create_dir_all(decree.join("machines")).unwrap();
     fs::create_dir_all(decree.join("migrations")).unwrap();
     fs::create_dir_all(decree.join("scripts")).unwrap();
-    fs::write(
-        decree.join("machines/hello.yml"),
-        "name: hello\ndescription: Run one script.\ninitial: greet\nstates:\n  greet:\n    invoke: greet\n    \
-         transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
-    )
-    .unwrap();
+    common::write_file(&decree.join("machines/hello/machine.yml"), "name: hello\ndescription: Run one script.\ninitial: greet\nstates:\n  greet:\n    invoke: greet\n    \
+         transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n");
     write_script(
         &decree.join("scripts/greet.sh"),
         "#!/bin/sh\ngrep -q '^## Requirements' \"$DECREE_MESSAGE\"\n",

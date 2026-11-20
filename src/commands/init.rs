@@ -162,14 +162,13 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
 /// `.env.example`, `processed.md`, the empty queues and the empty `plugins/`. No plugin is
-/// installed, so `machines/` and `scripts/` are not written.
-/// `graph/` is written by `decree graph`; `schema/` only by `decree schema`, on request.
+/// installed, so `machines/` is not written. `decree graph` writes each machine's `graph.md`
+/// and `system.md`; `schema/` only `decree schema`, on request.
 fn write_layout(decree_dir: &Path, ai: Option<Backend>) -> Result<(), DecreeError> {
     for dir in [
         layout::MIGRATIONS_DIR,
         layout::INBOX_DIR,
         layout::RUNS_DIR,
-        layout::CRON_DIR,
         PLUGINS_DIR,
     ] {
         std::fs::create_dir_all(decree_dir.join(dir))?;
@@ -263,6 +262,13 @@ mod tests {
     #[test]
     fn test_command_exists_false() {
         assert!(!command_exists("definitely_not_a_real_command_xyz"));
+    }
+
+    /// Cron file `file` of plugin `plugin` in `examples/project/.decree/plugins/`.
+    fn example_plugin_cron(plugin: &str, file: &str) -> String {
+        let text = example(&format!("plugins/{plugin}.md"));
+        let found = crate::plugin::Plugin::parse(&text, Some(plugin)).unwrap();
+        found.cron[file].clone()
     }
 
     /// A file under `examples/project/.decree/`.
@@ -363,7 +369,7 @@ mod tests {
             .expect("the skill shows `hello`");
         let shown: serde_norway::Value = serde_norway::from_str(shown).unwrap();
         assert_eq!(shown, installed.machine_value().unwrap(), "hello");
-        let verify = feature_fixture("scripts/feature/verify.sh");
+        let verify = feature_fixture("machines/feature/scripts/verify.sh");
         let body = verify
             .lines()
             .filter(|l| !l.starts_with('#'))
@@ -371,7 +377,7 @@ mod tests {
             .join("\n");
         assert!(text.contains(body.trim()), "verify.sh");
         assert!(
-            text.contains(&example("cron/nightly-audit.md")),
+            text.contains(&example_plugin_cron("develop", "nightly-audit.md")),
             "nightly-audit.md"
         );
     }

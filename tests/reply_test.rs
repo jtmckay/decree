@@ -2,7 +2,6 @@
 //! claims a reply, `timeout` deadlines, and `decree event`. Each test builds its own
 //! `.decree/` in a temp directory.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::{json, Value};
 use std::fs;
@@ -61,7 +60,7 @@ impl Project {
         }
         fs::write(decree.join("processed.md"), "").unwrap();
         let machine = DEPLOY.replace("TIMEOUT", timeout);
-        fs::write(decree.join("machines/deploy.yml"), machine).unwrap();
+        common::write_file(&decree.join("machines/deploy/machine.yml"), machine);
         for (name, text) in [("ask_person", "#!/usr/bin/env bash\n"), ("ship", SHIP)] {
             write_script(&decree.join("scripts").join(name), text);
         }
@@ -78,7 +77,7 @@ impl Project {
     }
 
     fn write(&self, rel: &str, text: &str) {
-        fs::write(self.decree().join(rel), text).unwrap();
+        common::write_file(&self.decree().join(rel), text);
     }
 
     fn events(&self, id: &str) -> Vec<Value> {
@@ -108,8 +107,8 @@ impl Project {
     }
 
     fn decree_cmd(&self) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path()).env("NO_COLOR", "1");
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1");
         cmd
     }
 
@@ -181,7 +180,7 @@ fn a_migration_held_back_by_a_child_waiting_for_a_reply_is_named() {
     let p = Project::new("1h");
     fs::remove_file(p.decree().join(format!("inbox/{RUN}.md"))).unwrap();
     p.write(
-        "machines/release.yml",
+        "machines/release/machine.yml",
         "name: release\ndescription: Deploy as a child run.\ninitial: call\nstates:\n  \
          call:\n    invoke: { machine: deploy }\n    transitions: { done: done, rejected: done, expired: done }\n  \
          done: { final: true }\n  failed: { final: true }\n",
@@ -708,7 +707,7 @@ fn rejected_replies_never_hold_the_queue() {
     assert_eq!(last_transition(&p.events(RUN))["to"], "rejected");
 
     p.write(
-        "machines/note.yml",
+        "machines/note/machine.yml",
         "name: note\ndescription: One script, then done.\ninitial: work\nstates:\n  \
          work:\n    invoke: ask_person\n    transitions: { done: done }\n  \
          done: { final: true }\n  failed: { final: true }\n",
@@ -785,8 +784,7 @@ fn daemon_takes_a_reply_sent_before_the_deadline() {
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    let mut daemon = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-        .current_dir(p.tmp.path())
+    let mut daemon = common::std_decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
         .env_remove("DECREE_MACHINES")
         .env_remove("DECREE_EXCLUDE_MACHINES")

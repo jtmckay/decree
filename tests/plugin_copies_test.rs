@@ -82,14 +82,14 @@ fn shared_files_are_the_official_ones_in_every_plugin() {
 fn the_escalation_fixtures_gliner_router_is_the_official_one() {
     let fixture = repo().join("tests/fixtures/escalation/.decree");
     let machine: serde_norway::Value = serde_norway::from_str(
-        &fs::read_to_string(fixture.join("machines/gliner_router.yml")).unwrap(),
+        &fs::read_to_string(fixture.join("machines/gliner_router/machine.yml")).unwrap(),
     )
     .unwrap();
     let official: serde_norway::Value =
         serde_norway::from_str(&common::plugin_machine("plugins/gliner_router.md")).unwrap();
     assert_eq!(machine, official);
     assert_eq!(
-        fs::read_to_string(fixture.join("scripts/gliner_router/ask_gliner.sh")).unwrap(),
+        fs::read_to_string(fixture.join("machines/gliner_router/scripts/ask_gliner.sh")).unwrap(),
         common::plugin_script("plugins/gliner_router.md", "ask_gliner.sh")
     );
 }

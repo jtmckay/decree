@@ -23,7 +23,7 @@ machine:
 scripts:
   greet.sh: |
     #!/usr/bin/env bash
-    echo "hi $(cat .decree/store/hello/name.txt)"
+    echo "hi $(cat .decree/machines/hello/state/name.txt)"
 cron:
   morning.md: |
     ---
@@ -31,7 +31,7 @@ cron:
     machine: hello
     ---
     Good morning.
-store:
+state:
   name.txt: |
     world
 ---
@@ -47,7 +47,7 @@ Says hello, then asks a model whether to say it again.
 | `scripts` | no | A map of `<path>: <its text>`, each path relative to `scripts/<name>/` and written as it is installed (`implement.sh`, `requirements`, `kinds/command.sh`). A path is plain and relative: no `..`, no `.`, no empty part, no leading `/`. |
 | `cron` | no | A map of `<file>.md: <its text>`, each a [cron file](messages.md#cron-files) installed as `cron/<name>/<file>.md`, where the daemon reads it as it reads `cron/<file>.md`. A file name, no `/`. |
 | `migrations` | no | A map of `<file>.md: <its text>`, each a [migration](messages.md#migrations-ordered-run-once-stop-on-error) written to `migrations/<file>.md` once. A file name, no `/`; it sorts among the project's own migrations by name, so prefix it as the project does (`A01-newsletter-setup.md`). |
-| `store` | no | A map of `<path>: <its text>`, seeds for `store/<name>/` (`$DECREE_STORE` for the machine `<name>`), each written once. A plain relative path, as in `scripts`. |
+| `store` | no | A map of `<path>: <its text>`, seeds for `store/<name>/` (`$DECREE_STATE_DIR` for the machine `<name>`), each written once. A plain relative path, as in `scripts`. |
 | `needs` | no | The other plugins it relies on: a machine it invokes, emits to or routes through (`router:`, or the machine `router` that a `model` state with no `router:` uses), or a library whose scripts it sources. |
 | `x-<anything>` | no | Ignored by decree and kept as written by export: room for a tool built on decree (existential's `x-exist-services`), as Compose and OpenAPI keep `x-` keys. |
 
@@ -81,7 +81,7 @@ Installing is a step a person (or a machine of theirs) takes, never a side effec
 
 So the plugin is the source: edit the installed copy, try it, then run `decree plugin export <name>` and commit the plugin file. A project's own changes to a plugin (a `gate.sh`, `requirements`, infra's kinds, qa's invariants, wrenches and `QA_RUN`) live in its plugin file, not in a separate configuration folder ([D79](../decisions.md#d79-official-plugins-are-built-in-and-opt-in)), so sharing the plugin shares them too.
 
-**A run's edits.** The `commit` script the official plugins carry (`done`'s `onentry`) runs `decree plugin export` with no name before it commits, so what a run changed in an installed copy (an `infra` run adding a line to `scripts/infra/requirements`, a `develop` run editing its gate) reaches `plugins/` and is in the run's one commit; git ignores `machines/` and `scripts/`. A run that fails exports nothing: `keep` leaves its edits in the installed copy, where `decree process --retry` builds on them, and counts them (`decree plugin export --dry-run`) among the changes that make its attention file hold the queue, so the next run's `commit` does not take them.
+**A run's edits.** The `commit` script the official plugins carry (`done`'s `onentry`) runs `decree plugin export` with no name before it commits, so what a run changed in an installed copy (an `infra` run adding a line to `machines/infra/scripts/requirements`, a `develop` run editing its gate) reaches `plugins/` and is in the run's one commit; git ignores `machines/` and `scripts/`. A run that fails exports nothing: `keep` leaves its edits in the installed copy, where `decree process --retry` builds on them, and counts them (`decree plugin export --dry-run`) among the changes that make its attention file hold the queue, so the next run's `commit` does not take them.
 
 ## Commands
 
@@ -105,7 +105,7 @@ decree is built with its official plugins: the decree repository's [`plugins/`](
 | [`develop_rust`](../../plugins/develop_rust.md) | `develop` for a Rust project: its gate runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`, and its prompts follow Rust conventions ([D84](../decisions.md#d84-develop-variants-are-separate-machines)). | `infra` |
 | [`develop_node`](../../plugins/develop_node.md) | `develop` for a Node project: its gate installs with the lockfile's package manager (npm, pnpm or yarn) as CI does, then runs `lint`, `typecheck` and `test` where `package.json` defines them. | `infra` |
 | [`develop_react`](../../plugins/develop_react.md) | `develop` for a React project: `develop_node`'s gate, then `build`; its prompts ask for component tests with Testing Library. | `infra` |
-| [`infra`](../../plugins/infra.md) | Declares what the environment needs in `scripts/infra/requirements` and installs or checks it ([Declared environment](scripts.md#declared-environment)). | |
+| [`infra`](../../plugins/infra.md) | Declares what the environment needs in `machines/infra/scripts/requirements` and installs or checks it ([Declared environment](scripts.md#declared-environment)). | |
 | [`qa`](../../plugins/qa.md) | Attacks the project and hands each real bug to `develop` as a failing test. | `develop` |
 | [`router`](../../plugins/router.md) | The default router a `model` state with no `router:` asks ([The default router](runs.md#the-default-router)). | |
 | [`newsletter`](../../plugins/newsletter.md) | Feeds in, picked by a local model, one markdown issue out, on a cron schedule. | |

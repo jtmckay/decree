@@ -58,7 +58,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -366,7 +366,7 @@ scripts:
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
-    # this one commit; git ignores machines/ and scripts/. A failed run exports nothing: `keep`
+    # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
     "${DECREE}" plugin export
@@ -399,7 +399,7 @@ scripts:
     # develop's fix: the AI fixes what the gate reported. Like implement, it
     # writes STOP instead of guessing.
     set -euo pipefail
-    . .decree/scripts/develop_rust/ai.sh
+    . .decree/machines/develop_rust/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -412,12 +412,12 @@ scripts:
     stopped && exit 0
 
     prompt="Read ${DECREE_MESSAGE}. The project's gate
-    (.decree/scripts/develop_rust/gate.sh) failed; its output is in
+    (.decree/machines/develop_rust/scripts/gate.sh) failed; its output is in
     ${DECREE_ROOT_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
     Fix the failures, append a line to ${progress} for each fix, and run the
     gate again. If ${plan} exists, follow it. If a failure needs a decision the
     message does not make, write the question to ${stop} and stop.
-    Follow the conventions in .decree/scripts/develop_rust/conventions.md.
+    Follow the conventions in .decree/machines/develop_rust/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== AI prompt (fix) ==="
     echo "${prompt}"
@@ -462,7 +462,7 @@ scripts:
     # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
     # whose steps are develop's scripts shares them.
     set -euo pipefail
-    . .decree/scripts/develop_rust/ai.sh
+    . .decree/machines/develop_rust/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -485,7 +485,7 @@ scripts:
     If the message is ambiguous or conflicts with the code, do not guess: write
     the question to ${stop} and stop.
     Logs of earlier attempts (if any) are in ${DECREE_RUN_DIR}.
-    Follow the conventions in .decree/scripts/develop_rust/conventions.md.
+    Follow the conventions in .decree/machines/develop_rust/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== AI prompt (implementation) ==="
     echo "${prompt}"
@@ -525,11 +525,11 @@ scripts:
     echo "no other run starts until then (${attention})"
   precheck.sh: |
     #!/usr/bin/env bash
-    # Fail fast if the environment every .decree/scripts/*/requirements declares is not all
+    # Fail fast if the environment every .decree/machines/*/scripts/requirements declares is not all
     # there, such as the AI CLI or git missing from PATH. An infra message adds what is missing;
     # develop does not.
     set -euo pipefail
-    .decree/scripts/infra/run.sh check
+    .decree/machines/infra/scripts/run.sh check
   requirements: |
     # What develop_rust's gate needs, one resource per line, as in infra's requirements:
     # infra's `run.sh check` (develop_rust's precheck) reports each, and `run.sh apply`
@@ -545,7 +545,7 @@ scripts:
     # writes STOP instead of guessing. On `fail` it leaves gaps.md, what is missing, for
     # the next round or retry; an attempt that dies keeps the last one.
     set -euo pipefail
-    . .decree/scripts/develop_rust/ai.sh
+    . .decree/machines/develop_rust/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -565,7 +565,7 @@ scripts:
     message does not make, write the question to ${stop} and stop.
     If anything fails, write ${gaps}: one line per unmet requirement or failing test,
     saying what is wrong.
-    Follow the conventions in .decree/scripts/develop_rust/conventions.md.
+    Follow the conventions in .decree/machines/develop_rust/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp).
     End your reply with one line: VERDICT: pass if everything passes, else
     VERDICT: fail."
@@ -598,17 +598,17 @@ scripts:
 As `develop` does (`clean_tree`, `precheck`, `implement`, `gate`, `fix`, `final_gate`, `verify`, then `commit` or `keep`), except:
 
 - `gate` runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`, in that order, and names `fail` at the first that fails. Without `cargo` on `PATH` it exits non-zero, naming it, and the run ends without `fix`.
-- `implement`, `fix` and `verify` tell the agent to follow `.decree/scripts/develop_rust/conventions.md`: unit tests beside the code, behaviour a user sees in `tests/`, errors with context, no new dependency unless the message allows it.
+- `implement`, `fix` and `verify` tell the agent to follow `.decree/machines/develop_rust/scripts/conventions.md`: unit tests beside the code, behaviour a user sees in `tests/`, errors with context, no new dependency unless the message allows it.
 
 ## What it needs
 
 - git, and a project that is a git work tree with at least one commit.
 - An AI CLI on `PATH`: `claude`, `opencode` or `copilot`, picked as `develop` picks it.
-- `cargo`, which `.decree/scripts/develop_rust/requirements` declares, so `precheck` fails fast without it.
+- `cargo`, which `.decree/machines/develop_rust/scripts/requirements` declares, so `precheck` fails fast without it.
 - The `infra` plugin, which `decree plugin add develop_rust` adds with it.
 
 ## How to use it
 
-1. `decree plugin add develop_rust`. Add the project's own checks to `.decree/scripts/develop_rust/gate.sh`, and its own rules to `conventions.md` beside it, if it has any; `decree plugin export develop_rust`, or the next run's `commit`, keeps the edit in this file.
+1. `decree plugin add develop_rust`. Add the project's own checks to `.decree/machines/develop_rust/scripts/gate.sh`, and its own rules to `conventions.md` beside it, if it has any; `decree plugin export develop_rust`, or the next run's `commit`, keeps the edit in this file.
 2. Write a migration, `.decree/migrations/01-<what>.md`, with `machine: develop_rust` in its frontmatter, saying what to change and how to tell it is done.
 3. Run `decree process`.

@@ -49,7 +49,7 @@ Escape `<` as `#lt;` and `>` as `#gt;` in labels (Mermaid entity codes).
 
 ## Example: deploy
 
-This is the `<diagram>` for the [`deploy` machine](machines.md#example-asking-a-person): the fenced block in [`examples/project/.decree/graph/deploy.md`](../../examples/project/.decree/graph/deploy.md).
+This is the `<diagram>` for the [`deploy` machine](machines.md#example-asking-a-person): the fenced block in [`examples/project/.decree/machines/deploy/graph.md`](../../examples/project/.decree/machines/deploy/graph.md).
 
 ```mermaid
 stateDiagram-v2

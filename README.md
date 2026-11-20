@@ -60,34 +60,35 @@ decree plugin list
 decree plugin add develop
 ```
 
-`plugin add develop` copies `develop` and `infra`, which it needs, into `.decree/plugins/` and installs them into `.decree/machines/` and `.decree/scripts/`. Commit `.decree/plugins/` (and `graph/`), never `machines/` or `scripts/`: `.decree/.gitignore` ignores both. decree installs a plugin only when asked: in a fresh clone, or after a pull that changes a plugin, run `decree plugin install` (`decree check` and `decree process` say when one is due), or add the official plugin `plugin_install` to do it each time the daemon starts. To change a plugin, edit its installed copy, such as the checks in `.decree/scripts/develop/gate.sh`, then keep the edit with `decree plugin export develop`; a run's `commit` exports for you, so what a run changes is in its one commit. `decree plugin list` marks a plugin `differs` when your copy is not the one this decree ships, and `decree plugin add --force develop` takes this decree's copy, printing the edits it drops.
+`plugin add develop` copies `develop` and `infra`, which it needs, into `.decree/plugins/` and installs each into its folder, `.decree/machines/<name>/`. Commit `.decree/plugins/`, `.decree/system.md` and each machine's `graph.md`: `.decree/.gitignore` ignores the rest of what is installed. decree installs a plugin only when asked: in a fresh clone, or after a pull that changes a plugin, run `decree plugin install` (`decree check` and `decree process` say when one is due), or add the official plugin `plugin_install` to do it each time the daemon starts. To change a plugin, edit its installed copy, such as the checks in `.decree/machines/develop/scripts/gate.sh`, then keep the edit with `decree plugin export develop`; a run's `commit` exports for you, so what a run changes is in its one commit. `decree plugin list` marks a plugin `differs` when your copy is not the one this decree ships, and `decree plugin add --force develop` takes this decree's copy, printing the edits it drops.
 
-`develop` implements a message with an AI agent, runs your checks and has the agent check the acceptance criteria. For a Rust, Node or React project, add `develop_rust`, `develop_node` or `develop_react` instead: `develop` with a gate that already runs that ecosystem's checks (cargo fmt, clippy and test; the lockfile's package manager running `lint`, `typecheck`, `test`, and for React `build`) and prompts that follow its conventions. Its scripts ask through `ai.sh` beside them (the `ai` function, with a function per backend: it uses the run's `ai_cli` data, else `AI_CLI` in `.decree/.env`, else the first of `claude`, `opencode` and `copilot` on `PATH`; it waits out Claude's usage limit and logs every call in `.decree/ai-use.md`, as [The AI helper](docs/reference/scripts.md#the-ai-helper) says). It works in a git repository: a run starts only from a clean work tree, and a run that ends in `done` is one commit, titled with the message's first heading ([D63](docs/decisions.md#d63-one-commit-per-run-from-a-clean-tree)). Commit or stash your own changes before queuing work. A run that ends in `failed` keeps its changes in the work tree, and its file in `.decree/attention/` holds the queue, so no other run starts on them: `decree process --retry <id>` continues the run on its own work and removes the hold, or stash the changes and delete the file to set them aside. That folder has a file for every run that needs a person (failed, interrupted, or waiting for a reply), with the command that continues it; `decree process` and `decree status` point to it ([Attention](docs/reference/cli.md#attention), [D67](docs/decisions.md#d67-the-attention-folder-says-what-needs-a-person)). For divergent work, or to keep editing while runs go on, run decree in a git worktree you make: `git worktree add ../app-exp -b exp`, then `decree process` there. Each checkout has its own runs and inbox, and its branch its own `processed.md`, so the two never meet until you merge. A worktree holds committed files only: copy `.decree/.env` (and any app `.env`) in, and run `.decree/scripts/infra/run.sh apply` there first.
+`develop` implements a message with an AI agent, runs your checks and has the agent check the acceptance criteria. For a Rust, Node or React project, add `develop_rust`, `develop_node` or `develop_react` instead: `develop` with a gate that already runs that ecosystem's checks (cargo fmt, clippy and test; the lockfile's package manager running `lint`, `typecheck`, `test`, and for React `build`) and prompts that follow its conventions. Its scripts ask through `ai.sh` beside them (the `ai` function, with a function per backend: it uses the run's `ai_cli` data, else `AI_CLI` in `.decree/.env`, else the first of `claude`, `opencode` and `copilot` on `PATH`; it waits out Claude's usage limit and logs every call in `.decree/ai-use.md`, as [The AI helper](docs/reference/scripts.md#the-ai-helper) says). It works in a git repository: a run starts only from a clean work tree, and a run that ends in `done` is one commit, titled with the message's first heading ([D63](docs/decisions.md#d63-one-commit-per-run-from-a-clean-tree)). Commit or stash your own changes before queuing work. A run that ends in `failed` keeps its changes in the work tree, and its file in `.decree/attention/` holds the queue, so no other run starts on them: `decree process --retry <id>` continues the run on its own work and removes the hold, or stash the changes and delete the file to set them aside. That folder has a file for every run that needs a person (failed, interrupted, or waiting for a reply), with the command that continues it; `decree process` and `decree status` point to it ([Attention](docs/reference/cli.md#attention), [D67](docs/decisions.md#d67-the-attention-folder-says-what-needs-a-person)). For divergent work, or to keep editing while runs go on, run decree in a git worktree you make: `git worktree add ../app-exp -b exp`, then `decree process` there. Each checkout has its own runs and inbox, and its branch its own `processed.md`, so the two never meet until you merge. A worktree holds committed files only: copy `.decree/.env` (and any app `.env`) in, and run `.decree/machines/infra/scripts/run.sh apply` there first.
 
-`infra` changes the environment the project needs, the first time and every time after: the AI declares each resource in `.decree/scripts/infra/requirements` (`command python3`, `pip hypothesis 6.112.0`), and a script installs what is missing and checks every line, as Ansible applies a play. Nothing runs `sudo`; a step only you can do prints the command and fails until you run it. `develop` checks the same file, and any `requirements` beside another machine's scripts, before it starts ([Declared environment](docs/reference/scripts.md#declared-environment)).
+`infra` changes the environment the project needs, the first time and every time after: the AI declares each resource in `.decree/machines/infra/scripts/requirements` (`command python3`, `pip hypothesis 6.112.0`), and a script installs what is missing and checks every line, as Ansible applies a play. Nothing runs `sudo`; a step only you can do prints the command and fails until you run it. `develop` checks the same file, and any `requirements` beside another machine's scripts, before it starts ([Declared environment](docs/reference/scripts.md#declared-environment)).
 
-`qa` (`decree plugin add qa`) tries to break the project and hands what breaks to `develop`. The AI lists the attack surface, writes chaos tests in `tests/chaos/` against the invariants in `.decree/scripts/qa/invariants.md`, using the wrenches in `scripts/qa/wrenches.md` (bad input, repetition, interruption, full disks, corrupt state, …), and runs them. Triage marks each real bug's tests expected to fail and writes one report per root cause, stating the broken invariant and the expected behaviour and proposing no fix, and each report becomes a `develop` message. QA never fixes code: a script fails the step if the AI changed anything outside the chaos tests. Set `QA_RUN` in `.decree/scripts/qa/qa.sh` to the command that runs the chaos suite first (and keep it with `decree plugin export qa`), and add it to the gate once qa finds bugs, so a fixed bug whose test is still marked fails the gate ([D62](docs/decisions.md#d62-qa-finds-bugs-and-never-fixes-them)).
+`qa` (`decree plugin add qa`) tries to break the project and hands what breaks to `develop`. The AI lists the attack surface, writes chaos tests in `tests/chaos/` against the invariants in `.decree/machines/qa/scripts/invariants.md`, using the wrenches in `scripts/qa/wrenches.md` (bad input, repetition, interruption, full disks, corrupt state, …), and runs them. Triage marks each real bug's tests expected to fail and writes one report per root cause, stating the broken invariant and the expected behaviour and proposing no fix, and each report becomes a `develop` message. QA never fixes code: a script fails the step if the AI changed anything outside the chaos tests. Set `QA_RUN` in `.decree/machines/qa/scripts/qa.sh` to the command that runs the chaos suite first (and keep it with `decree plugin export qa`), and add it to the gate once qa finds bugs, so a fixed bug whose test is still marked fails the gate ([D62](docs/decisions.md#d62-qa-finds-bugs-and-never-fixes-them)).
 
 The other official plugins are `router` (the default router a `model` state asks), `newsletter`, `comfy` (renders on ComfyUI), `develop_by_size` with its routers `gliner_router` and `llm_router`, and `lease` (one holder at a time for a GPU or another shared resource, batched by mode), and `plugin_install` (runs `decree plugin install` each time the daemon starts); each plugin's file says what it needs and how to use it.
 
-**3. Write a script.** A script does one thing. Exit 0 is the event `done`, anything else is `error`.
+**3. Write a script.** A script does one thing. Exit 0 is the event `done`, anything else is `error`. A machine's scripts live in its own folder, `.decree/machines/<name>/scripts/`.
 
 ```bash
-cat > .decree/scripts/greet.sh <<'EOF'
+mkdir -p .decree/machines/hello/scripts
+cat > .decree/machines/hello/scripts/greet.sh <<'EOF'
 #!/usr/bin/env bash
 echo "Hello from $DECREE_MACHINE: $(sed -n 's/^# //p' "$DECREE_MESSAGE" | head -n 1)"
 EOF
-cat > .decree/scripts/notify_person.sh <<'EOF'
+cat > .decree/machines/hello/scripts/notify_person.sh <<'EOF'
 #!/usr/bin/env bash
 echo "$DECREE_QUESTION Reply with: decree event $DECREE_WAIT_ID <event>"
 EOF
-chmod +x .decree/scripts/greet.sh .decree/scripts/notify_person.sh
+chmod +x .decree/machines/hello/scripts/*.sh
 ```
 
-**4. Write a machine.** It names scripts, never paths: `greet` resolves to `scripts/hello/greet*`, else `scripts/greet*`. Editors that read SchemaStore apply the machine schema by path, so they complete keys and underline mistakes ([editors](docs/editors.md)).
+**4. Write a machine.** It names scripts, never paths: `greet` resolves to `.decree/machines/hello/scripts/greet*`. Editors that read SchemaStore apply the machine schema by path, so they complete keys and underline mistakes ([editors](docs/editors.md)).
 
 ```bash
-cat > .decree/machines/hello.yml <<'EOF'
+cat > .decree/machines/hello/machine.yml <<'EOF'
 name: hello
 description: Greet, ask a person to approve, then finish.
 initial: greet
@@ -185,7 +186,7 @@ A reply to a waiting run is a message with `to:` (the wait id or run id) and `ev
 A machine is an SCXML statechart written in YAML, in `.decree/machines/<name>.yml`. Keys use SCXML's names: `initial`, `states`, `transitions`, `target`, `type`, `onentry`, `onexit`, `invoke`, `data`, `final`.
 
 ```yaml
-# Graph: ../graph/deploy.md
+# Graph: graph.md
 name: deploy
 description: Build, ask a person to approve, then ship.
 initial: build
@@ -244,12 +245,9 @@ A `model` state asks a **router**: an ordinary machine that reads `request.json`
 
 A script is any executable file. decree runs it directly from the project root, so the shebang picks the language.
 
-Script `X` used by machine `M` is the first match of `X` or `X.<ext>` in:
+Script `X` used by machine `M` is the one match of `X` or `X.<ext>` in `.decree/machines/M/scripts/`; there is no other search path. Code several machines share is a library: a machine folder with no `machine.yml`, whose scripts others source by path.
 
-1. `.decree/scripts/M/`
-2. `.decree/scripts/`
-
-An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the script writes an event name to the file `$DECREE_EVENT_FILE` (`echo pass > "$DECREE_EVENT_FILE"`). Output goes to `runs/<id>/<NNNN>-<state>-<script>.log` and is only a log: decree never reads an event from it. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all). A run's own files go in `$DECREE_RUN_DIR`; what a machine keeps between runs goes in `$DECREE_STORE` and is declared under the machine's `store:`, so the machine file says what it remembers; its helpers, config and data sit beside its scripts in `.decree/scripts/<machine>/`.
+An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the script writes an event name to the file `$DECREE_EVENT_FILE` (`echo pass > "$DECREE_EVENT_FILE"`). Output goes to `runs/<id>/<NNNN>-<state>-<script>.log` and is only a log: decree never reads an event from it. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all). A run's own files go in `$DECREE_RUN_DIR`; what a machine keeps between runs goes in `$DECREE_STATE_DIR` and is declared under the machine's `state_files:`, so the machine file says what it remembers; its helpers, config and data sit beside its scripts in `.decree/machines/<machine>/scripts/`.
 
 Model servers and other long-running processes are not scripts and decree does not manage them: an `onentry` script starts what a state needs. [docs/services.md](docs/services.md) shows systemd units, llama-swap and a tmux layout for that.
 
@@ -301,7 +299,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   cron/                           # message templates queued on a schedule
   runs/<id>/                      # one folder per run: message.md, events.jsonl, traces.jsonl, logs
   attention/<id>.md               # what needs a person, with the command that continues it
-  store/<machine>/                # what a machine keeps between runs ($DECREE_STORE), declared under its store:; never pruned
+  store/<machine>/                # what a machine keeps between runs ($DECREE_STATE_DIR), declared under its store:; never pruned
   graph/                          # written by decree graph; committed
   schema/v1/                      # optional local copy written by decree schema; not committed
 ```

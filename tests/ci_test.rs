@@ -1,6 +1,6 @@
 //! `.github/workflows/ci.yml` parses as YAML, its `test` job runs exactly the commands of
 //! the gate script (`gate.sh` in this repository's `.decree/plugins/develop.md`, installed as
-//! `.decree/scripts/develop/gate.sh`), so the two cannot drift apart,
+//! `.decree/machines/develop/scripts/gate.sh`), so the two cannot drift apart,
 //! and its `decree-check` job checks every project with `--format sarif` and uploads the
 //! results. Reads this repository's files only; writes nothing.
 

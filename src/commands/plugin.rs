@@ -103,7 +103,7 @@ pub fn import(
     } else {
         None
     };
-    let machine = decree_dir.join(MACHINES_DIR).join(format!("{name}.yml"));
+    let machine = decree_dir.join(crate::layout::machine_file_rel(&name));
     if !force {
         if old.is_some() {
             return Err(DecreeError::Other(format!(
@@ -113,7 +113,8 @@ pub fn import(
         }
         if machine.exists() {
             return Err(DecreeError::Other(format!(
-                "{DECREE_DIR}/{MACHINES_DIR}/{name}.yml exists and no plugin installed it; run with --force to replace it"
+                "{DECREE_DIR}/{} exists and no plugin installed it; run with --force to replace it",
+                crate::layout::machine_file_rel(&name)
             )));
         }
     }
@@ -530,7 +531,8 @@ pub fn add(
         };
         if machine_without_plugin(&decree_dir, &name) && status != "replaced" {
             return Err(DecreeError::Other(format!(
-                "{DECREE_DIR}/{MACHINES_DIR}/{name}.yml exists and no plugin installed it; export it (`decree plugin export {name}`) or move it, then add `{name}` again; nothing was added"
+                "{DECREE_DIR}/{} exists and no plugin installed it; export it (`decree plugin export {name}`) or move it, then add `{name}` again; nothing was added",
+                crate::layout::machine_file_rel(&name)
             )));
         }
         for need in &plugin.needs {
@@ -614,7 +616,7 @@ pub fn add(
                         print_line_changes(&a.changes);
                         if a.dropped_edits_in_place {
                             println!(
-                                "  and dropped the edits in place to {DECREE_DIR}/{MACHINES_DIR}/{0}.yml, {DECREE_DIR}/scripts/{0}/ or {DECREE_DIR}/cron/{0}/, which were not exported",
+                                "  and dropped the edits in place to {DECREE_DIR}/{MACHINES_DIR}/{0}/ (machine.yml, scripts/ or cron/), which were not exported",
                                 a.name
                             );
                         }
@@ -634,11 +636,10 @@ pub fn add(
     }
 }
 
-/// Whether `machines/<name>.yml` exists and no plugin file names it.
+/// Whether `machines/<name>/machine.yml` exists and no plugin file names it.
 fn machine_without_plugin(decree_dir: &Path, name: &str) -> bool {
     decree_dir
-        .join(MACHINES_DIR)
-        .join(format!("{name}.yml"))
+        .join(crate::layout::machine_file_rel(name))
         .exists()
         && !decree_dir.join(plugin::plugin_file(name)).is_file()
 }
@@ -770,7 +771,10 @@ mod tests {
         old.needs.clear();
         let changes = changes(Some(&old), &new, true);
         assert_eq!(changes.len(), 2, "{changes:?}");
-        assert_eq!(changes[0]["path"], ".decree/scripts/develop/gate.sh");
+        assert_eq!(
+            changes[0]["path"],
+            ".decree/machines/develop/scripts/gate.sh"
+        );
         assert_eq!(changes[0]["change"], "changed");
         let lines = changes[0]["lines"].as_array().unwrap();
         assert!(lines.iter().any(|l| l == "- cargo test"), "{lines:?}");
@@ -788,7 +792,7 @@ mod tests {
         let file = plugins.join("develop.md");
         std::fs::write(&file, text).unwrap();
         plugin::sync(&decree_dir).unwrap();
-        let gate = decree_dir.join("scripts/develop/gate.sh");
+        let gate = decree_dir.join("machines/develop/scripts/gate.sh");
         std::fs::write(&gate, "#!/usr/bin/env bash\ncargo test\n").unwrap();
         // A pull changes the plugin file under the edit.
         let pulled = format!("{text}\nA teammate's note.\n");

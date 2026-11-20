@@ -20,12 +20,12 @@ It is more machinery than the simplest machine, which is where a project should 
 
 ## The files
 
-Start from a project with `develop` added (`decree init`, then `decree plugin add develop`). Replace the installed `.decree/machines/develop.yml` with this one, and keep the edit with `decree plugin export develop` (or let the next run's `commit` export it); it is the official machine with `data`, and the states from `final_gate` on changed or added.
+Start from a project with `develop` added (`decree init`, then `decree plugin add develop`). Replace the installed `.decree/machines/develop/machine.yml` with this one, and keep the edit with `decree plugin export develop` (or let the next run's `commit` export it); it is the official machine with `data`, and the states from `final_gate` on changed or added.
 
-`.decree/machines/develop.yml`:
+`.decree/machines/develop/machine.yml`:
 
 ```yaml
-# Graph: ../graph/develop.md
+# Graph: graph.md
 name: develop
 description: Implement a message with an AI in small steps, run the gate, fix and verify; then spend rounds on what is missing, first with the default agent, then with Claude, then ask a person.
 data:
@@ -83,10 +83,10 @@ states:
   failed: { final: true, onentry: [keep] }     # the run's changes stay in the tree; its attention file holds the queue
 ```
 
-`.decree/machines/gaps.yml`, one round. Set `ai_cli`'s default to the backend your cheap rounds use:
+`.decree/machines/gaps/machine.yml`, one round. Set `ai_cli`'s default to the backend your cheap rounds use:
 
 ```yaml
-# Graph: ../graph/gaps.md
+# Graph: graph.md
 name: gaps
 description: One round on gaps.md, by the CLI `ai_cli` names; ends filled if verify passes.
 data:
@@ -122,17 +122,17 @@ states:
 `gaps` reuses `develop`'s `gate`, `fix` and `verify`, and the `gate_gaps` below, through symlinks in its own script folder ([Resolution](reference/scripts.md)):
 
 ```bash
-mkdir -p .decree/scripts/gaps
-for s in gate fix verify gate_gaps; do ln -s "../develop/$s.sh" ".decree/scripts/gaps/$s.sh"; done
+mkdir -p .decree/machines/gaps/scripts
+for s in gate fix verify gate_gaps; do ln -s "../../develop/scripts/$s.sh" ".decree/machines/gaps/scripts/$s.sh"; done
 ```
 
-`.decree/scripts/gaps/fill.sh`, the only script of its own. It notes the round in `progress.md` and asks the round's agent to close each gap:
+`.decree/machines/gaps/scripts/fill.sh`, the only script of its own. It notes the round in `progress.md` and asks the round's agent to close each gap:
 
 ```bash
 #!/usr/bin/env bash
 # gaps' fill: close each gap in gaps.md, test first, with the agent the round names.
 set -euo pipefail
-. .decree/scripts/develop/ai.sh
+. .decree/machines/develop/scripts/ai.sh
 
 dir=${DECREE_ROOT_RUN_DIR}
 gaps="${dir}/gaps.md"
@@ -162,7 +162,7 @@ ai "${prompt}"
 stopped || true
 ```
 
-`.decree/scripts/develop/gate_gaps.sh`, for a gate that still fails after `fix`. It keeps the end of `gate.log`; a project can pick its test tool's failed tests and first errors out of the log instead:
+`.decree/machines/develop/scripts/gate_gaps.sh`, for a gate that still fails after `fix`. It keeps the end of `gate.log`; a project can pick its test tool's failed tests and first errors out of the log instead:
 
 ```bash
 #!/usr/bin/env bash
@@ -180,7 +180,7 @@ mv "${dir}/gaps.md.new" "${dir}/gaps.md"
 cat "${dir}/gaps.md"
 ```
 
-`.decree/scripts/develop/notify_human.sh`, `ask_human`'s `notify` script. It prints what a person needs; a real one could post it to chat or an issue:
+`.decree/machines/develop/scripts/notify_human.sh`, `ask_human`'s `notify` script. It prints what a person needs; a real one could post it to chat or an issue:
 
 ```bash
 #!/usr/bin/env bash
@@ -198,7 +198,7 @@ for event in ${DECREE_EVENTS}; do
 done
 ```
 
-Then `chmod +x .decree/scripts/gaps/fill.sh .decree/scripts/develop/gate_gaps.sh .decree/scripts/develop/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree plugin export gaps` and `decree plugin export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
+Then `chmod +x .decree/machines/gaps/scripts/fill.sh .decree/machines/develop/scripts/gate_gaps.sh .decree/machines/develop/scripts/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree plugin export gaps` and `decree plugin export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
 
 ## Tuning it
 

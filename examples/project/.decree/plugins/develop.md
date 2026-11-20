@@ -24,7 +24,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -258,14 +258,14 @@ scripts:
     }
   implement.sh: |
     #!/usr/bin/env bash
-    # develop's implement, a stand-in for an AI agent: scripts/develop/ is checked
+    # develop's implement, a stand-in for an AI agent: machines/develop/scripts/ is checked
     # before scripts/. The machine's attempt list says which model does this
     # attempt, in $DECREE_ATTEMPT_VALUE: a choice of how, not of what runs next.
     # `local` is a model served by Ollama through OpenCode; `claude` is Claude. Both go
     # through ai.sh's `ai`, which AI_CLI points at a backend.
     # A non-zero exit is error; decree then runs the next attempt in place.
     set -euo pipefail
-    . .decree/scripts/develop/ai.sh
+    . .decree/machines/develop/scripts/ai.sh
     prompt="Read $DECREE_MESSAGE and make the change it asks for."
     case "$DECREE_ATTEMPT_VALUE" in
       claude) AI_CLI=claude ai "$prompt" ;;
@@ -277,6 +277,31 @@ scripts:
     # failed, implicitly.
     set -euo pipefail
     cargo test
+cron:
+  nightly-audit.md: |
+    ---
+    cron: "0 3 * * *"
+    machine: develop
+    ---
+    # No dependency has an advisory that a patched version fixes
+
+    ## Overview
+
+    A vulnerability whose fix is published should not stay in the build overnight.
+
+    ## Outcome
+
+    `cargo audit` reports no advisory that a compatible patched version of the dependency fixes.
+
+    ## Constraints
+
+    - The project's own code does not change, only the versions of its dependencies.
+
+    ## Acceptance Criteria
+
+    - **Given** the project after the run
+      **When** `cargo audit` runs
+      **Then** it lists no advisory that a compatible patched version fixes
 ---
 # develop
 

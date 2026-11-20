@@ -179,7 +179,7 @@ fn test_every_readme_command_runs_as_written() {
     let message =
         std::fs::read_to_string(decree.join("runs").join(&id).join("message.md")).unwrap();
     assert!(message.contains("state: done"), "{message}");
-    assert!(decree.join("graph/hello.md").is_file());
+    assert!(decree.join("machines/hello/graph.md").is_file());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains(&format!("decree event {id}.w3 approve")),

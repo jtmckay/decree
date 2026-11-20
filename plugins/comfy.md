@@ -82,7 +82,7 @@ scripts:
     echo "prompt ${id} finished"
   build.sh: |
     #!/usr/bin/env bash
-    # comfy's build: patch .decree/scripts/comfy/<method>.json with the message and its
+    # comfy's build: patch .decree/machines/comfy/scripts/<method>.json with the message and its
     # params, and save it as runs/<id>/comfy-payload.json for submit. The method is
     # $METHOD when a wrapper script sets it, else the `method` param. Every workflow is
     # patched the same way, by node type, so a new method is a new workflow file:
@@ -93,7 +93,7 @@ scripts:
     # input_image is required when the workflow has a LoadImage node; submit
     # uploads it and points LoadImage at it.
     set -euo pipefail
-    workflows=.decree/scripts/comfy
+    workflows=.decree/machines/comfy/scripts
     method="${METHOD:-${DECREE_DATA_METHOD}}"
 
     methods() {
@@ -3416,7 +3416,7 @@ ComfyUI's API is fire and forget: `POST /prompt` queues a workflow and answers a
 ## What it does
 
 1. `precheck` (on entry) fails fast if `curl` or `jq` is missing.
-2. `build` patches `.decree/scripts/comfy/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It fails, before anything is sent, on an unknown method (listing the methods) or a missing `method`, `output`, prompt or `input_image`.
+2. `build` patches `.decree/machines/comfy/scripts/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It fails, before anything is sent, on an unknown method (listing the methods) or a missing `method`, `output`, prompt or `input_image`.
 3. `submit` uploads `input_image`, if any, queues the workflow and keeps the prompt id (`attempts: 3`).
 4. `await` polls `GET /history/<prompt id>` every `COMFY_POLL_S` seconds (5) until the prompt finishes, within 3 hours.
 5. `fetch` downloads each file the prompt saved to `output` plus its extension, or `output-<n>` plus it when there are several (`attempts: 3`).
@@ -3428,7 +3428,7 @@ ComfyUI's API is fire and forget: `POST /prompt` queues a workflow and answers a
 
 ## How to use it
 
-A method is a workflow in `.decree/scripts/comfy/`, by file stem, in ComfyUI's API format: `image_flux2_text_landscape` (an image from text), `image_flux2_text_image` (an image from text and a reference image) and `video_i2v_wan2.2_14B_long` (a video from a still image). A new method is a new workflow file there; keep it with `decree plugin export comfy`.
+A method is a workflow in `.decree/machines/comfy/scripts/`, by file stem, in ComfyUI's API format: `image_flux2_text_landscape` (an image from text), `image_flux2_text_image` (an image from text and a reference image) and `video_i2v_wan2.2_14B_long` (a video from a still image). A new method is a new workflow file there; keep it with `decree plugin export comfy`.
 
 ```yaml
 ---

@@ -68,7 +68,7 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
 
 ## The default router
 
-The official `router` plugin ([plugins.md](plugins.md#official-plugins)), which `decree plugin add router` adds, installs `machines/router.yml` and its script, `scripts/router/ask.sh`. It is a normal machine: edit it (and keep the edit with `decree plugin export router`), replace it, or write another and point a `model` invoke's `router:` at it. Its machine:
+The official `router` plugin ([plugins.md](plugins.md#official-plugins)), which `decree plugin add router` adds, installs `machines/router/machine.yml` and its script, `machines/router/scripts/ask.sh`. It is a normal machine: edit it (and keep the edit with `decree plugin export router`), replace it, or write another and point a `model` invoke's `router:` at it. Its machine:
 
 ```yaml
 name: router
@@ -132,7 +132,7 @@ Four lines of the recorded `develop` migration in [`examples/project/`](../../ex
 
 ```json
 {"v":1,"seq":1,"ts":"2026-10-01T14:30:05.000Z","type":"transition","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","from":null,"event":"claimed","to":"implement","source":"claim","exit_code":null,"file":"01-rate-limit-upload.md","span_id":"189ed21326b51409"}
-{"v":1,"seq":2,"ts":"2026-10-01T14:38:22.400Z","type":"script","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"implement","phase":"invoke","script":"implement","path":".decree/scripts/develop/implement.sh","attempt":1,"attempt_value":"local","started_at":"2026-10-01T14:30:05.010Z","duration_ms":497390,"exit_code":1,"log":"0001-implement-implement.log","span_id":"0b43a796c9019427"}
+{"v":1,"seq":2,"ts":"2026-10-01T14:38:22.400Z","type":"script","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"implement","phase":"invoke","script":"implement","path":".decree/machines/develop/scripts/implement.sh","attempt":1,"attempt_value":"local","started_at":"2026-10-01T14:30:05.010Z","duration_ms":497390,"exit_code":1,"log":"0001-implement-implement.log","span_id":"0b43a796c9019427"}
 {"v":1,"seq":3,"ts":"2026-10-01T14:38:22.405Z","type":"transition","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","attempt_value":"claude","from":"implement","event":"error","to":"implement","source":"attempt","exit_code":1}
 {"v":1,"seq":8,"ts":"2026-10-01T14:51:11.910Z","type":"run_finished","run_id":"20261001T143005.000000Z-189ed2","machine":"develop","trigger":"migration","trace_id":"b872e2142bcdeefd1e77db420727a461","state":"done","duration_ms":1266910}
 ```

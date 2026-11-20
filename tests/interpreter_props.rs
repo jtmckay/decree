@@ -13,7 +13,6 @@
 //! which may go back only when it tests `visits` of its own state with `less_than`, so
 //! every loop passes a bound.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use proptest::prelude::*;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -476,7 +475,7 @@ fn run_case(spec: &Spec) -> Outcome {
         fs::create_dir_all(decree.join(dir)).unwrap();
     }
     fs::write(decree.join("processed.md"), "").unwrap();
-    fs::write(decree.join("machines/prop.yml"), spec.yaml()).unwrap();
+    common::write_file(&decree.join("machines/prop/machine.yml"), spec.yaml());
     write_script(&decree.join("scripts/hook"), HOOK);
     write_script(&decree.join("scripts/work"), WORK);
     for (i, plan) in spec.plans.iter().enumerate() {
@@ -494,8 +493,7 @@ fn run_case(spec: &Spec) -> Outcome {
     .unwrap();
 
     let decree_cmd = |arg: &str| {
-        cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
+        common::decree_at(tmp.path())
             .env("NO_COLOR", "1")
             .arg(arg)
             .output()

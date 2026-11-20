@@ -15,7 +15,7 @@ machine:
     holder:
       type: string
       default: ''
-  store:
+  state_files:
     leases: 'One folder per resource: queue (the leases waiting, with when each asked), holder (the lease that holds it, its mode, its expiry), mode (what the resource is set up for), mode_since (when that mode was swapped in, for max_wait), free_since (when it was last given back) and lock. turn, swap, renew and leave read and write it, each under flock.'
   initial: turn
   states:
@@ -44,7 +44,7 @@ machine:
           description: Refused while the lease is not held yet; the log says so.
         error: turn
     swap:
-      description: Puts the resource into this lease's mode with scripts/lease/swap/<resource>.sh, a step with a timeout because unloading a model can take minutes; its failure fails the lease and leaves the mode unknown. Then the hold starts.
+      description: Puts the resource into this lease's mode with machines/lease/scripts/swap/<resource>.sh, a step with a timeout because unloading a model can take minutes; its failure fails the lease and leaves the mode unknown. Then the hold starts.
       invoke:
         script:
           name: swap
@@ -85,8 +85,8 @@ machine:
 scripts:
   lease.sh: |
     # lease's shared code, sourced by its scripts (never run on its own). The rules are in
-    # scripts/lease/resources; what the machine keeps between runs is in
-    # $DECREE_STORE/leases/<resource>/, read and written only under flock on its lock file, so
+    # machines/lease/scripts/resources; what the machine keeps between runs is in
+    # $DECREE_STATE_DIR/leases/<resource>/, read and written only under flock on its lock file, so
     # several decree processes sharing the project never see half a change:
     #   queue       one line per waiting lease: <asked, ms since the epoch> <lease id> <mode>
     #   holder      <lease id> <mode> <expiry, ms> <swapping|held>, absent when nobody holds it
@@ -97,7 +97,7 @@ scripts:
     # release, expiry, refused renewal and swap is one line in the run's log, `lease: <what>`
     # then key=value pairs naming the resource, the mode and the lease.
     set -euo pipefail
-    lease_rules=.decree/scripts/lease/resources
+    lease_rules=.decree/machines/lease/scripts/resources
     me="${DECREE_MESSAGE_ID}"
     decree_bin="${DECREE:-decree}"
 
@@ -167,7 +167,7 @@ scripts:
         dur_ms_="$(dur_ms "$DECREE_DATA_DURATION")" || die "duration \`$DECREE_DATA_DURATION\` is not a duration such as 15m"
         if (( dur_ms_ > max_lease_ms )); then dur_ms_="$max_lease_ms"; capped="$max"; fi
       fi
-      dir="${DECREE_STORE}/leases/${res}"
+      dir="${DECREE_STATE_DIR}/leases/${res}"
       mkdir -p "$dir"
       touch "$dir/queue"
     }
@@ -200,7 +200,7 @@ scripts:
     # gives it back, which starts the linger. A lease that failed while swapping leaves the
     # mode unknown, so the next lease swaps again. Safe to re-run.
     set -euo pipefail
-    . .decree/scripts/lease/lease.sh
+    . .decree/machines/lease/scripts/lease.sh
     ( load ) >/dev/null 2>&1 || exit 0   # a request that never named a real resource holds nothing
     load
     give_back() {
@@ -231,7 +231,7 @@ scripts:
     # reached the queue (its id), so one sent before the expiry is honoured even when decree
     # gets to it after; the new expiry is a duration from now.
     set -euo pipefail
-    . .decree/scripts/lease/lease.sh
+    . .decree/machines/lease/scripts/lease.sh
     load
     decide() {
       local now sent; now="$(now_ms)"; sent="$(reply_ms)"
@@ -292,13 +292,13 @@ scripts:
   swap.sh: |
     #!/usr/bin/env bash
     # The lease was granted: put the resource into its mode, then start the hold. A swap runs
-    # scripts/lease/swap/<resource>.sh <from> <to> (<from> empty when unknown); a missing
+    # machines/lease/scripts/swap/<resource>.sh <from> <to> (<from> empty when unknown); a missing
     # script means there is nothing to do, and a lease for the mode already set needs none.
     # While the swap runs, the lease's expiry is kept a duration ahead every second, so if
     # this run is interrupted the resource frees one duration later. If the swap fails, the
     # lease fails and the mode is unknown (leave clears the holder).
     set -euo pipefail
-    . .decree/scripts/lease/lease.sh
+    . .decree/machines/lease/scripts/lease.sh
     load
     from=""
     start() {
@@ -309,7 +309,7 @@ scripts:
     }
     locked start
     if [ "$from" != "$mode" ]; then
-      script=".decree/scripts/lease/swap/${res}.sh"
+      script=".decree/machines/lease/scripts/swap/${res}.sh"
       say "swap $(ids "$mode" "$me") from=${from:-unknown} to=$mode"
       if [ -x "$script" ]; then
         beat() { read_holder; [ "$h_id" != "$me" ] || write_holder "$me" "$mode" $(( $(now_ms) + dur_ms_ )) swapping; }
@@ -349,14 +349,14 @@ scripts:
     # https://github.com/jtmckay/decree/blob/main/docs/services.md. Keep an edit with
     # `decree plugin export lease`.
     set -euo pipefail
-    echo "gpu: would unload ${1:-whatever is loaded} and load $2 (edit .decree/scripts/lease/swap/gpu.sh)"
+    echo "gpu: would unload ${1:-whatever is loaded} and load $2 (edit .decree/machines/lease/scripts/swap/gpu.sh)"
   tell.sh: |
     #!/usr/bin/env bash
     # The ask script of waiting and held: says once, on the first visit, where the lease is and
     # how to answer. The state looks again every second, and says nothing then.
     set -euo pipefail
     [ "${DECREE_VISITS:-1}" = 1 ] || exit 0
-    . .decree/scripts/lease/lease.sh
+    . .decree/machines/lease/scripts/lease.sh
     load
     case "${DECREE_STATE}" in
       waiting) say "wait $(ids "$mode" "$me") ahead=$(( $(grep -c . "$dir/queue" || true) - 1 )) answer=\"decree event $me release\"" ;;
@@ -377,7 +377,7 @@ scripts:
     # interrupted (a live run's own look ends it). Names granted, wait, held or expired;
     # fails at once on a bad request, naming the problem and the resources there are.
     set -euo pipefail
-    . .decree/scripts/lease/lease.sh
+    . .decree/machines/lease/scripts/lease.sh
     load
     asked="$(asked_ms)"
     if [ "${DECREE_VISITS:-1}" = 1 ] && [ -n "$capped" ]; then
@@ -458,11 +458,11 @@ scripts:
 
 A "talking stick" for a resource several programs want at once: a GPU, one LLM server, a paid API with a budget. Each program asks for a **lease**; one lease holds the resource at a time, for a limited time, and gives it back. The next holder is picked to keep swaps rare: setting the resource up for another mode (unloading one model, loading another) is slow, so every lease for the mode already loaded goes first, as long as nobody in another mode waits too long.
 
-A lease is a decree run of this machine, and its run id is the lease's id. Nothing runs inside decree itself: the line of waiting leases is in the machine's store, `.decree/store/lease/`.
+A lease is a decree run of this machine, and its run id is the lease's id. Nothing runs inside decree itself: the line of waiting leases is in the machine's state folder, `.decree/machines/lease/state/`.
 
 ## What it needs
 
-- `bash`, `flock` (util-linux) and `jq`, listed in `scripts/lease/requirements`, so `infra`'s `run.sh check` checks them.
+- `bash`, `flock` (util-linux) and `jq`, listed in `machines/lease/scripts/requirements`, so `infra`'s `run.sh check` checks them.
 - `decree daemon` running: a waiting lease looks every second whether it is its turn, and a held one whether it has expired, and only `daemon` keeps looking (`decree process` stops once every lease waits). Those waits are timers, not questions for a person (`attention: false`), so a lease never puts a file in `.decree/attention/`.
 
 ## Adding it
@@ -473,7 +473,7 @@ decree plugin add lease
 
 ## Setting the rules
 
-The resource's owner writes the rules in `.decree/scripts/lease/resources`, one resource per line, `#` for comments:
+The resource's owner writes the rules in `.decree/machines/lease/scripts/resources`, one resource per line, `#` for comments:
 
 ```text
 # name  max_lease  linger  max_wait
@@ -486,7 +486,7 @@ gpu     15m        5s      30m
 
 Durations are decree's: `15m`, `5s`, `2h`.
 
-To put the resource into a mode, write `.decree/scripts/lease/swap/<name>.sh`. It gets the current mode (empty when unknown) and the mode wanted: `swap/gpu.sh <from> <to>`. With no script, there is nothing to do. The shipped `swap/gpu.sh` only says what it would do; [docs/services.md](https://github.com/jtmckay/decree/blob/main/docs/services.md) shows how to unload ollama's and ComfyUI's models. If a swap fails, its lease fails, the mode becomes unknown, and the next lease swaps again.
+To put the resource into a mode, write `.decree/machines/lease/scripts/swap/<name>.sh`. It gets the current mode (empty when unknown) and the mode wanted: `swap/gpu.sh <from> <to>`. With no script, there is nothing to do. The shipped `swap/gpu.sh` only says what it would do; [docs/services.md](https://github.com/jtmckay/decree/blob/main/docs/services.md) shows how to unload ollama's and ComfyUI's models. If a swap fails, its lease fails, the mode becomes unknown, and the next lease swaps again.
 
 Keep your edits to the rules and swap scripts with `decree plugin export lease`.
 

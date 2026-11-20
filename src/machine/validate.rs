@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::{
     event_matches, is_attempt_value, is_env_file_name, is_event_name, is_ident, is_reserved_event,
-    is_store_name, Attempts, DataType, Edge, Invoke, LoadedMachine, MachineInvoke, FAILED,
+    is_state_name, Attempts, DataType, Edge, Invoke, LoadedMachine, MachineInvoke, FAILED,
     ROUTER_MACHINE,
 };
 use crate::cond::{Condition, Operand, Subject, Test};
@@ -126,7 +126,7 @@ impl LoadedMachine {
         v.v12_scripts();
         v.v13_emits();
         v.v14_data();
-        v.v14_store();
+        v.v14_state_files();
         v.v14_env_file();
         v.v15_done_state();
         v.v16_invokes();
@@ -753,20 +753,20 @@ impl Validator<'_> {
 
     /// V14 for `store`: each name a file or folder directly in the store folder, each with a
     /// description.
-    fn v14_store(&mut self) {
-        for (name, description) in &self.m.store {
-            if !is_store_name(name) {
+    fn v14_state_files(&mut self) {
+        for (name, description) in &self.m.state_files {
+            if !is_state_name(name) {
                 self.push(
-                    self.nested_line("store", name),
+                    self.nested_line("state_files", name),
                     format!(
-                        "store `{name}`: the name does not match ^[A-Za-z0-9][A-Za-z0-9._-]*$: a file or folder directly in the store folder (V14)"
+                        "state_files `{name}`: the name does not match ^[A-Za-z0-9][A-Za-z0-9._-]*$: a file or folder directly in the state folder (V14)"
                     ),
                 );
             }
             if description.trim().is_empty() {
                 self.push(
-                    self.nested_line("store", name),
-                    format!("store `{name}`: the description is empty: say what it is and which states read or write it (V14)"),
+                    self.nested_line("state_files", name),
+                    format!("state_files `{name}`: the description is empty: say what it is and which states read or write it (V14)"),
                 );
             }
         }

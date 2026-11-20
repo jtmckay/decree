@@ -3,7 +3,6 @@
 //! `decree init` in its own temp directory, then adds the machines and scripts it needs.
 //! No test calls a model: routers are test machines whose script writes a fixed reply.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
@@ -134,9 +133,8 @@ impl Project {
     }
 
     fn decree(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.root())
-            .env("NO_COLOR", "1")
+        let mut cmd = common::decree_at(self.root());
+        cmd.env("NO_COLOR", "1")
             .env_remove("DECREE_MACHINE")
             .env_remove("DECREE_STATE")
             .env_remove("DECREE_MESSAGE_ID")
@@ -146,8 +144,7 @@ impl Project {
 
     /// `decree <args>` in the background, its stdout piped.
     fn spawn(&self, args: &[&str]) -> Child {
-        std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-            .current_dir(self.root())
+        common::std_decree_at(self.root())
             .env("NO_COLOR", "1")
             .args(args)
             .stdout(Stdio::piped())
@@ -158,7 +155,12 @@ impl Project {
 
     fn machine(&self, name: &str, yml: &str) {
         fs::create_dir_all(self.decree_dir().join("machines")).unwrap();
-        fs::write(self.decree_dir().join(format!("machines/{name}.yml")), yml).unwrap();
+        common::write_file(
+            &self
+                .decree_dir()
+                .join(format!("machines/{name}/machine.yml")),
+            yml,
+        );
     }
 
     fn script(&self, name: &str, text: &str) {
@@ -1027,11 +1029,7 @@ fn machine_prune_and_daemon_take_the_same_durations() {
 fn commands_without_a_project_fail() {
     let tmp = TempDir::new().unwrap();
     for cmd in ["process", "check", "graph", "status", "stop"] {
-        cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
-            .arg(cmd)
-            .assert()
-            .failure();
+        common::decree_at(tmp.path()).arg(cmd).assert().failure();
     }
 }
 
@@ -1166,7 +1164,7 @@ fn a_named_event_picks_the_transition() {
 
 /// AC (A08): `decree init` in an empty directory writes no `.decree/lib/`, `decree check`
 /// passes, and infra's `run.sh check`, once `infra` is added, runs from
-/// `.decree/scripts/infra/`, reporting each line with the file it came from.
+/// `.decree/machines/infra/scripts/`, reporting each line with the file it came from.
 #[test]
 fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     let p = Project::init();
@@ -1175,7 +1173,7 @@ fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     p.decree(&["plugin", "add", "infra"]).assert().success();
     assert!(!p.decree_dir().join("lib").exists());
     p.decree(&["check"]).assert().success().stderr("");
-    let out = std::process::Command::new(".decree/scripts/infra/run.sh")
+    let out = std::process::Command::new(".decree/machines/infra/scripts/run.sh")
         .arg("check")
         .current_dir(p.root())
         .env("PATH", path_with_stubs(&p.root(), &["claude"]))
@@ -1185,7 +1183,7 @@ fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         stdout,
-        "ok       command git (scripts/infra/requirements)\n"
+        "ok       command git (machines/infra/scripts/requirements)\n"
     );
 }
 
@@ -1229,13 +1227,13 @@ fn scripts_get_no_decree_lib() {
         ));
 }
 
-/// AC (A08): `scripts/develop/` may hold `conventions.md`, `ai.sh` and `requirements` beside
+/// AC (A08): `machines/develop/scripts/` may hold `conventions.md`, `ai.sh` and `requirements` beside
 /// the scripts its states invoke; `decree check` passes with no warning about them.
 #[test]
 fn check_ignores_the_files_beside_a_machines_scripts() {
     let p = Project::init();
     p.decree(&["plugin", "add", "develop"]).assert().success();
-    let develop = p.decree_dir().join("scripts/develop");
+    let develop = p.decree_dir().join("machines/develop/scripts");
     assert!(develop.join("ai.sh").is_file());
     fs::write(develop.join("conventions.md"), "# Conventions\n").unwrap();
     fs::write(develop.join("requirements"), "command   git\n").unwrap();
@@ -1485,13 +1483,13 @@ fn status_lists_active_runs_in_nested_projects() {
     let web = outer.path().join("apps/web");
     fs::create_dir_all(&web).unwrap();
     let decree = |dir: &std::path::Path, args: &[&str]| {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(dir).env("NO_COLOR", "1").args(args);
+        let mut cmd = common::decree_at(dir);
+        cmd.env("NO_COLOR", "1").args(args);
         cmd
     };
     decree(&web, &["init", "--ai", "claude"]).assert().success();
     fs::create_dir_all(web.join(".decree/machines")).unwrap();
-    fs::write(web.join(".decree/machines/tick.yml"), TICK).unwrap();
+    common::write_file(&web.join(".decree/machines/tick/machine.yml"), TICK);
     write_script(&web.join(".decree/scripts/ticker"), TICK_WHILE_FLAG);
     fs::write(web.join("tick.flag"), "").unwrap();
     let out = decree(&web, &["emit", "--machine", "tick"])
@@ -1502,8 +1500,7 @@ fn status_lists_active_runs_in_nested_projects() {
         .stdout
         .clone();
     let id = String::from_utf8(out).unwrap().trim().to_string();
-    let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-        .current_dir(&web)
+    let mut process = common::std_decree_at(&web)
         .args(["process", "--quiet"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -87,3 +87,117 @@ pub fn plugin_machine(plugin: &str) -> String {
     }
     serde_norway::to_string(&machine).unwrap()
 }
+
+/// Copy each file a test wrote to `<root>/.decree/scripts/` into every machine's own
+/// `machines/<m>/scripts/`, where decree resolves scripts (docs/reference/scripts.md,
+/// Resolution). Tests write a script once for every machine to run, as a project converted
+/// from 0.5's shared `scripts/` would copy it; a machine's own script of that name wins.
+/// The copies made are listed in `.decree/scripts/.shared`, so a later call refreshes them.
+#[allow(dead_code)]
+pub fn share_scripts(root: &Path) {
+    let decree = root.join(".decree");
+    let flat = decree.join("scripts");
+    let machines = decree.join("machines");
+    if !flat.is_dir() || !machines.is_dir() {
+        return;
+    }
+    let ledger = flat.join(".shared");
+    let mut shared: Vec<String> = std::fs::read_to_string(&ledger)
+        .map(|t| t.lines().map(String::from).collect())
+        .unwrap_or_default();
+    let files: Vec<_> = std::fs::read_dir(&flat)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_file() && !e.file_name().to_string_lossy().starts_with('.'))
+        .collect();
+    let installed = |m: &std::fs::DirEntry| {
+        decree
+            .join("cache/plugins")
+            .join(format!("{}.md", m.file_name().to_string_lossy()))
+            .is_file()
+    };
+    for m in std::fs::read_dir(&machines).unwrap().filter_map(Result::ok) {
+        // A plugin's installed copy is what the plugin says, nothing added.
+        if !m.path().join("machine.yml").is_file() || installed(&m) {
+            continue;
+        }
+        for f in &files {
+            let dest = m.path().join("scripts").join(f.file_name());
+            let key = dest.to_string_lossy().into_owned();
+            if dest.exists() && !shared.contains(&key) {
+                continue;
+            }
+            let text = std::fs::read(f.path()).unwrap();
+            if std::fs::read(&dest).ok().as_deref() != Some(text.as_slice()) {
+                let mode = std::fs::metadata(f.path()).unwrap().permissions();
+                std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+                let tmp = dest.with_extension("sharing");
+                std::fs::write(&tmp, &text).unwrap();
+                std::fs::set_permissions(&tmp, mode).unwrap();
+                std::fs::rename(&tmp, &dest).unwrap();
+            }
+            if !shared.contains(&key) {
+                shared.push(key);
+            }
+        }
+    }
+    // A folder `scripts/<m>/` is machine m's own folder, as in 0.5: its files go to
+    // `machines/<m>/scripts/`.
+    for dir in std::fs::read_dir(&flat).unwrap().filter_map(Result::ok) {
+        let m = machines.join(dir.file_name());
+        if !dir.path().is_dir() || !m.is_dir() {
+            continue;
+        }
+        copy_tree(&dir.path(), &m.join("scripts"));
+    }
+    std::fs::write(&ledger, shared.join("\n")).unwrap();
+}
+
+/// Copy every file under `from` into `to`, keeping modes, replacing what differs.
+fn copy_tree(from: &Path, to: &Path) {
+    for entry in std::fs::read_dir(from).unwrap().filter_map(Result::ok) {
+        let dest = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &dest);
+            continue;
+        }
+        let text = std::fs::read(entry.path()).unwrap();
+        if std::fs::read(&dest).ok().as_deref() == Some(text.as_slice()) {
+            continue;
+        }
+        std::fs::create_dir_all(to).unwrap();
+        let tmp = dest.with_extension("sharing");
+        std::fs::write(&tmp, &text).unwrap();
+        std::fs::set_permissions(&tmp, std::fs::metadata(entry.path()).unwrap().permissions())
+            .unwrap();
+        std::fs::rename(&tmp, &dest).unwrap();
+    }
+}
+
+/// `decree` run in `root`, after `share_scripts(root)`.
+#[allow(dead_code)]
+pub fn decree_at(root: impl AsRef<Path>) -> assert_cmd::Command {
+    share_scripts(root.as_ref());
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("decree");
+    cmd.current_dir(root.as_ref());
+    cmd
+}
+
+/// Write `text` to `path`, creating its folder first.
+#[allow(dead_code)]
+pub fn write_file(path: &Path, text: impl AsRef<[u8]>) {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(path, text).unwrap();
+}
+
+/// `decree` run in `root` as a `std::process::Command` (for a child the test signals or
+/// reads as it runs), after `share_scripts(root)`.
+#[allow(dead_code)]
+pub fn std_decree_at(root: impl AsRef<Path>) -> std::process::Command {
+    share_scripts(root.as_ref());
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_decree"));
+    cmd.current_dir(root.as_ref());
+    cmd
+}

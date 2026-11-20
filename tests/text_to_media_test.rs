@@ -1,6 +1,6 @@
 //! The official `comfy` plugin (`plugins/comfy.md`, the machine of `examples/text-to-media/`)
 //! run through the binary against a stub ComfyUI. A temp project runs `decree init` and
-//! `decree plugin add comfy`, which installs its workflows in `scripts/comfy/`, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
+//! `decree plugin add comfy`, which installs its workflows in `machines/comfy/scripts/`, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
 //! `/prompt`, `/history/<id>` and `/view` from files under `stub/`, and logs each request. No
 //! ComfyUI, no network.
 
@@ -55,11 +55,7 @@ fn add_plugins(root: &Path, plugins: &[&str]) {
     let mut add = vec!["plugin", "add"];
     add.extend_from_slice(plugins);
     for args in [vec!["init"], add] {
-        cargo_bin_cmd!("decree")
-            .current_dir(root)
-            .args(&args)
-            .assert()
-            .success();
+        common::decree_at(root).args(&args).assert().success();
     }
 }
 
@@ -82,7 +78,7 @@ struct Project {
 }
 
 impl Project {
-    /// A project with the `comfy` plugin (its workflows in `scripts/comfy/`), a stub ComfyUI that
+    /// A project with the `comfy` plugin (its workflows in `machines/comfy/scripts/`), a stub ComfyUI that
     /// finishes the prompt after `polls_before_done` empty answers with `status`, and an
     /// image in `images/ref.png`.
     fn new(polls_before_done: u32, status: &str) -> Project {
@@ -133,8 +129,7 @@ impl Project {
             emit.args(["--param", param]);
         }
         emit.assert().success();
-        cargo_bin_cmd!("decree")
-            .current_dir(self.root())
+        common::decree_at(self.root())
             .env("PATH", path)
             .env("COMFY_POLL_S", "0")
             .env("NO_COLOR", "1")
@@ -272,7 +267,7 @@ fn an_image_method_uploads_input_image() {
 
 /// A `build_*` script names the method and runs `build`, as in the README's "When messages
 /// stop naming a method": `build` reads `$METHOD` before the `method` param, from
-/// `.decree/scripts/comfy/`.
+/// `.decree/machines/comfy/scripts/`.
 #[test]
 fn a_wrapper_script_names_the_method_built_from_its_scripts() {
     let p = Project::new(0, "success");
@@ -281,7 +276,7 @@ fn a_wrapper_script_names_the_method_built_from_its_scripts() {
         &scripts.join("build_text.sh"),
         "#!/usr/bin/env bash\nMETHOD=image_flux2_text_landscape exec \"$(dirname \"$0\")/build.sh\"\n",
     );
-    let machine = p.root().join(".decree/machines/comfy.yml");
+    let machine = p.root().join(".decree/machines/comfy/machine.yml");
     let text = fs::read_to_string(&machine).unwrap();
     let text = text.replacen("    invoke: build\n", "    invoke: build_text\n", 1);
     assert!(text.contains("invoke: build_text"));
@@ -375,7 +370,7 @@ fn comfy_is_one_machine_with_six_states() {
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(machines, ["comfy.yml"]);
+    assert_eq!(machines, ["comfy"]);
     let text = common::plugin_machine("plugins/comfy.md");
     let machine: serde_norway::Value = serde_norway::from_str(&text).unwrap();
     let states: Vec<&str> = machine["states"]

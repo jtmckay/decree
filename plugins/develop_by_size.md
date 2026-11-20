@@ -54,7 +54,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -326,7 +326,7 @@ scripts:
     #           is then `stop`, and the run fails until a person answers it,
     #           deletes STOP and runs `decree process --retry`.
     set -euo pipefail
-    . .decree/scripts/develop_by_size/ai.sh
+    . .decree/machines/develop_by_size/scripts/ai.sh
     OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3-coder:30b}"
     TEST_CMD="${TEST_CMD:-cargo test}"
     progress="${DECREE_RUN_DIR}/progress.md"

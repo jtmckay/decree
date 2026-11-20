@@ -100,7 +100,7 @@ Each building block has its own directory in `.decree/`:
   .env                              # optional, never committed: KEY=value variables every script gets, secrets included (scripts.md, .env files)
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
-  store/<machine name>/             # what the machine keeps between runs: $DECREE_STORE, declared under `store:`; never deleted by decree (scripts.md, Store)
+  store/<machine name>/             # what the machine keeps between runs: $DECREE_STATE_DIR, declared under `store:`; never deleted by decree (scripts.md, Store)
   cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree keeps only cache/plugins/ there, its record of each plugin install (plugins.md)
   process.log                       # what `process` and `daemon` print as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
   attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops every run (cli.md, Attention)

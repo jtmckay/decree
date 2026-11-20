@@ -5,7 +5,6 @@
 //! file, and Claude's usage limit is waited out and the session resumed. `claude`, `date`,
 //! `sleep` and the gate's one check are stubs on `PATH`; no test calls a model.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
@@ -24,7 +23,7 @@ const MESSAGE: &str =
 /// the first call prints it and exits 1; a prompt containing `CLAUDE_FAIL_ON` exits 1.
 /// With `CLAUDE_STOP` set, it writes that to the run's `STOP` file, as an agent that
 /// cannot go on would. With `CLAUDE_DECLARE` set, it appends that line to
-/// `scripts/infra/requirements`, as infra's `declare` asks. With `CLAUDE_DO` set, it runs that
+/// `machines/infra/scripts/requirements`, as infra's `declare` asks. With `CLAUDE_DO` set, it runs that
 /// bash, with the prompt in `$prompt`, as an agent that edits files would. With `CLAUDE_RUNS_GATE` set, it runs the gate, as `fix` asks. A prompt asking for a verdict is answered with `CLAUDE_REPLY`,
 /// by default `VERDICT: pass`.
 const STUB_CLAUDE: &str = r#"#!/usr/bin/env bash
@@ -38,10 +37,10 @@ if [ -n "${CLAUDE_DO:-}" ]; then
   eval "$CLAUDE_DO"
 fi
 if [ -n "${CLAUDE_DECLARE:-}" ]; then
-  echo "$CLAUDE_DECLARE" >> .decree/scripts/infra/requirements
+  echo "$CLAUDE_DECLARE" >> .decree/machines/infra/scripts/requirements
 fi
 if [ -n "${CLAUDE_RUNS_GATE:-}" ]; then
-  .decree/scripts/develop/gate.sh
+  .decree/machines/develop/scripts/gate.sh
 fi
 if [ -n "${CLAUDE_LIMIT:-}" ] && [ ! -e "$dir/limited" ]; then
   touch "$dir/limited"
@@ -72,7 +71,7 @@ exit "$status"
 
 /// The line of the gate `init` writes that stands in for the project's checks.
 const UNCONFIGURED: &str =
-    "  echo \"gate: no checks configured; edit .decree/scripts/develop/gate.sh, then keep it with \\`decree plugin export develop\\`\"\n";
+    "  echo \"gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with \\`decree plugin export develop\\`\"\n";
 
 /// The local time is always `STUB_NOW`.
 const STUB_DATE: &str = "#!/usr/bin/env bash\necho \"$STUB_NOW\"\n";
@@ -169,10 +168,10 @@ impl Project {
         write_script(&self.script("gate"), &gate.replacen(from, to, 1));
     }
 
-    /// `.decree/scripts/develop/<name>.sh`.
+    /// `.decree/machines/develop/scripts/<name>.sh`.
     fn script(&self, name: &str) -> PathBuf {
         self.root()
-            .join(format!(".decree/scripts/develop/{name}.sh"))
+            .join(format!(".decree/machines/develop/scripts/{name}.sh"))
     }
 
     fn root(&self) -> &Path {
@@ -197,9 +196,8 @@ impl Project {
     }
 
     fn decree(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.root())
-            .env("NO_COLOR", "1")
+        let mut cmd = common::decree_at(self.root());
+        cmd.env("NO_COLOR", "1")
             .env_remove("DECREE_MACHINE")
             .env_remove("DECREE_STATE")
             .env_remove("DECREE_MESSAGE_ID")
@@ -366,12 +364,24 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             ["develop.md", "infra.md", "qa.md", "router.md"],
             "{ai}"
         );
+        let machines: Vec<String> = files_under(&decree.join("machines"))
+            .into_iter()
+            .filter(|f| f.ends_with("/machine.yml"))
+            .collect();
         assert_eq!(
-            files_under(&decree.join("machines")),
-            ["develop.yml", "infra.yml", "qa.yml", "router.yml"],
+            machines,
+            [
+                "develop/machine.yml",
+                "infra/machine.yml",
+                "qa/machine.yml",
+                "router/machine.yml"
+            ],
             "{ai}"
         );
-        let scripts = files_under(&decree.join("scripts"));
+        let scripts: Vec<String> = files_under(&decree.join("machines"))
+            .into_iter()
+            .filter_map(|f| f.split_once("/scripts/").map(|(m, f)| format!("{m}/{f}")))
+            .collect();
         assert_eq!(
             scripts,
             [
@@ -412,21 +422,24 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
         assert!(!decree.join("lib").exists(), "{ai}");
         for machine in ["develop", "infra", "qa"] {
             let helper =
-                fs::read_to_string(decree.join("scripts").join(machine).join("ai.sh")).unwrap();
+                fs::read_to_string(decree.join("machines").join(machine).join("scripts/ai.sh"))
+                    .unwrap();
             assert!(helper.contains("\nai() {\n"), "{ai}: {machine}");
         }
         let mut texts = Vec::new();
         for script in &scripts {
-            let text = fs::read_to_string(decree.join("scripts").join(script)).unwrap();
+            let (m, f) = script.split_once('/').unwrap();
+            let text = fs::read_to_string(decree.join("machines").join(m).join("scripts").join(f))
+                .unwrap();
             if !script.ends_with("/ai.sh") {
                 assert!(!text.contains("ai()"), "{ai}: {script} defines ai()");
             }
             texts.push(text);
         }
         installed.push(texts);
-        assert!(decree.join("graph/develop.md").is_file(), "{ai}");
+        assert!(decree.join("machines/develop/graph.md").is_file(), "{ai}");
         let develop: serde_norway::Value = serde_norway::from_str(
-            &fs::read_to_string(decree.join("machines/develop.yml")).unwrap(),
+            &fs::read_to_string(decree.join("machines/develop/machine.yml")).unwrap(),
         )
         .unwrap();
         assert_eq!(develop["states"]["gate"]["transitions"]["fail"], "fix");
@@ -434,7 +447,7 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             develop["states"]["final_gate"]["transitions"]["fail"],
             "failed"
         );
-        let gate = fs::read_to_string(decree.join("scripts/develop/gate.sh")).unwrap();
+        let gate = fs::read_to_string(decree.join("machines/develop/scripts/gate.sh")).unwrap();
         for event in ["echo pass > ", "echo fail > "] {
             assert!(gate.contains(event), "{ai}: {event}");
         }
@@ -476,7 +489,7 @@ fn the_default_gate_says_it_is_unconfigured_and_names_pass() {
     let p = Project::empty();
     p.decree(&["init", "--ai", "claude"]).assert().success();
     p.decree(&["plugin", "add", "develop"]).assert().success();
-    let said = "gate: no checks configured; edit .decree/scripts/develop/gate.sh, then keep it with `decree plugin export develop`\n";
+    let said = "gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with `decree plugin export develop`\n";
     assert_eq!(
         gate_alone(&p),
         (
@@ -1081,7 +1094,10 @@ fn ai_without_ai_cli_uses_the_first_cli_on_path() {
     let ask = |clis: &[&str]| {
         let path = path_with_only(&p, clis);
         let out = std::process::Command::new(path.join("bash"))
-            .args(["-c", ". .decree/scripts/develop/ai.sh && ai 'Say hi.'"])
+            .args([
+                "-c",
+                ". .decree/machines/develop/scripts/ai.sh && ai 'Say hi.'",
+            ])
             .current_dir(p.root())
             .env_clear()
             .env("PATH", &path)
@@ -1138,7 +1154,7 @@ fn ai_without_ai_cli_uses_the_first_cli_on_path() {
     )
     .unwrap();
     let out = std::process::Command::new(path.join("bash"))
-        .arg(".decree/scripts/router/ask.sh")
+        .arg(".decree/machines/router/scripts/ask.sh")
         .current_dir(p.root())
         .env_clear()
         .env("PATH", &path)
@@ -1163,25 +1179,23 @@ fn ai_without_ai_cli_uses_the_first_cli_on_path() {
 fn a_runs_ai_cli_wins_over_the_projects() {
     let p = Project::init();
     let decree = p.root().join(".decree");
-    fs::write(
-        decree.join("machines/ask.yml"),
+    common::write_file(
+        &decree.join("machines/ask/machine.yml"),
         "name: ask\ndescription: Ask once with the CLI ai_cli names.\n\
          data:\n  ai_cli: { type: string, default: opencode }\n\
          initial: say\nstates:\n  say: { invoke: say, transitions: { done: done } }\n  \
          done: { final: true }\n  failed: { final: true }\n",
-    )
-    .unwrap();
-    fs::write(
-        decree.join("machines/both.yml"),
+    );
+    common::write_file(
+        &decree.join("machines/both/machine.yml"),
         "name: both\ndescription: Ask with the project's CLI, then a child with Claude.\n\
          initial: own\nstates:\n  own: { invoke: say, transitions: { done: child } }\n  \
          child:\n    invoke:\n      machine: { name: ask, params: { ai_cli: claude } }\n    \
          transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
-    )
-    .unwrap();
+    );
     write_script(
         &decree.join("scripts/say.sh"),
-        "#!/usr/bin/env bash\nset -euo pipefail\n. .decree/scripts/develop/ai.sh\nai \"Say hi from $DECREE_MACHINE.\"\n",
+        "#!/usr/bin/env bash\nset -euo pipefail\n. .decree/machines/develop/scripts/ai.sh\nai \"Say hi from $DECREE_MACHINE.\"\n",
     );
     p.stub(
         "opencode",
@@ -1275,8 +1289,8 @@ fn infra_declares_a_resource_then_applies_it() {
     );
     assert_eq!(
         p.log(&id, "apply"),
-        "ok       command git (scripts/infra/requirements)\n\
-         ok       command ls (scripts/infra/requirements)\n"
+        "ok       command git (machines/infra/scripts/requirements)\n\
+         ok       command ls (machines/infra/scripts/requirements)\n"
     );
     let calls = p.calls();
     assert_eq!(calls.len(), 1, "{calls:?}");
@@ -1296,9 +1310,9 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
     assert_eq!(p.outcome(&id), "failed");
     assert_eq!(
         p.log(&id, "apply"),
-        "ok       command git (scripts/infra/requirements)\n\
+        "ok       command git (machines/infra/scripts/requirements)\n\
          not_a_tool_xyz is not on PATH: install it, then continue the run\n\
-         FAILED   command not_a_tool_xyz (scripts/infra/requirements)\n"
+         FAILED   command not_a_tool_xyz (machines/infra/scripts/requirements)\n"
     );
     // The declaration stays in the tree with the rest of the failed run, and its attention
     // file holds the queue; the person commits it and deletes the file.
@@ -1314,19 +1328,20 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
     );
     assert_eq!(
         p.log(&id, "precheck"),
-        "ok       command git (scripts/infra/requirements)\n\
-         missing  command not_a_tool_xyz (scripts/infra/requirements)\n"
+        "ok       command git (machines/infra/scripts/requirements)\n\
+         missing  command not_a_tool_xyz (machines/infra/scripts/requirements)\n"
     );
     assert_eq!(p.calls().len(), 1, "only infra's declare");
 }
 
-/// AC (A08): `scripts/develop/requirements` naming a command not on `PATH`, beside infra's
+/// AC (A08): `machines/develop/scripts/requirements` naming a command not on `PATH`, beside infra's
 /// `git`, fails develop's precheck before the agent runs, naming the command and the file.
 #[test]
 fn precheck_checks_every_machines_requirements() {
     let p = Project::init();
     fs::write(
-        p.root().join(".decree/scripts/develop/requirements"),
+        p.root()
+            .join(".decree/machines/develop/scripts/requirements"),
         "command   not_a_tool_xyz\n",
     )
     .unwrap();
@@ -1342,8 +1357,8 @@ fn precheck_checks_every_machines_requirements() {
     );
     assert_eq!(
         p.log(&id, "precheck"),
-        "ok       command git (scripts/infra/requirements)\n\
-         missing  command not_a_tool_xyz (scripts/develop/requirements)\n"
+        "ok       command git (machines/infra/scripts/requirements)\n\
+         missing  command not_a_tool_xyz (machines/develop/scripts/requirements)\n"
     );
     assert!(p.calls().is_empty(), "{:?}", p.calls());
 }
@@ -1392,7 +1407,7 @@ impl Project {
     /// `init`, then `QA_RUN` set to `CHAOS_RUN`, and an app file.
     fn init_qa() -> Project {
         let p = Project::init();
-        let qa = p.root().join(".decree/scripts/qa/qa.sh");
+        let qa = p.root().join(".decree/machines/qa/scripts/qa.sh");
         let text = fs::read_to_string(&qa).unwrap();
         let text = text.replacen("QA_RUN=\"\"\n", &format!("QA_RUN='{CHAOS_RUN}'\n"), 1);
         fs::write(&qa, text).unwrap();
@@ -1465,7 +1480,7 @@ fn qa_needs_its_chaos_suite_command_first() {
     );
     assert_eq!(
         p.log(&id, "recon"),
-        "qa: no chaos suite command; set QA_RUN in .decree/scripts/qa/qa.sh, then keep it with `decree plugin export qa`\n"
+        "qa: no chaos suite command; set QA_RUN in .decree/machines/qa/scripts/qa.sh, then keep it with `decree plugin export qa`\n"
     );
     assert!(p.calls().is_empty());
 }
@@ -1514,7 +1529,7 @@ fn a_command_line_checks_its_version() {
     assert!(
         p.log(&id, "apply").ends_with(
             "bash 0.0.0-none is not on PATH: install it, then continue the run\n\
-             FAILED   command bash 0.0.0-none (scripts/infra/requirements)\n"
+             FAILED   command bash 0.0.0-none (machines/infra/scripts/requirements)\n"
         ),
         "{}",
         p.log(&id, "apply")
@@ -1701,9 +1716,11 @@ fn done_commits_the_runs_work() {
         plugin.contains("\n    command   git\n    command   ls\n"),
         "{plugin}"
     );
+    // Of an installed machine, git tracks only its graph.
     assert!(p
-        .git(&["ls-files", ".decree/scripts", ".decree/machines"])
-        .is_empty());
+        .git(&["ls-files", ".decree/machines"])
+        .lines()
+        .all(|f| f.ends_with("/graph.md")));
     assert_eq!(p.git(&["status", "--porcelain"]), "");
 }
 
@@ -1717,7 +1734,7 @@ fn a_failed_run_exports_nothing_and_keeps_its_edit_installed() {
     let id = p.run(&[
         (
             "CLAUDE_DO",
-            "case \"$prompt\" in *senior*) echo '# edited by the run' >> .decree/scripts/develop/gate.sh ;; esac",
+            "case \"$prompt\" in *senior*) echo '# edited by the run' >> .decree/machines/develop/scripts/gate.sh ;; esac",
         ),
         ("CLAUDE_REPLY", "VERDICT: fail"),
     ]);
@@ -1946,7 +1963,10 @@ fn the_documented_escalation_ladder_runs_rounds_then_claude() {
         written.push(c[1].to_string());
     }
     assert_eq!(written.len(), 5, "{written:?}");
-    let start = docs.find("```bash\nmkdir -p .decree/scripts/gaps").unwrap() + "```bash\n".len();
+    let start = docs
+        .find("```bash\nmkdir -p .decree/machines/gaps/scripts")
+        .unwrap()
+        + "```bash\n".len();
     let links = &docs[start..start + docs[start..].find("```").unwrap()];
     let out = std::process::Command::new("bash")
         .args(["-c", links])
@@ -2031,8 +2051,8 @@ fn consensus_project(picks: [&str; 3]) -> Project {
     assert_eq!(
         written,
         [
-            ".decree/machines/consensus_router.yml",
-            ".decree/scripts/consensus_router/combine.sh"
+            ".decree/machines/consensus_router/machine.yml",
+            ".decree/machines/consensus_router/scripts/combine.sh"
         ]
     );
     let machine = fs::read_to_string(p.root().join(&written[0])).unwrap();
@@ -2043,16 +2063,16 @@ fn consensus_project(picks: [&str; 3]) -> Project {
         .collect();
     assert_eq!(routers.len(), picks.len(), "{routers:?}");
     for (router, pick) in routers.iter().zip(picks) {
-        fs::write(
-            p.root().join(format!(".decree/machines/{router}.yml")),
+        common::write_file(
+            &p.root()
+                .join(format!(".decree/machines/{router}/machine.yml")),
             format!(
                 "name: {router}\ndescription: Pick {pick}.\ninitial: ask\nstates:\n  \
                  ask:\n    invoke: ask\n    transitions: {{ done: done }}\n  \
                  done:   {{ final: true }}\n  failed: {{ final: true }}\n"
             ),
-        )
-        .unwrap();
-        let dir = p.root().join(format!(".decree/scripts/{router}"));
+        );
+        let dir = p.root().join(format!(".decree/machines/{router}/scripts"));
         fs::create_dir_all(&dir).unwrap();
         write_script(
             &dir.join("ask.sh"),
@@ -2067,9 +2087,7 @@ fn consensus_project(picks: [&str; 3]) -> Project {
     }
     let option = |e: &str| format!("      {e}: {{ target: done, description: The letter {e}. }}\n");
     let options: String = ["a", "b", "c"].iter().map(|e| option(e)).collect();
-    fs::write(
-        p.root().join(".decree/machines/pick.yml"),
-        format!(
+    common::write_file(&p.root().join(".decree/machines/pick/machine.yml"), format!(
             "name: pick\ndescription: Pick a letter.\ninitial: decide\nstates:\n  \
              decide:\n    invoke:\n      model:\n        question: Which letter?\n        \
              router: consensus_router\n        min_confidence: 0.6\n    transitions:\n{options}      \
@@ -2077,12 +2095,10 @@ fn consensus_project(picks: [&str; 3]) -> Project {
              ask_person:\n    invoke:\n      reply:\n        question: Which letter?\n        \
              notify: tell\n    transitions:\n{options}  \
              done:   {{ final: true }}\n  failed: {{ final: true }}\n"
-        ),
-    )
-    .unwrap();
-    fs::create_dir_all(p.root().join(".decree/scripts/pick")).unwrap();
+        ));
+    fs::create_dir_all(p.root().join(".decree/machines/pick/scripts")).unwrap();
     write_script(
-        &p.root().join(".decree/scripts/pick/tell.sh"),
+        &p.root().join(".decree/machines/pick/scripts/tell.sh"),
         "#!/usr/bin/env bash\necho \"asked $DECREE_WAIT_ID\"\n",
     );
     p.decree(&["graph"]).assert().success();
@@ -2136,7 +2152,7 @@ fn the_documented_consensus_router_sends_a_split_to_a_person() {
     assert_eq!(last["state"], "ask_person");
 }
 
-/// The `release` kind in docs/reference/scripts.md, run by `scripts/infra/run.sh apply` from a
+/// The `release` kind in docs/reference/scripts.md, run by `machines/infra/scripts/run.sh apply` from a
 /// local archive: installed when the sha256 in its source matches, refused when it does not
 /// or when the source has none.
 #[test]
@@ -2147,7 +2163,7 @@ fn the_documented_release_kind_checks_its_sha256() {
             .unwrap();
     let start = docs.find("```bash\n# kinds/release.sh").unwrap() + "```bash\n".len();
     let kind = &docs[start..start + docs[start..].find("```").unwrap()];
-    let infra = p.root().join(".decree/scripts/infra");
+    let infra = p.root().join(".decree/machines/infra/scripts");
     fs::write(infra.join("kinds/release.sh"), kind).unwrap();
 
     // An archive holding `mytool`, which prints its version.
@@ -2191,14 +2207,14 @@ fn the_documented_release_kind_checks_its_sha256() {
     let (ok, out) = apply(&format!("{url}#sha256={sum}"));
     assert!(ok, "{out}");
     assert!(
-        out.ends_with("changed  release mytool 1.2.3 (scripts/infra/requirements)\n"),
+        out.ends_with("changed  release mytool 1.2.3 (machines/infra/scripts/requirements)\n"),
         "{out}"
     );
 
     let (ok, out) = apply(&format!("{url}#sha256={}", "0".repeat(64)));
     assert!(!ok, "{out}");
     assert!(
-        out.ends_with("FAILED   release mytool 1.2.3 (scripts/infra/requirements)\n"),
+        out.ends_with("FAILED   release mytool 1.2.3 (machines/infra/scripts/requirements)\n"),
         "{out}"
     );
     assert!(!p.root().join(".tools/bin/mytool").exists());

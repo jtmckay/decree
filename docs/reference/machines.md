@@ -9,13 +9,13 @@ The first three examples are the machines of [`examples/project`](../../examples
 ## Example: the smallest machine
 
 ```yaml
-# Graph: ../graph/hello.md
+# Graph: graph.md
 name: hello
 description: Run one script.
 initial: greet
 states:
   greet:
-    invoke: greet                  # runs scripts/greet (or scripts/hello/greet)
+    invoke: greet                  # runs scripts/greet (or machines/hello/scripts/greet)
     transitions: { done: done }    # exit 0 -> done; non-zero -> failed, implicitly
   done:   { final: true }
   failed: { final: true }          # every machine has one
@@ -24,7 +24,7 @@ states:
 ## Example: an attempt list
 
 ```yaml
-# Graph: ../graph/develop.md
+# Graph: graph.md
 name: develop
 description: Implement a message, then test it.
 initial: implement
@@ -43,7 +43,7 @@ states:
 ## Example: asking a person
 
 ```yaml
-# Graph: ../graph/deploy.md
+# Graph: graph.md
 name: deploy
 description: Build, ask a person to approve, then ship.
 initial: build
@@ -73,7 +73,7 @@ states:
 A state can invoke a whole machine. It runs as a child run, and the final state it reaches becomes this state's event: `done`, `rejected`, and `failed` as `error`.
 
 ```yaml
-# Graph: ../graph/release.md
+# Graph: graph.md
 name: release
 description: Implement a change, then deploy it.
 initial: build
@@ -243,7 +243,7 @@ A duration is a whole number of at most 9 digits followed by one unit: `s` (seco
 
 ## Store
 
-A machine that remembers something from one run to the next keeps it in its store, `.decree/store/<machine>/`, which its scripts find as `$DECREE_STORE` ([Store](scripts.md#store)), and says so under `store:`, so the machine file shows what it remembers and where:
+A machine that remembers something from one run to the next keeps it in its store, `.decree/store/<machine>/`, which its scripts find as `$DECREE_STATE_DIR` ([Store](scripts.md#store)), and says so under `store:`, so the machine file shows what it remembers and where:
 
 ```yaml
 store:

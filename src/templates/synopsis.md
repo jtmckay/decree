@@ -11,11 +11,11 @@ Install or update:
        decree plugin add develop
 
 2. Write a script (chmod +x it):
-       `.decree/scripts/greet.sh`
+       `.decree/machines/hello/scripts/greet.sh`
    Exit 0 is the event `done`; anything else is `error`.
 
 3. Write a machine that runs it:
-       `.decree/machines/hello.yml`
+       `.decree/machines/hello/machine.yml`
 
 4. Write a message for that machine: 
        `.decree/migrations/01-hello.md`

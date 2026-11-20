@@ -2,7 +2,7 @@
 name: newsletter
 machine:
   description: Gather new items from my feeds, pick and summarise the ones that fit my taste, and write the issue.
-  store:
+  state_files:
     seen.tsv: Links already sent, so an item is never in two issues. gather reads it; deliver appends.
   initial: gather
   states:
@@ -26,7 +26,7 @@ scripts:
   deliver.sh: |
     #!/usr/bin/env bash
     # newsletter's deliver: copy the run's issue.md to $NEWSLETTER_DIR/<YYYY-MM-DD>.md (-2, -3
-    # when that day already has an issue), record every gathered link in $DECREE_STORE/seen.tsv
+    # when that day already has an issue), record every gathered link in $DECREE_STATE_DIR/seen.tsv
     # with the date, and, if NTFY_URL is set, post the issue's first three lines to
     # $NTFY_URL/$NTFY_TOPIC. Safe to re-run: an identical issue is not copied twice, and a link
     # already in seen.tsv is not added again.
@@ -47,7 +47,7 @@ scripts:
     cp "${issue}" "${target}"
     echo "deliver: ${target}"
 
-    seen="${DECREE_STORE}/seen.tsv"
+    seen="${DECREE_STATE_DIR}/seen.tsv"
     touch "${seen}"
     added=0
     if [ -s "${items}" ]; then
@@ -82,7 +82,7 @@ scripts:
 
     Reads RSS 2.0 and Atom, and writes $DECREE_RUN_DIR/items.jsonl, one JSON object per line
     (title, link, source, published, summary), newest first, at most $NEWSLETTER_MAX_ITEMS.
-    An item is new when its link is not in $DECREE_STORE/seen.tsv. It does not mark items
+    An item is new when its link is not in $DECREE_STATE_DIR/seen.tsv. It does not mark items
     seen: deliver does, so a failed run gathers them again next time. A feed that fails is
     logged and skipped; every feed failing is an error. Python 3 standard library only.
     """
@@ -198,7 +198,7 @@ scripts:
         if not urls:
             print("gather: feeds.txt lists no feeds", file=sys.stderr)
             return 1
-        seen = seen_links(os.path.join(os.environ["DECREE_STORE"], "seen.tsv"))
+        seen = seen_links(os.path.join(os.environ["DECREE_STATE_DIR"], "seen.tsv"))
 
         items, failed = {}, 0
         for url in urls:
@@ -252,7 +252,7 @@ scripts:
     # With no new items it says so, without calling the model.
     set -euo pipefail
     items="${DECREE_RUN_DIR}/items.jsonl"
-    taste=.decree/scripts/newsletter/taste.md
+    taste=.decree/machines/newsletter/scripts/taste.md
     issue="${DECREE_RUN_DIR}/issue.md"
     today="$(date +%F)"
 
@@ -294,9 +294,9 @@ A personal newsletter: the RSS and Atom feeds you choose, gathered on a schedule
 
 ## What it does
 
-The machine remembers one thing between runs, declared under `store:`: `seen.tsv`, the links already sent, in `.decree/store/newsletter/` (`$DECREE_STORE`), one link and the date it was sent per line.
+The machine remembers one thing between runs, declared under `state_files:`: `seen.tsv`, the links already sent, in `.decree/machines/newsletter/state/` (`$DECREE_STATE_DIR`), one link and the date it was sent per line.
 
-1. `gather` (Python 3, standard library only) fetches every feed in `.decree/scripts/newsletter/feeds.txt`, RSS 2.0 or Atom, and writes the run's `items.jsonl`: `title`, `link`, `source`, `published` and `summary` for each item whose link is not in `seen.tsv`, newest first, at most `NEWSLETTER_MAX_ITEMS`. A feed that fails is logged and skipped; every feed failing fails the run.
+1. `gather` (Python 3, standard library only) fetches every feed in `.decree/machines/newsletter/scripts/feeds.txt`, RSS 2.0 or Atom, and writes the run's `items.jsonl`: `title`, `link`, `source`, `published` and `summary` for each item whose link is not in `seen.tsv`, newest first, at most `NEWSLETTER_MAX_ITEMS`. A feed that fails is logged and skipped; every feed failing fails the run.
 2. `write` (bash, `curl` and `jq`) sends `taste.md` and `items.jsonl` to Ollama's `/api/chat`, and writes the run's `issue.md`: a title with the date, then the model's picks as markdown links. With no new items it writes an issue saying so, without calling the model.
 3. `deliver` copies `issue.md` to `newsletter/<YYYY-MM-DD>.md`, records every gathered link in `seen.tsv`, and, if `NTFY_URL` is set, posts the issue's first three lines to `$NTFY_URL/$NTFY_TOPIC`.
 
@@ -316,7 +316,7 @@ The machine remembers one thing between runs, declared under `store:`: `seen.tsv
   # NTFY_TOPIC=my-newsletter
   ```
 
-- A cron file, to run it on a schedule, `.decree/cron/newsletter.md`:
+- A cron file, to run it on a schedule, `.decree/machines/newsletter/cron/newsletter.md`:
 
   ```markdown
   ---
@@ -328,7 +328,7 @@ The machine remembers one thing between runs, declared under `store:`: `seen.tsv
 
 ## How to use it
 
-1. Edit `.decree/scripts/newsletter/feeds.txt` (one feed URL per line) and `taste.md`, the whole prompt about you: write it as you would to a friend picking links for you. Keep the edits with `decree plugin export newsletter`.
+1. Edit `.decree/machines/newsletter/scripts/feeds.txt` (one feed URL per line) and `taste.md`, the whole prompt about you: write it as you would to a friend picking links for you. Keep the edits with `decree plugin export newsletter`.
 2. One issue now: `echo "This week" | decree emit --machine newsletter && decree process`.
 3. Every Monday at 07:00, from the cron file: `decree daemon`.
 
@@ -342,4 +342,4 @@ Add each of these only once a real issue shows the need:
 | A poor issue from the local model | `write` checks its output and exits non-zero, and gets `attempts: [local, claude]`. |
 | Too many items for the context | `write` scores each item first, keeps the top 20, then writes. |
 | Summary-only feeds | `gather` fetches the full text of each new item. |
-| Several editions | An `edition` param with `enum`, choosing `scripts/newsletter/<edition>/`, and one cron file each. |
+| Several editions | An `edition` param with `enum`, choosing `machines/newsletter/scripts/<edition>/`, and one cron file each. |

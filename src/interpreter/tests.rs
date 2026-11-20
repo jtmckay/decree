@@ -70,18 +70,21 @@ impl Project {
             })
             .collect();
 
-        let script_dir = decree.join("scripts");
-        fs::create_dir_all(&script_dir).unwrap();
         let fixtures = repo().join("tests/fixtures/scripts");
-        for script in loaded.values().flat_map(script_names) {
-            let file = scripts
-                .iter()
-                .find(|(s, _)| *s == script)
-                .map_or("record", |(_, f)| f);
-            install(
-                &fixtures.join(format!("{file}.sh")),
-                &script_dir.join(format!("{script}.sh")),
-            );
+        for (machine, m) in &loaded {
+            // Each machine's scripts are in its own folder, `machines/<name>/scripts/`.
+            let script_dir = decree.join("machines").join(machine).join("scripts");
+            fs::create_dir_all(&script_dir).unwrap();
+            for script in script_names(m) {
+                let file = scripts
+                    .iter()
+                    .find(|(s, _)| *s == script)
+                    .map_or("record", |(_, f)| f);
+                install(
+                    &fixtures.join(format!("{file}.sh")),
+                    &script_dir.join(format!("{script}.sh")),
+                );
+            }
         }
         // Every fixture machine passes `decree check`.
         let ids: BTreeSet<String> = loaded.keys().cloned().collect();
@@ -1196,7 +1199,10 @@ fn retried_run_whose_onentry_fails_takes_error() {
     retry(&p, "inner");
     install(
         &repo().join("tests/fixtures/scripts/exit_three.sh"),
-        &p.root().join(".decree/scripts/inner_entry.sh"),
+        &p.root()
+            .join(".decree/machines")
+            .join(&p.name)
+            .join("scripts/inner_entry.sh"),
     );
     let outcome = continue_run(&p.ctx(), RUN_ID).unwrap();
     assert_eq!(outcome, Outcome::Finished("failed".into()));

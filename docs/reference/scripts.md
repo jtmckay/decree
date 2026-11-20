@@ -55,7 +55,7 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_MAX_DEPTH` | The project's `max_depth` in effect: `DECREE_MAX_DEPTH` from decree's environment, else `.decree/.env`, else `10` ([Environment](cli.md#environment)). `decree emit` in the script checks against it. |
 | `DECREE_RUN_ATTEMPT` | The run's attempt: `1`, then one more for each `decree process --retry` ([Run attempts](runs.md#step-loop)). |
 | `DECREE_RUN_DIR` | Absolute path of `runs/<id>/`. |
-| `DECREE_STORE` | Absolute path of `.decree/store/<machine>/`, what this machine keeps between runs ([Store](#store)); a child machine's scripts get the child's. decree creates it before the script runs. |
+| `DECREE_STATE_DIR` | Absolute path of `.decree/store/<machine>/`, what this machine keeps between runs ([Store](#store)); a child machine's scripts get the child's. decree creates it before the script runs. |
 | `DECREE_ATTEMPT` | Attempt number of the invoke in this visit, from 1. `1` for `onentry` and `onexit` scripts. |
 | `DECREE_ATTEMPT_VALUE` | This attempt's entry in the invoke's `attempts` list, e.g. `claude`. Unset with the integer form, and for `onentry` and `onexit` scripts. |
 | `DECREE_ATTEMPT_VALUES` | The whole `attempts` list, space-separated. Unset with the integer form. |
@@ -129,7 +129,7 @@ A machine's helpers, config and data sit beside its scripts, in `.decree/scripts
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-. .decree/scripts/summarize/ai.sh
+. .decree/machines/summarize/scripts/ai.sh
 ai "Summarize $DECREE_MESSAGE" > summary.md
 ```
 
@@ -143,7 +143,7 @@ What a machine keeps between runs goes in its store instead ([Store](#store)).
 
 ### The AI helper
 
-Each official plugin whose scripts ask AI (`develop`, `infra`, `qa`, `develop_by_size`) carries a copy of `ai.sh` in its scripts directory, and its scripts source it from there (`. .decree/scripts/develop/ai.sh`). `ai.sh` defines `ai <prompt>`, which asks an AI agent and prints its reply, and one function per backend: `ai_claude`, `ai_opencode`, `ai_copilot`. `ai` calls, most specific first: the one the run's `data` entry `ai_cli` names (`DECREE_DATA_AI_CLI`: a message's or a parent's `params`, else the machine's default), so a child machine invoked with `params: { ai_cli: claude }` works with Claude whatever the project's setting; else the one `AI_CLI` names (`.decree/.env` or the shell); else the first of `claude`, `opencode` and `copilot` found on `PATH`, and with none of them it fails, naming `AI_CLI`. No installed file names a backend; `decree init --ai` writes `AI_CLI` into `.env.example` only. A message can pick the CLI only on a machine that declares `ai_cli` under `data`. Another backend is one more `ai_<name>` function. Scripts call AI only through `ai`, never `claude` or `opencode` directly, so every call gets the same handling:
+Each official plugin whose scripts ask AI (`develop`, `infra`, `qa`, `develop_by_size`) carries a copy of `ai.sh` in its scripts directory, and its scripts source it from there (`. .decree/machines/develop/scripts/ai.sh`). `ai.sh` defines `ai <prompt>`, which asks an AI agent and prints its reply, and one function per backend: `ai_claude`, `ai_opencode`, `ai_copilot`. `ai` calls, most specific first: the one the run's `data` entry `ai_cli` names (`DECREE_DATA_AI_CLI`: a message's or a parent's `params`, else the machine's default), so a child machine invoked with `params: { ai_cli: claude }` works with Claude whatever the project's setting; else the one `AI_CLI` names (`.decree/.env` or the shell); else the first of `claude`, `opencode` and `copilot` found on `PATH`, and with none of them it fails, naming `AI_CLI`. No installed file names a backend; `decree init --ai` writes `AI_CLI` into `.env.example` only. A message can pick the CLI only on a machine that declares `ai_cli` under `data`. Another backend is one more `ai_<name>` function. Scripts call AI only through `ai`, never `claude` or `opencode` directly, so every call gets the same handling:
 
 - The agent names no event: a script it runs, such as the gate, gets `DECREE_EVENT_FILE=/dev/null`, and the caller's event file is emptied after the call. A call that leaves a `STOP` file in the run folder returns 0, so the caller's `STOP` check names `stop` instead of failing an attempt.
 - Every call adds a line to `.decree/ai-use.md` (gitignored), a Markdown table: time, run, machine and state, backend, model, `DECREE_RUN_ATTEMPT`, `DECREE_ATTEMPT`, seconds and exit code. Past 2 MiB it keeps the header and the last 10000 calls.
@@ -152,7 +152,7 @@ Each official plugin whose scripts ask AI (`develop`, `infra`, `qa`, `develop_by
 
 ## Declared environment
 
-What the project's environment needs (commands, packages, tools) is declared, not scripted, as Ansible declares state: `.decree/scripts/infra/requirements` lists one resource per line, in order, and `scripts/infra/kinds/<kind>.sh` says how to check and install that kind. Another machine may keep its own `requirements` beside its scripts (`scripts/develop/requirements`, say, for the tools its gate runs); every `.decree/scripts/*/requirements` is one list, `infra`'s first, then the others in name order.
+What the project's environment needs (commands, packages, tools) is declared, not scripted, as Ansible declares state: `.decree/machines/infra/scripts/requirements` lists one resource per line, in order, and `machines/infra/scripts/kinds/<kind>.sh` says how to check and install that kind. Another machine may keep its own `requirements` beside its scripts (`machines/develop/scripts/requirements`, say, for the tools its gate runs); every `.decree/machines/*/scripts/requirements` is one list, `infra`'s first, then the others in name order.
 
 ```text
 # kind    name         version   source
@@ -162,9 +162,9 @@ system    python3-venv
 pip       hypothesis   6.112.0
 ```
 
-`scripts/infra/run.sh check` reports each line `ok` or `missing`, ending with the file it came from (`missing  command cargo (scripts/develop/requirements)`), and changes nothing; `run.sh apply` installs what is missing, checks it again (`changed`) and stops at the first line that fails, naming it. A kind is a file with two bash functions, `check` and `install`, each called with the line's name, version and source. The official `infra` plugin ships one kind, `command` (on `PATH`, at the version if the line gives one, from `<name> --version`; `install` names it for a person and fails), and a requirements file with `git`, its comment saying to add the AI CLI's line. A project adds kinds as it needs them (`pip` into a project venv, `release` for a pinned binary into `.tools/bin`). An edit to `requirements` or `kinds/` is kept in the `infra` plugin file by `decree plugin export infra`, or by the next run's `commit`.
+`machines/infra/scripts/run.sh check` reports each line `ok` or `missing`, ending with the file it came from (`missing  command cargo (machines/develop/scripts/requirements)`), and changes nothing; `run.sh apply` installs what is missing, checks it again (`changed`) and stops at the first line that fails, naming it. A kind is a file with two bash functions, `check` and `install`, each called with the line's name, version and source. The official `infra` plugin ships one kind, `command` (on `PATH`, at the version if the line gives one, from `<name> --version`; `install` names it for a person and fails), and a requirements file with `git`, its comment saying to add the AI CLI's line. A project adds kinds as it needs them (`pip` into a project venv, `release` for a pinned binary into `.tools/bin`). An edit to `requirements` or `kinds/` is kept in the `infra` plugin file by `decree plugin export infra`, or by the next run's `commit`.
 
-A kind installs into the project, never with `sudo`. A step only a person can do, such as a system package, prints the exact command and returns 1; the person runs it, then `decree process --retry`. The built-in `infra` machine changes the environment ([D61](../decisions.md#d61-the-environment-is-declared)): `declare`, where the AI edits only `scripts/infra/requirements` (and adds a kind only if none fits), then `apply`. The built-in `develop` machine's `precheck` runs `run.sh check`, so a run stops before the AI starts when the environment is short. A fresh checkout or CI runs `.decree/scripts/infra/run.sh apply` directly.
+A kind installs into the project, never with `sudo`. A step only a person can do, such as a system package, prints the exact command and returns 1; the person runs it, then `decree process --retry`. The built-in `infra` machine changes the environment ([D61](../decisions.md#d61-the-environment-is-declared)): `declare`, where the AI edits only `machines/infra/scripts/requirements` (and adds a kind only if none fits), then `apply`. The built-in `develop` machine's `precheck` runs `run.sh check`, so a run stops before the AI starts when the environment is short. A fresh checkout or CI runs `.decree/machines/infra/scripts/run.sh apply` directly.
 
 A kind that downloads must check what it downloaded: its line's source carries the file's SHA-256 in the URL's fragment, `<url>#sha256=<hex>`, as pip's hash-checking and PyPI's simple index do, and `install` fails on a mismatch. The hash comes from what the project publishes (a `SHA256SUMS` file, the release page), never from downloading the file and hashing it, which proves only that the download matches itself. `infra`'s `declare` prompt says so. A `release` kind, for a pinned binary from a release archive:
 
@@ -193,12 +193,12 @@ release   shellcheck   0.10.0   https://github.com/koalaman/shellcheck/releases/
 
 ## Store
 
-`.decree/store/<machine>/` holds what a machine remembers from one run to the next: the links a newsletter already sent, the last item a feed reader saw, a counter. Every script of the machine, in every phase, finds it through `DECREE_STORE`; decree creates it before a script runs. It survives runs: `decree prune` never touches it, and nothing else in decree deletes it. It is not committed: `decree init`'s `.decree/.gitignore` lists `store/`. The idea is the *state* directory of the XDG Base Directory spec, n8n's workflow static data and Node-RED's persistent flow context; it is called the store because "state" already means a machine's state (`DECREE_STATE`).
+`.decree/store/<machine>/` holds what a machine remembers from one run to the next: the links a newsletter already sent, the last item a feed reader saw, a counter. Every script of the machine, in every phase, finds it through `DECREE_STATE_DIR`; decree creates it before a script runs. It survives runs: `decree prune` never touches it, and nothing else in decree deletes it. It is not committed: `decree init`'s `.decree/.gitignore` lists `store/`. The idea is the *state* directory of the XDG Base Directory spec, n8n's workflow static data and Node-RED's persistent flow context; it is called the store because "state" already means a machine's state (`DECREE_STATE`).
 
-**The convention:** anything a script keeps between runs goes in `$DECREE_STORE` and is declared under the machine's `store:` ([Store](machines.md#store)), with what it is and which states read or write it. A run's own files go in `$DECREE_RUN_DIR` ([Run-directory files](#run-directory-files)); a machine's helpers, config and data beside its scripts ([A machine's files](#a-machines-files)); outputs for people wherever the user wants them.
+**The convention:** anything a script keeps between runs goes in `$DECREE_STATE_DIR` and is declared under the machine's `store:` ([Store](machines.md#store)), with what it is and which states read or write it. A run's own files go in `$DECREE_RUN_DIR` ([Run-directory files](#run-directory-files)); a machine's helpers, config and data beside its scripts ([A machine's files](#a-machines-files)); outputs for people wherever the user wants them.
 
 ```bash
-seen="$DECREE_STORE/seen.tsv"
+seen="$DECREE_STATE_DIR/seen.tsv"
 touch "$seen"
 printf '%s\t%s\n' "$link" "$(date +%F)" >> "$seen"
 ```
@@ -248,7 +248,7 @@ stdout and stderr are only the script's log; decree never parses them. A log can
 
 ## Example scripts
 
-`scripts/feature/verify.sh` (a `feature`-only script): a test pass is deterministic, and only failures go to the LLM.
+`machines/feature/scripts/verify.sh` (a `feature`-only script): a test pass is deterministic, and only failures go to the LLM.
 
 ```bash
 #!/usr/bin/env bash
@@ -261,7 +261,7 @@ else
 fi
 ```
 
-`scripts/feature/spawn.sh` (also `feature`-only): follow-ups go through `decree emit`, never by writing files.
+`machines/feature/scripts/spawn.sh` (also `feature`-only): follow-ups go through `decree emit`, never by writing files.
 
 ```bash
 #!/usr/bin/env bash

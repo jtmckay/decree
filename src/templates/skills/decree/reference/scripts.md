@@ -5,28 +5,25 @@ piece of work, makes no routing decision, and reports one outcome.
 
 ## Where scripts live
 
-Machines name scripts, never paths. Script `X` used by machine `M` resolves in this order, and
-the first directory holding a match wins:
-
-1. `.decree/scripts/M/`
-2. `.decree/scripts/`
-
-There is no other search path. To share a machine and its scripts across projects, make it a plugin: `decree plugin export M` writes `.decree/plugins/M.md`.
+Machines name scripts, never paths. Script `X` used by machine `M` resolves in one folder only,
+`.decree/machines/M/scripts/`. There is no other search path: a script another machine ships is
+reached by path from a script, never by name. To share a machine and its scripts across projects, make it a plugin: `decree plugin export M` writes `.decree/plugins/M.md`.
 
 A match is a file named `X` or `X.<ext>` (`verify.sh`), executable, and the only match in its
-directory. Script names match `^[a-z][a-z0-9_]*$`. Write generic scripts (`commit`, `keep`,
-`notify`) once in `scripts/`; put a machine's own version in `scripts/<machine>/`.
+directory. Script names match `^[a-z][a-z0-9_]*$`. Code several machines share is a library: a
+machine folder with no `machine.yml` (a plugin with no `machine`), whose scripts others source
+by path and name in their plugin's `needs`.
 `chmod +x` new scripts; `decree check` fails otherwise.
 
 A machine's helpers, config and data (bash functions to source, a prompt template, workflow
-files) sit beside its scripts in `scripts/<machine>/`; decree runs only a file a state names,
+files) sit beside its scripts in `machines/<machine>/scripts/`; decree runs only a file a state names,
 and other files there are never an error. Scripts reach them by path from the project root,
-their working directory: `. .decree/scripts/develop/ai.sh`. What a machine keeps between runs
-goes in `$DECREE_STORE`.
+their working directory: `. .decree/machines/develop/scripts/ai.sh`. What a machine keeps between runs
+goes in `$DECREE_STATE_DIR`.
 
-`scripts/infra/` holds the project's declared environment. `requirements` lists one resource
+`machines/infra/scripts/` holds the project's declared environment. `requirements` lists one resource
 per line (`kind name version source`), in dependency order; any other machine may keep a
-`requirements` beside its scripts, and every `.decree/scripts/*/requirements` is one list,
+`requirements` beside its scripts, and every `.decree/machines/*/scripts/requirements` is one list,
 infra's first; `kinds/<kind>.sh` defines `check` and
 `install` for a kind, each called with the line's name, version and source; `run.sh check`
 reports each line `ok` or `missing`, with the file it came from, and `run.sh apply` installs what is missing and checks it
@@ -63,7 +60,7 @@ Write the event's name to `$DECREE_EVENT_FILE`, a fresh empty file for each atte
 
 ```bash
 #!/usr/bin/env bash
-# scripts/feature/verify.sh: a pass is deterministic; only failures go further.
+# machines/feature/scripts/verify.sh: a pass is deterministic; only failures go further.
 set -uo pipefail
 cargo test 2>&1 | tail -n 40
 if [ "${PIPESTATUS[0]}" -eq 0 ]; then
@@ -91,7 +88,7 @@ fi
 
 ```bash
 #!/usr/bin/env bash
-# scripts/feature/spawn.sh: the state lists `emits: [feature]`.
+# machines/feature/scripts/spawn.sh: the state lists `emits: [feature]`.
 set -euo pipefail
 decree emit --machine feature <<'EOF'
 # Follow-up: split rate limiting per route
@@ -115,7 +112,7 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
 - `STOP`: a question instead of a guess. A script that finds it prints it and writes `stop` to
   `$DECREE_EVENT_FILE`; it keeps stopping retries until a person answers in `plan.md`, deletes
   it and runs `decree process --retry`.
-- `gate.log`: the output of the project's checks (`scripts/develop/gate.sh`), for the step that
+- `gate.log`: the output of the project's checks (`machines/develop/scripts/gate.sh`), for the step that
   fixes them. The gate names `pass` or `fail`; a non-zero exit (`error`) means the checks could
   not run, such as a missing tool, and its message is here.
 - `plan.md`: a plan for later steps, and a person's answer to a `STOP`. develop's AI steps read it.
@@ -144,7 +141,7 @@ develop's scripts shares them). decree reads none of them but `hold`, and quotes
 | `DECREE_VISITS` | Times this state has been entered, including now, since the run's last retry. |
 | `DECREE_RUN_ATTEMPT` | The run's attempt: 1, then one more per `decree process --retry`. |
 | `DECREE_RUN_DIR` | `runs/<id>/`. |
-| `DECREE_STORE` | `.decree/store/<machine>/`: what this machine keeps between runs; created before the script runs. |
+| `DECREE_STATE_DIR` | `.decree/machines/<machine>/state/`: what this machine keeps between runs; created before the script runs. |
 | `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS`, `DECREE_FINAL_ATTEMPT` | Attempt number, the limit, and `true` on the last one. |
 | `DECREE_ATTEMPT_VALUE`, `DECREE_ATTEMPT_VALUES` | With an `attempts` list: this attempt's entry, and the whole list, space-separated. Unset with `attempts: <n>`; no value for `onentry`/`onexit`. |
 | `DECREE_TRIGGER` | `migration`, `cron`, `emit`, `inbox` or `invoke`. |

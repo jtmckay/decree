@@ -2,7 +2,6 @@
 //! inherits that run's variables. Its scripts must see only the `DECREE_*` variables it
 //! sets itself (docs/reference/scripts.md, Environment), not the outer run's.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
 use tempfile::TempDir;
 
@@ -16,11 +15,7 @@ fn a_script_sees_only_the_decree_variables_its_own_run_sets() {
     for dir in ["machines", "scripts", "inbox", "runs"] {
         fs::create_dir_all(decree.join(dir)).unwrap();
     }
-    fs::write(
-        decree.join("machines/m.yml"),
-        "name: m\ndescription: One script.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
-    )
-    .unwrap();
+    common::write_file(&decree.join("machines/m/machine.yml"), "name: m\ndescription: One script.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n");
     write_script(
         &decree.join("scripts/work"),
         "#!/usr/bin/env bash\nenv | grep -E '^(DECREE_|TRACESTATE=)' | sort > \"$DECREE_PROJECT_ROOT/env.txt\"\n",
@@ -30,8 +25,7 @@ fn a_script_sees_only_the_decree_variables_its_own_run_sets() {
         format!("---\nid: {A}\nmachine: m\n---\nbody\n"),
     )
     .unwrap();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         // What an outer run's script environment holds.
         .env("DECREE_DATA_OUTER", "leak")
@@ -55,11 +49,7 @@ fn project(work: &str) -> TempDir {
     for dir in ["machines", "scripts", "inbox", "runs"] {
         fs::create_dir_all(decree.join(dir)).unwrap();
     }
-    fs::write(
-        decree.join("machines/m.yml"),
-        "name: m\ndescription: One script.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
-    )
-    .unwrap();
+    common::write_file(&decree.join("machines/m/machine.yml"), "name: m\ndescription: One script.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n");
     write_script(&decree.join("scripts/work"), work);
     queue(&tmp, A);
     tmp
@@ -90,15 +80,13 @@ fn dotenv_values_reach_scripts_and_the_process_environment_wins() {
         "# ComfyUI\nCOMFY_URL=\"http://box:8188\"\n",
     )
     .unwrap();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env_remove("COMFY_URL")
         .assert()
         .success();
     queue(&tmp, B);
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env("COMFY_URL", "http://other:8188")
         .assert()
@@ -119,8 +107,7 @@ fn dotenv_syntax_as_compose_reads_it() {
         "# comment\n\nA='single $HOME'\nexport B=exported\nC=\"$HOME\"\nD=plain value\n",
     )
     .unwrap();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env("HOME", "/home/x")
         .env_remove("A")
@@ -143,16 +130,14 @@ fn dotenv_values_are_interpolated_and_the_process_environment_wins() {
         "HOST=box\nURL=http://${HOST}:8188\n",
     )
     .unwrap();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env_remove("HOST")
         .env_remove("URL")
         .assert()
         .success();
     queue(&tmp, B);
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env("HOST", "other")
         .env_remove("URL")
@@ -169,14 +154,12 @@ fn single_quotes_and_double_dollar_are_literal() {
         "#!/usr/bin/env bash\nprintf '%s|%s\\n' \"$A\" \"$C\" > \"$DECREE_PROJECT_ROOT/out.txt\"\n",
     );
     fs::write(tmp.path().join(".decree/.env"), "A='${B}'\nC=$$5\n").unwrap();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .assert()
         .success();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env("B", "set")
         .env_remove("A")
@@ -197,8 +180,7 @@ fn an_unknown_variable_is_empty_and_check_warns() {
         "# hosts\n\nPORT=1\nURL=http://${DECREE_TEST_UNSET_HOST}:$PORT\n",
     )
     .unwrap();
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .env_remove("DECREE_TEST_UNSET_HOST")
         .arg("check")
@@ -211,8 +193,7 @@ fn an_unknown_variable_is_empty_and_check_warns() {
         stderr.contains("warning: .env: line 4: `${DECREE_TEST_UNSET_HOST}` is not set\n"),
         "{stderr}"
     );
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .env("DECREE_TEST_UNSET_HOST", "box")
         .arg("check")
@@ -222,8 +203,7 @@ fn an_unknown_variable_is_empty_and_check_warns() {
         .clone();
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(!stderr.contains("is not set"), "{stderr}");
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env_remove("DECREE_TEST_UNSET_HOST")
         .env_remove("URL")
@@ -246,8 +226,7 @@ fn a_malformed_dotenv_fails_check_and_process() {
     ] {
         let tmp = project(PRINT_COMFY_URL);
         fs::write(tmp.path().join(".decree/.env"), text).unwrap();
-        let out = cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
+        let out = common::decree_at(tmp.path())
             .env("NO_COLOR", "1")
             .arg("check")
             .assert()
@@ -259,8 +238,7 @@ fn a_malformed_dotenv_fails_check_and_process() {
         assert!(stdout.starts_with(&expected), "{stdout}");
         assert!(stdout.trim_end().ends_with("(E1)"), "{stdout}");
 
-        let out = cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
+        let out = common::decree_at(tmp.path())
             .env("NO_COLOR", "1")
             .arg("process")
             .assert()
@@ -289,15 +267,15 @@ fn machine(tmp: &TempDir, name: &str, head: &str, child: Option<&str>) {
         ),
         None => ("done", String::new()),
     };
-    fs::write(
-        tmp.path().join(format!(".decree/machines/{name}.yml")),
+    common::write_file(
+        &tmp.path()
+            .join(format!(".decree/machines/{name}/machine.yml")),
         format!(
             "name: {name}\ndescription: Prints its variables.\n{head}initial: work\nstates:\n  \
              work:\n    invoke: print\n    transitions: {{ done: {after} }}\n{call}  \
              done: {{ final: true }}\n  failed: {{ final: true }}\n"
         ),
-    )
-    .unwrap();
+    );
 }
 
 const PRINT_ABC: &str = "#!/usr/bin/env bash\necho \"$DECREE_MACHINE A=${A-unset} B=${B-unset} C=${C-unset}\" >> \"$DECREE_PROJECT_ROOT/out.txt\"\n";
@@ -315,8 +293,7 @@ fn a_machine_env_file_wins_and_stays_in_its_machine() {
     fs::write(decree.join(".gitignore"), ".env*\n!.env.example\n").unwrap();
     fs::write(decree.join(".env"), "A=base\nB=base\nC=base\n").unwrap();
     fs::write(decree.join(".env.m"), "A=machine\nC=${B}-${A}\n").unwrap();
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .assert()
@@ -325,8 +302,7 @@ fn a_machine_env_file_wins_and_stays_in_its_machine() {
         .clone();
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(!stderr.contains(".env"), "{stderr}");
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .env("A", "shell")
         .env("B", "shell")
@@ -348,8 +324,7 @@ fn a_machine_env_file_is_checked() {
     let decree = tmp.path().join(".decree");
     machine(&tmp, "m", "env_file: .env.m\n", None);
     write_script(&decree.join("scripts/print"), PRINT_ABC);
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .assert()
@@ -369,8 +344,7 @@ fn a_machine_env_file_is_checked() {
     );
 
     fs::write(decree.join(".env.m"), "A=1\nnot a pair\n").unwrap();
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .assert()
@@ -385,8 +359,7 @@ fn a_machine_env_file_is_checked() {
         stderr.contains("warning: .gitignore: does not list `.env*`, so git may commit `.env.m`"),
         "{stderr}"
     );
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("process")
         .assert()
@@ -414,8 +387,7 @@ fn env_file_must_be_a_gitignored_name() {
         let tmp = project("#!/usr/bin/env bash\n");
         machine(&tmp, "m", &format!("env_file: \"{bad}\"\n"), None);
         write_script(&tmp.path().join(".decree/scripts/print"), PRINT_ABC);
-        let out = cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
+        let out = common::decree_at(tmp.path())
             .env("NO_COLOR", "1")
             .arg("check")
             .assert()
@@ -425,7 +397,7 @@ fn env_file_must_be_a_gitignored_name() {
         let stdout = String::from_utf8(out.stdout).unwrap();
         assert!(
             stdout.contains(&format!(
-                "machines/m.yml: line 3: env_file `{bad}` is not `.env.<name>`"
+                "machines/m/machine.yml: line 3: env_file `{bad}` is not `.env.<name>`"
             )),
             "{bad}: {stdout}"
         );
@@ -448,15 +420,14 @@ fn run_dir_variables_in_a_parent_a_child_and_a_grandchild() {
             None => String::new(),
         };
         let after = if child.is_some() { "call" } else { "done" };
-        fs::write(
-            decree.join(format!("machines/{name}.yml")),
+        common::write_file(
+            &decree.join(format!("machines/{name}/machine.yml")),
             format!(
                 "name: {name}\ndescription: One link of a chain.\ninitial: work\nstates:\n  \
                  work:\n    invoke: dirs\n    transitions: {{ done: {after} }}\n{call}  \
                  done: {{ final: true }}\n  failed: {{ final: true }}\n"
             ),
-        )
-        .unwrap();
+        );
     };
     machine("m", Some("child"));
     machine("child", Some("grandchild"));
@@ -465,14 +436,12 @@ fn run_dir_variables_in_a_parent_a_child_and_a_grandchild() {
         &decree.join("scripts/dirs"),
         "#!/usr/bin/env bash\necho \"$DECREE_MACHINE|$DECREE_RUN_DIR|$DECREE_PARENT_RUN_DIR|$DECREE_ROOT_RUN_DIR\" >> \"$DECREE_PROJECT_ROOT/out.txt\"\n",
     );
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .assert()
         .success();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .arg("process")
         .assert()
         .success();

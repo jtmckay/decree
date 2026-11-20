@@ -5,7 +5,6 @@
 //! tested in `develop_test.rs`, a migration waiting for an interrupted child in
 //! `failure_test.rs`.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
@@ -70,8 +69,8 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        fs::write(decree.join("machines/hello.yml"), HELLO).unwrap();
-        fs::write(decree.join("machines/ask.yml"), ASK).unwrap();
+        common::write_file(&decree.join("machines/hello/machine.yml"), HELLO);
+        common::write_file(&decree.join("machines/ask/machine.yml"), ASK);
         write_script(&decree.join("scripts/work"), WORK);
         write_script(&decree.join("scripts/ask_person"), "#!/bin/sh\n");
         Project { tmp }
@@ -92,10 +91,8 @@ impl Project {
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path())
-            .env("NO_COLOR", "1")
-            .args(args);
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1").args(args);
         cmd
     }
 
@@ -217,8 +214,7 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
 /// `decree process` in the background, waiting until run `id`'s script sleeps.
 fn sleeping(p: &Project, id: &str) -> Child {
     fs::write(p.tmp.path().join("sleep.flag"), "").unwrap();
-    let child = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-        .current_dir(p.tmp.path())
+    let child = common::std_decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
         .arg("process")
         .stdout(Stdio::null())
@@ -442,7 +438,7 @@ states:
 #[test]
 fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     let p = Project::new();
-    p.write("machines/stopper.yml", STOPPER);
+    p.write("machines/stopper/machine.yml", STOPPER);
     write_script(
         &p.path("scripts/stop_queue"),
         "#!/bin/sh\n\"${DECREE}\" stop -m \"release freeze\"\n",
@@ -578,8 +574,7 @@ fn decree_stop_keeps_the_first_file_and_prints_json() {
 
     // Outside a project it fails, and writes nothing.
     let outside = TempDir::new().unwrap();
-    cargo_bin_cmd!("decree")
-        .current_dir(outside.path())
+    common::decree_at(outside.path())
         .arg("stop")
         .assert()
         .code(1);

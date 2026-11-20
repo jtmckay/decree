@@ -1,7 +1,6 @@
 //! `decree emit` (docs/reference/cli.md): parent, depth and trigger, `emits`, `max_depth` and
 //! `--param` checks. Each test builds its own `.decree/` in a temp directory.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use std::fs;
 use std::path::PathBuf;
@@ -56,8 +55,8 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        fs::write(decree.join("machines/flow.yml"), FLOW).unwrap();
-        fs::write(decree.join("machines/other.yml"), OTHER).unwrap();
+        common::write_file(&decree.join("machines/flow/machine.yml"), FLOW);
+        common::write_file(&decree.join("machines/other/machine.yml"), OTHER);
         write_script(&decree.join("scripts/work"), WORK);
         Project { tmp }
     }
@@ -87,8 +86,8 @@ impl Project {
     /// `decree emit` with no `DECREE_*` or trace variables but those given, so a test suite
     /// run inside a decree run (a gate script) sees the same results.
     fn emit(&self, env: &[(&str, &str)], args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path()).env("NO_COLOR", "1");
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1");
         for var in [
             "DECREE_MESSAGE_ID",
             "DECREE_MACHINE",
@@ -325,9 +324,8 @@ fn emit_from_a_script_queues_a_follow_up_that_process_runs() {
         bin.parent().unwrap().display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let mut cmd = cargo_bin_cmd!("decree");
-    cmd.current_dir(p.tmp.path())
-        .env("NO_COLOR", "1")
+    let mut cmd = common::decree_at(p.tmp.path());
+    cmd.env("NO_COLOR", "1")
         .env("PATH", path)
         .env_remove("DECREE_MESSAGE_ID")
         .env_remove("DECREE_MACHINE")
@@ -381,8 +379,8 @@ states:
 impl Project {
     /// `decree process` with no `DECREE_*` variables.
     fn process(&self) {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path()).env("NO_COLOR", "1");
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1");
         for var in ["DECREE_MESSAGE_ID", "DECREE_MACHINE", "DECREE_STATE"] {
             cmd.env_remove(var);
         }
@@ -405,7 +403,7 @@ fn id_of(output: &std::process::Output) -> String {
 #[test]
 fn emit_of_a_processed_migration_queues_its_work_again() {
     let p = Project::new();
-    fs::write(p.decree().join("machines/m.yml"), M).unwrap();
+    common::write_file(&p.decree().join("machines/m/machine.yml"), M);
     write_script(&p.decree().join("scripts/step"), "#!/usr/bin/env bash\n");
     let migration = p.decree().join("migrations/01-a.md");
     fs::write(&migration, MIGRATION).unwrap();
@@ -539,8 +537,7 @@ fn emit_of_invalid_frontmatter_gives_the_errors_check_gives() {
         let got = stderr(&output);
 
         fs::write(p.decree().join("inbox/x.md"), input).unwrap();
-        let check = cargo_bin_cmd!("decree")
-            .current_dir(p.tmp.path())
+        let check = common::decree_at(p.tmp.path())
             .env("NO_COLOR", "1")
             .arg("check")
             .output()

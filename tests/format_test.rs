@@ -8,7 +8,6 @@
 //! A command that changes the project runs in text mode on a copy, so both modes start
 //! from the same files.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -87,7 +86,7 @@ impl Project {
         let decree = p.root().join(".decree");
         fs::create_dir_all(decree.join("machines")).unwrap();
         for (name, yml) in [("flaky", FLAKY), ("deploy", DEPLOY), ("slow", SLOW)] {
-            fs::write(decree.join(format!("machines/{name}.yml")), yml).unwrap();
+            common::write_file(&decree.join(format!("machines/{name}/machine.yml")), yml);
         }
         for (name, text) in [
             ("work", FLAKY_WORK),
@@ -145,8 +144,7 @@ impl Project {
 
 /// `decree <args>` in `dir` with `stdin`: (exit code, stdout, stderr).
 fn run(dir: &Path, args: &[&str], stdin: &str) -> (i32, String, String) {
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(dir)
+    let out = common::decree_at(dir)
         .env("NO_COLOR", "1")
         .env_remove("DECREE_MACHINE")
         .env_remove("DECREE_STATE")
@@ -182,7 +180,7 @@ fn check_graph_and_schema() {
 
     // A stale graph and an unknown schema file: warnings, removed by graph and schema.
     let decree = p.root().join(".decree");
-    fs::write(decree.join("graph/old.md"), "old\n").unwrap();
+    common::write_file(&decree.join("machines/old/graph.md"), "old\n");
     fs::write(decree.join("schema/v1/old.schema.json"), "{}\n").unwrap();
     let (code, doc) = p.json(&["check"], "", schema::CLI_CHECK_SCHEMA, false);
     assert_eq!(code, 0);
@@ -190,15 +188,15 @@ fn check_graph_and_schema() {
     assert_eq!(
         doc["warnings"],
         serde_json::json!([
-            { "file": "graph/old.md", "message": "no machine draws it; run `decree graph`" },
+            { "file": "machines/old/graph.md", "message": "no machine draws it; run `decree graph`" },
             { "file": "schema/v1/old.schema.json", "message": "not one decree writes; run `decree schema`" },
         ])
     );
 
     let (code, doc) = p.json(&["graph"], "", schema::CLI_GRAPH_SCHEMA, false);
     assert_eq!(code, 0);
-    assert!(strings(&doc["written"]).contains(&".decree/graph/system.md"));
-    assert_eq!(strings(&doc["removed"]), [".decree/graph/old.md"]);
+    assert!(strings(&doc["written"]).contains(&".decree/system.md"));
+    assert_eq!(strings(&doc["removed"]), [".decree/machines/old/graph.md"]);
 
     let (code, doc) = p.json(&["schema"], "", schema::CLI_SCHEMA_SCHEMA, false);
     assert_eq!(code, 0);
@@ -214,7 +212,10 @@ fn check_graph_and_schema() {
 
     // Errors: check reports them in the document; graph fails before it writes anything.
     fs::write(decree.join("inbox/a.md"), "---\nmachine: nope\n---\n").unwrap();
-    fs::write(decree.join("cron/c.md"), "---\ncron: '0 * * * *'\n---\n").unwrap();
+    common::write_file(
+        &decree.join("machines/nope/cron/c.md"),
+        "---\ncron: '0 * * * *'\nmachine: [nope]\n---\n",
+    );
     let (code, doc) = p.json(&["check"], "", schema::CLI_CHECK_SCHEMA, false);
     assert_eq!(code, 1);
     assert_eq!(doc["valid"], false);
@@ -396,8 +397,7 @@ fn status_of_an_active_run_names_its_running_script() {
         .1
         .trim()
         .to_string();
-    let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-        .current_dir(p.root())
+    let mut process = common::std_decree_at(p.root())
         .arg("process")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

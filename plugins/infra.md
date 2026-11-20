@@ -1,7 +1,7 @@
 ---
 name: infra
 machine:
-  description: Add to the environment the project needs, the first time and every time after; the AI declares each resource in scripts/infra/requirements, then apply installs what is missing and checks every line.
+  description: Add to the environment the project needs, the first time and every time after; the AI declares each resource in machines/infra/scripts/requirements, then apply installs what is missing and checks every line.
   onentry:
   - clean_tree
   initial: declare
@@ -26,7 +26,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -261,7 +261,7 @@ scripts:
   apply.sh: |
     #!/usr/bin/env bash
     # infra's apply: install what every machine's requirements declare and is missing.
-    exec .decree/scripts/infra/run.sh apply
+    exec .decree/machines/infra/scripts/run.sh apply
   clean_tree.sh: |
     #!/usr/bin/env bash
     # Root onentry script: the run starts from a clean git work tree, so the commit at `done`
@@ -338,7 +338,7 @@ scripts:
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
-    # this one commit; git ignores machines/ and scripts/. A failed run exports nothing: `keep`
+    # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
     "${DECREE}" plugin export
@@ -358,14 +358,14 @@ scripts:
     git log -1 --format='committed %h %s'
   declare.sh: |
     #!/usr/bin/env bash
-    # infra's declare: the AI changes scripts/infra/requirements to meet the message, and
+    # infra's declare: the AI changes machines/infra/scripts/requirements to meet the message, and
     # installs nothing; apply does. If the change needs a choice the message does not make,
     # it writes the question to STOP instead of guessing; the run fails until a person
     # answers it in plan.md, deletes STOP and runs `decree process --retry`.
     set -euo pipefail
-    . .decree/scripts/infra/ai.sh
+    . .decree/machines/infra/scripts/ai.sh
 
-    infra=.decree/scripts/infra
+    infra=.decree/machines/infra/scripts
     plan="${DECREE_RUN_DIR}/plan.md"
     stop="${DECREE_RUN_DIR}/STOP"
     stopped() {
@@ -456,12 +456,12 @@ scripts:
     # `check` reports each resource ok or missing and changes nothing; `apply` installs a
     # missing one and checks it again (changed), and stops at the first that fails, naming it.
     # The requirements are one list: infra's own first, then each other
-    # .decree/scripts/<machine>/requirements in name order. Each line reported ends with the
+    # .decree/machines/<machine>/scripts/requirements in name order. Each line reported ends with the
     # file it came from. A kind is kinds/<kind>.sh, beside this script.
     # Usage: run.sh check|apply
     set -euo pipefail
     here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-    scripts=$(dirname "${here}")
+    machines=$(dirname "$(dirname "${here}")")
     mode=${1:?usage: run.sh check|apply}
     case ${mode} in check | apply) ;; *) echo "usage: run.sh check|apply" >&2; exit 2 ;; esac
     # One stream, so a failure prints after the lines before it.
@@ -469,13 +469,13 @@ scripts:
 
     files=()
     [ -f "${here}/requirements" ] && files+=("${here}/requirements")
-    for f in "${scripts}"/*/requirements; do
+    for f in "${machines}"/*/scripts/requirements; do
       [ -f "${f}" ] && [ "${f}" != "${here}/requirements" ] && files+=("${f}")
     done
 
     missing=0
     for file in "${files[@]}"; do
-      from="scripts/${file#"${scripts}/"}"
+      from="machines/${file#"${machines}/"}"
       while read -r kind name version source; do
         [[ -z ${kind} || ${kind} == \#* ]] && continue
         label="${kind} ${name}${version:+ ${version}}"
@@ -508,8 +508,8 @@ Declares what your project's environment needs (commands on `PATH`, and any othe
 ## What it does
 
 1. `clean_tree` (on entry): the run starts from a clean git work tree.
-2. `declare`: the agent changes `.decree/scripts/infra/requirements` to meet the message, and installs nothing. It writes `STOP` instead of guessing.
-3. `apply`: `.decree/scripts/infra/run.sh apply` checks each line of every `.decree/scripts/*/requirements`, installs what is missing, and checks it again. A resource only a person can install (a `command` line, say) fails the run, naming it.
+2. `declare`: the agent changes `.decree/machines/infra/scripts/requirements` to meet the message, and installs nothing. It writes `STOP` instead of guessing.
+3. `apply`: `.decree/machines/infra/scripts/run.sh apply` checks each line of every `.decree/machines/*/scripts/requirements`, installs what is missing, and checks it again. A resource only a person can install (a `command` line, say) fails the run, naming it.
 4. `done`: `commit` exports the edited plugin, so the new requirement lines reach `.decree/plugins/infra.md`, and commits. `failed`: `keep` leaves the changes for a retry.
 
 `develop`'s `precheck` runs `run.sh check`, so a run fails fast when the environment is short of something.
@@ -520,7 +520,7 @@ Declares what your project's environment needs (commands on `PATH`, and any othe
 
 ## How to use it
 
-- Edit `.decree/scripts/infra/requirements` by hand, one resource per line (`kind name version source`), or send a message: `echo "We need jq and node 22" | decree emit --machine infra && decree process`.
-- A kind is `.decree/scripts/infra/kinds/<kind>.sh`, defining `check` and `install`; `command` is the one shipped.
-- `.decree/scripts/infra/run.sh check` (or `apply`) works outside decree too, in CI or a fresh checkout.
+- Edit `.decree/machines/infra/scripts/requirements` by hand, one resource per line (`kind name version source`), or send a message: `echo "We need jq and node 22" | decree emit --machine infra && decree process`.
+- A kind is `.decree/machines/infra/scripts/kinds/<kind>.sh`, defining `check` and `install`; `command` is the one shipped.
+- `.decree/machines/infra/scripts/run.sh check` (or `apply`) works outside decree too, in CI or a fresh checkout.
 - Edits are kept in this file by `decree plugin export infra`, or by the next run's `commit`.

@@ -1,0 +1,14 @@
+# Graph: graph.md
+name: develop
+description: Make a small code change with an AI agent, then run the tests.
+initial: implement
+states:
+  implement:
+    invoke:
+      script: { name: implement, timeout: 1h }
+    transitions: { done: test }
+  test:
+    invoke: test
+    transitions: { done: done }
+  done: { final: true }
+  failed: { final: true, onentry: [notify] }   # runs once when the run fails

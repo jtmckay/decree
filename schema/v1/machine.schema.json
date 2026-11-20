@@ -29,9 +29,9 @@
       "not": { "const": ".env.example" },
       "examples": [".env.comfy"]
     },
-    "store": {
+    "state_files": {
       "type": "object",
-      "description": "Extension: what the machine keeps between runs, in .decree/store/<machine>/ (DECREE_STORE). A map of names to descriptions: each name is a file or folder directly in the store folder, matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (no `/`), and each description says what it is and which states read or write it (V14). `decree check` warns about anything in the store folder that is not declared. Outputs for people go wherever the user wants, not here.",
+      "description": "Extension: what the machine keeps between runs, in .decree/machines/<machine>/state/ (DECREE_STATE_DIR). A map of names to descriptions: each name is a file or folder directly in the state folder, matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (no `/`), and each description says what it is and which states read or write it (V14). `decree check` warns about anything in the state folder that is not declared. A file named `*.git.txt` is committed; any other is not. Outputs for people go wherever the user wants, not here.",
       "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
       "additionalProperties": {
         "type": "string",

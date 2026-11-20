@@ -8,11 +8,12 @@
 //! every file of a passing case validates, and every file a failing case reports is rejected
 //! by the schema, unless `CHECK_ONLY` lists it with the reason only `decree check` can tell.
 
-use assert_cmd::cargo::cargo_bin_cmd;
+mod common;
+
 use serde_norway::Value;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 #[path = "common/schema.rs"]
@@ -64,7 +65,7 @@ states:
   failed: { final: true }
 ";
 
-/// `BASE` as a plugin, `plugins/m.md`, with no scripts.
+/// `BASE` as a plugin, `plugins/m.md`, with its script, the `STUB` every case gets.
 const PLUGIN_BASE: &str = "\
 ---
 name: m
@@ -77,6 +78,10 @@ machine:
       transitions: { done: done }
     done: { final: true }
     failed: { final: true }
+scripts:
+  work: |
+    #!/usr/bin/env bash
+    exit 0
 ---
 # m
 ";
@@ -94,6 +99,10 @@ machine:
       transitions: { done: done }
     done: { final: true }
     failed: { final: true }
+scripts:
+  work: |
+    #!/usr/bin/env bash
+    exit 0
 ---
 # m
 ";
@@ -179,7 +188,7 @@ const CASES: &[Case] = &[
     Case {
         rule: "V1",
         name: "name equals the file stem",
-        files: &[("machines/m.yml", BASE)],
+        files: &[("machines/m/machine.yml", BASE)],
         scripts: &[],
         expected: PASSES,
     },
@@ -187,7 +196,7 @@ const CASES: &[Case] = &[
         rule: "V1",
         name: "name differs from the file stem",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: other
 description: Base machine.
@@ -201,13 +210,13 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: line 1: name `other` does not equal the file stem `m` (V1)\n",
+        expected: "machines/m/machine.yml: line 1: name `other` does not equal the file stem `m` (V1)\n",
     },
     // V2
     Case {
         rule: "V2",
         name: "lowercase state ids",
-        files: &[("machines/m.yml", BASE)],
+        files: &[("machines/m/machine.yml", BASE)],
         scripts: &[],
         expected: PASSES,
     },
@@ -215,7 +224,7 @@ states:
         rule: "V2",
         name: "a state id with a capital",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Base machine.
@@ -229,13 +238,13 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: Work: state id `Work` does not match ^[a-z][a-z0-9_]*$ (V2)\n",
+        expected: "machines/m/machine.yml: Work: state id `Work` does not match ^[a-z][a-z0-9_]*$ (V2)\n",
     },
     // V3
     Case {
         rule: "V3",
         name: "initial names a child",
-        files: &[("machines/m.yml", BASE)],
+        files: &[("machines/m/machine.yml", BASE)],
         scripts: &[],
         expected: PASSES,
     },
@@ -243,7 +252,7 @@ states:
         rule: "V3",
         name: "initial names no child",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Base machine.
@@ -257,13 +266,13 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: line 3: initial `nowhere` is not a direct child state (V3)\n",
+        expected: "machines/m/machine.yml: line 3: initial `nowhere` is not a direct child state (V3)\n",
     },
     // V4
     Case {
         rule: "V4",
         name: "every target exists",
-        files: &[("machines/m.yml", BASE)],
+        files: &[("machines/m/machine.yml", BASE)],
         scripts: &[],
         expected: PASSES,
     },
@@ -271,7 +280,7 @@ states:
         rule: "V4",
         name: "a target that does not exist",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Base machine.
@@ -285,13 +294,13 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: work: transition `skip` targets unknown state `nowhere` (V4)\n",
+        expected: "machines/m/machine.yml: work: transition `skip` targets unknown state `nowhere` (V4)\n",
     },
     // V5
     Case {
         rule: "V5",
         name: "a root final state named failed",
-        files: &[("machines/m.yml", BASE)],
+        files: &[("machines/m/machine.yml", BASE)],
         scripts: &[],
         expected: PASSES,
     },
@@ -299,7 +308,7 @@ states:
         rule: "V5",
         name: "no state named failed",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Base machine.
@@ -312,14 +321,14 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: line 4: no root-level final state `failed`: every machine needs one for unhandled errors (V5)\n",
+        expected: "machines/m/machine.yml: line 4: no root-level final state `failed`: every machine needs one for unhandled errors (V5)\n",
     },
     // V6
     Case {
         rule: "V6",
         name: "a compound state without invoke",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A compound state with its own final state.
@@ -344,7 +353,7 @@ states:
         rule: "V6",
         name: "a compound state with invoke",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A compound state with its own final state.
@@ -364,13 +373,13 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: work: compound state may not have `invoke` (V6)\n",
+        expected: "machines/m/machine.yml: work: compound state may not have `invoke` (V6)\n",
     },
     // V7
     Case {
         rule: "V7",
         name: "final states with only final",
-        files: &[("machines/m.yml", BASE)],
+        files: &[("machines/m/machine.yml", BASE)],
         scripts: &[],
         expected: PASSES,
     },
@@ -378,7 +387,7 @@ states:
         rule: "V7",
         name: "a final state with transitions",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Base machine.
@@ -392,14 +401,14 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: done: final state may only have `final`, `description`, `onentry` and `emits`, not `transitions` (V7)\n",
+        expected: "machines/m/machine.yml: done: final state may only have `final`, `description`, `onentry` and `emits`, not `transitions` (V7)\n",
     },
     // V8
     Case {
         rule: "V8",
         name: "a check handles true and false, a person is asked a question",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A check, then a person picks one option.
@@ -431,7 +440,7 @@ states:
         rule: "V8",
         name: "a check misses false, a person is asked nothing",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A check that misses false, and a person asked nothing.
@@ -456,16 +465,16 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: again: a `check` state must handle `false`, itself or through an ancestor (V8)
-machines/m.yml: approval: a `reply` state needs a `question`: what is being decided (V8)
-machines/m.yml: approval: option `reject` needs a `description`: write it as `reject: { target: failed, description: ... }` (V8)
+machines/m/machine.yml: again: a `check` state must handle `false`, itself or through an ancestor (V8)
+machines/m/machine.yml: approval: a `reply` state needs a `question`: what is being decided (V8)
+machines/m/machine.yml: approval: option `reject` needs a `description`: write it as `reject: { target: failed, description: ... }` (V8)
 ",
     },
     Case {
         rule: "V8",
         name: "a check still written with yes and no",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A check whose transitions use the old yes and no.
@@ -484,7 +493,7 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: again: a `check` produces `true` and `false`: rename its `yes` and `no` transitions to `true` and `false` (V8)
+machines/m/machine.yml: again: a `check` produces `true` and `false`: rename its `yes` and `no` transitions to `true` and `false` (V8)
 ",
     },
     // V9
@@ -492,7 +501,7 @@ machines/m.yml: again: a `check` produces `true` and `false`: rename its `yes` a
         rule: "V9",
         name: "output names a script state",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A check on the output of a script state.
@@ -516,7 +525,7 @@ states:
         rule: "V9",
         name: "output names a state that runs no script",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A check on the output of a state that runs no script.
@@ -534,14 +543,14 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: ok: output `ok` is not a state with a script invoke (V9)\n",
+        expected: "machines/m/machine.yml: ok: output `ok` is not a state with a script invoke (V9)\n",
     },
     // V10
     Case {
         rule: "V10",
         name: "a condition on existing data",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A check on visits against data.
@@ -567,7 +576,7 @@ states:
         rule: "V10",
         name: "a condition on unknown data",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A check on visits against data.
@@ -587,14 +596,14 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: again: check: unknown data `rounds` (V10)\n",
+        expected: "machines/m/machine.yml: again: check: unknown data `rounds` (V10)\n",
     },
     // V11
     Case {
         rule: "V11",
         name: "every state is reachable and can finish",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Every state is reachable and can finish.
@@ -618,7 +627,7 @@ states:
         rule: "V11",
         name: "an unreachable state and a stall",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A machine with an unreachable state and a stall.
@@ -640,39 +649,39 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: orphan: state is unreachable from the root `initial` (V11)
-machines/m.yml: wait: state cannot reach a root-level final state (V11)
+machines/m/machine.yml: orphan: state is unreachable from the root `initial` (V11)
+machines/m/machine.yml: wait: state cannot reach a root-level final state (V11)
 ",
     },
     // V12
     Case {
         rule: "V12",
         name: "every script resolves, one in the machine's folder",
-        files: &[("machines/m.yml", V12_MACHINE)],
+        files: &[("machines/m/machine.yml", V12_MACHINE)],
         scripts: &[Script::At("m/snapshot.sh")],
         expected: PASSES,
     },
     Case {
         rule: "V12",
         name: "a missing script and one that is not executable",
-        files: &[("machines/m.yml", V12_MACHINE)],
+        files: &[("machines/m/machine.yml", V12_MACHINE)],
         scripts: &[
             Script::Missing("setup"),
             Script::NotExecutable("snapshot.sh"),
         ],
         expected: "\
-machines/m.yml: line 3: script `setup` not found; searched scripts/m, scripts (V12)
-machines/m.yml: work: script `snapshot`: scripts/snapshot.sh is not executable (V12)
+machines/m/machine.yml: line 3: script `setup` not found; searched machines/m/scripts (V12)
+machines/m/machine.yml: work: script `snapshot`: machines/m/scripts/snapshot.sh is not executable (V12)
 ",
     },
     Case {
         rule: "V12",
         name: "a script with no extension named like its machine",
         files: &[(
-            "machines/verify.yml",
+            "machines/verify/machine.yml",
             "\
 name: verify
-description: Its script is scripts/verify, a file where a per-machine directory would be.
+description: Its script is machines/verify/scripts/verify, with no extension.
 initial: work
 states:
   work:
@@ -690,7 +699,7 @@ states:
         rule: "V13",
         name: "emits names a machine",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Base machine.
@@ -711,7 +720,7 @@ states:
         rule: "V13",
         name: "emits names an unknown machine",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Base machine.
@@ -726,13 +735,13 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: work: emits unknown machine `nope` (V13)\n",
+        expected: "machines/m/machine.yml: work: emits unknown machine `nope` (V13)\n",
     },
     // V14
     Case {
         rule: "V14",
         name: "every default matches its type",
-        files: &[("machines/m.yml", TYPED)],
+        files: &[("machines/m/machine.yml", TYPED)],
         scripts: &[],
         expected: PASSES,
     },
@@ -740,7 +749,7 @@ states:
         rule: "V14",
         name: "a string default for a bool",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Typed data.
@@ -758,12 +767,12 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: line 6: data `strict`: default `yes` is not of type `bool` (V14)\n",
+        expected: "machines/m/machine.yml: line 6: data `strict`: default `yes` is not of type `bool` (V14)\n",
     },
     Case {
         rule: "V14",
         name: "an enum and a number, compared numerically",
-        files: &[("machines/m.yml", CHOICES)],
+        files: &[("machines/m/machine.yml", CHOICES)],
         scripts: &[],
         expected: PASSES,
     },
@@ -771,7 +780,7 @@ states:
         rule: "V14",
         name: "an enum default not in the list, an enum on an int, an empty or repeating enum, a non-number",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Typed data.
@@ -792,22 +801,22 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: line 6: data `empty`: `enum` is empty (V14)
-machines/m.yml: line 8: data `megapixels`: default `x` is not of type `number` (V14)
-machines/m.yml: line 4: data `need`: default `review` is not one of the `enum` values: plan, fix (V14)
-machines/m.yml: line 5: data `rounds`: `enum` is for type `string`, not `int` (V14)
-machines/m.yml: line 7: data `twice`: `enum` lists `a` twice (V14)
+machines/m/machine.yml: line 6: data `empty`: `enum` is empty (V14)
+machines/m/machine.yml: line 8: data `megapixels`: default `x` is not of type `number` (V14)
+machines/m/machine.yml: line 4: data `need`: default `review` is not one of the `enum` values: plan, fix (V14)
+machines/m/machine.yml: line 5: data `rounds`: `enum` is for type `string`, not `int` (V14)
+machines/m/machine.yml: line 7: data `twice`: `enum` lists `a` twice (V14)
 ",
     },
     Case {
         rule: "V14",
-        name: "store names are files or folders in the store folder, with a description",
+        name: "state_files names are files or folders in the state folder, with a description",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: Stored.
-store:
+state_files:
   seen.tsv: Links already sent. work reads and appends.
   \"a/b\": x
   cache: \"  \"
@@ -822,8 +831,8 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: line 5: store `a/b`: the name does not match ^[A-Za-z0-9][A-Za-z0-9._-]*$: a file or folder directly in the store folder (V14)
-machines/m.yml: line 6: store `cache`: the description is empty: say what it is and which states read or write it (V14)
+machines/m/machine.yml: line 5: state_files `a/b`: the name does not match ^[A-Za-z0-9][A-Za-z0-9._-]*$: a file or folder directly in the state folder (V14)
+machines/m/machine.yml: line 6: state_files `cache`: the description is empty: say what it is and which states read or write it (V14)
 ",
     },
     // V15
@@ -831,7 +840,7 @@ machines/m.yml: line 6: store `cache`: the description is empty: say what it is 
         rule: "V15",
         name: "done.state is handled",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A compound state whose final state raises done.state.work.
@@ -856,7 +865,7 @@ states:
         rule: "V15",
         name: "nothing handles done.state",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A compound state whose final state nothing handles.
@@ -875,16 +884,16 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: work: compound state has a final state, but nothing handles `done.state.work`, itself or through an ancestor (V15)\n",
+        expected: "machines/m/machine.yml: work: compound state has a final state, but nothing handles `done.state.work`, itself or through an ancestor (V15)\n",
     },
     // V16
     Case {
         rule: "V16",
         name: "a model with a machine named router",
         files: &[
-            ("machines/m.yml", V16_MACHINE.0),
+            ("machines/m/machine.yml", V16_MACHINE.0),
             (
-                "machines/router.yml",
+                "machines/router/machine.yml",
                 "\
 name: router
 description: Answers a model request.
@@ -905,9 +914,9 @@ states:
         rule: "V16",
         name: "no machine named router, min_confidence out of range",
         files: &[
-            ("machines/m.yml", V16_MACHINE.1),
+            ("machines/m/machine.yml", V16_MACHINE.1),
             (
-                "machines/picker.yml",
+                "machines/picker/machine.yml",
                 "\
 name: picker
 description: Answers a model request.
@@ -923,15 +932,15 @@ states:
         ],
         scripts: &[],
         expected: "\
-machines/m.yml: triage: `model` names no `router`, and there is no machine named `router` (V16)
-machines/m.yml: triage: min_confidence 80 is not between 0 and 1 (V16)
+machines/m/machine.yml: triage: `model` names no `router`, and there is no machine named `router` (V16)
+machines/m/machine.yml: triage: min_confidence 80 is not between 0 and 1 (V16)
 ",
     },
     Case {
         rule: "V14",
         name: "an env_file named .env.<name>",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: One script with its own secrets.
@@ -952,7 +961,7 @@ states:
         rule: "V14",
         name: "an env_file that is the committed template",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: One script with its own secrets.
@@ -968,14 +977,14 @@ states:
         )],
         scripts: &[],
         expected: "\
-machines/m.yml: line 3: env_file `.env.example` is not `.env.<name>` with <name> matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (and not `.env.example`): a file directly in .decree/ that .gitignore's `.env*` keeps out of git (V14)
+machines/m/machine.yml: line 3: env_file `.env.example` is not `.env.<name>` with <name> matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (and not `.env.example`): a file directly in .decree/ that .gitignore's `.env*` keeps out of git (V14)
 ",
     },
     Case {
         rule: "V16",
         name: "a timeout in each unit",
         files: &[
-            ("machines/a.yml", "\
+            ("machines/a/machine.yml", "\
 name: a
 description: A script with a time limit.
 initial: work
@@ -986,7 +995,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/b.yml", "\
+            ("machines/b/machine.yml", "\
 name: b
 description: A script with a time limit.
 initial: work
@@ -997,7 +1006,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/c.yml", "\
+            ("machines/c/machine.yml", "\
 name: c
 description: A script with a time limit.
 initial: work
@@ -1008,7 +1017,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/d.yml", TIMEOUT_REPLY),
+            ("machines/d/machine.yml", TIMEOUT_REPLY),
         ],
         scripts: &[],
         expected: PASSES,
@@ -1017,7 +1026,7 @@ states:
         rule: "V16",
         name: "attempts as a count and as a list of model ids",
         files: &[
-            ("machines/a.yml", "\
+            ("machines/a/machine.yml", "\
 name: a
 description: Retries.
 initial: work
@@ -1028,7 +1037,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/b.yml", "\
+            ("machines/b/machine.yml", "\
 name: b
 description: A local model twice, then a hosted one.
 initial: work
@@ -1047,7 +1056,7 @@ states:
         rule: "V16",
         name: "attempts empty, zero, or with an entry that has a space",
         files: &[
-            ("machines/a.yml", "\
+            ("machines/a/machine.yml", "\
 name: a
 description: No attempts.
 initial: work
@@ -1058,7 +1067,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/b.yml", "\
+            ("machines/b/machine.yml", "\
 name: b
 description: Zero attempts.
 initial: work
@@ -1069,7 +1078,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/c.yml", "\
+            ("machines/c/machine.yml", "\
 name: c
 description: A value with a space.
 initial: work
@@ -1083,16 +1092,16 @@ states:
         ],
         scripts: &[],
         expected: "\
-machines/a.yml: work: attempts: [] lists no attempts (V16)
-machines/b.yml: work: attempts: 0 is not a positive integer (V16)
-machines/c.yml: work: attempts entry `claude opus` is not a valid value: it starts with a letter or digit, then up to 127 of letters, digits and `._:/@-` (V16)
+machines/a/machine.yml: work: attempts: [] lists no attempts (V16)
+machines/b/machine.yml: work: attempts: 0 is not a positive integer (V16)
+machines/c/machine.yml: work: attempts entry `claude opus` is not a valid value: it starts with a letter or digit, then up to 127 of letters, digits and `._:/@-` (V16)
 ",
     },
     Case {
         rule: "V16",
         name: "a timeout that is not a duration",
         files: &[
-            ("machines/a.yml", "\
+            ("machines/a/machine.yml", "\
 name: a
 description: A script with a time limit.
 initial: work
@@ -1103,7 +1112,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/b.yml", "\
+            ("machines/b/machine.yml", "\
 name: b
 description: A script with a time limit.
 initial: work
@@ -1114,7 +1123,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/c.yml", "\
+            ("machines/c/machine.yml", "\
 name: c
 description: A script with a time limit.
 initial: work
@@ -1125,7 +1134,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/d.yml", "\
+            ("machines/d/machine.yml", "\
 name: d
 description: A script with a time limit.
 initial: work
@@ -1136,7 +1145,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/e.yml", "\
+            ("machines/e/machine.yml", "\
 name: e
 description: A script with a time limit.
 initial: work
@@ -1147,7 +1156,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/f.yml", "\
+            ("machines/f/machine.yml", "\
 name: f
 description: A script with a time limit.
 initial: work
@@ -1161,12 +1170,12 @@ states:
         ],
         scripts: &[],
         expected: "\
-machines/a.yml: work: timeout: `1.5h` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
-machines/b.yml: work: timeout: `1h30m` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
-machines/c.yml: work: timeout: `10` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
-machines/d.yml: work: timeout: `-1m` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
-machines/e.yml: work: timeout: `1w` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
-machines/f.yml: work: timeout: `` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/a/machine.yml: work: timeout: `1.5h` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/b/machine.yml: work: timeout: `1h30m` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/c/machine.yml: work: timeout: `10` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/d/machine.yml: work: timeout: `-1m` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/e/machine.yml: work: timeout: `1w` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
+machines/f/machine.yml: work: timeout: `` is not a duration: a whole number of at most 9 digits followed by s, m, h or d, such as 90s, 10m, 12h or 7d (V16)
 ",
     },
     // V17
@@ -1174,7 +1183,7 @@ machines/f.yml: work: timeout: `` is not a duration: a whole number of at most 9
         rule: "V17",
         name: "internal from a compound state to its child",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: An internal transition from a compound state to its child.
@@ -1201,7 +1210,7 @@ states:
         rule: "V17",
         name: "internal from an atomic state",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: An internal transition from an atomic state.
@@ -1215,14 +1224,14 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: work: transition `done`: `type: internal` is only allowed from a compound state to one of its descendants (V17)\n",
+        expected: "machines/m/machine.yml: work: transition `done`: `type: internal` is only allowed from a compound state to one of its descendants (V17)\n",
     },
     // V18
     Case {
         rule: "V18",
         name: "lowercase events",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A script that prints pass or fail.
@@ -1242,7 +1251,7 @@ states:
         rule: "V18",
         name: "an event with a capital",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A script that prints pass or fail.
@@ -1256,13 +1265,13 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: work: event `Pass` does not match ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$ (V18)\n",
+        expected: "machines/m/machine.yml: work: event `Pass` does not match ^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$ (V18)\n",
     },
     // V19
     Case {
         rule: "V19",
         name: "only the SCXML subset",
-        files: &[("machines/m.yml", BASE)],
+        files: &[("machines/m/machine.yml", BASE)],
         scripts: &[],
         expected: PASSES,
     },
@@ -1271,7 +1280,7 @@ states:
         name: "cond on a transition, router on a state",
         files: &[
             (
-                "machines/a.yml",
+                "machines/a/machine.yml",
                 "\
 name: a
 description: A transition with cond.
@@ -1285,60 +1294,60 @@ states:
   failed: { final: true }
 ",
             ),
-            ("machines/b.yml", ROUTER_ON_A_STATE),
+            ("machines/b/machine.yml", ROUTER_ON_A_STATE),
         ],
         scripts: &[],
         expected: "\
-machines/a.yml: work: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)
-machines/b.yml: work.step: router on a state is not supported: make the decision a state with invoke: { model: { question: ... } } (V19)
+machines/a/machine.yml: work: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)
+machines/b/machine.yml: work.step: router on a state is not supported: make the decision a state with invoke: { model: { question: ... } } (V19)
 ",
     },
     Case {
         rule: "V19",
         name: "choose, the old decision invoke",
-        files: &[("machines/m.yml", OLD_CHOOSE)],
+        files: &[("machines/m/machine.yml", OLD_CHOOSE)],
         scripts: &[],
-        expected: "machines/m.yml: approval: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { reply: { question: ..., notify: <script> } } to wait for a reply (V19)\n",
+        expected: "machines/m/machine.yml: approval: choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { reply: { question: ..., notify: <script> } } to wait for a reply (V19)\n",
     },
     Case {
         rule: "V19",
         name: "person with ask, the old name of reply with notify",
-        files: &[("machines/m.yml", OLD_PERSON)],
+        files: &[("machines/m/machine.yml", OLD_PERSON)],
         scripts: &[],
-        expected: "machines/m.yml: approval: person: is now reply: (and its ask: is notify:) (V19)\n",
+        expected: "machines/m/machine.yml: approval: person: is now reply: (and its ask: is notify:) (V19)\n",
     },
     Case {
         rule: "V19",
         name: "input beside a check",
-        files: &[("machines/m.yml", OLD_INPUT)],
+        files: &[("machines/m/machine.yml", OLD_INPUT)],
         scripts: &[],
-        expected: "machines/m.yml: ok: input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } }) (V19)\n",
+        expected: "machines/m/machine.yml: ok: input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } }) (V19)\n",
     },
     Case {
         rule: "V19",
         name: "a bare matches",
-        files: &[("machines/m.yml", OLD_BARE_MATCHES)],
+        files: &[("machines/m/machine.yml", OLD_BARE_MATCHES)],
         scripts: &[],
-        expected: "machines/m.yml: ok: a bare matches is not supported: name the state it reads, { output: <state>, matches: ... } (V19)\n",
+        expected: "machines/m/machine.yml: ok: a bare matches is not supported: name the state it reads, { output: <state>, matches: ... } (V19)\n",
     },
     Case {
         rule: "V19",
         name: "max_attempts and timeout_s on a state",
         files: &[
-            ("machines/a.yml", OLD_MAX_ATTEMPTS),
-            ("machines/b.yml", OLD_TIMEOUT_S),
+            ("machines/a/machine.yml", OLD_MAX_ATTEMPTS),
+            ("machines/b/machine.yml", OLD_TIMEOUT_S),
         ],
         scripts: &[],
         expected: "\
-machines/a.yml: work: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` inside the script invoke, invoke: { script: { name: <script>, attempts: … } } (V19)
-machines/b.yml: work: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or reply: { ..., timeout: <n>s|m|h|d }) (V19)
+machines/a/machine.yml: work: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` inside the script invoke, invoke: { script: { name: <script>, attempts: … } } (V19)
+machines/b/machine.yml: work: timeout_s on a state is not supported: write timeout: <n>s|m|h|d inside the invoke, invoke: { script: { name: <script>, timeout: <n>s|m|h|d } } (or reply: { ..., timeout: <n>s|m|h|d }) (V19)
 ",
     },
     Case {
         rule: "V19",
         name: "max_attempts in a script invoke, attempts in a model invoke",
         files: &[
-            ("machines/a.yml", "\
+            ("machines/a/machine.yml", "\
 name: a
 description: Retries written the old way.
 initial: work
@@ -1349,7 +1358,7 @@ states:
   done: { final: true }
   failed: { final: true }
 "),
-            ("machines/b.yml", "\
+            ("machines/b/machine.yml", "\
 name: b
 description: Attempts on a model.
 initial: pick
@@ -1366,41 +1375,41 @@ states:
         ],
         scripts: &[],
         expected: "\
-machines/a.yml: work: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` (V19)
-machines/b.yml: pick: unknown field `attempts`, expected one of `question`, `router`, `min_confidence`, `output` (V19)
+machines/a/machine.yml: work: max_attempts is not supported: write `attempts: 2` or `attempts: [<value>, …]` (V19)
+machines/b/machine.yml: pick: unknown field `attempts`, expected one of `question`, `router`, `min_confidence`, `output` (V19)
 ",
     },
     Case {
         rule: "V19",
         name: "timeout_s in a script and a reply invoke",
         files: &[
-            ("machines/a.yml", OLD_TIMEOUT_S_SCRIPT),
-            ("machines/d.yml", OLD_TIMEOUT_S_REPLY),
+            ("machines/a/machine.yml", OLD_TIMEOUT_S_SCRIPT),
+            ("machines/d/machine.yml", OLD_TIMEOUT_S_REPLY),
         ],
         scripts: &[],
         expected: "\
-machines/a.yml: work: timeout_s is not supported: write timeout: <n>s|m|h|d (V19)
-machines/d.yml: approval: timeout_s is not supported: write timeout: <n>s|m|h|d (V19)
+machines/a/machine.yml: work: timeout_s is not supported: write timeout: <n>s|m|h|d (V19)
+machines/d/machine.yml: approval: timeout_s is not supported: write timeout: <n>s|m|h|d (V19)
 ",
     },
     Case {
         rule: "V19",
         name: "params beside machine",
         files: &[
-            ("machines/m.yml", OLD_MACHINE_PARAMS),
-            ("machines/n.yml", V19_CHILD),
+            ("machines/m/machine.yml", OLD_MACHINE_PARAMS),
+            ("machines/n/machine.yml", V19_CHILD),
         ],
         scripts: &[],
-        expected: "machines/m.yml: work: { machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } } (V19)\n",
+        expected: "machines/m/machine.yml: work: { machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } } (V19)\n",
     },
     // V20
     Case {
         rule: "V20",
         name: "a child machine that invokes no machine",
         files: &[
-            ("machines/m.yml", V20_M),
+            ("machines/m/machine.yml", V20_M),
             (
-                "machines/n.yml",
+                "machines/n/machine.yml",
                 "\
 name: n
 description: Runs a script.
@@ -1421,9 +1430,9 @@ states:
         rule: "V20",
         name: "two machines that invoke each other",
         files: &[
-            ("machines/m.yml", V20_M),
+            ("machines/m/machine.yml", V20_M),
             (
-                "machines/n.yml",
+                "machines/n/machine.yml",
                 "\
 name: n
 description: Runs m as a child.
@@ -1439,8 +1448,8 @@ states:
         ],
         scripts: &[],
         expected: "\
-machines/m.yml: work: machine `m` invokes itself: m -> n -> m; a machine never invokes itself, directly or through others (V20)
-machines/n.yml: work: machine `n` invokes itself: n -> m -> n; a machine never invokes itself, directly or through others (V20)
+machines/m/machine.yml: work: machine `m` invokes itself: m -> n -> m; a machine never invokes itself, directly or through others (V20)
+machines/n/machine.yml: work: machine `n` invokes itself: n -> m -> n; a machine never invokes itself, directly or through others (V20)
 ",
     },
     // V21
@@ -1448,7 +1457,7 @@ machines/n.yml: work: machine `n` invokes itself: n -> m -> n; a machine never i
         rule: "V21",
         name: "done.state and error do not overlap",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A compound state that handles its own completion by its full name.
@@ -1473,7 +1482,7 @@ states:
         rule: "V21",
         name: "done and done.state overlap",
         files: &[(
-            "machines/m.yml",
+            "machines/m/machine.yml",
             "\
 name: m
 description: A compound state that handles its own completion by its full name.
@@ -1492,14 +1501,14 @@ states:
 ",
         )],
         scripts: &[],
-        expected: "machines/m.yml: work: events `done` and `done.state.work` overlap: `done` also matches `done.state.work`, so at most one transition per state may match an event (V21)\n",
+        expected: "machines/m/machine.yml: work: events `done` and `done.state.work` overlap: `done` also matches `done.state.work`, so at most one transition per state may match an event (V21)\n",
     },
     // M1
     Case {
         rule: "M1",
         name: "pending migrations name m with valid params; processed ones are not checked",
         files: &[
-            ("machines/m.yml", TYPED),
+            ("machines/m/machine.yml", TYPED),
             ("processed.md", "00-done.md\n"),
             (
                 "migrations/00-done.md",
@@ -1521,7 +1530,7 @@ states:
         rule: "M1",
         name: "an unknown param, an unknown machine, no machine key",
         files: &[
-            ("machines/m.yml", TYPED),
+            ("machines/m/machine.yml", TYPED),
             ("processed.md", ""),
             (
                 "migrations/01-first.md",
@@ -1544,7 +1553,7 @@ migrations/03-third.md: line 1: no `machine` key (M1)
         rule: "M1",
         name: "a param outside the enum, a number param that is not a number",
         files: &[
-            ("machines/m.yml", CHOICES),
+            ("machines/m/machine.yml", CHOICES),
             (
                 "processed.md",
                 "",
@@ -1569,7 +1578,7 @@ migrations/02-second.md: line 3: param `megapixels` must be of type `number` (M1
         rule: "M2",
         name: "a message, a BOM and CRLF, a reply; hidden files are not checked",
         files: &[
-            ("machines/m.yml", TYPED),
+            ("machines/m/machine.yml", TYPED),
             ("inbox/a.md", "---\nmachine: m\n---\n# Plain message\n"),
             (
                 "inbox/b.md",
@@ -1589,7 +1598,7 @@ migrations/02-second.md: line 3: param `megapixels` must be of type `number` (M1
         rule: "M2",
         name: "no machine, a param of the wrong type, no closing fence, a duplicate key",
         files: &[
-            ("machines/m.yml", TYPED),
+            ("machines/m/machine.yml", TYPED),
             ("inbox/a.md", "# No frontmatter, so no machine\n"),
             (
                 "inbox/b.md",
@@ -1613,7 +1622,7 @@ inbox/d.md: line 3: duplicate entry with key \"machine\" (M2)
         rule: "M2",
         name: "an enum value, a float and an int for a number",
         files: &[
-            ("machines/m.yml", CHOICES),
+            ("machines/m/machine.yml", CHOICES),
             (
                 "inbox/a.md",
                 "---\nmachine: m\nparams: { need: plan, megapixels: 1.5 }\n---\nbody\n",
@@ -1630,7 +1639,7 @@ inbox/d.md: line 3: duplicate entry with key \"machine\" (M2)
         rule: "M2",
         name: "a param outside the enum",
         files: &[
-            ("machines/m.yml", CHOICES),
+            ("machines/m/machine.yml", CHOICES),
             (
                 "inbox/a.md",
                 "---\nmachine: m\nparams: { need: review }\n---\nbody\n",
@@ -1644,9 +1653,9 @@ inbox/d.md: line 3: duplicate entry with key \"machine\" (M2)
         rule: "M3",
         name: "a cron file with a machine and params",
         files: &[
-            ("machines/m.yml", TYPED),
+            ("machines/m/machine.yml", TYPED),
             (
-                "cron/nightly.md",
+                "machines/m/cron/nightly.md",
                 "---\ncron: \"0 2 * * *\"\nmachine: m\nparams:\n  mode: nightly\n---\n# Nightly\n",
             ),
         ],
@@ -1655,45 +1664,53 @@ inbox/d.md: line 3: duplicate entry with key \"machine\" (M2)
     },
     Case {
         rule: "M3",
-        name: "no cron key, an unknown machine, no machine key",
+        name: "no cron key, an unknown machine",
         files: &[
-            ("machines/m.yml", TYPED),
-            ("cron/a.md", "---\nmachine: m\n---\n# No cron key\n"),
+            ("machines/m/machine.yml", TYPED),
+            ("machines/m/cron/a.md", "---\nmachine: m\n---\n# No cron key\n"),
             (
-                "cron/b.md",
+                "machines/m/cron/b.md",
                 "---\ncron: \"0 2 * * *\"\nmachine: nope\n---\n# Unknown machine\n",
-            ),
-            (
-                "cron/c.md",
-                "---\ncron: \"0 3 * * *\"\n---\n# No machine key\n",
             ),
         ],
         scripts: &[],
         expected: "\
-cron/a.md: line 1: no `cron:` expression (M3)
-cron/b.md: line 3: unknown machine `nope` (M3)
-cron/c.md: line 1: no `machine` key (M3)
+machines/m/cron/a.md: line 1: no `cron:` expression (M3)
+machines/m/cron/b.md: line 3: unknown machine `nope` (M3)
 ",
+    },
+    Case {
+        rule: "M3",
+        name: "no machine key runs the folder's machine",
+        files: &[
+            ("machines/m/machine.yml", BASE),
+            (
+                "machines/m/cron/c.md",
+                "---\ncron: \"0 3 * * *\"\n---\n# No machine key\n",
+            ),
+        ],
+        scripts: &[],
+        expected: PASSES,
     },
     Case {
         rule: "M3",
         name: "a param outside the enum",
         files: &[
-            ("machines/m.yml", CHOICES),
+            ("machines/m/machine.yml", CHOICES),
             (
-                "cron/a.md",
+                "machines/m/cron/a.md",
                 "---\ncron: '0 2 * * *'\nmachine: m\nparams: { need: review }\n---\n# Nightly\n",
             ),
         ],
         scripts: &[],
-        expected: "cron/a.md: line 4: param `need` is `review`, not one of the allowed values: plan, fix (M3)\n",
+        expected: "machines/m/cron/a.md: line 4: param `need` is `review`, not one of the allowed values: plan, fix (M3)\n",
     },
     // E1
     Case {
         rule: "E1",
         name: "a dotenv file with comments, quotes and export",
         files: &[
-            ("machines/m.yml", BASE),
+            ("machines/m/machine.yml", BASE),
             (
                 ".env",
                 "# GPU box\n\nexport COMFY_URL=\"http://box:8188\"\nMODEL='sdxl'\nSTEPS=30\n",
@@ -1706,7 +1723,7 @@ cron/c.md: line 1: no `machine` key (M3)
         rule: "E1",
         name: "a reserved key, a line that is not a pair, a bad key, an unclosed quote",
         files: &[
-            ("machines/m.yml", BASE),
+            ("machines/m/machine.yml", BASE),
             (
                 ".env",
                 "DECREE_X=1\nnot a pair\nTRACEPARENT=x\n1A=x\nB=\"open\n",
@@ -1773,10 +1790,10 @@ cron/c.md: line 1: no `machine` key (M3)
     // P3
     Case {
         rule: "P3",
-        name: "a changed plugin over an unedited copy is installed",
+        name: "a changed plugin over an unedited copy is no conflict",
         files: &[
             ("cache/plugins/m.md", PLUGIN_BASE),
-            ("machines/m.yml", BASE),
+            ("machines/m/machine.yml", BASE),
             ("plugins/m.md", PLUGIN_CHANGED),
         ],
         scripts: &[],
@@ -1787,11 +1804,11 @@ cron/c.md: line 1: no `machine` key (M3)
         name: "a changed plugin over an edited copy",
         files: &[
             ("cache/plugins/m.md", PLUGIN_BASE),
-            ("machines/m.yml", BASE_EDITED),
+            ("machines/m/machine.yml", BASE_EDITED),
             ("plugins/m.md", PLUGIN_CHANGED),
         ],
         scripts: &[],
-        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m.yml, scripts/m/ or cron/m/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export m` and merge with git; to take the plugin's version, run `decree plugin install m` (P3)\n",
+        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m/machine.yml, or a file in machines/m/scripts/ or machines/m/cron/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export m` and merge with git; to take the plugin's version, run `decree plugin install m` (P3)\n",
     },
 ];
 
@@ -2093,27 +2110,57 @@ fn write(path: &Path, text: &str, mode: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
 }
 
+/// Where script `path` of a case goes: `<machine>/<file>` in that machine's
+/// `machines/<machine>/scripts/`; a bare `<file>` in every machine's.
+fn script_paths(decree: &Path, machines: &[String], path: &str) -> Vec<PathBuf> {
+    match path.split_once('/') {
+        Some((m, file)) => vec![decree.join("machines").join(m).join("scripts").join(file)],
+        None => machines
+            .iter()
+            .map(|m| decree.join("machines").join(m).join("scripts").join(path))
+            .collect(),
+    }
+}
+
 /// Write `files` and the scripts the machines need into `decree`.
 fn write_project(decree: &Path, files: &[(&str, &str)], scripts: &[Script]) {
-    let mut names = Vec::new();
+    let mut machines = Vec::new();
+    let mut needed = Vec::new();
     for (path, text) in files {
         write(&decree.join(path), text, 0o644);
-        if path.starts_with("machines/") {
+        let machine = path
+            .strip_prefix("machines/")
+            .and_then(|p| p.strip_suffix("/machine.yml"));
+        if let Some(machine) = machine {
+            machines.push(machine.to_string());
+            let mut names = Vec::new();
             if let Ok(value) = serde_norway::from_str::<Value>(text) {
                 script_names(&value, &mut names);
             }
+            needed.extend(names.into_iter().map(|n| (machine.to_string(), n)));
         }
     }
     for script in scripts {
-        match script {
-            Script::Missing(_) => {}
-            Script::At(path) => write(&decree.join("scripts").join(path), STUB, 0o755),
-            Script::NotExecutable(path) => write(&decree.join("scripts").join(path), STUB, 0o644),
+        let (path, mode) = match script {
+            Script::Missing(_) => continue,
+            Script::At(path) => (path, 0o755),
+            Script::NotExecutable(path) => (path, 0o644),
+        };
+        for at in script_paths(decree, &machines, path) {
+            write(&at, STUB, mode);
         }
     }
-    for name in names {
+    for (machine, name) in needed {
         if scripts.iter().all(|s| s.name() != name) {
-            write(&decree.join("scripts").join(&name), STUB, 0o755);
+            write(
+                &decree
+                    .join("machines")
+                    .join(&machine)
+                    .join("scripts")
+                    .join(&name),
+                STUB,
+                0o755,
+            );
         }
     }
 }
@@ -2122,8 +2169,7 @@ fn write_project(decree: &Path, files: &[(&str, &str)], scripts: &[Script]) {
 fn check(files: &[(&str, &str)], scripts: &[Script]) -> (i32, String) {
     let tmp = TempDir::new().unwrap();
     write_project(&tmp.path().join(".decree"), files, scripts);
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .output()
@@ -2234,73 +2280,73 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
     (
         "V1",
         "name differs from the file stem",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "a schema sees the document, not its file name",
     ),
     (
         "V3",
         "initial names no child",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "a schema cannot require a value to be one of the document's own keys",
     ),
     (
         "V4",
         "a target that does not exist",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "a target may be any state in the machine, at any depth: a cross-reference",
     ),
     (
         "V9",
         "output names a state that runs no script",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "whether the named state has a script invoke is a cross-reference",
     ),
     (
         "V10",
         "a condition on unknown data",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "whether `data` names an entry of the machine's `data`, and its type, is a cross-reference",
     ),
     (
         "V11",
         "an unreachable state and a stall",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "reachability is a property of the whole graph",
     ),
     (
         "V12",
         "a missing script and one that is not executable",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "scripts are files on disk, outside the document",
     ),
     (
         "V13",
         "emits names an unknown machine",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "other machines are other files",
     ),
     (
         "V15",
         "nothing handles done.state",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "the event is named after the state's own key, done.state.<id>, and may be handled by an ancestor",
     ),
     (
         "V20",
         "two machines that invoke each other",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "a cycle runs through other machines, which are other files",
     ),
     (
         "V20",
         "two machines that invoke each other",
-        "machines/n.yml",
+        "machines/n/machine.yml",
         "a cycle runs through other machines, which are other files",
     ),
     (
         "V21",
         "done and done.state overlap",
-        "machines/m.yml",
+        "machines/m/machine.yml",
         "a schema cannot compare one key of a map with the others",
     ),
     (
@@ -2335,14 +2381,14 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "M3",
-        "no cron key, an unknown machine, no machine key",
-        "cron/a.md",
+        "no cron key, an unknown machine",
+        "machines/m/cron/a.md",
         "one message schema covers every message; only the directory makes a file a cron file",
     ),
     (
         "M3",
-        "no cron key, an unknown machine, no machine key",
-        "cron/b.md",
+        "no cron key, an unknown machine",
+        "machines/m/cron/b.md",
         "which machines exist depends on other files",
     ),
     (
@@ -2372,7 +2418,7 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
     (
         "M3",
         "a param outside the enum",
-        "cron/a.md",
+        "machines/m/cron/a.md",
         "valid params depend on the machine's `data`, in another file",
     ),
 ];
@@ -2389,9 +2435,27 @@ fn schema_errors(
     if file.starts_with('.') || !file.ends_with(".yml") && !file.ends_with(".md") {
         return None;
     }
+    // A cron file, `machines/<m>/cron/<file>.md`, is a message whose `machine` defaults to
+    // the folder's, as decree reads it.
+    let parts: Vec<&str> = path.split('/').collect();
+    if let ["machines", owner, "cron", _] = parts.as_slice() {
+        let text = match text.strip_prefix("---\n") {
+            Some(rest)
+                if !rest
+                    .split("\n---")
+                    .next()
+                    .unwrap_or("")
+                    .contains("machine:") =>
+            {
+                format!("---\nmachine: {owner}\n{rest}")
+            }
+            _ => text.to_string(),
+        };
+        return schema::message_errors(message, &text);
+    }
     match path.split('/').next() {
         Some("machines") => schema::machine_errors(machine, text),
-        Some("migrations" | "inbox" | "cron") => schema::message_errors(message, text),
+        Some("migrations" | "inbox") => schema::message_errors(message, text),
         Some("plugins") => schema::frontmatter_to_json(text)
             .map(|json| schema::errors(&schema::plugin_validator(), &json)),
         _ => None,
@@ -2451,7 +2515,7 @@ fn schemas_agree_with_decree_check_on_every_case() {
 fn several_invalid_machines_print_one_line_per_error() {
     let files = [
         (
-            "machines/a.yml",
+            "machines/a/machine.yml",
             "\
 name: a
 description: Base machine.
@@ -2465,7 +2529,7 @@ states:
 ",
         ),
         (
-            "machines/b.yml",
+            "machines/b/machine.yml",
             "\
 name: b
 description: Base machine.
@@ -2478,11 +2542,11 @@ states:
 ",
         ),
         (
-            "machines/c.yml",
+            "machines/c/machine.yml",
             "name: c\ndescription: d\ninitial: x\nstates:\n  x: { invok: work }\n",
         ),
         (
-            "machines/d.yml",
+            "machines/d/machine.yml",
             "\
 name: d
 description: A check that handles neither of its events.
@@ -2505,12 +2569,12 @@ states:
     assert_eq!(
         stdout,
         "\
-machines/a.yml: work: transition `done` targets unknown state `nowhere` (V4)
-machines/a.yml: done: state is unreachable from the root `initial` (V11)
-machines/b.yml: line 4: no root-level final state `failed`: every machine needs one for unhandled errors (V5)
-machines/c.yml: x: unknown field `invok`, expected one of `final`, `description`, `invoke`, `onentry`, `onexit`, `initial`, `states`, `transitions`, `emits` (V19)
-machines/d.yml: again: a `check` state must handle `true`, itself or through an ancestor (V8)
-machines/d.yml: again: a `check` state must handle `false`, itself or through an ancestor (V8)
+machines/a/machine.yml: work: transition `done` targets unknown state `nowhere` (V4)
+machines/a/machine.yml: done: state is unreachable from the root `initial` (V11)
+machines/b/machine.yml: line 4: no root-level final state `failed`: every machine needs one for unhandled errors (V5)
+machines/c/machine.yml: x: unknown field `invok`, expected one of `final`, `description`, `invoke`, `onentry`, `onexit`, `initial`, `states`, `transitions`, `emits` (V19)
+machines/d/machine.yml: again: a `check` state must handle `true`, itself or through an ancestor (V8)
+machines/d/machine.yml: again: a `check` state must handle `false`, itself or through an ancestor (V8)
 "
     );
 }
@@ -2519,8 +2583,7 @@ machines/d.yml: again: a `check` state must handle `false`, itself or through an
 fn check_as(files: &[(&str, &str)], scripts: &[Script], format: &str) -> (i32, String) {
     let tmp = TempDir::new().unwrap();
     write_project(&tmp.path().join(".decree"), files, scripts);
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .args(["check", "--format", format])
         .output()
@@ -2654,13 +2717,13 @@ fn check_sarif_has_every_rule_and_a_result_per_text_error() {
 /// SARIF result has no `ruleId`.
 #[test]
 fn an_error_without_a_rule_has_a_null_rule_and_no_rule_id() {
-    let files = [("machines/m.yml", "name: m\nstates: [\n")];
+    let files = [("machines/m/machine.yml", "name: m\nstates: [\n")];
     let (code, stdout) = check_as(&files, &[], "json");
     assert_eq!(code, 1);
     let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let error = &doc["errors"][0];
     assert_eq!(error["rule"], serde_json::Value::Null);
-    assert_eq!(error["file"], "machines/m.yml");
+    assert_eq!(error["file"], "machines/m/machine.yml");
     assert!(error["line"].is_u64(), "{error}");
     let errors = schema::errors(&schema::validator(schema::CLI_CHECK_SCHEMA), &doc);
     assert!(errors.is_empty(), "{errors:?}");

@@ -67,7 +67,7 @@ impl Project {
     }
 
     fn lease_dir(&self) -> PathBuf {
-        self.root().join(".decree/scripts/lease")
+        self.root().join(".decree/machines/lease/scripts")
     }
 
     fn decree(&self, args: &[&str]) -> Command {
@@ -726,12 +726,14 @@ fn lease_is_listed_and_adds_cleanly() {
     assert!(line.contains("One holder per resource"), "{line}");
     run(&["plugin", "add", "lease"]);
     run(&["check"]);
-    let req = tmp.path().join(".decree/scripts/lease/requirements");
+    let req = tmp
+        .path()
+        .join(".decree/machines/lease/scripts/requirements");
     for tool in ["flock", "jq"] {
         assert!(path_has(&req, &format!("command   {tool}")), "{tool}");
     }
     assert!(path_has(
-        &tmp.path().join(".decree/scripts/lease/resources"),
+        &tmp.path().join(".decree/machines/lease/scripts/resources"),
         "\ngpu 15m 5s 30m\n"
     ));
 }

@@ -3,7 +3,6 @@
 //! without a warning, warns when `graph/` is out of date, and names the rule when a machine
 //! is broken. The rule-by-rule cases are in `validation_test.rs`.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -43,23 +42,54 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
+/// Copy a project's `.decree/` as a fresh clone has it: no `cache/`, and of each
+/// `machines/<name>/` only what git tracks (`graph.md`, `order/`, `*.git.txt`), so what is
+/// installed from `plugins/` is installed again.
+fn copy_clone(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let to = dst.join(&name);
+        match name.as_str() {
+            "cache" => {}
+            "machines" if src.join("plugins").is_dir() => {
+                for m in fs::read_dir(entry.path()).unwrap() {
+                    let m = m.unwrap();
+                    let graph = m.path().join("graph.md");
+                    if graph.is_file() {
+                        fs::create_dir_all(to.join(m.file_name())).unwrap();
+                        fs::copy(&graph, to.join(m.file_name()).join("graph.md")).unwrap();
+                    }
+                    let order = m.path().join("order");
+                    if order.is_dir() {
+                        copy_dir(&order, &to.join(m.file_name()).join("order"));
+                    }
+                }
+            }
+            _ if entry.file_type().unwrap().is_dir() => copy_dir(&entry.path(), &to),
+            _ => {
+                fs::copy(entry.path(), &to).unwrap();
+            }
+        }
+    }
+}
+
 /// Run `decree check` in a copy of `project` (relative to the repository): (exit code,
 /// stdout, stderr).
 fn check_project(project: &str, edit: impl FnOnce(&Path)) -> (i32, String, String) {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&decree_dir(project), &tmp.path().join(".decree"));
+    copy_clone(&decree_dir(project), &tmp.path().join(".decree"));
     // A project with plugins (examples/project) has its machines installed first, as any
     // command does, so `edit` changes the installed copy, as a person edits it.
     if tmp.path().join(".decree/plugins").is_dir() {
-        cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
+        common::decree_at(tmp.path())
             .args(["plugin", "install"])
             .assert()
             .success();
     }
     edit(&tmp.path().join(".decree"));
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .output()
@@ -90,11 +120,10 @@ fn check_passes_on_the_reference_examples() {
     let decree = tmp.path().join(".decree");
     fs::create_dir_all(decree.join("machines")).unwrap();
     for name in ["hello", "develop", "deploy"] {
-        fs::write(
-            decree.join(format!("machines/{name}.yml")),
+        common::write_file(
+            &decree.join(format!("machines/{name}/machine.yml")),
             common::plugin_machine(&format!("{PROJECT}/.decree/plugins/{name}.md")),
-        )
-        .unwrap();
+        );
     }
     let reference = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/machines.md"),
@@ -105,7 +134,7 @@ fn check_passes_on_the_reference_examples() {
         .filter_map(|block| block.split_once("```").map(|(yaml, _)| yaml))
         .find(|yaml| yaml.contains("\nname: release\n"))
         .unwrap();
-    fs::write(decree.join("machines/release.yml"), release).unwrap();
+    common::write_file(&decree.join("machines/release/machine.yml"), release);
     let scripts = decree.join("scripts");
     fs::create_dir_all(&scripts).unwrap();
     for name in [
@@ -120,8 +149,7 @@ fn check_passes_on_the_reference_examples() {
         fs::write(&path, "#!/usr/bin/env bash\nexit 0\n").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let out = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .output()
@@ -135,52 +163,64 @@ fn check_passes_on_the_reference_examples() {
 #[test]
 fn check_warns_when_the_graph_files_are_out_of_date() {
     let (code, stdout, stderr) = check_project(PROJECT, |decree| {
-        let graph = decree.join("graph");
-        fs::remove_file(graph.join("hello.md")).unwrap();
-        fs::write(graph.join("deploy.md"), "# deploy\n").unwrap();
-        fs::write(graph.join("old.md"), "# old\n").unwrap();
+        fs::remove_file(decree.join("machines/hello/graph.md")).unwrap();
+        fs::write(decree.join("machines/deploy/graph.md"), "# deploy\n").unwrap();
+        common::write_file(&decree.join("machines/old/graph.md"), "# old\n");
     });
     assert_eq!((code, stdout.as_str()), (0, ""));
     assert_eq!(
         stderr,
-        "warning: graph/deploy.md: out of date; run `decree graph`\n\
-         warning: graph/hello.md: missing; run `decree graph`\n\
-         warning: graph/old.md: no machine draws it; run `decree graph`\n"
+        "warning: machines/deploy/graph.md: out of date; run `decree graph`\n\
+         warning: machines/hello/graph.md: missing; run `decree graph`\n\
+         warning: machines/old/graph.md: no machine draws it; run `decree graph`\n"
     );
 }
 
-/// What `.decree/store/` holds that no machine declares is a warning, not an error
-/// (docs/reference/machines.md, Store).
+/// What a machine's `state/` holds that its `state_files:` does not declare is a warning,
+/// not an error (docs/reference/machines.md, State).
 #[test]
-fn check_warns_about_undeclared_store_files_and_orphan_store_folders() {
+fn check_warns_about_undeclared_state_files() {
     let (code, stdout, stderr) = check_project(PROJECT, |decree| {
-        let hello = decree.join("machines/hello.yml");
+        let hello = decree.join("machines/hello/machine.yml");
         let text = fs::read_to_string(&hello).unwrap().replace(
             "initial: greet\n",
-            "store:\n  seen.tsv: Who was greeted. greet reads and appends.\ninitial: greet\n",
+            "state_files:\n  seen.tsv: Who was greeted. greet reads and appends.\ninitial: greet\n",
         );
         fs::write(&hello, text).unwrap();
-        let store = decree.join("store");
-        fs::create_dir_all(store.join("hello/cache")).unwrap();
-        fs::write(store.join("hello/seen.tsv"), "ada\n").unwrap();
-        fs::write(store.join("hello/other.txt"), "x\n").unwrap();
-        fs::create_dir_all(store.join("deploy")).unwrap();
-        fs::write(store.join("deploy/count"), "1\n").unwrap();
-        fs::create_dir_all(store.join("old")).unwrap();
-        fs::write(store.join("notes.txt"), "x\n").unwrap();
+        let hello = decree.join("machines/hello/state");
+        fs::create_dir_all(hello.join("cache")).unwrap();
+        fs::write(hello.join("seen.tsv"), "ada\n").unwrap();
+        fs::write(hello.join("other.txt"), "x\n").unwrap();
+        common::write_file(&decree.join("machines/deploy/state/count"), "1\n");
     });
     assert_eq!((code, stdout.as_str()), (0, ""));
-    let store: Vec<&str> = stderr.lines().filter(|l| l.contains(" store/")).collect();
+    let state: Vec<&str> = stderr.lines().filter(|l| l.contains("/state/")).collect();
     assert_eq!(
-        store,
+        state,
         [
-            "warning: store/deploy/count: is not declared in deploy's `store:`",
-            "warning: store/hello/cache: is not declared in hello's `store:`",
-            "warning: store/hello/other.txt: is not declared in hello's `store:`",
-            "warning: store/notes.txt: is not a folder: `store/` holds one folder per machine",
-            "warning: store/old: is a store folder with no machine: no `machines/old.yml`",
+            "warning: machines/deploy/state/count: is not declared in deploy's `state_files:`",
+            "warning: machines/hello/state/cache: is not declared in hello's `state_files:`",
+            "warning: machines/hello/state/other.txt: is not declared in hello's `state_files:`",
         ],
         "{stderr}"
+    );
+}
+
+/// A machine that still says `store:` names the key that replaced it (V19).
+#[test]
+fn check_names_state_files_for_an_old_store_key() {
+    let (code, stdout, _) = check_project(PROJECT, |decree| {
+        let hello = decree.join("machines/hello/machine.yml");
+        let text = fs::read_to_string(&hello).unwrap().replace(
+            "initial: greet\n",
+            "store:\n  seen.tsv: Who.\ninitial: greet\n",
+        );
+        fs::write(&hello, text).unwrap();
+    });
+    assert_eq!(code, 1);
+    assert_eq!(
+        stdout,
+        "machines/hello/machine.yml: store: is now state_files: (the folder is machines/<name>/state/, $DECREE_STATE_DIR) (V19)\n"
     );
 }
 
@@ -204,14 +244,17 @@ fn queue_migrations(decree: &Path, names: &[&str], ran: &[&str]) {
 /// `03-c.md` run and `02-b.md` pending: (exit code, stdout).
 fn check_inserted_migration(format: &str) -> (i32, String) {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&decree_dir(PROJECT), &tmp.path().join(".decree"));
+    copy_clone(&decree_dir(PROJECT), &tmp.path().join(".decree"));
     queue_migrations(
         &tmp.path().join(".decree"),
         &["01-a.md", "02-b.md", "03-c.md"],
         &["01-a.md", "03-c.md"],
     );
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
+        .args(["plugin", "install"])
+        .assert()
+        .success();
+    let out = common::decree_at(tmp.path())
         .args(["check", "--format", format])
         .output()
         .unwrap();
@@ -295,14 +338,17 @@ fn check_warns_that_100_sorts_before_99_and_says_how_to_keep_the_order() {
 #[test]
 fn a_letter_prefix_continues_after_numbered_migrations() {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&decree_dir(PROJECT), &tmp.path().join(".decree"));
+    copy_clone(&decree_dir(PROJECT), &tmp.path().join(".decree"));
     queue_migrations(
         &tmp.path().join(".decree"),
         &["99-a.md", "A01-b.md"],
         &["99-a.md"],
     );
-    let check = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
+        .args(["plugin", "install"])
+        .assert()
+        .success();
+    let check = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .output()
@@ -310,8 +356,7 @@ fn a_letter_prefix_continues_after_numbered_migrations() {
     let stderr = String::from_utf8(check.stderr).unwrap();
     assert_eq!(check.status.code(), Some(0), "{stderr}");
     assert_eq!(stderr, "", "no inserted-migration warning");
-    let dry = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    let dry = common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .args(["process", "--dry-run"])
         .output()
@@ -335,22 +380,24 @@ fn check_does_not_warn_about_a_migration_after_the_ones_that_ran() {
     assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
 }
 
-/// A new machine makes `graph/` stale until `decree graph` rewrites it.
+/// A new machine makes the graph stale until `decree graph` rewrites it.
 #[test]
 fn check_warns_until_the_graph_is_rewritten() {
     let tmp = TempDir::new().unwrap();
-    copy_dir(&decree_dir(PROJECT), &tmp.path().join(".decree"));
+    copy_clone(&decree_dir(PROJECT), &tmp.path().join(".decree"));
+    common::decree_at(tmp.path())
+        .args(["plugin", "install"])
+        .assert()
+        .success();
     fs::create_dir_all(tmp.path().join(".decree/machines")).unwrap();
-    fs::write(
-        tmp.path().join(".decree/machines/greet.yml"),
+    common::write_file(
+        &tmp.path().join(".decree/machines/greet/machine.yml"),
         "name: greet\ndescription: Run hello.\ninitial: work\nstates:\n  \
          work:\n    invoke: { machine: hello }\n    transitions: { done: done }\n  \
          done: { final: true }\n  failed: { final: true }\n",
-    )
-    .unwrap();
+    );
     let run = |cmd: &str| {
-        let out = cargo_bin_cmd!("decree")
-            .current_dir(tmp.path())
+        let out = common::decree_at(tmp.path())
             .env("NO_COLOR", "1")
             .arg(cmd)
             .output()
@@ -361,15 +408,14 @@ fn check_warns_until_the_graph_is_rewritten() {
         )
     };
     // Kept as a plugin, as git ignores machines/ in a project with plugins/.
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .args(["plugin", "export", "greet"])
         .assert()
         .success();
     let (code, stderr) = run("check");
     assert_eq!(code, 0);
     assert!(
-        stderr.contains("warning: graph/greet.md: missing"),
+        stderr.contains("warning: machines/greet/graph.md: missing"),
         "{stderr}"
     );
     assert_eq!(run("graph").0, 0);
@@ -379,14 +425,14 @@ fn check_warns_until_the_graph_is_rewritten() {
 #[test]
 fn check_warns_when_the_graph_directory_is_missing() {
     let (code, _, stderr) = check_project(PROJECT, |decree| {
-        fs::remove_dir_all(decree.join("graph")).unwrap()
+        for m in ["hello", "develop", "deploy"] {
+            fs::remove_file(decree.join("machines").join(m).join("graph.md")).unwrap();
+        }
+        fs::remove_file(decree.join("system.md")).unwrap();
     });
     assert_eq!(code, 0);
     assert_eq!(stderr.lines().count(), 4, "{stderr}");
-    assert!(
-        stderr.contains("warning: graph/system.md: missing"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("warning: system.md: missing"), "{stderr}");
 }
 
 /// The machine `name` as docs/reference/machines.md shows it, written by hand.
@@ -412,33 +458,36 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
             "feature.yml",
             "        transitions: { done: verify }\n",
             "        transitions: { done: { target: verify, cond: \"visits.implement < 2\" } }\n",
-            "machines/feature.yml: work.implement: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)",
+            "machines/feature/machine.yml: work.implement: transition `done`: cond on a transition is not supported: make the decision a state with invoke: { check: ... } (V19)",
         ),
         (
             PROJECT,
             "deploy.yml",
             "        question: Ship this build?\n",
             "",
-            "machines/deploy.yml: approval: a `reply` state needs a `question`: what is being decided (V8)",
+            "machines/deploy/machine.yml: approval: a `reply` state needs a `question`: what is being decided (V8)",
         ),
         (
             PROJECT,
             "deploy.yml",
             "reject:  { target: rejected, description: Do not ship. }",
             "reject:  rejected",
-            "machines/deploy.yml: approval: option `reject` needs a `description`: write it as `reject: { target: rejected, description: ... }` (V8)",
+            "machines/deploy/machine.yml: approval: option `reject` needs a `description`: write it as `reject: { target: rejected, description: ... }` (V8)",
         ),
         (
             FEATURE,
             "ship.yml",
             "invoke: { machine: deploy }",
             "invoke: { machine: ship }",
-            "machines/ship.yml: release: machine `ship` invokes itself: ship -> ship; a machine never invokes itself, directly or through others (V20)",
+            "machines/ship/machine.yml: release: machine `ship` invokes itself: ship -> ship; a machine never invokes itself, directly or through others (V20)",
         ),
     ];
     for (project, file, from, to, expected) in cases {
         let (code, stdout, _) = check_project(project, |decree| {
-            let path = decree.join("machines").join(file);
+            let path = decree
+                .join("machines")
+                .join(file.trim_end_matches(".yml"))
+                .join("machine.yml");
             // examples/project's machines are plugins; the edit is to the machine as written
             // by hand, as docs/reference/machines.md shows it.
             let text = if project == PROJECT {
@@ -454,21 +503,17 @@ fn check_rejects_the_old_shapes_with_the_reference_messages() {
     }
     // A router state inside a compound state, as in the V19 case of `validation_test.rs`.
     let (code, stdout, _) = check_project(PROJECT, |decree| {
-        fs::write(
-            decree.join("machines/b.yml"),
-            "name: b\ndescription: A router state inside a compound state.\ninitial: work\n\
+        common::write_file(&decree.join("machines/b/machine.yml"), "name: b\ndescription: A router state inside a compound state.\ninitial: work\n\
              states:\n  work:\n    initial: step\n    transitions: { done.state.work: done }\n    \
              states:\n      step:\n        invoke: work\n        router: llm\n        transitions:\n          \
              pass: { target: fin, description: The work is finished. }\n          \
              retry: { target: step, description: Run the work again. }\n      fin: { final: true }\n  \
-             done: { final: true }\n  failed: { final: true }\n",
-        )
-        .unwrap();
+             done: { final: true }\n  failed: { final: true }\n");
     });
     assert_eq!(code, 1);
     assert_eq!(
         stdout,
-        "machines/b.yml: work.step: router on a state is not supported: make the decision a state with invoke: { model: { question: ... } } (V19)\n"
+        "machines/b/machine.yml: work.step: router on a state is not supported: make the decision a state with invoke: { model: { question: ... } } (V19)\n"
     );
 }
 
@@ -479,22 +524,22 @@ fn check_rejects_bad_escalation_conditions_with_v10() {
         (
             "file: { type: string, default: \"\" }",
             "file: { type: int, default: 0 }",
-            "machines/file_document.yml: by_name: check: `matches` needs string data, but `file` is int (V10)",
+            "machines/file_document/machine.yml: by_name: check: `matches` needs string data, but `file` is int (V10)",
         ),
         (
             "confidence: big_model",
             "confidence: read_text",
-            "machines/file_document.yml: worth_asking: check: `confidence` names `read_text`, which is not a `model` state (V10)",
+            "machines/file_document/machine.yml: worth_asking: check: `confidence` names `read_text`, which is not a `model` state (V10)",
         ),
         (
             "at_least: 0.4",
             "at_least: 1.5",
-            "machines/file_document.yml: worth_asking: check: `confidence` compares to a number from 0 to 1, not 1.5 (V10)",
+            "machines/file_document/machine.yml: worth_asking: check: `confidence` compares to a number from 0 to 1, not 1.5 (V10)",
         ),
     ];
     for (from, to, expected) in cases {
         let (code, stdout, _) = check_project(ESCALATION, |decree| {
-            let path = decree.join("machines/file_document.yml");
+            let path = decree.join("machines/file_document/machine.yml");
             let text = fs::read_to_string(&path).unwrap();
             assert!(text.contains(from), "{from}");
             fs::write(&path, text.replacen(from, to, 1)).unwrap();
@@ -507,10 +552,6 @@ fn check_rejects_bad_escalation_conditions_with_v10() {
 #[test]
 fn check_outside_a_project_fails() {
     let tmp = TempDir::new().unwrap();
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
-        .arg("check")
-        .output()
-        .unwrap();
+    let out = common::decree_at(tmp.path()).arg("check").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
 }

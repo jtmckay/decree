@@ -1,11 +1,29 @@
-//! The `.decree/` layout (docs/reference/README.md): a project is machines, scripts and messages.
+//! The `.decree/` layout (docs/reference/README.md): a project is machines, scripts and
+//! messages, grouped by domain: each machine owns `machines/<name>/`, which holds its
+//! `machine.yml`, `graph.md`, `scripts/`, `cron/`, `state/` and `order/`.
+
+use std::path::{Path, PathBuf};
 
 pub const DECREE_DIR: &str = ".decree";
+/// `.decree/machines/`: one folder per machine, `machines/<name>/`.
+pub const MACHINES_DIR: &str = "machines";
+/// The machine's statechart, `machines/<name>/machine.yml`.
+pub const MACHINE_FILE: &str = "machine.yml";
+/// The machine's scripts, `machines/<name>/scripts/` (docs/reference/scripts.md, Resolution).
+pub const SCRIPTS_DIR: &str = "scripts";
+/// The machine's cron files, `machines/<name>/cron/*.md` (docs/reference/messages.md).
 pub const CRON_DIR: &str = "cron";
+/// What the machine keeps between runs, `machines/<name>/state/` (docs/reference/scripts.md,
+/// State): a file named `*.git.txt` there is committed, any other is not.
+pub const STATE_DIR: &str = "state";
+/// The machine's ordered work, `machines/<name>/order/*.md`, which the `order` plugin runs.
+pub const ORDER_DIR: &str = "order";
+/// The machine's diagram, `machines/<name>/graph.md` (docs/reference/graph.md).
+pub const GRAPH_FILE: &str = "graph.md";
+/// The diagram of every machine, `.decree/system.md` (docs/reference/graph.md).
+pub const SYSTEM_GRAPH_FILE: &str = "system.md";
 pub const INBOX_DIR: &str = "inbox";
 pub const RUNS_DIR: &str = "runs";
-/// What each machine keeps between runs, `store/<machine>/` (docs/reference/scripts.md, Store).
-pub const STORE_DIR: &str = "store";
 pub const MIGRATIONS_DIR: &str = "migrations";
 pub const PROCESSED_FILE: &str = "processed.md";
 pub const GITIGNORE_FILE: &str = ".gitignore";
@@ -48,7 +66,23 @@ pub const MESSAGE_FILE: &str = "message.md";
 /// Folder in the run directory that delivered replies are moved into (docs/reference/messages.md).
 pub const RECEIVED_DIR: &str = "received";
 
-/// `.decree/store/<machine>/`, the folder `DECREE_STORE` names for `machine`'s scripts.
-pub fn store_dir(project_root: &std::path::Path, machine: &str) -> std::path::PathBuf {
-    project_root.join(DECREE_DIR).join(STORE_DIR).join(machine)
+/// `machines/<machine>`, relative to `.decree/`.
+pub fn machine_dir_rel(machine: &str) -> String {
+    format!("{MACHINES_DIR}/{machine}")
+}
+
+/// `machines/<machine>/machine.yml`, relative to `.decree/`.
+pub fn machine_file_rel(machine: &str) -> String {
+    format!("{MACHINES_DIR}/{machine}/{MACHINE_FILE}")
+}
+
+/// `<decree_dir>/machines/<machine>/`.
+pub fn machine_dir(decree_dir: &Path, machine: &str) -> PathBuf {
+    decree_dir.join(MACHINES_DIR).join(machine)
+}
+
+/// `.decree/machines/<machine>/state/`, the folder `DECREE_STATE_DIR` names for `machine`'s
+/// scripts.
+pub fn state_dir(project_root: &Path, machine: &str) -> PathBuf {
+    machine_dir(&project_root.join(DECREE_DIR), machine).join(STATE_DIR)
 }

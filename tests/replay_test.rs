@@ -12,7 +12,6 @@
 //! must equal the recorded ones but for their times; and every recorded `reply.json`
 //! validates against its request's `reply_schema`.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -144,18 +143,15 @@ impl Replay {
         let tmp = TempDir::new().unwrap();
         let decree = tmp.path().join(".decree");
         let recorded = repo().join(project).join(".decree");
-        // The plugins (or machines and scripts), graphs and cron files; no runs, queue or
-        // migrations, and nothing installed or cached locally.
+        // The plugins (or the machine folders); no runs, queue or migrations, and nothing
+        // installed or cached locally.
         let has_plugins = recorded.join("plugins").is_dir();
         copy_dir(&recorded, &decree, &|p| {
             p.parent() == Some(recorded.as_path())
                 && (["runs", "inbox", "migrations", "processed.md", "cache"]
                     .iter()
                     .any(|n| p.file_name().unwrap() == *n)
-                    || has_plugins
-                        && ["machines", "scripts"]
-                            .iter()
-                            .any(|n| p.file_name().unwrap() == *n))
+                    || has_plugins && p.file_name().unwrap() == "machines")
         });
         for dir in ["runs", "inbox", "migrations"] {
             fs::create_dir_all(decree.join(dir)).unwrap();
@@ -172,8 +168,10 @@ impl Replay {
                 .unwrap();
             assert!(out.status.success(), "{out:?}");
         }
-        for script in files(&decree.join("scripts")) {
-            write_script(&script, STUB);
+        for script in files(&decree.join("machines")) {
+            if script.parent().is_some_and(|d| d.ends_with("scripts")) {
+                write_script(&script, STUB);
+            }
         }
 
         let id = match run.split_once('Z') {
@@ -282,16 +280,13 @@ impl Replay {
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path())
-            .env("NO_COLOR", "1")
-            .args(args);
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1").args(args);
         cmd
     }
 
     fn spawn_process(&self) -> Child {
-        std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-            .current_dir(self.tmp.path())
+        common::std_decree_at(self.tmp.path())
             .env("NO_COLOR", "1")
             .arg("process")
             .stdout(Stdio::null())

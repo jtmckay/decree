@@ -49,14 +49,16 @@ fn machines_project(files: &[&str]) -> TempDir {
             // A plugin file: the machine it installs.
             Some(plugin) => {
                 let name = Path::new(plugin).file_name().unwrap().to_str().unwrap();
-                fs::write(
-                    dir.join(format!("{name}.yml")),
+                common::write_file(
+                    &dir.join(name).join("machine.yml"),
                     common::plugin_machine(file),
-                )
-                .unwrap();
+                );
             }
+            // `machines/<name>/machine.yml`: the machine's folder names it.
             None => {
-                fs::copy(&from, dir.join(from.file_name().unwrap())).unwrap();
+                let name = from.parent().unwrap().file_name().unwrap();
+                fs::create_dir_all(dir.join(name)).unwrap();
+                fs::copy(&from, dir.join(name).join("machine.yml")).unwrap();
             }
         }
     }
@@ -78,18 +80,31 @@ fn graph(tmp: &TempDir) -> (i32, String, String) {
     )
 }
 
-/// The file `decree graph` wrote, `.decree/graph/<name>`.
-fn written(tmp: &TempDir, name: &str) -> String {
-    fs::read_to_string(tmp.path().join(".decree/graph").join(name)).unwrap()
+/// The file `decree graph` wrote, `.decree/<rel>`: `machines/<name>/graph.md` or `system.md`.
+fn written(tmp: &TempDir, rel: &str) -> String {
+    fs::read_to_string(tmp.path().join(".decree").join(rel)).unwrap()
 }
 
-/// The `.md` filenames in `dir`, sorted.
-fn md_names(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = fs::read_dir(dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .filter(|n| n.ends_with(".md"))
-        .collect();
+/// Every graph file in `decree` (a `.decree/`), relative to it, sorted: each
+/// `machines/<name>/graph.md`, and `system.md`.
+fn graph_files(decree: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(entries) = fs::read_dir(decree.join("machines")) {
+        for e in entries {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            if decree
+                .join("machines")
+                .join(&name)
+                .join("graph.md")
+                .is_file()
+            {
+                names.push(format!("machines/{name}/graph.md"));
+            }
+        }
+    }
+    if decree.join("system.md").is_file() {
+        names.push("system.md".to_string());
+    }
     names.sort();
     names
 }
@@ -98,22 +113,22 @@ fn md_names(dir: &Path) -> Vec<String> {
 fn graph_writes_one_file_per_machine_and_system_md() {
     // `feature` has a compound state, a check, a model and a person.
     let tmp = machines_project(&[
-        "tests/fixtures/feature/.decree/machines/feature.yml",
+        "tests/fixtures/feature/.decree/machines/feature/machine.yml",
         "examples/project/.decree/plugins/hello.md",
-        "tests/fixtures/feature/.decree/machines/router.yml",
+        "tests/fixtures/feature/.decree/machines/router/machine.yml",
     ]);
     let (code, stdout, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
         stdout,
-        ".decree/graph/feature.md\n.decree/graph/hello.md\n.decree/graph/router.md\n.decree/graph/system.md\n"
+        ".decree/machines/feature/graph.md\n.decree/machines/hello/graph.md\n.decree/machines/router/graph.md\n.decree/system.md\n"
     );
     assert_eq!(
-        written(&tmp, "feature.md"),
-        read("tests/fixtures/feature/.decree/graph/feature.md")
+        written(&tmp, "machines/feature/graph.md"),
+        read("tests/fixtures/feature/.decree/machines/feature/graph.md")
     );
-    assert!(written(&tmp, "hello.md")
-        .contains("Machine: [machines/hello.yml](../machines/hello.yml)\n"));
+    assert!(written(&tmp, "machines/hello/graph.md")
+        .contains("Machine: [machines/hello/machine.yml](machine.yml)\n"));
 }
 
 #[test]
@@ -147,12 +162,19 @@ fn graph_rewrites_every_example_graph_unchanged() {
     assert!(projects.len() >= 2, "{projects:?}");
     for project_dir in projects {
         let tmp = project(&project_dir.join(".decree"));
+        // A project of plugins draws what `decree plugin install` installs.
+        if tmp.path().join(".decree/plugins").is_dir() {
+            common::decree_at(tmp.path())
+                .args(["plugin", "install"])
+                .assert()
+                .success();
+        }
         let (code, _, stderr) = graph(&tmp);
         assert_eq!(code, 0, "{}: {stderr}", project_dir.display());
-        let committed = project_dir.join(".decree/graph");
-        let names = md_names(&committed);
+        let committed = project_dir.join(".decree");
+        let names = graph_files(&committed);
         assert!(names.contains(&"system.md".to_string()), "{names:?}");
-        assert_eq!(md_names(&tmp.path().join(".decree/graph")), names);
+        assert_eq!(graph_files(&tmp.path().join(".decree")), names);
         for name in &names {
             assert_eq!(
                 written(&tmp, name),
@@ -165,34 +187,33 @@ fn graph_rewrites_every_example_graph_unchanged() {
 }
 
 #[test]
-fn graph_removes_stale_md_files_only() {
-    let tmp = machines_project(&["examples/project/.decree/plugins/hello.md"]);
-    let dir = tmp.path().join(".decree/graph");
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("gone.md"), "# gone\n").unwrap();
-    fs::write(dir.join("notes.txt"), "kept\n").unwrap();
-    let (code, _, stderr) = graph(&tmp);
-    assert_eq!(code, 0, "{stderr}");
-    assert_eq!(md_names(&dir), ["hello.md", "system.md"]);
-    assert!(dir.join("notes.txt").exists());
-}
-
-#[test]
-fn graph_cron_without_machine_is_an_error() {
+fn graph_removes_stale_graph_files_only() {
     let tmp = machines_project(&["examples/project/.decree/plugins/hello.md"]);
     let decree = tmp.path().join(".decree");
-    fs::create_dir_all(decree.join("cron")).unwrap();
-    fs::write(
-        decree.join("cron/Hourly.md"),
-        "---\ncron: \"0 * * * *\"\n---\nTick.\n",
-    )
-    .unwrap();
+    common::write_file(&decree.join("machines/gone/graph.md"), "# gone\n");
+    fs::write(decree.join("machines/hello/notes.md"), "kept\n").unwrap();
     let (code, _, stderr) = graph(&tmp);
-    assert_eq!(code, 1, "{stderr}");
-    assert!(
-        stderr.contains("cron/Hourly.md: no `machine` key (run `decree check`)"),
-        "{stderr}"
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        graph_files(&decree),
+        ["machines/hello/graph.md", "system.md"]
     );
+    assert!(decree.join("machines/hello/notes.md").exists());
+}
+
+/// A cron file that names no machine runs the machine whose folder holds it.
+#[test]
+fn graph_cron_without_machine_runs_its_folders_machine() {
+    let tmp = machines_project(&["examples/project/.decree/plugins/hello.md"]);
+    let decree = tmp.path().join(".decree");
+    common::write_file(
+        &decree.join("machines/hello/cron/Hourly.md"),
+        "---\ncron: \"0 * * * *\"\n---\nTick.\n",
+    );
+    let (code, _, stderr) = graph(&tmp);
+    assert_eq!(code, 0, "{stderr}");
+    let system = written(&tmp, "system.md");
+    assert!(system.contains("|cron| hello"), "{system}");
 }
 
 #[test]

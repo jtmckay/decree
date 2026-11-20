@@ -6,7 +6,6 @@
 //! interrupted run written on recovery and the linked run span after `decree process --retry`. Each
 //! test builds its own `.decree/` in a temp directory.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -119,7 +118,7 @@ impl Project {
         }
         fs::write(decree.join("processed.md"), "").unwrap();
         for (name, text) in [("flow", FLOW), ("leaf", LEAF), ("router", ROUTER)] {
-            fs::write(decree.join(format!("machines/{name}.yml")), text).unwrap();
+            common::write_file(&decree.join(format!("machines/{name}/machine.yml")), text);
         }
         write_script(&decree.join("scripts/work"), WORK);
         write_script(&decree.join("scripts/reply"), REPLY);
@@ -147,9 +146,8 @@ impl Project {
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.root())
-            .env("NO_COLOR", "1")
+        let mut cmd = common::decree_at(self.root());
+        cmd.env("NO_COLOR", "1")
             .env_remove("TRACEPARENT")
             .env_remove("TRACESTATE")
             .args(args);
@@ -390,8 +388,7 @@ fn a_failed_script_and_a_failed_run_have_status_error() {
 /// return decree and the script's pid.
 fn working(p: &Project) -> (std::process::Child, i32) {
     fs::write(p.root().join("wait.flag"), "").unwrap();
-    let decree = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-        .current_dir(p.root())
+    let decree = common::std_decree_at(p.root())
         .env("NO_COLOR", "1")
         .arg("process")
         .stdout(Stdio::null())

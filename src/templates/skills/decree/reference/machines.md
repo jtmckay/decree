@@ -8,7 +8,7 @@ you know SCXML, you know how a machine behaves.
 The first line links the machine to its graph:
 
 ```yaml
-# Graph: ../graph/<name>.md
+# Graph: graph.md
 ```
 
 **Before writing a machine, run `decree schema` and read `.decree/schema/v1/machine.schema.json`**
@@ -24,7 +24,7 @@ schema by path; machines carry no schema line.
 | Root | `name` | Equals the file stem; `^[a-z][a-z0-9_]*$`. |
 | Root | `description` | Required. Shown in prompts, `decree status` and graphs. |
 | Root | `data` | `name: { type: string\|int\|number\|bool, default: ..., enum?: [...] }`. `number` is an int or a float; `enum` (string only) lists the allowed values, which the default and `params` must be one of (V14). Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
-| Root | `store` | `name: description`: what the machine keeps between runs in `.decree/store/<machine>/` (`$DECREE_STORE`). A name is a file or folder directly in that folder, `^[A-Za-z0-9][A-Za-z0-9._-]*$`; a description says what it is and which states read or write it (V14). `decree check` warns about undeclared files there. |
+| Root | `state_files` | `name: description`: what the machine keeps between runs in `.decree/machines/<machine>/state/` (`$DECREE_STATE_DIR`). A name is a file or folder directly in that folder, `^[A-Za-z0-9][A-Za-z0-9._-]*$`; a description says what it is and which states read or write it (V14). `decree check` warns about undeclared files there. |
 | Root | `env_file` | `.env.<name>`: a gitignored dotenv file in `.decree/` whose variables this machine's scripts get, over `.decree/.env` and the process environment; no other machine's scripts see them (V14). |
 | Root | `onentry`, `onexit` | Scripts run once when the run starts, and once after a root final state is entered. |
 | Root | `initial`, `states` | Required. `initial` is a direct child. |
@@ -95,7 +95,7 @@ Its script reads `$DECREE_REQUEST`, asks a model, and writes
 `{"event": "...", "reason": "...", "confidence": 0.86}` to `$DECREE_REPLY`
 (`.decree/schema/v1/reply.schema.json`). decree checks the
 event is an option and applies `min_confidence`. To use another model, write another router
-machine and point `router:` at it, or replace `machines/router.yml`; recalibrate `min_confidence` when you do.
+machine and point `router:` at it, or replace `machines/router/machine.yml`; recalibrate `min_confidence` when you do.
 
 Routers are **typed** or **untyped**. A typed router cannot answer outside the options: a
 classifier such as GLiNER2.5-Decide picks one of the labels it is given, and a constrained
@@ -192,7 +192,7 @@ the new shape for an old one (`choose`, `input`, a bare `matches`, the old retry
 ## Example: everything at once
 
 ```yaml
-# Graph: ../graph/feature.md
+# Graph: graph.md
 name: feature
 description: Implement one feature spec with an AI agent, verify it, and commit.
 data:
@@ -252,7 +252,7 @@ states:
 ## Example: composing machines
 
 ```yaml
-# Graph: ../graph/ship.md
+# Graph: graph.md
 name: ship
 description: Implement a feature, then deploy it.
 initial: build
@@ -279,6 +279,6 @@ person's time is worth it, then a `reply` from a person. Each threshold is a num
 name resolves, decision states cover their events, options have descriptions, `emits` and
 `router` name real machines, no invoke cycles, nothing outside the SCXML subset) and M1–M3 (every
 pending migration, inbox message and cron file parses and names a machine with valid `params`)
-and E1 (`.decree/.env` and each `env_file` are valid dotenv files without reserved keys). Errors look like `machines/feature.yml: work.verify: <message>`. It also warns when
-`.decree/graph/` is out of date, or `.decree/schema/` when it exists: run `decree graph` or
+and E1 (`.decree/.env` and each `env_file` are valid dotenv files without reserved keys). Errors look like `machines/feature/machine.yml: work.verify: <message>`. It also warns when
+a machine's `graph.md` or `.decree/system.md` is out of date, or `.decree/schema/` when it exists: run `decree graph` or
 `decree schema`.

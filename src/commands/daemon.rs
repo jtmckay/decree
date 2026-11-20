@@ -217,7 +217,7 @@ mod tests {
     fn setup_decree_dir(dir: &TempDir) {
         let decree = dir.path().join(".decree");
         std::fs::create_dir_all(decree.join("inbox")).unwrap();
-        std::fs::create_dir_all(decree.join("cron")).unwrap();
+        std::fs::create_dir_all(decree.join("machines/develop/cron")).unwrap();
     }
 
     #[test]
@@ -227,7 +227,8 @@ mod tests {
 
         // Write a cron file that fires every minute
         std::fs::write(
-            dir.path().join(".decree/cron/every-minute.md"),
+            dir.path()
+                .join(".decree/machines/develop/cron/every-minute.md"),
             "---\ncron: \"* * * * *\"\nmachine: develop\n---\nMinutely task.\n",
         )
         .unwrap();
@@ -264,7 +265,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
         std::fs::write(
-            dir.path().join(".decree/cron/every-minute.md"),
+            dir.path()
+                .join(".decree/machines/develop/cron/every-minute.md"),
             "---\r\ncron: \"* * * * *\"\r\nmachine: develop\r\n---\r\nMinutely task.\r\n",
         )
         .unwrap();

@@ -10,7 +10,6 @@
 //! what `decree check` rejects is tested case by case in `validation_test.rs`; every line
 //! the property test in `interpreter_props.rs` writes is validated there.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -241,8 +240,7 @@ fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
     for ai in ["claude", "copilot", "opencode"] {
         let tmp = TempDir::new().unwrap();
         let decree = |args: &[&str]| {
-            cargo_bin_cmd!("decree")
-                .current_dir(tmp.path())
+            common::decree_at(tmp.path())
                 .env("NO_COLOR", "1")
                 .args(args)
                 .assert()
@@ -251,8 +249,16 @@ fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
         decree(&["init", "--ai", ai]);
         assert!(!tmp.path().join(".decree/machines").exists(), "{ai}");
         decree(&["plugin", "add", "develop", "qa", "router"]);
-        let paths = files_in(&tmp.path().join(".decree/machines"), ".yml");
-        assert_eq!(paths.len(), 4, "{ai}");
+        let paths: Vec<PathBuf> = ["develop", "infra", "qa", "router"]
+            .iter()
+            .map(|m| {
+                tmp.path()
+                    .join(".decree/machines")
+                    .join(m)
+                    .join("machine.yml")
+            })
+            .collect();
+        assert!(paths.iter().all(|p| p.is_file()), "{ai}");
         for path in &paths {
             let text = fs::read_to_string(path).unwrap();
             assert!(!text.contains("$schema="), "{ai}: {}", path.display());
@@ -268,8 +274,7 @@ fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
 #[test]
 fn init_writes_no_schema_folder_and_check_does_not_ask_for_one() {
     let tmp = TempDir::new().unwrap();
-    cargo_bin_cmd!("decree")
-        .current_dir(tmp.path())
+    common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .args(["init", "--ai", "claude"])
         .assert()
@@ -295,8 +300,31 @@ fn every_message_in_examples_validates() {
     let mut paths = Vec::new();
     for project in example_projects() {
         let decree = project.join(".decree");
-        for dir in ["migrations", "inbox", "cron"] {
+        for dir in ["migrations", "inbox"] {
             paths.extend(files_in(&decree.join(dir), ".md"));
+        }
+        // Cron files are a plugin's, `cron:` in its file.
+        for plugin in files_in(&decree.join("plugins"), ".md") {
+            let text = fs::read_to_string(&plugin).unwrap();
+            let fm = text
+                .strip_prefix("---\n")
+                .and_then(|t| t.split_once("\n---\n"));
+            let Some((fm, _)) = fm else { continue };
+            let value: serde_norway::Value = serde_norway::from_str(fm).unwrap();
+            if let Some(cron) = value.get("cron").and_then(|c| c.as_mapping()) {
+                for (file, text) in cron {
+                    let path = std::env::temp_dir().join(format!(
+                        "decree-schema-cron-{}-{}",
+                        std::process::id(),
+                        file.as_str().unwrap()
+                    ));
+                    let dir = path.with_extension("").join("cron");
+                    fs::create_dir_all(&dir).unwrap();
+                    let at = dir.join(file.as_str().unwrap());
+                    fs::write(&at, text.as_str().unwrap()).unwrap();
+                    paths.push(at);
+                }
+            }
         }
         let Ok(runs) = fs::read_dir(decree.join("runs")) else {
             continue;
@@ -332,7 +360,7 @@ description: Every invoke kind.
 data:
   max_rounds: { type: int, default: 2 }
   file: { type: string, default: a.pdf }
-store:
+state_files:
   seen.tsv: Links already sent. long reads and appends.
 initial: short
 states:
@@ -508,11 +536,11 @@ fn mistakes_are_rejected_where_they_are() {
             "{ type: int, default: two }",
             "/data/max_rounds/default",
         ),
-        ("  seen.tsv: Links", "  a/seen.tsv: Links", "/store"),
+        ("  seen.tsv: Links", "  a/seen.tsv: Links", "/state_files"),
         (
             "seen.tsv: Links already sent. long reads and appends.",
             "seen.tsv: ''",
-            "/store/seen.tsv",
+            "/state_files/seen.tsv",
         ),
     ] {
         assert!(EVERY_INVOKE.contains(from), "{from}");
@@ -532,11 +560,10 @@ fn project() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let decree = tmp.path().join(".decree");
     fs::create_dir_all(decree.join("machines")).unwrap();
-    fs::write(
-        decree.join("machines/hello.yml"),
+    common::write_file(
+        &decree.join("machines/hello/machine.yml"),
         common::plugin_machine("examples/project/.decree/plugins/hello.md"),
-    )
-    .unwrap();
+    );
     common_script(&decree.join("scripts/greet"));
     tmp
 }
@@ -550,8 +577,7 @@ fn common_script(path: &Path) {
 
 /// `decree <cmd>` in `dir`: (exit code, stdout, stderr).
 fn decree(dir: &Path, cmd: &str) -> (i32, String, String) {
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(dir)
+    let out = common::decree_at(dir)
         .env("NO_COLOR", "1")
         .arg(cmd)
         .output()
@@ -645,7 +671,7 @@ fn a_machine_with_the_schema_line_still_checks() {
         .expect("docs/editors.md gives the per-file line");
     let target = line.split_once("$schema=").unwrap().1;
     let tmp = project();
-    let path = tmp.path().join(".decree/machines/hello.yml");
+    let path = tmp.path().join(".decree/machines/hello/machine.yml");
     let text = fs::read_to_string(&path).unwrap();
     fs::write(&path, format!("{line}\n{text}")).unwrap();
     decree(tmp.path(), "graph");
@@ -864,8 +890,8 @@ fn a_model_run_writes_files_that_validate() {
     for dir in ["machines", "inbox"] {
         fs::create_dir_all(decree_dir.join(dir)).unwrap();
     }
-    fs::write(
-        decree_dir.join("machines/ask.yml"),
+    common::write_file(
+        &decree_dir.join("machines/ask/machine.yml"),
         "name: ask\n\
          description: Ask the router which way to go.\n\
          initial: read\n\
@@ -882,10 +908,9 @@ fn a_model_run_writes_files_that_validate() {
          \x20     unsure: failed\n\
          \x20 done: { final: true }\n\
          \x20 failed: { final: true }\n",
-    )
-    .unwrap();
-    fs::write(
-        decree_dir.join("machines/router.yml"),
+    );
+    common::write_file(
+        &decree_dir.join("machines/router/machine.yml"),
         "name: router\n\
          description: Always go left.\n\
          initial: answer\n\
@@ -895,8 +920,7 @@ fn a_model_run_writes_files_that_validate() {
          \x20   transitions: { done: done }\n\
          \x20 done: { final: true }\n\
          \x20 failed: { final: true }\n",
-    )
-    .unwrap();
+    );
     script(&decree_dir.join("scripts/read"), "echo 'the road forks'\n");
     script(
         &decree_dir.join("scripts/answer"),

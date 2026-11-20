@@ -15,7 +15,7 @@ use crate::error::DecreeError;
 
 pub(crate) mod validate;
 /// Directory holding machine files, relative to `.decree/`.
-pub const MACHINES_DIR: &str = "machines";
+pub use crate::layout::MACHINES_DIR;
 
 /// Root-level final state an unhandled `error` goes to (V5).
 pub const FAILED: &str = "failed";
@@ -32,7 +32,7 @@ struct Machine {
     #[serde(default)]
     pub data: BTreeMap<String, DataSpec>,
     #[serde(default)]
-    pub store: BTreeMap<String, String>,
+    pub state_files: BTreeMap<String, String>,
     pub env_file: Option<String>,
     #[serde(default)]
     pub onentry: Vec<String>,
@@ -430,7 +430,7 @@ pub struct LoadedMachine {
     pub data: BTreeMap<String, DataSpec>,
     /// What the machine keeps in `.decree/store/<machine>/` between runs: name to description
     /// (docs/reference/machines.md, Store).
-    pub store: BTreeMap<String, String>,
+    pub state_files: BTreeMap<String, String>,
     /// A dotenv file in `.decree/` whose variables this machine's scripts get, over decree's
     /// own environment (docs/reference/scripts.md, Environment). V14 checks the name.
     pub env_file: Option<String>,
@@ -489,7 +489,7 @@ fn flatten(id: &str, machine: Machine) -> LoadedMachine {
     LoadedMachine {
         id: id.to_string(),
         data: machine.data,
-        store: machine.store,
+        state_files: machine.state_files,
         env_file: machine.env_file,
         nodes,
     }
@@ -522,8 +522,8 @@ fn push_children(nodes: &mut Vec<Node>, parent: usize, states: BTreeMap<String, 
     }
 }
 
-/// Load every machine in `<decree_dir>/machines/*.yml` (docs/reference/README.md). A missing `machines/`
-/// directory holds no machines.
+/// Load every machine, `<decree_dir>/machines/<id>/machine.yml` (docs/reference/README.md). A
+/// missing `machines/` directory holds no machines.
 pub fn load_machines(decree_dir: &Path) -> Result<BTreeMap<String, LoadedMachine>, DecreeError> {
     let mut machines = BTreeMap::new();
     for (id, path) in machine_paths(decree_dir)? {
@@ -533,7 +533,8 @@ pub fn load_machines(decree_dir: &Path) -> Result<BTreeMap<String, LoadedMachine
     Ok(machines)
 }
 
-/// The file each machine id loads from: every `*.yml` file in `machines/`, by stem.
+/// The file each machine id loads from: `machines/<id>/machine.yml`, for every folder in
+/// `machines/` that has one. A folder without it (a library of scripts) is no machine.
 pub fn machine_paths(decree_dir: &Path) -> Result<BTreeMap<String, PathBuf>, DecreeError> {
     let entries = match std::fs::read_dir(decree_dir.join(MACHINES_DIR)) {
         Ok(entries) => entries,
@@ -542,10 +543,11 @@ pub fn machine_paths(decree_dir: &Path) -> Result<BTreeMap<String, PathBuf>, Dec
     };
     let mut paths = BTreeMap::new();
     for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_some_and(|ext| ext == "yml") && path.is_file() {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                paths.insert(stem.to_string(), path);
+        let dir = entry?.path();
+        let file = dir.join(crate::layout::MACHINE_FILE);
+        if dir.is_dir() && file.is_file() {
+            if let Some(id) = dir.file_name().and_then(|s| s.to_str()) {
+                paths.insert(id.to_string(), file);
             }
         }
     }
@@ -555,7 +557,7 @@ pub fn machine_paths(decree_dir: &Path) -> Result<BTreeMap<String, PathBuf>, Dec
 /// Parse and flatten machine `id`, whose file contents are `text`.
 pub fn load_machine_text(id: &str, text: &str) -> Result<LoadedMachine, DecreeError> {
     let machine = parse_machine(text)
-        .map_err(|e| DecreeError::Other(format!("{MACHINES_DIR}/{id}.yml: {e}")))?;
+        .map_err(|e| DecreeError::Other(format!("{}: {e}", crate::layout::machine_file_rel(id))))?;
     Ok(flatten(id, machine))
 }
 
@@ -606,6 +608,8 @@ const UNSUPPORTED_STATE_KEYS: [(&str, &str); 14] = [
 /// a bare `matches`, `timeout_s` and `person` (with its `ask`). Nothing old is read: each fails with the shape to write instead.
 const CHOOSE: &str = "choose is not supported: write invoke: { model: { question: ... } } for a model, or invoke: { reply: { question: ..., notify: <script> } } to wait for a reply";
 const INPUT: &str = "input is not supported: name the state whose output is read with output, in the condition ({ output: <state>, matches: ... }) or in the model ({ model: { ..., output: <state> } })";
+const STORE_KEY: &str =
+    "store: is now state_files: (the folder is machines/<name>/state/, $DECREE_STATE_DIR)";
 const MACHINE_PARAMS: &str = "{ machine: <name>, params: ... } is not supported: write invoke: { machine: { name: <name>, params: ... } }";
 const BARE_MATCHES: &str =
     "a bare matches is not supported: name the state it reads, { output: <state>, matches: ... }";
@@ -708,6 +712,12 @@ fn parse_machine_located(text: &str) -> Result<Machine, ParseError> {
         return Err(ParseError {
             at: Some(path),
             message,
+        });
+    }
+    if value.get("store").is_some() {
+        return Err(ParseError {
+            at: None,
+            message: format!("{STORE_KEY} (V19)"),
         });
     }
     let err = match serde_norway::from_str::<Machine>(text) {
@@ -881,12 +891,12 @@ pub(crate) fn is_ident(s: &str) -> bool {
 /// which `.decree/.gitignore` keeps out of git, other than the base `.env` and the committed
 /// template.
 pub(crate) fn is_env_file_name(s: &str) -> bool {
-    s != crate::layout::ENV_EXAMPLE_FILE && s.strip_prefix(".env.").is_some_and(is_store_name)
+    s != crate::layout::ENV_EXAMPLE_FILE && s.strip_prefix(".env.").is_some_and(is_state_name)
 }
 
 /// `^[A-Za-z0-9][A-Za-z0-9._-]*$`, the pattern for a `store` name: a file or folder directly
 /// in the store folder (docs/reference/machines.md, Store).
-pub(crate) fn is_store_name(s: &str) -> bool {
+pub(crate) fn is_state_name(s: &str) -> bool {
     let mut bytes = s.bytes();
     bytes.next().is_some_and(|b| b.is_ascii_alphanumeric())
         && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))

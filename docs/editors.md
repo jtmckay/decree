@@ -42,7 +42,7 @@ Offline, run `decree schema` and map the local copy instead: `"./.decree/schema/
 
 ```yaml
 # yaml-language-server: $schema=../schema/v1/machine.schema.json
-# Graph: ../graph/hello.md
+# Graph: graph.md
 ```
 
 The path is relative to the machine file. Both ways work, and they can be mixed: a machine with the line is checked against the local copy, one without it by the setting or SchemaStore.

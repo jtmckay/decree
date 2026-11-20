@@ -96,7 +96,7 @@ fn add_develop_adds_what_it_needs_and_names_it() {
         );
         assert!(p
             .path()
-            .join(format!(".decree/machines/{name}.yml"))
+            .join(format!(".decree/machines/{name}/machine.yml"))
             .is_file());
     }
     let (code, stdout, stderr) = decree(p.path(), &["check"]);
@@ -115,7 +115,7 @@ fn add_develop_adds_what_it_needs_and_names_it() {
 fn an_edited_plugin_is_marked_kept_and_replaced_only_with_force() {
     let p = init();
     ok(p.path(), &["plugin", "add", "develop"]);
-    let gate = p.path().join(".decree/scripts/develop/gate.sh");
+    let gate = p.path().join(".decree/machines/develop/scripts/gate.sh");
     let text = fs::read_to_string(&gate).unwrap();
     let edited = text.replacen(
         "  echo \"gate: no checks configured;",
@@ -169,7 +169,7 @@ fn an_edited_plugin_is_marked_kept_and_replaced_only_with_force() {
     let out = ok(p.path(), &["plugin", "add", "--force", "develop"]);
     assert!(out.contains("replaced .decree/plugins/develop.md"), "{out}");
     assert!(
-        out.contains("  changed .decree/scripts/develop/gate.sh\n"),
+        out.contains("  changed .decree/machines/develop/scripts/gate.sh\n"),
         "{out}"
     );
     assert!(out.contains("    -   cargo test --workspace\n"), "{out}");
@@ -225,7 +225,7 @@ fn export_with_no_name_takes_only_edited_plugins() {
     ok(p.path(), &["plugin", "add", "develop"]);
     let out = ok(p.path(), &["plugin", "export"]);
     assert!(out.contains("nothing to export"), "{out}");
-    let req = p.path().join(".decree/scripts/infra/requirements");
+    let req = p.path().join(".decree/machines/infra/scripts/requirements");
     let mut text = fs::read_to_string(&req).unwrap();
     text.push_str("command   jq\n");
     fs::write(&req, text).unwrap();

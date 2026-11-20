@@ -7,14 +7,11 @@ use std::fmt::Write;
 
 use crate::machine::{Attempts, Invoke, LoadedMachine, FAILED, MACHINES_DIR, ROUTER_MACHINE};
 
-/// The file `decree graph` writes for the whole system, beside one per machine.
-pub const SYSTEM_FILE: &str = "system.md";
-
-/// The Markdown document for one machine, `graph/<machine>.md`: heading, description, a
-/// link back to its YAML, and a `stateDiagram-v2`.
+/// The Markdown document for one machine, `machines/<machine>/graph.md`: heading,
+/// description, a link to its `machine.yml` beside it, and a `stateDiagram-v2`.
 pub fn machine_document(m: &LoadedMachine) -> Result<String, String> {
     let link = format!(
-        "Machine: [{MACHINES_DIR}/{id}.yml](../{MACHINES_DIR}/{id}.yml)\n\n",
+        "Machine: [{MACHINES_DIR}/{id}/machine.yml](machine.yml)\n\n",
         id = m.id
     );
     Ok(document(&m.id, m.description(), &link, &state_diagram(m)?))
@@ -29,7 +26,12 @@ pub fn system_document(
 ) -> String {
     let list: String = machines
         .iter()
-        .map(|(id, m)| format!("- [{id}]({id}.md): {}\n", m.description()))
+        .map(|(id, m)| {
+            format!(
+                "- [{id}]({MACHINES_DIR}/{id}/graph.md): {}\n",
+                m.description()
+            )
+        })
         .collect();
     document(
         "All machines",
@@ -58,7 +60,7 @@ fn state_diagram(m: &LoadedMachine) -> Result<String, String> {
         for edge in &node.transitions {
             let target = m.find(&edge.target).ok_or_else(|| {
                 format!(
-                    "{MACHINES_DIR}/{}.yml: {}: transition `{}` targets unknown state `{}` (run `decree check`)",
+                    "{MACHINES_DIR}/{}/machine.yml: {}: transition `{}` targets unknown state `{}` (run `decree check`)",
                     m.id,
                     m.state_path(i),
                     edge.event,
@@ -121,13 +123,13 @@ fn invoke_suffix(invoke: &Invoke, is_error: bool) -> String {
 /// decision, child machine and scripts, in arena order.
 fn notes(m: &LoadedMachine, out: &mut String) {
     let root = m.root();
-    if !root.onentry.is_empty() || !root.onexit.is_empty() || !m.store.is_empty() {
+    if !root.onentry.is_empty() || !root.onexit.is_empty() || !m.state_files.is_empty() {
         let initial = root.initial.as_deref().unwrap_or_default();
         push(out, 1, &format!("note left of {initial}"));
         script_lines(out, "machine onentry", &root.onentry);
         script_lines(out, "machine onexit", &root.onexit);
-        let store: Vec<String> = m.store.keys().cloned().collect();
-        script_lines(out, "store", &store);
+        let state_files: Vec<String> = m.state_files.keys().cloned().collect();
+        script_lines(out, "state_files", &state_files);
         push(out, 1, "end note");
     }
     // Arena order: depth-first, children in `BTreeMap` order.
@@ -314,11 +316,11 @@ mod tests {
     fn feature_matches_fixture() {
         let m = load(
             "feature",
-            &fixture("tests/fixtures/feature/.decree/machines/feature.yml"),
+            &fixture("tests/fixtures/feature/.decree/machines/feature/machine.yml"),
         );
         assert_eq!(
             machine_document(&m).unwrap(),
-            fixture("tests/fixtures/feature/.decree/graph/feature.md")
+            fixture("tests/fixtures/feature/.decree/machines/feature/graph.md")
         );
     }
 
@@ -369,14 +371,14 @@ mod tests {
     }
 
     #[test]
-    fn store_is_a_note_on_the_machine() {
+    fn state_files_are_a_note_on_the_machine() {
         let m = load(
             "m",
-            "name: m\ndescription: d\nstore:\n  seen.tsv: Sent links.\n  cache: Pages.\ninitial: s\nstates:\n  s:\n    invoke: s\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
+            "name: m\ndescription: d\nstate_files:\n  seen.tsv: Sent links.\n  cache: Pages.\ninitial: s\nstates:\n  s:\n    invoke: s\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n",
         );
         assert_eq!(
             state_diagram(&m).unwrap(),
-            "stateDiagram-v2\n    [*] --> s\n    s --> done: done\n    s --> failed: error (implicit)\n    done --> [*]\n    failed --> [*]\n    note left of s\n        store: cache, seen.tsv\n    end note\n"
+            "stateDiagram-v2\n    [*] --> s\n    s --> done: done\n    s --> failed: error (implicit)\n    done --> [*]\n    failed --> [*]\n    note left of s\n        state_files: cache, seen.tsv\n    end note\n"
         );
     }
 
@@ -402,7 +404,9 @@ mod tests {
         );
         let err = state_diagram(&m).unwrap_err();
         assert!(
-            err.contains("machines/m.yml: s: transition `done` targets unknown state `nowhere`"),
+            err.contains(
+                "machines/m/machine.yml: s: transition `done` targets unknown state `nowhere`"
+            ),
             "{err}"
         );
     }

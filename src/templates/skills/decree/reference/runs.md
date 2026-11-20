@@ -72,8 +72,8 @@ until it changes again. `decree process` ends with `<n> run(s) need attention: .
 
 ## Graphs
 
-`decree graph` writes `.decree/graph/<machine>.md` (a Mermaid `stateDiagram-v2`) for each
-machine and `.decree/graph/system.md` (machines, `emits` and `invokes` edges, cron entry points).
+`decree graph` writes `.decree/machines/<machine>/graph.md` (a Mermaid `stateDiagram-v2`) for
+each machine and `.decree/system.md` (machines, `emits` and `invokes` edges, cron entry points).
 Edge labels say who decided: `(check)`, `(model)`, `(reply)`, `(machine: <name>)`; `(implicit)`
 marks an unhandled `error` going to `failed`. Commit the files; they render on GitHub, GitLab,
 Obsidian and in VS Code's Markdown preview (`Ctrl+Shift+V`), or paste the diagram into

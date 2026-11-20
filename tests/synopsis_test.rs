@@ -154,13 +154,20 @@ fn synopsis_steps_run_as_written() {
     // 2. A script: exit 0 is `done`.
     let script = step_file(&steps[&2]);
     let path = dir.path().join(&script);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "#!/usr/bin/env bash\necho hello\n").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     let script_name = Path::new(&script).file_stem().unwrap().to_str().unwrap();
 
     // 3. A machine that runs it.
     let machine = step_file(&steps[&3]);
-    let machine_name = Path::new(&machine).file_stem().unwrap().to_str().unwrap();
+    // `.decree/machines/<name>/machine.yml`: the folder names the machine.
+    let machine_name = Path::new(&machine)
+        .parent()
+        .and_then(|d| d.file_name())
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(machine_name, "hello");
     fs::write(
         dir.path().join(&machine),

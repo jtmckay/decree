@@ -2,7 +2,6 @@
 //! defaults to 10, and the shell or `.decree/.env` can change it for `process`, `daemon`,
 //! `emit` and `check`.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use std::fs;
 use std::path::PathBuf;
@@ -73,9 +72,9 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        fs::write(decree.join("machines/chain.yml"), CHAIN).unwrap();
-        fs::write(decree.join("machines/nest.yml"), NEST).unwrap();
-        fs::write(decree.join("machines/leaf.yml"), LEAF).unwrap();
+        common::write_file(&decree.join("machines/chain/machine.yml"), CHAIN);
+        common::write_file(&decree.join("machines/nest/machine.yml"), NEST);
+        common::write_file(&decree.join("machines/leaf/machine.yml"), LEAF);
         write_script(&decree.join("scripts/work"), WORK);
         Project { tmp }
     }
@@ -85,7 +84,7 @@ impl Project {
     }
 
     fn write(&self, rel: &str, text: &str) {
-        fs::write(self.decree().join(rel), text).unwrap();
+        common::write_file(&self.decree().join(rel), text);
     }
 
     fn queue(&self, machine: &str) {
@@ -115,8 +114,8 @@ impl Project {
     /// `decree <args>` with no `DECREE_*` or trace variables but `env`, so a test suite run
     /// inside a decree run (a gate script) sees the same results.
     fn decree_cmd(&self, env: &[(&str, &str)], args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path()).env("NO_COLOR", "1");
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1");
         for (name, _) in std::env::vars_os() {
             let name = name.to_string_lossy().into_owned();
             if name.starts_with("DECREE_") || name.starts_with("TRACE") {
@@ -284,7 +283,7 @@ fn a_bad_value_is_refused_before_anything_runs() {
 fn a_machine_env_file_may_not_set_it() {
     let p = Project::new();
     p.write(
-        "machines/chain.yml",
+        "machines/chain/machine.yml",
         &CHAIN.replace("initial: work\n", "initial: work\nenv_file: .env.chain\n"),
     );
     p.write(".gitignore", ".env*\n");
@@ -309,7 +308,7 @@ fn a_machine_env_file_may_not_set_it() {
     }
     // In `.decree/.env` it is a setting, and check passes.
     fs::remove_file(p.decree().join(".env.chain")).unwrap();
-    p.write("machines/chain.yml", CHAIN);
+    p.write("machines/chain/machine.yml", CHAIN);
     p.write(".env", "DECREE_MAX_DEPTH=20\n");
     let output = p.decree_cmd(&[], &["check"]).output().unwrap();
     assert!(

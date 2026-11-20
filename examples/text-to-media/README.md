@@ -11,7 +11,7 @@ No model is involved: the scripts call ComfyUI directly, with `curl` and `jq`.
 The machine is the official plugin [`comfy`](../../plugins/comfy.md), built into decree: `decree plugin add comfy` adds it to a project. Its file says what each state does and what it needs. In short:
 
 1. The root `onentry`, `precheck`, fails fast if `curl` or `jq` is missing.
-2. `build` patches `.decree/scripts/comfy/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type, so a new method is a new workflow file.
+2. `build` patches `.decree/machines/comfy/scripts/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type, so a new method is a new workflow file.
 3. `submit` uploads `input_image`, if any, queues the workflow and keeps the prompt id (`attempts: 3`).
 4. `await` polls `GET /history/<prompt id>` until the prompt finishes, within 3 hours.
 5. `fetch` downloads each file the prompt saved to `output` plus its extension (`attempts: 3`).
@@ -20,7 +20,7 @@ The scripts find ComfyUI at `COMFY_URL`, `http://127.0.0.1:8188` by default.
 
 ## Methods and messages
 
-A method is a workflow in `.decree/scripts/comfy/`, by file stem: data that comfy's scripts read, so it sits beside them; decree runs only the scripts its states name ([Resolution](../../docs/reference/scripts.md#resolution)). A new workflow there is a new method; `decree plugin export comfy` keeps it in the plugin file. One message per method:
+A method is a workflow in `.decree/machines/comfy/scripts/`, by file stem: data that comfy's scripts read, so it sits beside them; decree runs only the scripts its states name ([Resolution](../../docs/reference/scripts.md#resolution)). A new workflow there is a new method; `decree plugin export comfy` keeps it in the plugin file. One message per method:
 
 ### `image_flux2_text_landscape`: an image from text (FLUX2)
 
@@ -147,7 +147,7 @@ states:
   build_animate: { invoke: build_animate, transitions: { done: submit } }
 ```
 
-Each `build_*` script names its method and hands over to `build`, as `.decree/scripts/comfy/build_text.sh` would:
+Each `build_*` script names its method and hands over to `build`, as `.decree/machines/comfy/scripts/build_text.sh` would:
 
 ```sh
 #!/usr/bin/env bash

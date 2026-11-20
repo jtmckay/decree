@@ -37,8 +37,9 @@ fn clone_files() -> Option<Vec<String>> {
     Some(files)
 }
 
-/// AC (A10): no path under any `.decree/machines/` or `.decree/scripts/` is in git outside
-/// `tests/fixtures/`, and every machine `examples/` held is an official plugin in `plugins/`.
+/// AC (A10, D86): of any `.decree/machines/` outside `tests/fixtures/`, git holds only what a
+/// project commits (each `graph.md`, `order/` and `*.git.txt` file), never an installed copy;
+/// and every machine `examples/` held is an official plugin in `plugins/`.
 #[test]
 fn no_installed_copy_is_tracked_and_the_examples_machines_are_official_plugins() {
     let Some(files) = clone_files() else {
@@ -49,6 +50,7 @@ fn no_installed_copy_is_tracked_and_the_examples_machines_are_official_plugins()
         .iter()
         .filter(|f| !f.starts_with("tests/fixtures/"))
         .filter(|f| f.contains(".decree/machines/") || f.contains(".decree/scripts/"))
+        .filter(|f| !(f.ends_with("/graph.md") || f.contains("/order/") || f.ends_with(".git.txt")))
         .collect();
     assert!(tracked.is_empty(), "installed copies in git: {tracked:?}");
     for name in [
@@ -97,11 +99,14 @@ fn check_passes_in_a_fresh_clone() {
     }
     assert!(projects.len() >= 2, "{projects:?}");
     for project in &projects {
-        assert!(
-            !project.join(".decree/machines").exists(),
-            "{}",
-            project.display()
-        );
+        // A fresh clone has no machine installed: only what a project commits.
+        let installed: Vec<PathBuf> = fs::read_dir(project.join(".decree/machines"))
+            .into_iter()
+            .flatten()
+            .map(|e| e.unwrap().path().join("machine.yml"))
+            .filter(|p| p.exists())
+            .collect();
+        assert!(installed.is_empty(), "{installed:?}");
         let install = Command::new(env!("CARGO_BIN_EXE_decree"))
             .args(["plugin", "install"])
             .current_dir(project)

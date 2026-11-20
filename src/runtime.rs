@@ -452,9 +452,10 @@ impl Executor {
             return Err(interrupted());
         }
 
-        // The machine's store, created before its first script runs (docs/reference/scripts.md, Store).
-        let store = crate::layout::store_dir(&self.info.project_root, &self.info.machine);
-        fs::create_dir_all(&store).map_err(io_err(&store))?;
+        // The machine's state folder, created before its first script runs
+        // (docs/reference/scripts.md, State).
+        let state = crate::layout::state_dir(&self.info.project_root, &self.info.machine);
+        fs::create_dir_all(&state).map_err(io_err(&state))?;
 
         let log = self.reserve_log(run.state, run.script);
         let log_path = self.info.run_dir.join(&log);
@@ -616,8 +617,8 @@ impl Executor {
             ("MAX_DEPTH", info.max_depth.to_string().into()),
             ("RUN_DIR", info.run_dir.as_os_str().into()),
             (
-                "STORE",
-                crate::layout::store_dir(&info.project_root, &info.machine).into(),
+                "STATE_DIR",
+                crate::layout::state_dir(&info.project_root, &info.machine).into(),
             ),
             ("ATTEMPT", run.attempt.to_string().into()),
             ("MAX_ATTEMPTS", run.attempt_count.to_string().into()),
@@ -875,7 +876,7 @@ pub(crate) mod executor_tests {
 
     const RUN_ID: &str = "20261001T143005Z-3fa9c1";
 
-    /// A temp project whose `.decree/scripts/` holds copies of `tests/fixtures/scripts/`
+    /// A temp project whose `.decree/machines/m/scripts/` holds copies of `tests/fixtures/scripts/`
     /// fixtures, with one run folder, `.decree/runs/<RUN_ID>/`.
     struct Project {
         tmp: TempDir,
@@ -890,7 +891,7 @@ pub(crate) mod executor_tests {
                 shutdown: Arc::new(AtomicBool::new(false)),
             };
             fs::create_dir_all(project.run_dir()).unwrap();
-            let dir = project.root().join(".decree/scripts");
+            let dir = project.root().join(".decree/machines/m/scripts");
             fs::create_dir_all(&dir).unwrap();
             let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scripts");
             for name in scripts {
@@ -1424,8 +1425,11 @@ pub(crate) mod executor_tests {
             ("DECREE_MAX_DEPTH", "10".to_string()),
             ("DECREE_RUN_DIR", run_dir.to_str().unwrap().to_string()),
             (
-                "DECREE_STORE",
-                root.join(".decree/store/m").to_str().unwrap().to_string(),
+                "DECREE_STATE_DIR",
+                root.join(".decree/machines/m/state")
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
             ),
             ("DECREE_ATTEMPT", "1".to_string()),
             ("DECREE_MAX_ATTEMPTS", "1".to_string()),
@@ -1461,8 +1465,8 @@ pub(crate) mod executor_tests {
         // decree defines no `DECREE_LIB`: a machine's files sit beside its scripts (D77).
         assert!(!vars.contains_key("DECREE_LIB"), "{log}");
         assert!(
-            root.join(".decree/store/m").is_dir(),
-            "store folder created"
+            root.join(".decree/machines/m/state").is_dir(),
+            "state folder created"
         );
     }
 
@@ -1601,7 +1605,7 @@ pub(crate) mod executor_tests {
         assert_eq!(e["state"], "s");
         assert_eq!(e["phase"], "invoke");
         assert_eq!(e["script"], "sleep_one");
-        assert_eq!(e["path"], ".decree/scripts/sleep_one.sh");
+        assert_eq!(e["path"], ".decree/machines/m/scripts/sleep_one.sh");
         assert_eq!(e["attempt"], 1);
         assert_eq!(e["exit_code"], 0);
         assert_eq!(e["log"], "0001-s-sleep_one.log");
@@ -1658,7 +1662,7 @@ pub(crate) mod executor_tests {
     #[test]
     fn stop_escalates_to_sigkill_after_the_grace_period() {
         let p = Project::new(&["ignore_term"]);
-        let script = p.root().join(".decree/scripts/ignore_term.sh");
+        let script = p.root().join(".decree/machines/m/scripts/ignore_term.sh");
         let mut child = Command::new(&script)
             .env("DECREE_RUN_DIR", p.run_dir())
             .process_group(0)

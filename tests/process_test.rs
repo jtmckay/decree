@@ -1,7 +1,6 @@
 //! `decree process` (docs/reference/messages.md, docs/reference/cli.md): inbox claim and validation, and the six
 //! migration rules. Each test builds its own `.decree/` in a temp directory.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
@@ -58,7 +57,7 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        fs::write(decree.join("machines/flow.yml"), MACHINE).unwrap();
+        common::write_file(&decree.join("machines/flow/machine.yml"), MACHINE);
         for (name, text) in [("work", WORK), ("commit", COMMIT)] {
             write_script(&decree.join("scripts").join(name), text);
         }
@@ -70,7 +69,7 @@ impl Project {
     }
 
     fn write(&self, rel: &str, text: &str) {
-        fs::write(self.decree().join(rel), text).unwrap();
+        common::write_file(&self.decree().join(rel), text);
     }
 
     fn read(&self, rel: &str) -> String {
@@ -104,10 +103,8 @@ impl Project {
     }
 
     fn process(&self) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path())
-            .env("NO_COLOR", "1")
-            .arg("process");
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1").arg("process");
         cmd
     }
 
@@ -403,8 +400,7 @@ fn set_mtime(p: &Project, rel: &str, secs: u64) {
 #[test]
 fn a_file_written_after_an_emitted_message_runs_after_it_with_a_time_id() {
     let p = Project::new();
-    let emitted = cargo_bin_cmd!("decree")
-        .current_dir(p.tmp.path())
+    let emitted = common::decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
         .args(["emit", "--machine", "flow"])
         .write_stdin("emitted\n")
@@ -568,8 +564,7 @@ fn status_lists_an_arrived_file_by_its_new_name() {
     assert!(p
         .read(&format!("inbox/{name}"))
         .contains("arrived_as: zz.md\n"));
-    let status = cargo_bin_cmd!("decree")
-        .current_dir(p.tmp.path())
+    let status = common::decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
         .arg("status")
         .assert()
@@ -743,8 +738,7 @@ fn rule4_process_retry_continues_the_blocking_migration_then_the_rest() {
 
 /// `decree <args>` in the project, with its output.
 fn decree(p: &Project, args: &[&str]) -> std::process::Output {
-    cargo_bin_cmd!("decree")
-        .current_dir(p.tmp.path())
+    common::decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
         .args(args)
         .output()
@@ -817,8 +811,7 @@ fn a_name_that_is_neither_a_run_nor_a_migrations_run_is_not_found() {
 fn status_lists_emitted_and_migration_runs_in_the_order_they_ran() {
     let p = Project::new();
     let emit = |body: &str| {
-        let out = cargo_bin_cmd!("decree")
-            .current_dir(p.tmp.path())
+        let out = common::decree_at(p.tmp.path())
             .args(["emit", "--machine", "flow"])
             .write_stdin(body.to_string())
             .output()
@@ -969,7 +962,7 @@ echo "$DECREE_STATE" >> "$DECREE_PROJECT_ROOT/order.log"
 #[test]
 fn process_retry_state_resumes_at_the_named_state() {
     let p = Project::new();
-    p.write("machines/two.yml", TWO);
+    p.write("machines/two/machine.yml", TWO);
     write_script(&p.decree().join("scripts/step"), STEP);
     p.write(
         "inbox/20260101T000000.000000Z-000000.md",
@@ -1091,21 +1084,15 @@ fn dry_run_lists_and_runs_nothing() {
 /// A migration, an inbox message and a cron file without `machine:`: `decree check` fails
 /// M1, M2 and M3 for them, and `decree process --dry-run` runs nothing.
 #[test]
-fn messages_without_machine_fail_m1_m2_m3() {
+fn messages_without_machine_fail_m1_m2() {
     let p = Project::new();
-    fs::create_dir_all(p.decree().join("cron")).unwrap();
     p.write("inbox/task.md", "# No machine key\n");
     p.write(
         "migrations/01-first.md",
         "---\nparams: {}\n---\n# No machine key\n",
     );
-    p.write(
-        "cron/nightly.md",
-        "---\ncron: \"0 2 * * *\"\n---\n# No machine key\n",
-    );
 
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(p.tmp.path())
+    let out = common::decree_at(p.tmp.path())
         .env("NO_COLOR", "1")
         .arg("check")
         .output()
@@ -1114,8 +1101,7 @@ fn messages_without_machine_fail_m1_m2_m3() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "migrations/01-first.md: line 1: no `machine` key (M1)\n\
-         inbox/task.md: line 1: no `machine` key (M2)\n\
-         cron/nightly.md: line 1: no `machine` key (M3)\n"
+         inbox/task.md: line 1: no `machine` key (M2)\n"
     );
 
     let out = p.process().arg("--dry-run").output().unwrap();

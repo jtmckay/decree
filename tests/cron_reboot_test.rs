@@ -4,7 +4,6 @@
 //! for a machine the daemon excludes; queued even while the queue is held. `check` accepts
 //! it and `status --cron` says it fires at daemon start.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
@@ -44,7 +43,7 @@ impl Project {
         };
         p.decree(&["init", "--ai", "claude"]).assert().success();
         fs::create_dir_all(p.decree_dir().join("machines")).unwrap();
-        fs::write(p.decree_dir().join("machines/boot.yml"), BOOT).unwrap();
+        common::write_file(&p.decree_dir().join("machines/boot/machine.yml"), BOOT);
         common::write_script(
             &p.decree_dir().join("scripts/warm"),
             "#!/usr/bin/env bash\necho warm\n",
@@ -61,9 +60,8 @@ impl Project {
     }
 
     fn decree(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.root())
-            .env("NO_COLOR", "1")
+        let mut cmd = common::decree_at(self.root());
+        cmd.env("NO_COLOR", "1")
             .env_remove("DECREE_MACHINES")
             .env_remove("DECREE_EXCLUDE_MACHINES")
             .args(args);
@@ -71,14 +69,15 @@ impl Project {
     }
 
     fn reboot_file(&self) {
-        fs::create_dir_all(self.decree_dir().join("cron")).unwrap();
-        fs::write(self.decree_dir().join("cron/boot.md"), REBOOT).unwrap();
+        common::write_file(
+            &self.decree_dir().join("machines/boot/cron/boot.md"),
+            REBOOT,
+        );
     }
 
     /// `decree daemon --interval 1s <args>` in the background.
     fn daemon(&self, args: &[&str]) -> Child {
-        std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-            .current_dir(self.root())
+        common::std_decree_at(self.root())
             .env("NO_COLOR", "1")
             .env_remove("DECREE_MACHINES")
             .env_remove("DECREE_EXCLUDE_MACHINES")
@@ -220,8 +219,7 @@ fn excluded_machine_does_not_fire_reboot() {
     stop(daemon);
     assert!(p.boot_messages().is_empty());
 
-    let daemon = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-        .current_dir(p.root())
+    let daemon = common::std_decree_at(p.root())
         .env("DECREE_EXCLUDE_MACHINES", "boot")
         .env_remove("DECREE_MACHINES")
         .args(["daemon", "--interval", "1s"])
@@ -265,7 +263,7 @@ fn check_and_status_cron_know_reboot() {
     let p = Project::new();
     p.reboot_file();
     fs::write(
-        p.decree_dir().join("cron/hourly.md"),
+        p.decree_dir().join("machines/boot/cron/hourly.md"),
         "---\ncron: \"0 * * * *\"\nmachine: boot\n---\nHourly.\n",
     )
     .unwrap();
@@ -289,14 +287,14 @@ fn check_and_status_cron_know_reboot() {
     assert_eq!(
         doc["cron"][0],
         serde_json::json!({
-            "file": "boot.md",
+            "file": "boot/boot.md",
             "cron": "@reboot",
             "machine": "boot",
             "next": null,
             "at_daemon_start": true,
         })
     );
-    assert_eq!(doc["cron"][1]["file"], "hourly.md");
+    assert_eq!(doc["cron"][1]["file"], "boot/hourly.md");
     assert_eq!(doc["cron"][1]["at_daemon_start"], false);
     assert!(doc["cron"][1]["next"].is_string(), "{doc:#}");
 
@@ -308,7 +306,10 @@ fn check_and_status_cron_know_reboot() {
         .stdout
         .clone();
     let text = String::from_utf8(out).unwrap();
-    let line = text.lines().find(|l| l.starts_with("boot.md")).unwrap();
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("boot/boot.md"))
+        .unwrap();
     assert!(
         line.contains("@reboot") && line.ends_with("daemon start"),
         "{text}"
@@ -319,9 +320,9 @@ fn check_and_status_cron_know_reboot() {
 #[test]
 fn check_rejects_daemon_alias() {
     let p = Project::new();
-    fs::create_dir_all(p.decree_dir().join("cron")).unwrap();
+    fs::create_dir_all(p.decree_dir().join("machines/boot/cron")).unwrap();
     fs::write(
-        p.decree_dir().join("cron/boot.md"),
+        p.decree_dir().join("machines/boot/cron/boot.md"),
         "---\ncron: \"@daemon\"\nmachine: boot\n---\n",
     )
     .unwrap();

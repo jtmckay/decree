@@ -4,7 +4,6 @@
 //! tools they declare. Each gate runs with stub `cargo`, `npm`, `pnpm` and `yarn` on a `PATH`
 //! of one folder, so no test needs Rust's or Node's real tools, or the network.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,8 +35,7 @@ fi
 
 /// `decree <args>` in `dir`: (exit code, stdout, stderr).
 fn decree(dir: &Path, args: &[&str]) -> (i32, String, String) {
-    let out = cargo_bin_cmd!("decree")
-        .current_dir(dir)
+    let out = common::decree_at(dir)
         .env("NO_COLOR", "1")
         .args(args)
         .output()
@@ -122,7 +120,9 @@ struct Gate {
 /// `stubs` on `PATH`, `STUB_FAIL` set to `fail`.
 fn run_gate(variant: &str, work: &Path, stubs: &[&str], fail: &str) -> Gate {
     let p = project(&[variant]);
-    let gate = p.path().join(format!(".decree/scripts/{variant}/gate.sh"));
+    let gate = p
+        .path()
+        .join(format!(".decree/machines/{variant}/scripts/gate.sh"));
     let run = work.join("run");
     fs::create_dir_all(&run).unwrap();
     let event = run.join("event");
@@ -190,9 +190,10 @@ fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
 
     let reference = project(&["develop"]);
     ok(reference.path(), &["graph"]);
-    let develop = fs::read_to_string(reference.path().join(".decree/graph/develop.md")).unwrap();
+    let develop =
+        fs::read_to_string(reference.path().join(".decree/machines/develop/graph.md")).unwrap();
     for variant in ["develop_rust", "develop_react"] {
-        let graph = fs::read_to_string(dot.join(format!("graph/{variant}.md"))).unwrap();
+        let graph = fs::read_to_string(dot.join(format!("machines/{variant}/graph.md"))).unwrap();
         assert!(graph.starts_with(&format!("# {variant}\n")), "{graph}");
         assert_eq!(mermaid(&graph), mermaid(&develop), "{variant}");
         for state in [
@@ -264,12 +265,12 @@ fn shared_scripts_are_develops_in_every_variant() {
             let theirs = &ours[path];
             if PROMPTS.contains(&path.as_str()) {
                 let line = format!(
-                    "Follow the conventions in .decree/scripts/{variant}/conventions.md.\n"
+                    "Follow the conventions in .decree/machines/{variant}/scripts/conventions.md.\n"
                 );
                 assert_eq!(theirs.matches(&line).count(), 1, "{variant}: {path}");
                 let back = theirs.replacen(&line, "", 1).replace(
-                    &format!(".decree/scripts/{variant}/"),
-                    ".decree/scripts/develop/",
+                    &format!(".decree/machines/{variant}/scripts/"),
+                    ".decree/machines/develop/scripts/",
                 );
                 assert_eq!(&back, text, "{variant}: {path} differs from develop's");
             } else {
@@ -504,7 +505,7 @@ fn react_gate_builds_after_node_checks_and_names_fail_when_build_fails() {
 
 /// AC: each variant declares its tools in its own `requirements` (`cargo`; `node` and `npm`),
 /// and with `develop_node` added, its `precheck` without `node` on `PATH` fails, reporting
-/// `node` missing from `scripts/develop_node/requirements`.
+/// `node` missing from `machines/develop_node/scripts/requirements`.
 #[test]
 fn node_precheck_without_node_fails_naming_its_requirements() {
     for (variant, tools) in [
@@ -524,18 +525,21 @@ fn node_precheck_without_node_fails_naming_its_requirements() {
     let p = project(&["develop_node"]);
     let run = p.path().join("run");
     let bin = path_with(&run, &["npm"]);
-    let out = std::process::Command::new(p.path().join(".decree/scripts/develop_node/precheck.sh"))
-        .current_dir(p.path())
-        .env_clear()
-        .env("PATH", &bin)
-        .output()
-        .unwrap();
+    let out = std::process::Command::new(
+        p.path()
+            .join(".decree/machines/develop_node/scripts/precheck.sh"),
+    )
+    .current_dir(p.path())
+    .env_clear()
+    .env("PATH", &bin)
+    .output()
+    .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_ne!(out.status.code(), Some(0), "{stdout}");
     assert_eq!(
         stdout,
-        "ok       command git (scripts/infra/requirements)\n\
-         missing  command node (scripts/develop_node/requirements)\n\
-         ok       command npm (scripts/develop_node/requirements)\n"
+        "ok       command git (machines/infra/scripts/requirements)\n\
+         missing  command node (machines/develop_node/scripts/requirements)\n\
+         ok       command npm (machines/develop_node/scripts/requirements)\n"
     );
 }

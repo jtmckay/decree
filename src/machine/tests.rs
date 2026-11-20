@@ -33,7 +33,8 @@ fn fixture(name: &str) -> String {
     }
     let path = root
         .join("tests/fixtures/feature/.decree/machines")
-        .join(format!("{name}.yml"));
+        .join(name)
+        .join("machine.yml");
     fs::read_to_string(path).unwrap()
 }
 
@@ -48,7 +49,8 @@ fn write_machines(base: &Path, files: &[(&str, &str)]) {
     let dir = base.join(MACHINES_DIR);
     fs::create_dir_all(&dir).unwrap();
     for (id, text) in files {
-        fs::write(dir.join(format!("{id}.yml")), text).unwrap();
+        fs::create_dir_all(dir.join(id)).unwrap();
+        fs::write(dir.join(id).join("machine.yml"), text).unwrap();
     }
 }
 
@@ -232,7 +234,7 @@ fn misspelled_script_setting_names_file_and_state_path() {
     let text = fixture("feature").replace("attempts: 2", "attempt: 2");
     let err = load_err("feature", &text);
     assert!(
-        err.starts_with("machines/feature.yml: work.implement: unknown field `attempt`"),
+        err.starts_with("machines/feature/machine.yml: work.implement: unknown field `attempt`"),
         "{err}"
     );
     assert!(err.ends_with("(V19)"), "{err}");
@@ -243,7 +245,7 @@ fn misspelled_top_level_state_key() {
     let text = fixture("hello").replace("invoke: greet ", "invokes: greet ");
     let err = load_err("hello", &text);
     assert!(
-        err.starts_with("machines/hello.yml: greet: unknown field `invokes`"),
+        err.starts_with("machines/hello/machine.yml: greet: unknown field `invokes`"),
         "{err}"
     );
 }
@@ -253,7 +255,9 @@ fn misspelled_invoke_key_names_its_state() {
     let text = fixture("feature").replace("min_confidence: 0.8", "min_confidense: 0.8");
     let err = load_err("feature", &text);
     assert!(
-        err.starts_with("machines/feature.yml: work.triage: unknown field `min_confidense`"),
+        err.starts_with(
+            "machines/feature/machine.yml: work.triage: unknown field `min_confidense`"
+        ),
         "{err}"
     );
 }
@@ -263,7 +267,9 @@ fn misspelled_condition_key_names_its_state() {
     let text = fixture("feature").replace("less_than:", "lesser_than:");
     let err = load_err("feature", &text);
     assert!(
-        err.starts_with("machines/feature.yml: work.rounds_left: unknown field `lesser_than`"),
+        err.starts_with(
+            "machines/feature/machine.yml: work.rounds_left: unknown field `lesser_than`"
+        ),
         "{err}"
     );
 }
@@ -293,7 +299,7 @@ fn misspelled_root_key_names_line() {
     let text = fixture("hello").replace("description:", "descripton:");
     let err = load_err("hello", &text);
     assert!(
-        err.starts_with("machines/hello.yml: line 3: unknown field `descripton`"),
+        err.starts_with("machines/hello/machine.yml: line 3: unknown field `descripton`"),
         "{err}"
     );
 }
@@ -301,7 +307,7 @@ fn misspelled_root_key_names_line() {
 #[test]
 fn yaml_syntax_error_names_line() {
     let err = load_err("bad", "name: bad\nstates: [\n");
-    assert!(err.starts_with("machines/bad.yml: line "), "{err}");
+    assert!(err.starts_with("machines/bad/machine.yml: line "), "{err}");
 }
 
 #[test]
@@ -309,7 +315,7 @@ fn colon_in_a_plain_value_says_to_quote_it() {
     let text = fixture("hello").replace("description:", "description: Note: this");
     let err = load_err("hello", &text);
     assert!(
-        err.starts_with("machines/hello.yml: line 3: mapping values are not allowed in this context: a value with `: ` in it must be quoted"),
+        err.starts_with("machines/hello/machine.yml: line 3: mapping values are not allowed in this context: a value with `: ` in it must be quoted"),
         "{err}"
     );
     assert!(!err.contains("column"), "{err}");
@@ -364,7 +370,7 @@ fn machine_error_uses_relative_path() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.starts_with("machines/hello.yml: failed: unknown field `fnal`"),
+        err.starts_with("machines/hello/machine.yml: failed: unknown field `fnal`"),
         "{err}"
     );
 }
@@ -377,11 +383,12 @@ fn missing_dir_loads_nothing() {
 }
 
 #[test]
-fn only_yml_files_load() {
+fn only_folders_with_a_machine_yml_load() {
     let tmp = project(&[("hello", &fixture("hello"))]);
     let dir = tmp.path().join(".decree").join(MACHINES_DIR);
     fs::write(dir.join("notes.md"), "not a machine").unwrap();
-    fs::write(dir.join("other.yaml"), "not: [valid").unwrap();
+    fs::write(dir.join("old.yml"), "not: [valid").unwrap();
+    fs::create_dir_all(dir.join("library/scripts")).unwrap();
     let machines = load_machines(&tmp.path().join(".decree")).unwrap();
     assert_eq!(machines.keys().collect::<Vec<_>>(), ["hello"]);
 }
@@ -1120,7 +1127,7 @@ fn script_problems_name_the_state_and_relative_path() {
             },
             Problem {
                 at: "a".into(),
-                message: "script `x` not found; searched scripts/m, scripts (V12)".into(),
+                message: "script `x` not found; searched machines/m/scripts (V12)".into(),
             },
         ]
     );

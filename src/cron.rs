@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
-/// A parsed cron file from `.decree/cron/`.
+/// A parsed cron file from `.decree/machines/<machine>/cron/`.
 #[derive(Debug, Clone)]
 pub struct CronFile {
-    /// Filename (e.g., `hourly-maintenance.md`).
+    /// `<machine>/<file>.md`: the machine whose folder holds it, and its file name.
     pub filename: String,
     /// Raw cron expression as written in the frontmatter (e.g., `*/15 * * * *`).
     pub cron_expr: String,
@@ -22,7 +22,8 @@ pub struct CronFile {
 }
 
 impl CronFile {
-    /// The machine its messages name: frontmatter `machine`.
+    /// The machine its messages name: frontmatter `machine`, else the machine whose folder
+    /// holds it.
     pub fn machine(&self) -> Option<&str> {
         self.message.machine()
     }
@@ -46,59 +47,47 @@ pub fn parse_when(cron_expr: &str) -> Result<When, cron::error::Error> {
     parse_schedule(cron_expr).map(|s| When::Schedule(Box::new(s)))
 }
 
-/// Scan `.decree/cron/` for valid cron files.
+/// Every valid cron file, `machines/*/cron/*.md`, sorted by machine, then file name.
 pub fn scan_cron_files(project_root: &Path) -> Result<Vec<CronFile>, DecreeError> {
-    let cron_dir = project_root.join(layout::DECREE_DIR).join(layout::CRON_DIR);
-
-    if !cron_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let entries = file_names(&cron_dir)?;
-
+    let decree_dir = project_root.join(layout::DECREE_DIR);
     let mut cron_files = Vec::new();
-    for filename in entries {
-        let path = cron_dir.join(&filename);
+    for (owner, file) in file_names(&decree_dir)? {
+        let path = layout::machine_dir(&decree_dir, &owner)
+            .join(layout::CRON_DIR)
+            .join(&file);
         let content = std::fs::read_to_string(&path)?;
-        match parse_cron_file(&filename, &content) {
-            Ok(cf) => cron_files.push(cf),
-            Err(_) => {
-                // Skip files with invalid cron expressions or no cron field
-                continue;
-            }
+        // A file with no or an invalid `cron:` is skipped here; `decree check` reports it (M3).
+        if let Ok(cf) = parse_cron_file(&owner, &file, &content) {
+            cron_files.push(cf);
         }
     }
-
     Ok(cron_files)
 }
 
-/// Every cron file in `cron_dir`, relative to it, sorted: each `*.md` there, and each `*.md`
-/// in a folder there, as `<folder>/<file>.md`: a plugin installs its cron files in
-/// `cron/<plugin>/` (docs/reference/plugins.md). Deeper folders are not read.
-pub fn file_names(cron_dir: &Path) -> std::io::Result<Vec<String>> {
+/// Every cron file, as (the machine whose folder holds it, its file name), sorted: each
+/// `*.md` in `machines/<machine>/cron/` (docs/reference/messages.md, Cron files). A file
+/// whose name starts with `.`, and a folder inside `cron/`, are not read.
+pub fn file_names(decree_dir: &Path) -> std::io::Result<Vec<(String, String)>> {
     let is_md = |p: &Path| p.is_file() && p.extension().is_some_and(|ext| ext == "md");
     let mut out = Vec::new();
-    if !cron_dir.is_dir() {
+    let machines = decree_dir.join(layout::MACHINES_DIR);
+    if !machines.is_dir() {
         return Ok(out);
     }
-    for entry in std::fs::read_dir(cron_dir)? {
+    for entry in std::fs::read_dir(&machines)? {
         let entry = entry?;
-        let path = entry.path();
-        let Ok(name) = entry.file_name().into_string() else {
+        let Ok(owner) = entry.file_name().into_string() else {
             continue;
         };
-        if name.starts_with('.') {
+        let dir = entry.path().join(layout::CRON_DIR);
+        if owner.starts_with('.') || !dir.is_dir() {
             continue;
         }
-        if is_md(&path) {
-            out.push(name);
-        } else if path.is_dir() {
-            for inner in std::fs::read_dir(&path)? {
-                let inner = inner?;
-                if let Ok(file) = inner.file_name().into_string() {
-                    if !file.starts_with('.') && is_md(&inner.path()) {
-                        out.push(format!("{name}/{file}"));
-                    }
+        for inner in std::fs::read_dir(&dir)? {
+            let inner = inner?;
+            if let Ok(file) = inner.file_name().into_string() {
+                if !file.starts_with('.') && is_md(&inner.path()) {
+                    out.push((owner.clone(), file));
                 }
             }
         }
@@ -107,10 +96,20 @@ pub fn file_names(cron_dir: &Path) -> std::io::Result<Vec<String>> {
     Ok(out)
 }
 
-/// Parse a single cron file from its filename and content.
-fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeError> {
-    let message = Message::parse(content)
+/// Give a cron file in `machines/<owner>/cron/` its owner as `machine` when it names none
+/// (docs/reference/messages.md, Cron files).
+pub fn default_machine(message: &mut Message, owner: &str) {
+    if !message.frontmatter.contains_key("machine") {
+        message.set("machine", owner);
+    }
+}
+
+/// Parse one cron file of machine `owner`'s folder from its file name and content.
+fn parse_cron_file(owner: &str, file: &str, content: &str) -> Result<CronFile, DecreeError> {
+    let filename = format!("{owner}/{file}");
+    let mut message = Message::parse(content)
         .map_err(|(line, e)| DecreeError::Other(format!("{filename}: line {line}: {e}")))?;
+    default_machine(&mut message, owner);
     let cron_expr = message
         .text("cron")
         .ok_or_else(|| DecreeError::Other(format!("no cron field in {filename}")))?
@@ -118,7 +117,7 @@ fn parse_cron_file(filename: &str, content: &str) -> Result<CronFile, DecreeErro
     let when = parse_when(&cron_expr)
         .map_err(|e| DecreeError::Other(format!("invalid cron expression in {filename}: {e}")))?;
     Ok(CronFile {
-        filename: filename.to_string(),
+        filename,
         cron_expr,
         when,
         message,
@@ -212,7 +211,7 @@ mod tests {
 
     fn setup_decree_dir(dir: &TempDir) {
         let decree = dir.path().join(".decree");
-        std::fs::create_dir_all(decree.join("cron")).unwrap();
+        std::fs::create_dir_all(decree.join("machines/m/cron")).unwrap();
         std::fs::create_dir_all(decree.join("inbox")).unwrap();
         std::fs::create_dir_all(decree.join("runs")).unwrap();
     }
@@ -220,8 +219,8 @@ mod tests {
     #[test]
     fn test_parse_cron_file_basic() {
         let content = "---\ncron: \"0 * * * *\"\nmachine: develop\n---\nRun hourly task.\n";
-        let cf = parse_cron_file("hourly-task.md", content).unwrap();
-        assert_eq!(cf.filename, "hourly-task.md");
+        let cf = parse_cron_file("develop", "hourly-task.md", content).unwrap();
+        assert_eq!(cf.filename, "develop/hourly-task.md");
         assert_eq!(cf.machine(), Some("develop"));
         assert_eq!(cf.message.body, "Run hourly task.\n");
     }
@@ -229,14 +228,14 @@ mod tests {
     #[test]
     fn test_parse_cron_file_no_machine() {
         let content = "---\ncron: \"*/15 * * * *\"\n---\nEvery 15 minutes.\n";
-        let cf = parse_cron_file("frequent.md", content).unwrap();
-        assert!(cf.machine().is_none());
+        let cf = parse_cron_file("develop", "frequent.md", content).unwrap();
+        assert_eq!(cf.machine(), Some("develop"), "the folder's machine");
     }
 
     #[test]
     fn test_parse_cron_file_crlf() {
         let content = "---\r\ncron: \"0 * * * *\"\r\nmachine: develop\r\n---\r\nBody.\r\n";
-        let cf = parse_cron_file("crlf.md", content).unwrap();
+        let cf = parse_cron_file("develop", "crlf.md", content).unwrap();
         assert_eq!(cf.cron_expr, "0 * * * *");
         assert_eq!(cf.machine(), Some("develop"));
         assert_eq!(cf.message.body, "Body.\r\n");
@@ -245,7 +244,7 @@ mod tests {
     #[test]
     fn test_inbox_message_keeps_key_order_and_drops_cron() {
         let content = "---\nzeta: 1\ncron: \"0 9 * * *\"\nmachine: develop\ntrigger: manual\nalpha: [a, b]\n---\nDaily task.\n";
-        let cf = parse_cron_file("daily.md", content).unwrap();
+        let cf = parse_cron_file("develop", "daily.md", content).unwrap();
         let msg = cron_to_inbox_message(&cf);
         assert_eq!(
             String::from_utf8(msg.to_bytes()).unwrap(),
@@ -256,21 +255,21 @@ mod tests {
     #[test]
     fn test_parse_cron_file_no_cron_field() {
         let content = "---\nmachine: develop\n---\nBody.\n";
-        let result = parse_cron_file("test.md", content);
+        let result = parse_cron_file("develop", "test.md", content);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_cron_file_invalid_expression() {
         let content = "---\ncron: \"invalid cron\"\n---\nBody.\n";
-        let result = parse_cron_file("test.md", content);
+        let result = parse_cron_file("develop", "test.md", content);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_cron_file_no_frontmatter() {
         let content = "Just plain text.\n";
-        let result = parse_cron_file("test.md", content);
+        let result = parse_cron_file("develop", "test.md", content);
         assert!(result.is_err());
     }
 
@@ -293,7 +292,7 @@ mod tests {
     fn test_scan_cron_files_sorted() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
-        let cron_dir = dir.path().join(".decree/cron");
+        let cron_dir = dir.path().join(".decree/machines/m/cron");
 
         std::fs::write(
             cron_dir.join("beta.md"),
@@ -310,15 +309,15 @@ mod tests {
 
         let files = scan_cron_files(dir.path()).unwrap();
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0].filename, "alpha.md");
-        assert_eq!(files[1].filename, "beta.md");
+        assert_eq!(files[0].filename, "m/alpha.md");
+        assert_eq!(files[1].filename, "m/beta.md");
     }
 
     #[test]
     fn test_scan_cron_files_skips_invalid() {
         let dir = TempDir::new().unwrap();
         setup_decree_dir(&dir);
-        let cron_dir = dir.path().join(".decree/cron");
+        let cron_dir = dir.path().join(".decree/machines/m/cron");
 
         std::fs::write(
             cron_dir.join("valid.md"),
@@ -338,13 +337,13 @@ mod tests {
 
         let files = scan_cron_files(dir.path()).unwrap();
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].filename, "valid.md");
+        assert_eq!(files[0].filename, "m/valid.md");
     }
 
     #[test]
     fn test_cron_tracker_prevents_duplicate() {
         let content = "---\ncron: \"* * * * *\"\n---\nBody.\n";
-        let cf = parse_cron_file("test.md", content).unwrap();
+        let cf = parse_cron_file("develop", "test.md", content).unwrap();
 
         let mut tracker = CronTracker::new();
 
@@ -361,7 +360,7 @@ mod tests {
     #[test]
     fn test_cron_to_inbox_message() {
         let content = "---\ncron: \"0 * * * *\"\nmachine: develop\npriority: high\ntrigger: x\n---\nHourly maintenance.\n";
-        let cf = parse_cron_file("hourly-maintenance.md", content).unwrap();
+        let cf = parse_cron_file("develop", "hourly-maintenance.md", content).unwrap();
         let msg = cron_to_inbox_message(&cf);
         assert_eq!(
             String::from_utf8(msg.to_bytes()).unwrap(),
@@ -370,10 +369,15 @@ mod tests {
     }
 
     #[test]
-    fn test_cron_to_inbox_message_without_machine() {
-        let cf = parse_cron_file("task.md", "---\ncron: \"0 * * * *\"\n---\nTask.\n").unwrap();
+    fn test_cron_to_inbox_message_without_machine_names_the_folders_machine() {
+        let cf = parse_cron_file(
+            "develop",
+            "task.md",
+            "---\ncron: \"0 * * * *\"\n---\nTask.\n",
+        )
+        .unwrap();
         let msg = cron_to_inbox_message(&cf);
-        assert_eq!(msg.text("machine"), None);
+        assert_eq!(msg.text("machine"), Some("develop"));
         assert_eq!(msg.text("trigger"), Some("cron"));
     }
 
@@ -387,6 +391,7 @@ mod tests {
     #[test]
     fn test_reboot_fires_at_daemon_start_only() {
         let cf = parse_cron_file(
+            "boot",
             "boot.md",
             "---\ncron: \"@reboot\"\nmachine: boot\n---\nWarm up.\n",
         )
@@ -412,23 +417,23 @@ mod tests {
     #[test]
     fn test_various_cron_expressions() {
         // Every minute
-        let cf = parse_cron_file("t.md", "---\ncron: \"* * * * *\"\n---\n").unwrap();
+        let cf = parse_cron_file("develop", "t.md", "---\ncron: \"* * * * *\"\n---\n").unwrap();
         assert!(next(&cf));
 
         // Every hour
-        let cf = parse_cron_file("t.md", "---\ncron: \"0 * * * *\"\n---\n").unwrap();
+        let cf = parse_cron_file("develop", "t.md", "---\ncron: \"0 * * * *\"\n---\n").unwrap();
         assert!(next(&cf));
 
         // Daily at 9am
-        let cf = parse_cron_file("t.md", "---\ncron: \"0 9 * * *\"\n---\n").unwrap();
+        let cf = parse_cron_file("develop", "t.md", "---\ncron: \"0 9 * * *\"\n---\n").unwrap();
         assert!(next(&cf));
 
         // Weekdays at 9am
-        let cf = parse_cron_file("t.md", "---\ncron: \"0 9 * * 1-5\"\n---\n").unwrap();
+        let cf = parse_cron_file("develop", "t.md", "---\ncron: \"0 9 * * 1-5\"\n---\n").unwrap();
         assert!(next(&cf));
 
         // Every 15 minutes
-        let cf = parse_cron_file("t.md", "---\ncron: \"*/15 * * * *\"\n---\n").unwrap();
+        let cf = parse_cron_file("develop", "t.md", "---\ncron: \"*/15 * * * *\"\n---\n").unwrap();
         assert!(next(&cf));
     }
 }

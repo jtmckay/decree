@@ -706,7 +706,7 @@ fn validate_migrations(project: &Project) -> Result<(), DecreeError> {
     let mut invalid = 0;
     for name in project.pending_migrations()? {
         let mut problems = Vec::new();
-        project.check_file(MIGRATIONS_DIR, &name, "M1", false, &mut problems)?;
+        project.check_file(MIGRATIONS_DIR, &name, "M1", None, &mut problems)?;
         if !problems.is_empty() {
             invalid += 1;
             for problem in problems {
@@ -1276,7 +1276,7 @@ fn run_dry(project: &Project, format: Format, filter: &MachineFilter) -> Result<
                         println!("  {file:<24} → invalid");
                     }
                     let rule = if dir == MIGRATIONS_DIR { "M1" } else { "M2" };
-                    project.check_file(dir, &file, rule, false, &mut problems)?;
+                    project.check_file(dir, &file, rule, None, &mut problems)?;
                 }
             }
             items.push(item);

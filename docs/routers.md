@@ -17,7 +17,7 @@ Running a model server is outside decree: these routers only talk to one (see [`
 
 ## The contract
 
-A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, such as the official plugin `decree plugin add router` adds (`decree check` fails V16 if a `model` names no router and there is no `machines/router.yml`):
+A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, such as the official plugin `decree plugin add router` adds (`decree check` fails V16 if a `model` names no router and there is no `machines/router/machine.yml`):
 
 ```yaml
 # the machine of the official develop_by_size plugin (plugins/develop_by_size.md)
@@ -95,7 +95,7 @@ The `decision` event records the router, the router's run id (`child_run`), the 
 | GLiNER2.5-Decide | The classifier's score for the label it picks (`include_confidence=True`). |
 | A language model constrained by `format` | Still the model's own estimate: the decoder constrains the shape of the reply, not how honest its number is. |
 
-So a threshold only means something for the router it was set with. When a `model` invoke switches to another router, or `machines/router.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, [Observability](reference/observability.md)) before trusting it.
+So a threshold only means something for the router it was set with. When a `model` invoke switches to another router, or `machines/router/machine.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, [Observability](reference/observability.md)) before trusting it.
 
 ## Typed routers
 
@@ -111,7 +111,7 @@ curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does th
 
 To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time). The `gliner2` package's plain install is only its cloud API client; running the model locally needs `gliner2[local,train]`, since the local runtime imports its training modules too ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
 
-`machines/gliner_router.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md)):
+`machines/gliner_router/machine.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md)):
 
 ```yaml
 name: gliner_router
@@ -125,7 +125,7 @@ states:
   failed: { final: true }
 ```
 
-`scripts/gliner_router/ask_gliner.sh` sends the question, the options with their descriptions as labels, and `input` and `message_body` as the text, and writes the server's answer as the reply:
+`machines/gliner_router/scripts/ask_gliner.sh` sends the question, the options with their descriptions as labels, and `input` and `message_body` as the text, and writes the server's answer as the reply:
 
 ```bash
 url="${GLINER_URL:-http://127.0.0.1:8090/classify}"
@@ -154,7 +154,7 @@ So keep each decision to a few options, and settle anything the params already a
 
 A language model served by [Ollama](https://docs.ollama.com/capabilities/structured-outputs) is a typed router when its call passes the request's `reply_schema` as `format`: Ollama constrains the model's output to the JSON Schema it is given, and the schema's `event` enum holds the pick to the options. Ollama's docs suggest also putting the schema in the prompt, and a temperature of 0, and say the same works through its OpenAI-compatible API's `response_format`. vLLM's guided decoding takes a JSON Schema too; SGLang's `select` picks among the option names directly. The confidence is still the model's own estimate.
 
-`machines/ollama_router.yml` is `gliner_router` with `invoke: ask_ollama`; `scripts/ollama_router/ask_ollama.sh`:
+`machines/ollama_router/machine.yml` is `gliner_router` with `invoke: ask_ollama`; `machines/ollama_router/scripts/ask_ollama.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -192,7 +192,7 @@ The reply is in the response's `message.content`. A constrained decoder emits pr
 | answer `probabilities` | reply `probabilities` |
 | answer `confidence` | reply `confidence` |
 
-`machines/jev_router.yml`:
+`machines/jev_router/machine.yml`:
 
 ```yaml
 name: jev_router
@@ -207,7 +207,7 @@ states:
   failed: { final: true }
 ```
 
-`scripts/jev_router/ask_jev.sh`:
+`machines/jev_router/scripts/ask_jev.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -241,7 +241,7 @@ OpenAI's Decisions API would be a typed router: it takes context and questions w
 
 ### Claude, OpenCode and Copilot (the official `router` plugin)
 
-The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree plugin add router` installs [`plugins/router.md`](../plugins/router.md): `machines/router.yml` and its script `scripts/router/ask.sh`:
+The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree plugin add router` installs [`plugins/router.md`](../plugins/router.md): `machines/router/machine.yml` and its script `machines/router/scripts/ask.sh`:
 
 ```yaml
 name: router
@@ -317,10 +317,10 @@ worth_asking:                      # at least 0.4: ask a person; lower: set asid
 
 A router can ask several routers and reply with what enough of them agree on: all of them, a majority, or a set number. It is a router machine like any other, so it needs nothing new in decree: each router it asks is a child machine (`invoke: { machine: … }`), and a script combines their replies into its own. A split goes to a person through the calling state's `min_confidence` and `unsure`.
 
-`.decree/machines/consensus_router.yml`, which asks three routers in turn, then combines their picks:
+`.decree/machines/consensus_router/machine.yml`, which asks three routers in turn, then combines their picks:
 
 ```yaml
-# Graph: ../graph/consensus_router.md
+# Graph: graph.md
 name: consensus_router
 description: Ask three routers the same request, and reply with the pick at least quorum of them agree on.
 data:
@@ -350,7 +350,7 @@ request=${DECREE_REQUEST:-$DECREE_PARENT_RUN_DIR/request.json}   # asked by cons
 reply=${DECREE_REPLY:-$DECREE_RUN_DIR/reply.json}                # asked by consensus_router: read by combine
 ```
 
-`.decree/scripts/consensus_router/combine.sh` finds each router's run from the `waiting` events in its own `events.jsonl` ([events.jsonl](reference/runs.md#eventsjsonl)), counts their picks over the request's options, and writes the reply ([The contract](#the-contract)):
+`.decree/machines/consensus_router/scripts/combine.sh` finds each router's run from the `waiting` events in its own `events.jsonl` ([events.jsonl](reference/runs.md#eventsjsonl)), counts their picks over the request's options, and writes the reply ([The contract](#the-contract)):
 
 ```bash
 #!/usr/bin/env bash

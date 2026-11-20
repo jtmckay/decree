@@ -3,7 +3,7 @@
 //! with the `.env` the plugin's file names, and its `feeds.txt` lists local `file://` fixtures (`tests/fixtures/newsletter/`: one RSS 2.0, one Atom, one broken),
 //! and a stub `curl` first on `PATH` stands in for Ollama's `/api/chat` and for ntfy. Covers:
 //! a first run writes `newsletter/<today>.md` with the stub's picks and records the five links
-//! in the machine's store, `.decree/store/newsletter/seen.tsv`; a second run writes the "nothing new" issue without calling the model; a
+//! in the machine's store, `.decree/machines/newsletter/state/seen.tsv`; a second run writes the "nothing new" issue without calling the model; a
 //! broken feed is skipped, and all feeds broken fails `gather`; `deliver` posts to ntfy once
 //! with `NTFY_URL` set, and skips the ping, saying so, without it. Skipped without `python3`
 //! or `jq`, which the plugin's scripts need.
@@ -101,7 +101,8 @@ impl Project {
         fs::write(p.root().join(".decree/.env"), DOTENV).unwrap();
         let list: String = feeds.iter().map(|f| fixture(f) + "\n").collect();
         fs::write(
-            p.root().join(".decree/scripts/newsletter/feeds.txt"),
+            p.root()
+                .join(".decree/machines/newsletter/scripts/feeds.txt"),
             format!("# fixtures\n{list}"),
         )
         .unwrap();
@@ -210,7 +211,11 @@ impl Project {
 
     /// `seen.tsv`, in the machine's store.
     fn seen_tsv(&self) -> String {
-        fs::read_to_string(self.root().join(".decree/store/newsletter/seen.tsv")).unwrap()
+        fs::read_to_string(
+            self.root()
+                .join(".decree/machines/newsletter/state/seen.tsv"),
+        )
+        .unwrap()
     }
 
     /// The first column of `seen.tsv`.
@@ -383,11 +388,16 @@ fn deliver_is_safe_to_re_run() {
     }
     let p = Project::new(&["rss.xml", "atom.xml"]);
     let id = p.run(None);
-    let script = p.root().join(".decree/scripts/newsletter/deliver.sh");
+    let script = p
+        .root()
+        .join(".decree/machines/newsletter/scripts/deliver.sh");
     let out = Command::new(script)
         .current_dir(p.root())
         .env("DECREE_RUN_DIR", p.run_dir(&id))
-        .env("DECREE_STORE", p.root().join(".decree/store/newsletter"))
+        .env(
+            "DECREE_STATE_DIR",
+            p.root().join(".decree/machines/newsletter/state"),
+        )
         .env("NEWSLETTER_DIR", "newsletter")
         .env_remove("NTFY_URL")
         .output()
@@ -417,7 +427,7 @@ fn newsletter_has_five_states_and_documents_its_cron_file() {
         .map(|k| k.as_str().unwrap())
         .collect();
     assert_eq!(states, ["gather", "write", "deliver", "done", "failed"]);
-    let store: Vec<&str> = machine["store"]
+    let store: Vec<&str> = machine["state_files"]
         .as_mapping()
         .unwrap()
         .keys()
@@ -434,19 +444,19 @@ fn newsletter_has_five_states_and_documents_its_cron_file() {
     }
 }
 
-/// `seen.tsv` lives in the machine's store: declared under `store:`, drawn in the graph, and
-/// read and written by the scripts through `$DECREE_STORE` (docs/reference/scripts.md, Store).
+/// `seen.tsv` lives in the machine's store: declared under `state_files:`, drawn in the graph, and
+/// read and written by the scripts through `$DECREE_STATE_DIR` (docs/reference/scripts.md, State).
 #[test]
-fn seen_tsv_is_in_the_store() {
+fn seen_tsv_is_in_the_state_folder() {
     let p = Project::new(&[]);
-    let graph = fs::read_to_string(p.root().join(".decree/graph/newsletter.md")).unwrap();
+    let graph = fs::read_to_string(p.root().join(".decree/machines/newsletter/graph.md")).unwrap();
     assert!(
-        graph.contains("    note left of gather\n        store: seen.tsv\n    end note\n"),
+        graph.contains("    note left of gather\n        state_files: seen.tsv\n    end note\n"),
         "{graph}"
     );
     for script in ["gather.py", "deliver.sh"] {
         let text = common::plugin_script(PLUGIN, script);
-        assert!(text.contains("DECREE_STORE"), "{script}");
+        assert!(text.contains("DECREE_STATE_DIR"), "{script}");
         assert!(!text.contains("NEWSLETTER_DIR/seen.tsv"), "{script}");
     }
 }

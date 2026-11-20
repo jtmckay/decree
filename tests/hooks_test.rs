@@ -3,7 +3,6 @@
 //! visit to a state; `attempts` re-runs only the invoke. Each test builds its own
 //! `.decree/` in a temp directory.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::Value;
 use std::fs;
@@ -67,7 +66,7 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        fs::write(decree.join("machines/hooks.yml"), MACHINE).unwrap();
+        common::write_file(&decree.join("machines/hooks/machine.yml"), MACHINE);
         for name in SCRIPTS {
             write_script(&decree.join("scripts").join(name), RECORD);
         }
@@ -108,10 +107,8 @@ impl Project {
     }
 
     fn process(&self) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path())
-            .env("NO_COLOR", "1")
-            .arg("process");
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1").arg("process");
         cmd
     }
 }

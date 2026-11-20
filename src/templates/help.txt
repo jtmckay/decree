@@ -97,21 +97,23 @@ Commands:
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 
 Files (.decree/):
-  plugins/<name>.md           A machine, scripts, cron files, migrations and
-                              store seeds; committed
-  machines/<name>.yml         Machines (installed from plugins/; gitignored)
-  scripts/<name>              Scripts shared by every machine
-  scripts/<machine>/<name>    A machine's own scripts, found before scripts/, and
-                              its helpers, config and data, never run by decree
+  plugins/<name>.md           A machine's folder as one file: machine, scripts,
+                              cron files, state and order seeds; committed
+  machines/<name>/            One folder per machine, installed from plugins/:
+    machine.yml               The machine
+    scripts/                  Its scripts, and its helpers, config and data,
+                              never run by decree
+    cron/                     Message templates queued on a schedule
+    state/                    What it keeps between runs ($DECREE_STATE_DIR),
+                              declared under its `state_files:`; *.git.txt
+                              committed, the rest not
+    graph.md                  Written by `decree graph`; commit it
+  system.md                   Written by `decree graph`; commit it
   .env  .env.<name>           KEY=value for every script, or one machine's
                               (env_file:); gitignored but .env.example
   migrations/  processed.md   Ordered, run-once messages and their ledger; commit both
   inbox/                      Queued messages, run in filename order
-  cron/                       Message templates queued on a schedule
   runs/<id>/                  One folder per run: message.md, events.jsonl, logs
-  store/<machine>/            What a machine keeps between runs ($DECREE_STORE), declared
-                              under its `store:`; never pruned, not committed
-  graph/                      Written by `decree graph`; commit it
   schema/v1/                  Optional; written by `decree schema`, not committed.
                               Editors use the hosted copy (docs/editors.md)
 
@@ -130,7 +132,7 @@ Messages:
   filename order, and a failed one blocks the ones after it.
 
 Machines:
-  # Graph: ../graph/deploy.md
+  # Graph: graph.md
   name: deploy
   description: Build, ask a person to approve, then ship.
   initial: build
@@ -175,7 +177,7 @@ Scripts:
 
   Environment: DECREE_PROJECT_ROOT, DECREE_MESSAGE, DECREE_MESSAGE_ID,
   DECREE_MACHINE, DECREE_STATE, DECREE_PHASE, DECREE_VISITS, DECREE_RUN_DIR,
-  DECREE_MAX_DEPTH, DECREE_STORE, DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS,
+  DECREE_MAX_DEPTH, DECREE_STATE_DIR, DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS,
   DECREE_FINAL_ATTEMPT, DECREE_TRIGGER, DECREE_EVENTS, DECREE_EVENT_FILE,
   DECREE_PARENT, DECREE_RECEIVED, DECREE_DATA_<NAME>; with an attempts list DECREE_ATTEMPT_VALUE and
   DECREE_ATTEMPT_VALUES; in a router run DECREE_REQUEST and DECREE_REPLY; for a

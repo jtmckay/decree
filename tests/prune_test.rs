@@ -3,7 +3,6 @@
 //! migration that ended in `failed`, a child of an unfinished parent or a locked run. Each
 //! test builds its own `.decree/` in a temp directory and drives the `decree` binary.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use chrono::{SecondsFormat, TimeDelta, Utc};
 use serde_json::{json, Value};
@@ -56,7 +55,7 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        fs::write(decree.join("machines/m.yml"), MACHINE).unwrap();
+        common::write_file(&decree.join("machines/m/machine.yml"), MACHINE);
         write_script(&decree.join("scripts/work"), WORK);
         let holder = std::process::Command::new("sleep")
             .arg("60")
@@ -156,10 +155,8 @@ impl Project {
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path())
-            .env("NO_COLOR", "1")
-            .args(args);
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1").args(args);
         cmd
     }
 

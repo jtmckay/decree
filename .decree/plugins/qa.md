@@ -42,7 +42,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -278,14 +278,14 @@ scripts:
     #!/usr/bin/env bash
     # qa's attack: the AI writes chaos tests in QA_DIR, each naming its wrench and invariant.
     set -euo pipefail
-    . .decree/scripts/qa/ai.sh
-    . .decree/scripts/qa/qa.sh
+    . .decree/machines/qa/scripts/ai.sh
+    . .decree/machines/qa/scripts/qa.sh
     qa_ready
     qa_guard
 
     prompt="You are QA. Your job is to make this project misbehave. You are done when you have
-    written tests that fail, or have tried every wrench in .decree/scripts/qa/wrenches.md.
-    Read ${DECREE_RUN_DIR}/surface.md, .decree/scripts/qa/invariants.md and the tests already in
+    written tests that fail, or have tried every wrench in .decree/machines/qa/scripts/wrenches.md.
+    Read ${DECREE_RUN_DIR}/surface.md, .decree/machines/qa/scripts/invariants.md and the tests already in
     ${QA_DIR}/ (do not repeat a wrench and invariant pair tested there). Write new tests in
     ${QA_DIR}/, in the project's language and test framework, run by: ${QA_RUN}
     Each test names its wrench and the invariant it checks. Seed every random choice with a
@@ -372,7 +372,7 @@ scripts:
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
-    # this one commit; git ignores machines/ and scripts/. A failed run exports nothing: `keep`
+    # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
     "${DECREE}" plugin export
@@ -452,7 +452,7 @@ scripts:
     # Fail unless QA_RUN is set and this is a git work tree (the guard needs git).
     qa_ready() {
       if [ -z "${QA_RUN}" ]; then
-        echo "qa: no chaos suite command; set QA_RUN in .decree/scripts/qa/qa.sh, then keep it with \`decree plugin export qa\`" >&2
+        echo "qa: no chaos suite command; set QA_RUN in .decree/machines/qa/scripts/qa.sh, then keep it with \`decree plugin export qa\`" >&2
         return 1
       fi
       git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
@@ -483,13 +483,13 @@ scripts:
     #!/usr/bin/env bash
     # qa's recon: the AI lists the attack surface, from the docs and the code, in surface.md.
     set -euo pipefail
-    . .decree/scripts/qa/ai.sh
-    . .decree/scripts/qa/qa.sh
+    . .decree/machines/qa/scripts/ai.sh
+    . .decree/machines/qa/scripts/qa.sh
     qa_ready
     qa_guard
 
-    prompt="You are QA. Read the project's docs and code, .decree/scripts/qa/invariants.md and
-    .decree/scripts/qa/wrenches.md. Write ${DECREE_RUN_DIR}/surface.md: a short list of the
+    prompt="You are QA. Read the project's docs and code, .decree/machines/qa/scripts/invariants.md and
+    .decree/machines/qa/scripts/wrenches.md. Write ${DECREE_RUN_DIR}/surface.md: a short list of the
     attack surface (each input, each piece of saved state, each call to the outside world,
     each limit), and for each, the invariants it could break. Change no other file.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
@@ -516,7 +516,7 @@ scripts:
     # qa's run: the chaos suite, into chaos.log. A failing test is a finding, so this exits 0
     # either way; only a suite that could not start at all (command not found) is an error.
     set -uo pipefail
-    . .decree/scripts/qa/qa.sh
+    . .decree/machines/qa/scripts/qa.sh
     bash -c "${QA_RUN}" 2>&1 | tee "${DECREE_RUN_DIR}/chaos.log"
     status=${PIPESTATUS[0]}
     if [ "${status}" -ge 126 ]; then
@@ -532,8 +532,8 @@ scripts:
     # pass, or the step fails. A failure the docs do not settle is a question in STOP; the run
     # fails until a person answers it in plan.md, deletes STOP and runs `decree process --retry`.
     set -euo pipefail
-    . .decree/scripts/qa/ai.sh
-    . .decree/scripts/qa/qa.sh
+    . .decree/machines/qa/scripts/ai.sh
+    . .decree/machines/qa/scripts/qa.sh
 
     bugs="${DECREE_RUN_DIR}/bugs"
     plan="${DECREE_RUN_DIR}/plan.md"
@@ -548,7 +548,7 @@ scripts:
     qa_guard
 
     prompt="You are QA triage. Read ${DECREE_RUN_DIR}/chaos.log, the project's docs,
-    .decree/scripts/qa/invariants.md, and ${plan} if it exists. For each failing test in
+    .decree/machines/qa/scripts/invariants.md, and ${plan} if it exists. For each failing test in
     ${QA_DIR}/, decide:
     - Real bug: the project breaks an invariant or its docs. Mark the test expected to fail,
       with the framework's strict marker, so the suite passes now and fails once the bug is
@@ -600,7 +600,7 @@ Attacks your project to make it misbehave, and hands each real bug to `develop` 
 
 ## What it does
 
-1. `recon`: lists the attack surface, from the docs and the code, in the run's `surface.md`. It fails first if `QA_RUN` in `.decree/scripts/qa/qa.sh` is empty.
+1. `recon`: lists the attack surface, from the docs and the code, in the run's `surface.md`. It fails first if `QA_RUN` in `.decree/machines/qa/scripts/qa.sh` is empty.
 2. `attack`: writes chaos tests in `QA_DIR`, each naming the wrench (`wrenches.md`) and the invariant (`invariants.md`) it tests.
 3. `run`: runs the chaos suite, `QA_RUN`, into `chaos.log`; a failing test is a finding, not an error.
 4. `triage`: one bug report per root cause, its tests marked as expected to fail. It writes `STOP` instead of guessing.
@@ -614,8 +614,8 @@ Attacks your project to make it misbehave, and hands each real bug to `develop` 
 
 ## How to use it
 
-1. Set `QA_DIR` and `QA_RUN` in `.decree/scripts/qa/qa.sh`: where the chaos tests go, and the command that runs them (`cargo test --test chaos`, say).
-2. Write your project's invariants in `.decree/scripts/qa/invariants.md`, and adjust `wrenches.md`.
+1. Set `QA_DIR` and `QA_RUN` in `.decree/machines/qa/scripts/qa.sh`: where the chaos tests go, and the command that runs them (`cargo test --test chaos`, say).
+2. Write your project's invariants in `.decree/machines/qa/scripts/invariants.md`, and adjust `wrenches.md`.
 3. `echo "Attack the upload API" | decree emit --machine qa && decree process`.
 
 Edits are kept in this file by `decree plugin export qa`, or by the next run's `commit`.

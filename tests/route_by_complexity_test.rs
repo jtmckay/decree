@@ -93,7 +93,8 @@ impl Project {
         let results: String = test_results.iter().map(|c| format!("{c}\n")).collect();
         fs::write(p.root().join("stub/test_results"), results).unwrap();
         write_script(
-            &p.root().join(".decree/scripts/gliner_router/ask_gliner.sh"),
+            &p.root()
+                .join(".decree/machines/gliner_router/scripts/ask_gliner.sh"),
             STUB_ASK_GLINER,
         );
         fs::create_dir(p.bin()).unwrap();
@@ -369,7 +370,7 @@ fn an_unknown_attempt_value_is_an_error_naming_it() {
     fs::create_dir(&run).unwrap();
     let out = Command::new(
         p.root()
-            .join(".decree/scripts/develop_by_size/implement.sh"),
+            .join(".decree/machines/develop_by_size/scripts/implement.sh"),
     )
     .current_dir(p.root())
     .env("DECREE_ATTEMPT_VALUE", "gpt")

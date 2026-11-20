@@ -17,11 +17,11 @@ decree runs work through three building blocks:
 
 - A **message** (markdown) says *what* to do in its body, and *which machine* does it
   (`machine:` in the frontmatter). Migrations, inbox messages and cron templates are all messages.
-- A **machine** (`.decree/machines/<name>.yml`) says *in what order*: a W3C SCXML statechart
+- A **machine** (`.decree/machines/<name>/machine.yml`) says *in what order*: a W3C SCXML statechart
   written in YAML. States, what each state invokes, and which event leads to which state. No
   code, no paths.
-- A **script** (`.decree/scripts/<name>.sh`, or `.decree/scripts/<machine>/<name>.sh` for one
-  machine's own) does one piece of work and reports one outcome: exit 0 is `done`, non-zero is
+- A **script** (`.decree/machines/<machine>/scripts/<name>.sh`, in the folder of the machine
+  that runs it) does one piece of work and reports one outcome: exit 0 is `done`, non-zero is
   `error`, or the script names a richer event in a file (`echo pass > "$DECREE_EVENT_FILE"`).
 
 Every state invokes one function, and its result is an event. The function is a script, a child
@@ -43,7 +43,7 @@ file (`.decree/plugins/<name>.md`) says what it does, what it needs and how to u
 For a Rust, Node or React project, add the `develop` variant that fits instead of `develop`:
 `decree plugin add develop_rust` (or `develop_node`, `develop_react`). Each is `develop`'s
 machine under its own name, with a gate that already runs the ecosystem's standard checks,
-conventions its prompts follow, and its tools in `scripts/<variant>/requirements`; a project
+conventions its prompts follow, and its tools in `machines/<variant>/scripts/requirements`; a project
 with two parts (a Rust API, a React front end) adds two and names one in each message. A
 project in another ecosystem starts from `develop` and fills in its gate.
 
@@ -114,7 +114,8 @@ project in another ecosystem starts from `develop` and fills in its gate.
   `decree status 01-a`, `decree process --retry 01-a.md`, `decree tail 01-a` and `decree event
   01-a <event>` take the migration's file name or stem and mean its newest run.
 - **Run `decree check` after every change** to a machine, script, message or cron file, and
-  `decree graph` after changing a machine. Commit `.decree/graph/`.
+  `decree graph` after changing a machine. Commit each `machines/<name>/graph.md` and
+  `.decree/system.md`.
 - **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,
   `decree status [<id>] --format json`, and `--format json` on `emit`, `event`, `stop`,
   `prune`, `graph`, `schema`, `skill`, `upgrade` and `process --dry-run` print one JSON document, described by
@@ -143,19 +144,19 @@ project in another ecosystem starts from `develop` and fills in its gate.
   (`$DECREE_RUN_DIR`): OpenCode's `external_directory` permission covers its file tools, not
   its shell, so it is no sandbox.
 - **Declare the environment.** A command, package or tool the project needs is a line in
-  `.decree/scripts/infra/requirements`, added by a message for the `infra` machine, never
+  `.decree/machines/infra/scripts/requirements`, added by a message for the `infra` machine, never
   installed by another machine's step. Nothing runs `sudo`: a step only a person can do prints
   the exact command and fails, and the person runs it, then `decree process --retry`.
 - **Check a boundary with a script, not only a prompt.** When an agent must not change
   something (QA never edits app code), a script after it checks, and fails the step if it did.
-- **A machine's helpers, config and data go in `scripts/<machine>/`**, beside the scripts its
+- **A machine's helpers, config and data go in `machines/<machine>/scripts/`**, beside the scripts its
   states invoke (`ai.sh`, a prompt template, a workflow file); decree runs only what a state
   names, and scripts reach the rest by path from the project root. Variables and secrets go in `.decree/.env` (every script) or a machine's
   `env_file: .env.<name>` (that machine's scripts only); both are gitignored, and
   `.decree/.env.example` is the committed template.
-- **What a machine keeps between runs goes in `$DECREE_STORE`** (`.decree/store/<machine>/`)
-  and is declared under the machine's `store:`, with what it is and which states read or write
-  it. A run's own files go in `$DECREE_RUN_DIR`; helpers, config and data in `scripts/<machine>/`;
+- **What a machine keeps between runs goes in `$DECREE_STATE_DIR`** (`.decree/machines/<machine>/state/`)
+  and is declared under the machine's `state_files:`, with what it is and which states read or write
+  it. A run's own files go in `$DECREE_RUN_DIR`; helpers, config and data in `machines/<machine>/scripts/`;
   project-wide files no machine owns (a test tool's browsers) in `.decree/cache/`. Never
   `tee` decree's output: `process` and `daemon` keep it in `.decree/process.log`.
 - **A step that waits for a shared resource is an invoked state with a `timeout`** (ComfyUI's
@@ -170,14 +171,14 @@ project in another ecosystem starts from `develop` and fills in its gate.
   until it is deleted. To pause the queue, `decree stop`: the runs going now finish, and
   nothing more runs until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the
   run instead.
-- **Plugins are the source.** Each `.decree/plugins/<name>.md` holds a machine (or none: a
-  library of scripts), its `scripts/<name>/`, cron files (`cron/<name>/`), migrations and
-  store seeds; `x-` keys are for other tools. decree installs plugins only when asked:
-  `decree plugin install` (after a clone or a pull; `check` and `process` say when one is
-  due), `add` or `import`. Edit the installed copy
-  (`machines/<name>.yml`, `scripts/<name>/`, `cron/<name>/`), run it, then keep the edit with
+- **Plugins are the source.** Each `.decree/plugins/<name>.md` holds one machine folder,
+  `.decree/machines/<name>/`: its `machine.yml` (or none: a library of scripts), `scripts/`,
+  `cron/`, and seeds for its `state/` and `order/`; `x-` keys are for other tools. decree
+  installs plugins only when asked: `decree plugin install` (after a clone or a pull; `check`
+  and `process` say when one is due), `add` or `import`. Edit the installed copy
+  (`machine.yml`, `scripts/`, `cron/`), run it, then keep the edit with
   `decree plugin export <name>`, or let the next run's `commit` export it, and commit the
-  plugin file. A machine written by hand in `machines/` is not committed until it is exported
+  plugin file. A machine written by hand in `machines/<name>/` is not committed until it is exported
   (`decree check` warns about it). A project's settings for a plugin (`gate.sh`,
   `requirements`, `QA_RUN`) are such edits: they live in its plugin file. If `decree check` reports a P3
   conflict (the plugin changed while the copy was edited), export to keep the edit and merge
@@ -185,10 +186,10 @@ project in another ecosystem starts from `develop` and fills in its gate.
   `.decree/cache/plugins/`.
 - **Never delete run folders to clean up**; they are the record. Use
   `decree prune --older-than <age>`.
-- Commit `.decree/plugins/` and `.decree/graph/`, never `.decree/machines/` or
-  `.decree/scripts/` or `.decree/cron/<plugin>/`: git ignores them, and `decree plugin install`
-  installs them from `plugins/`. Do not commit
-  `.decree/inbox/`, `.decree/runs/`, `.decree/store/` or `.decree/cache/`.
+- Commit `.decree/plugins/`, `.decree/system.md` and each `machines/<name>/graph.md` and
+  `order/`; git ignores the rest of `.decree/machines/`, which `decree plugin install` installs
+  from `plugins/`, except any `*.git.txt` file in a machine's `state/`. Do not commit
+  `.decree/inbox/`, `.decree/runs/` or `.decree/cache/`.
 
 ## Commands
 
@@ -196,8 +197,8 @@ project in another ecosystem starts from `develop` and fills in its gate.
 | --- | --- |
 | `decree check [--format json\|sarif]` | Validate every machine, script name, pending migration, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
 | `decree plugin list` / `decree plugin add <name>... [--force]` | List the official plugins (`added`, `differs`); add them, and those they need, to `.decree/plugins/` and install them. `--force` takes this decree's copy and prints the edits it drops. |
-| `decree plugin export [<name>]` | Write `.decree/plugins/<name>.md` from the installed machine, its `scripts/<name>/` and the flat scripts it runs; with no name, every plugin whose installed copy was edited. `decree plugin import <file\|->` checks one and installs it; `decree plugin install [<name>]` replaces an edited installed copy. |
-| `decree graph` | Write `.decree/graph/<machine>.md` (Mermaid) for every machine, plus `system.md`. |
+| `decree plugin export [<name>]` | Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. `decree plugin import <file\|->` checks one and installs it; `decree plugin install [<name>]` replaces an edited installed copy. |
+| `decree graph` | Write `.decree/machines/<machine>/graph.md` (Mermaid) for every machine, plus `.decree/system.md`. |
 | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
 | `decree skill [--ai claude\|copilot]` | Refresh this skill after upgrading decree; other files in the skill folder are kept. |
 | `decree` | Print a synopsis of the quick start and run nothing; run the queue with `decree process`. |
@@ -241,7 +242,7 @@ or to keep editing while runs go on, suggest a
 git worktree the user makes and runs decree in (`git worktree add ../app-exp -b exp`, then
 `decree process` there): each checkout has its own runs and inbox, and its branch its own
 `processed.md`. A new worktree has committed files only: copy `.decree/.env` in and run
-`.decree/scripts/infra/run.sh apply` there first.
+`.decree/machines/infra/scripts/run.sh apply` there first.
 
 `develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
@@ -250,7 +251,7 @@ source the `ai.sh` beside them (`ai`, which calls `ai_<backend>`: a data entry `
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and
 retries. `precheck` runs
-`scripts/infra/run.sh check`, which checks every `.decree/scripts/*/requirements`. The project fills in `scripts/develop/gate.sh` with its own checks, kept by
+`machines/infra/scripts/run.sh check`, which checks every `.decree/machines/*/scripts/requirements`. The project fills in `machines/develop/scripts/gate.sh` with its own checks, kept by
 `decree plugin export develop` (or the next `commit`); until then it runs nothing, says so and
 names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,
 then `final_gate`, whose `fail` ends the run); a non-zero exit means the checks could not run,
@@ -259,18 +260,18 @@ such as a missing tool, and goes to `failed` without `fix`. `ai.sh` runs the age
 runs names no event for its caller. `verify`
 ends in `pass` or `fail` from the AI's `VERDICT:` line.
 
-`infra`: `declare` → `apply`. The AI edits `scripts/infra/requirements` (`kind name version
-source`, one resource per line, in dependency order), adding a kind in `scripts/infra/kinds/`
-only when none fits; `apply` runs `scripts/infra/run.sh apply`, which installs what is missing and checks
+`infra`: `declare` → `apply`. The AI edits `machines/infra/scripts/requirements` (`kind name version
+source`, one resource per line, in dependency order), adding a kind in `machines/infra/scripts/kinds/`
+only when none fits; `apply` runs `machines/infra/scripts/run.sh apply`, which installs what is missing and checks
 every line. The first `infra` migration builds the environment; later ones add to it. Its
 `commit` exports `infra`, so the new lines are in `.decree/plugins/infra.md` in the run's commit.
 
 `qa`: `recon` → `attack` → `run` → `triage` → `report`. The AI writes chaos tests in
-`QA_DIR` (`tests/chaos`) against `scripts/qa/invariants.md`, each naming a wrench from
-`scripts/qa/wrenches.md`; triage marks each real bug's tests with the framework's strict
+`QA_DIR` (`tests/chaos`) against `machines/qa/scripts/invariants.md`, each naming a wrench from
+`machines/qa/scripts/wrenches.md`; triage marks each real bug's tests with the framework's strict
 expected-failure marker and writes one report per root cause (the broken invariant and the
-expected behaviour, no fix), and `report` emits each as a `develop` message. A guard (`scripts/qa/qa.sh`) fails any step whose AI changed a file outside
-`QA_DIR`. It does not start until `QA_RUN` in `scripts/qa/qa.sh` names the suite's command (kept
+expected behaviour, no fix), and `report` emits each as a `develop` message. A guard (`machines/qa/scripts/qa.sh`) fails any step whose AI changed a file outside
+`QA_DIR`. It does not start until `QA_RUN` in `machines/qa/scripts/qa.sh` names the suite's command (kept
 by `decree plugin export qa`); once
 qa finds bugs, the gate should run it too.
 
@@ -306,13 +307,13 @@ Each API key makes at most 10 uploads per minute on `POST /api/upload`.
 The smallest machine:
 
 ```yaml
-# Graph: ../graph/hello.md
+# Graph: graph.md
 name: hello
 description: Run one script.
 initial: greet
 states:
   greet:
-    invoke: greet                  # runs scripts/greet (or scripts/hello/greet)
+    invoke: greet                  # runs scripts/greet (or machines/hello/scripts/greet)
     transitions: { done: done }    # exit 0 -> done; non-zero -> failed, implicitly
   done:   { final: true }
   failed: { final: true }          # every machine has one
@@ -321,7 +322,7 @@ states:
 A machine grows one reason at a time. First, the straight line that does the job:
 
 ```yaml
-# Graph: ../graph/develop.md
+# Graph: graph.md
 name: develop
 description: Implement a message, then test it.
 initial: implement

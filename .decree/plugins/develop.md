@@ -59,7 +59,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -367,7 +367,7 @@ scripts:
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
-    # this one commit; git ignores machines/ and scripts/. A failed run exports nothing: `keep`
+    # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
     "${DECREE}" plugin export
@@ -400,7 +400,7 @@ scripts:
     # develop's fix: the AI fixes what the gate reported. Like implement, it
     # writes STOP instead of guessing.
     set -euo pipefail
-    . .decree/scripts/develop/ai.sh
+    . .decree/machines/develop/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -413,12 +413,12 @@ scripts:
     stopped && exit 0
 
     prompt="Read ${DECREE_MESSAGE}. The project's gate
-    (.decree/scripts/develop/gate.sh) failed; its output is in
+    (.decree/machines/develop/scripts/gate.sh) failed; its output is in
     ${DECREE_ROOT_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
     Fix the failures, append a line to ${progress} for each fix, and run the
     gate again. If ${plan} exists, follow it. If a failure needs a decision the
     message does not make, write the question to ${stop} and stop.
-    Follow the conventions in .decree/scripts/develop/conventions.md.
+    Follow the conventions in .decree/machines/develop/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== AI prompt (fix) ==="
     echo "${prompt}"
@@ -463,7 +463,7 @@ scripts:
     # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
     # whose steps are develop's scripts shares them.
     set -euo pipefail
-    . .decree/scripts/develop/ai.sh
+    . .decree/machines/develop/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -486,7 +486,7 @@ scripts:
     If the message is ambiguous or conflicts with the code, do not guess: write
     the question to ${stop} and stop.
     Logs of earlier attempts (if any) are in ${DECREE_RUN_DIR}.
-    Follow the conventions in .decree/scripts/develop/conventions.md.
+    Follow the conventions in .decree/machines/develop/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp)."
     echo "=== AI prompt (implementation) ==="
     echo "${prompt}"
@@ -526,15 +526,15 @@ scripts:
     echo "no other run starts until then (${attention})"
   precheck.sh: |
     #!/usr/bin/env bash
-    # Fail fast if the environment every .decree/scripts/*/requirements declares is not all
+    # Fail fast if the environment every .decree/machines/*/scripts/requirements declares is not all
     # there, such as the AI CLI or git missing from PATH. An infra message adds what is missing;
     # develop does not.
     set -euo pipefail
-    .decree/scripts/infra/run.sh check
+    .decree/machines/infra/scripts/run.sh check
   restart.sh: |
     #!/usr/bin/env bash
     # onentry script of `done`, after commit: hold the queue once this run has
-    # committed, so `decree process` exits and .decree/scripts/develop/run-queue.sh
+    # committed, so `decree process` exits and .decree/machines/develop/scripts/run-queue.sh
     # builds decree from the new commit before the next migration runs. Each
     # migration here changes decree itself, so the next one must run on the result.
     # Only migrations: an inbox run is not part of the queue's rebuild loop.
@@ -546,7 +546,7 @@ scripts:
     # run-queue: run this repository's pending migrations unattended, each one on a
     # decree built from the commit before it.
     #
-    #   .decree/scripts/develop/run-queue.sh
+    #   .decree/machines/develop/scripts/run-queue.sh
     #
     # develop's `restart` (done's onentry, after commit) runs `decree stop`, so
     # `process` exits after each migration. This loop then builds the release
@@ -583,7 +583,7 @@ scripts:
     # writes STOP instead of guessing. On `fail` it leaves gaps.md, what is missing, for
     # the next round or retry; an attempt that dies keeps the last one.
     set -euo pipefail
-    . .decree/scripts/develop/ai.sh
+    . .decree/machines/develop/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -603,7 +603,7 @@ scripts:
     message does not make, write the question to ${stop} and stop.
     If anything fails, write ${gaps}: one line per unmet requirement or failing test,
     saying what is wrong.
-    Follow the conventions in .decree/scripts/develop/conventions.md.
+    Follow the conventions in .decree/machines/develop/scripts/conventions.md.
     Write scratch files only under ${DECREE_RUN_DIR}, never outside the project (not /tmp).
     End your reply with one line: VERDICT: pass if everything passes, else
     VERDICT: fail."
@@ -634,9 +634,9 @@ Implements a message, such as a migration describing a change, with an AI coding
 ## What it does
 
 1. `clean_tree` (on entry): the run starts from a clean git work tree, so the commit at the end holds this run's work only.
-2. `precheck`: fails fast if anything that `.decree/scripts/*/requirements` declares is missing, by running infra's `run.sh check` (so `develop` needs `infra`).
+2. `precheck`: fails fast if anything that `.decree/machines/*/scripts/requirements` declares is missing, by running infra's `run.sh check` (so `develop` needs `infra`).
 3. `implement`: the agent implements the message in small steps, logging each in the run's `progress.md`. If the message is ambiguous it writes `STOP` with its question instead of guessing, and the run ends in `failed`.
-4. `gate`: your project's checks, `.decree/scripts/develop/gate.sh`. Passing goes to `verify`; failing goes to `fix`, where the agent fixes what `gate.log` reports, then to `final_gate`, whose failure ends the run.
+4. `gate`: your project's checks, `.decree/machines/develop/scripts/gate.sh`. Passing goes to `verify`; failing goes to `fix`, where the agent fixes what `gate.log` reports, then to `final_gate`, whose failure ends the run.
 5. `verify`: the agent checks every acceptance criterion and ends its reply with `VERDICT: pass` or `VERDICT: fail`.
 6. `done`: `commit` exports every plugin a run edited (`decree plugin export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree process --retry <id>`, and holds the queue.
 
@@ -648,6 +648,6 @@ Implements a message, such as a migration describing a change, with an AI coding
 
 ## How to use it
 
-1. Put your project's checks in `.decree/scripts/develop/gate.sh` (it prints `gate: no checks configured` until you do), for instance `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. The edit is kept in this file by `decree plugin export develop`, or by the next run's `commit`.
+1. Put your project's checks in `.decree/machines/develop/scripts/gate.sh` (it prints `gate: no checks configured` until you do), for instance `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. The edit is kept in this file by `decree plugin export develop`, or by the next run's `commit`.
 2. Write a migration, `.decree/migrations/01-<what>.md`, with `machine: develop` in its frontmatter, saying what to change and how to tell it is done.
 3. Run `decree process`.

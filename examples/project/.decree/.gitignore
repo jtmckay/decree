@@ -1,3 +1,5 @@
+inbox/
+runs/
 schema/
 .env*
 !.env.example
@@ -5,6 +7,9 @@ attention/
 process.log
 cache/
 ai-use.md
-machines/
-scripts/
-cron/*/
+# Installed from plugins/; a machine's order/ and graph.md, and any *.git.txt, are committed.
+machines/**
+!machines/**/
+!machines/*/order/**
+!machines/*/graph.md
+!machines/**/*.git.txt

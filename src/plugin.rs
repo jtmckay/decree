@@ -1,15 +1,15 @@
 //! Plugins (docs/reference/plugins.md): one markdown file, `.decree/plugins/<name>.md`, whose
-//! frontmatter holds any of decree's files: a machine, the files of `scripts/<name>/`, cron
-//! files, migrations and store seeds. decree installs a plugin into `machines/<name>.yml`,
-//! `scripts/<name>/` and `cron/<name>/` (its installed copy), writes its migrations and store
-//! seeds once, exports an installed copy back to its file, and never overwrites an installed
-//! copy that was edited in place.
+//! frontmatter holds a machine's folder, `machines/<name>/`: its `machine.yml`, its scripts,
+//! its cron files, and seeds for its `state/` and `order/`. decree installs a plugin into
+//! `machine.yml`, `scripts/` and `cron/` (its installed copy), writes its state and order seeds
+//! once, exports an installed copy back to its file, and never overwrites an installed copy
+//! that was edited in place.
 //!
 //! What decree records about an install is a copy of the plugin file as it was installed,
 //! `.decree/cache/plugins/<name>.md`. A plugin changed since its install when its file differs
 //! from that record; its installed copy was edited when it differs from what the record
 //! installs. The machine is compared as YAML, so a comment or a reordered key is no edit;
-//! every file of `scripts/<name>/` and `cron/<name>/` is compared byte for byte.
+//! every file of `scripts/` and `cron/` is compared byte for byte.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -20,10 +20,10 @@ use serde_norway::{Mapping, Value};
 
 use crate::commands::check::md_files;
 use crate::error::DecreeError;
-use crate::layout::{CACHE_DIR, CRON_DIR, MIGRATIONS_DIR, RUNS_DIR, STORE_DIR};
-use crate::machine::{self, is_ident, Invoke, MACHINES_DIR};
+use crate::layout::{self, CACHE_DIR, CRON_DIR, ORDER_DIR, STATE_DIR};
+use crate::machine::{self, is_ident};
 use crate::message::{write_replace, Message};
-use crate::runtime::resolve::{resolve_script, SCRIPTS_DIR};
+use crate::runtime::resolve::SCRIPTS_DIR;
 
 /// Directory holding plugin files, relative to `.decree/`.
 pub const PLUGINS_DIR: &str = "plugins";
@@ -33,13 +33,7 @@ const RECORDS_DIR: &str = "plugins";
 
 /// The keys a plugin's frontmatter may have, besides any `x-` key.
 const KEYS: [&str; 7] = [
-    "name",
-    "machine",
-    "scripts",
-    "cron",
-    "migrations",
-    "store",
-    "needs",
+    "name", "machine", "scripts", "cron", "state", "order", "needs",
 ];
 
 /// A plugin file, parsed and checked against the plugin schema.
@@ -53,10 +47,10 @@ pub struct Plugin {
     pub scripts: BTreeMap<String, String>,
     /// Each file of `cron/<name>/`, by its file name there.
     pub cron: BTreeMap<String, String>,
-    /// Each migration, by its file name in `migrations/`: written once, never overwritten.
-    pub migrations: BTreeMap<String, String>,
-    /// Each seed of `store/<name>/`, by its path there: written once, never overwritten.
-    pub store: BTreeMap<String, String>,
+    /// Each seed of `state/`, by its path there: written once, never overwritten.
+    pub state: BTreeMap<String, String>,
+    /// Each seed of `order/`, by its file name there: written once, never overwritten.
+    pub order: BTreeMap<String, String>,
     /// The other plugins this one relies on, as written.
     pub needs: Vec<String>,
     /// Every `x-` key, as written: decree keeps them and reads none.
@@ -107,7 +101,7 @@ impl Plugin {
                     problems.push(Problem::at(
                         key.as_str().map_or(1, line),
                         format!(
-                            "unknown key `{shown}`: a plugin has `name`, `machine`, `scripts`, `cron`, `migrations`, `store`, `needs` and `x-` keys"
+                            "unknown key `{shown}`: a plugin has `name`, `machine`, `scripts`, `cron`, `state`, `order`, `needs` and `x-` keys"
                         ),
                     ));
                 }
@@ -173,8 +167,8 @@ impl Plugin {
         };
         let scripts = files("scripts", "script", true, false);
         let cron = files("cron", "cron file", false, true);
-        let migrations = files("migrations", "migration", false, true);
-        let store = files("store", "store file", true, false);
+        let state = files("state", "state file", true, false);
+        let order = files("order", "order file", false, true);
 
         let mut needs = Vec::new();
         match message.frontmatter.get("needs") {
@@ -218,8 +212,8 @@ impl Plugin {
                 machine,
                 scripts,
                 cron,
-                migrations,
-                store,
+                state,
+                order,
                 needs,
                 extensions,
                 body: message.body,
@@ -229,7 +223,7 @@ impl Plugin {
     }
 
     /// The plugin file, as export writes it: `name`, `needs`, `machine`, `scripts`, `cron`,
-    /// `migrations` and `store` (each unless empty), the `x-` keys as written, then the body.
+    /// `state` and `order` (each unless empty), the `x-` keys as written, then the body.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut message = Message::new(self.body.clone());
         message.set("name", self.name.as_str());
@@ -243,8 +237,8 @@ impl Plugin {
         for (key, files) in [
             ("scripts", &self.scripts),
             ("cron", &self.cron),
-            ("migrations", &self.migrations),
-            ("store", &self.store),
+            ("state", &self.state),
+            ("order", &self.order),
         ] {
             if !files.is_empty() {
                 let mut map = Mapping::new();
@@ -290,7 +284,7 @@ impl Plugin {
     }
 
     /// Every file the plugin writes, relative to `.decree/`, with its text: the machine, the
-    /// scripts, the cron files, the migrations and the store seeds, each in path order.
+    /// scripts, the cron files, and the state and order seeds, each in path order.
     pub fn files(&self) -> Vec<(String, String)> {
         let name = &self.name;
         let mut out: Vec<(String, String)> = self
@@ -299,10 +293,22 @@ impl Plugin {
             .into_iter()
             .collect();
         for (dir, files) in [
-            (format!("{SCRIPTS_DIR}/{name}"), &self.scripts),
-            (format!("{CRON_DIR}/{name}"), &self.cron),
-            (MIGRATIONS_DIR.to_string(), &self.migrations),
-            (format!("{STORE_DIR}/{name}"), &self.store),
+            (
+                format!("{}/{SCRIPTS_DIR}", layout::machine_dir_rel(name)),
+                &self.scripts,
+            ),
+            (
+                format!("{}/{CRON_DIR}", layout::machine_dir_rel(name)),
+                &self.cron,
+            ),
+            (
+                format!("{}/{STATE_DIR}", layout::machine_dir_rel(name)),
+                &self.state,
+            ),
+            (
+                format!("{}/{ORDER_DIR}", layout::machine_dir_rel(name)),
+                &self.order,
+            ),
         ] {
             out.extend(
                 files
@@ -334,10 +340,9 @@ fn frontmatter_yaml(text: &str) -> Option<String> {
     None
 }
 
-/// Read a frontmatter map of `<path>: <its text>` (`scripts`, `cron`, `migrations`,
-/// `store`). Each path is plain (`is_plain_path`); with `folders` it may have `/`, else it is
+/// Read a frontmatter map of `<path>: <its text>` (`scripts`, `cron`, `state`, `order`). Each path is plain (`is_plain_path`); with `folders` it may have `/`, else it is
 /// one file name; with `md` it ends in `.md` and does not start with `.`, which decree skips
-/// in `cron/` and `migrations/`. A path that is both a file and a folder is a
+/// in `cron/` and `order/`. A path that is both a file and a folder is a
 /// problem.
 fn file_map(
     value: Option<&Value>,
@@ -415,7 +420,7 @@ fn file_map(
 
 /// `machines/<name>.yml`, relative to `.decree/`.
 fn machine_file(name: &str) -> String {
-    format!("{MACHINES_DIR}/{name}.yml")
+    layout::machine_file_rel(name)
 }
 
 /// A path relative to `scripts/<name>/` with nothing that leaves it: not empty, no leading
@@ -508,12 +513,12 @@ fn same_files(have: Option<&BTreeMap<String, Vec<u8>>>, want: &BTreeMap<String, 
 
 /// `.decree/cron/<name>/`.
 fn cron_dir(decree_dir: &Path, name: &str) -> PathBuf {
-    decree_dir.join(CRON_DIR).join(name)
+    layout::machine_dir(decree_dir, name).join(CRON_DIR)
 }
 
 /// `.decree/scripts/<name>/`.
 fn scripts_dir(decree_dir: &Path, name: &str) -> PathBuf {
-    decree_dir.join(SCRIPTS_DIR).join(name)
+    layout::machine_dir(decree_dir, name).join(SCRIPTS_DIR)
 }
 
 /// `.decree/cache/plugins/<name>.md`, the record of an install.
@@ -597,7 +602,6 @@ pub fn install(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), De
         }
         write_folder(&dir, have.unwrap_or_default(), want, scripts)?;
     }
-    drop_migrations(decree_dir, &plugin.name, Some(plugin))?;
     seed(decree_dir, plugin)?;
     record(decree_dir, &plugin.name, text)
 }
@@ -639,68 +643,17 @@ fn write_folder(
     Ok(())
 }
 
-/// Write `plugin`'s migrations and store seeds that are not there yet: a migration that is
-/// absent from `migrations/` and not in `processed.md`, and a store file absent from
-/// `store/<name>/`. Neither is ever overwritten: a migration is immutable once written, and
-/// the store is the project's data.
+/// Write `plugin`'s state and order seeds that are not there yet, into `state/` and
+/// `order/`. Neither is ever overwritten: they are the project's, which an install keeps.
 fn seed(decree_dir: &Path, plugin: &Plugin) -> Result<(), DecreeError> {
-    let processed = if plugin.migrations.is_empty() {
-        BTreeSet::new()
-    } else {
-        crate::commands::check::read_processed(decree_dir)?
-    };
-    let migrations = decree_dir.join(MIGRATIONS_DIR);
-    for (file, text) in &plugin.migrations {
-        let path = migrations.join(file);
-        if !processed.contains(file) && !path.exists() {
-            create_dir(path.parent())?;
-            write_replace(&path, text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
-        }
-    }
-    let store = decree_dir.join(STORE_DIR).join(&plugin.name);
-    for (file, text) in &plugin.store {
-        let path = store.join(file);
-        if !path.exists() {
-            create_dir(path.parent())?;
-            write_replace(&path, text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
-        }
-    }
-    Ok(())
-}
-
-/// Remove each migration plugin `name` was installed with (its record) that `now` does not
-/// have (`None`: the plugin is gone), if it never started: its file is as the plugin wrote
-/// it, it is not in `processed.md`, and it has no run. A migration that started is history,
-/// and stays.
-fn drop_migrations(decree_dir: &Path, name: &str, now: Option<&Plugin>) -> Result<(), DecreeError> {
-    let path = record_path(decree_dir, name);
-    let old = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(io_error(&path, e)),
-    };
-    let Some(old) = std::str::from_utf8(&old)
-        .ok()
-        .and_then(|t| Plugin::parse(t, None).ok())
-    else {
-        return Ok(());
-    };
-    let gone: Vec<(&String, &String)> = old
-        .migrations
-        .iter()
-        .filter(|(file, _)| now.is_none_or(|p| !p.migrations.contains_key(*file)))
-        .collect();
-    if gone.is_empty() {
-        return Ok(());
-    }
-    let processed = crate::commands::check::read_processed(decree_dir)?;
-    let runs = crate::migration::newest_runs(&decree_dir.join(RUNS_DIR))
-        .map_err(|e| io_error(&decree_dir.join(RUNS_DIR), e))?;
-    for (file, text) in gone {
-        let path = decree_dir.join(MIGRATIONS_DIR).join(file);
-        let untouched = std::fs::read(&path).is_ok_and(|b| b == text.as_bytes());
-        if untouched && !processed.contains(file) && !runs.contains_key(file) {
-            std::fs::remove_file(&path).map_err(|e| io_error(&path, e))?;
+    let dir = layout::machine_dir(decree_dir, &plugin.name);
+    for (sub, files) in [(STATE_DIR, &plugin.state), (ORDER_DIR, &plugin.order)] {
+        for (file, text) in files {
+            let path = dir.join(sub).join(file);
+            if !path.exists() {
+                create_dir(path.parent())?;
+                write_replace(&path, text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
+            }
         }
     }
     Ok(())
@@ -755,8 +708,8 @@ fn stem(file: &str) -> &str {
     file.strip_suffix(".md").unwrap_or(file)
 }
 
-/// Remove plugin `name`'s installed copy, the migrations it wrote that never started, and its
-/// record. Its store stays: it is the project's data.
+/// Remove plugin `name`'s installed copy and its record. Its `state/`, `order/` and `graph.md`
+/// stay: they are the project's. The folder goes when nothing is left in it.
 fn uninstall(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
     let machine = decree_dir.join(machine_file(name));
     if machine.exists() {
@@ -767,7 +720,15 @@ fn uninstall(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
             std::fs::remove_dir_all(&dir).map_err(|e| io_error(&dir, e))?;
         }
     }
-    drop_migrations(decree_dir, name, None)?;
+    let dir = layout::machine_dir(decree_dir, name);
+    if dir.is_dir()
+        && std::fs::read_dir(&dir)
+            .map_err(|e| io_error(&dir, e))?
+            .next()
+            .is_none()
+    {
+        std::fs::remove_dir(&dir).map_err(|e| io_error(&dir, e))?;
+    }
     forget(decree_dir, name)
 }
 
@@ -977,7 +938,7 @@ impl Synced {
         }
         for name in &self.kept {
             out.push(format!(
-                "{}: deleted, but its installed copy was edited, so {} and {SCRIPTS_DIR}/{name}/ stay as a machine no plugin installed",
+                "{}: deleted, but its installed copy was edited, so {} stays as a machine no plugin installed",
                 plugin_file(name),
                 machine_file(name)
             ));
@@ -1001,8 +962,9 @@ pub fn plugin_file(name: &str) -> String {
 /// What a conflict is and both ways out of it.
 pub fn conflict_message(name: &str) -> String {
     format!(
-        "plugin `{name}` changed, but its installed copy ({}, {SCRIPTS_DIR}/{name}/ or {CRON_DIR}/{name}/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export {name}` and merge with git; to take the plugin's version, run `decree plugin install {name}`",
-        machine_file(name)
+        "plugin `{name}` changed, but its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export {name}` and merge with git; to take the plugin's version, run `decree plugin install {name}`",
+        machine_file(name),
+        dir = layout::machine_dir_rel(name)
     )
 }
 
@@ -1028,8 +990,10 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
     let cdir = cron_dir(decree_dir, name);
     if text.is_none() && !sdir.is_dir() && !cdir.is_dir() {
         return Err(DecreeError::Other(format!(
-            "nothing installed as `{name}`: none of {dir}/{}, {dir}/{SCRIPTS_DIR}/{name}/ and {dir}/{CRON_DIR}/{name}/ exists",
+            "nothing installed as `{name}`: none of {dir}/{}, {dir}/{}/{SCRIPTS_DIR}/ and {dir}/{}/{CRON_DIR}/ exists",
             machine_file(name),
+            layout::machine_dir_rel(name),
+            layout::machine_dir_rel(name),
             dir = crate::layout::DECREE_DIR,
         )));
     }
@@ -1060,7 +1024,8 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
             for (path, bytes) in read_tree(dir)? {
                 let text = String::from_utf8(bytes).map_err(|_| {
                     DecreeError::Other(format!(
-                        "{shown}/{name}/{path}: not UTF-8 text; a plugin holds text files only"
+                        "{}/{shown}/{path}: not UTF-8 text; a plugin holds text files only",
+                        layout::machine_dir_rel(name)
                     ))
                 })?;
                 out.insert(path, text);
@@ -1068,24 +1033,10 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
         }
         Ok(out)
     };
-    let mut scripts = text_files(&sdir, SCRIPTS_DIR)?;
+    let scripts = text_files(&sdir, SCRIPTS_DIR)?;
     let cron = text_files(&cdir, CRON_DIR)?;
-    let flat = decree_dir.join(SCRIPTS_DIR);
     let mut needs = BTreeSet::new();
     if let Some(loaded) = &loaded {
-        for script in script_names(loaded) {
-            let Ok(found) = resolve_script(decree_dir, name, &script) else {
-                continue;
-            };
-            if found.parent() != Some(flat.as_path()) {
-                continue;
-            }
-            let Some(file) = found.file_name().and_then(|f| f.to_str()) else {
-                continue;
-            };
-            let text = std::fs::read_to_string(&found).map_err(|e| io_error(&found, e))?;
-            scripts.insert(file.to_string(), text);
-        }
         for (_, child) in loaded.invoked_machines() {
             needs.insert(child.to_string());
         }
@@ -1102,12 +1053,8 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
         needs.extend(old.needs.iter().cloned());
     }
     needs.remove(name);
-    let (migrations, store, extensions) = match old {
-        Some(old) => (
-            old.migrations.clone(),
-            old.store.clone(),
-            old.extensions.clone(),
-        ),
+    let (state, order, extensions) = match old {
+        Some(old) => (old.state.clone(), old.order.clone(), old.extensions.clone()),
         None => Default::default(),
     };
     let body = existing
@@ -1128,8 +1075,8 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
         machine,
         scripts,
         cron,
-        migrations,
-        store,
+        state,
+        order,
         needs: needs.into_iter().collect(),
         extensions,
         body,
@@ -1165,24 +1112,6 @@ pub fn write_and_install(decree_dir: &Path, plugin: &Plugin) -> Result<PathBuf, 
     write_replace(&path, &bytes).map_err(|(path, e)| io_error(&path, e))?;
     install(decree_dir, plugin, &bytes)?;
     Ok(path)
-}
-
-/// Every script name a machine runs: root `onentry` and `onexit`, and each state's script
-/// invoke, `reply` `notify`, `onentry` and `onexit`, sorted.
-fn script_names(m: &machine::LoadedMachine) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for node in &m.nodes {
-        out.extend(node.onentry.iter().cloned());
-        out.extend(node.onexit.iter().cloned());
-        match &node.invoke {
-            Some(Invoke::Script(s)) => {
-                out.insert(s.name.clone());
-            }
-            Some(Invoke::Reply(p)) => out.extend(p.notify.iter().cloned()),
-            _ => {}
-        }
-    }
-    out
 }
 
 /// The machines in `machines/` that no plugin file names, for `decree check`'s warning.
@@ -1292,7 +1221,7 @@ Says hello.
         assert_eq!(
             problems("---\nname: hello\nmachine: { name: hello }\nwhen: x\nx-exist: y\n---\n"),
             [
-                "Some(4): unknown key `when`: a plugin has `name`, `machine`, `scripts`, `cron`, `migrations`, `store`, `needs` and `x-` keys",
+                "Some(4): unknown key `when`: a plugin has `name`, `machine`, `scripts`, `cron`, `state`, `order`, `needs` and `x-` keys",
                 "Some(3): `machine` has `name`: the plugin's `name` names the machine",
             ]
         );
@@ -1319,11 +1248,11 @@ Says hello.
             ["Some(4): script path `a` is both a file and a folder"]
         );
         assert_eq!(
-            problems("---\nname: hello\ncron: x\nmigrations: { a/b.md: x, c.txt: y }\n---\n"),
+            problems("---\nname: hello\ncron: x\norder: { a/b.md: x, c.txt: y }\n---\n"),
             [
                 "Some(3): `cron` must be a mapping of paths to their text",
-                "Some(4): migration `a/b.md` must be a file name, with no `/`",
-                "Some(4): migration `c.txt` must end in `.md` and not start with `.`",
+                "Some(4): order file `a/b.md` must be a file name, with no `/`",
+                "Some(4): order file `c.txt` must end in `.md` and not start with `.`",
             ]
         );
     }
@@ -1367,26 +1296,30 @@ Says hello.
             s.missing_needs,
             [("hello".to_string(), vec!["other".to_string()])]
         );
-        assert!(get(d, "machines/hello.yml")
+        assert!(get(d, "machines/hello/machine.yml")
             .unwrap()
             .starts_with("name: hello\n"));
-        let mode = std::fs::metadata(d.join("scripts/hello/greet.sh"))
+        let mode = std::fs::metadata(d.join("machines/hello/scripts/greet.sh"))
             .unwrap()
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o755);
-        let mode = std::fs::metadata(d.join("scripts/hello/kinds/data.txt"))
+        let mode = std::fs::metadata(d.join("machines/hello/scripts/kinds/data.txt"))
             .unwrap()
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o644);
 
         // An edit stays while the plugin is unchanged.
-        put(d, "scripts/hello/greet.sh", "#!/bin/sh\necho edited\n");
+        put(
+            d,
+            "machines/hello/scripts/greet.sh",
+            "#!/bin/sh\necho edited\n",
+        );
         let s = sync(d).unwrap();
         assert!(s.installed.is_empty() && s.conflicts.is_empty());
         assert_eq!(
-            get(d, "scripts/hello/greet.sh").unwrap(),
+            get(d, "machines/hello/scripts/greet.sh").unwrap(),
             "#!/bin/sh\necho edited\n"
         );
 
@@ -1399,14 +1332,14 @@ Says hello.
         let s = sync(d).unwrap();
         assert_eq!(s.conflicts, ["hello"]);
         assert_eq!(
-            get(d, "scripts/hello/greet.sh").unwrap(),
+            get(d, "machines/hello/scripts/greet.sh").unwrap(),
             "#!/bin/sh\necho edited\n"
         );
 
         // Install takes the plugin's version.
         let found = read_one(d, "hello").unwrap();
         install(d, &found.parsed.unwrap(), &found.text).unwrap();
-        assert!(get(d, "scripts/hello/greet.sh")
+        assert!(get(d, "machines/hello/scripts/greet.sh")
             .unwrap()
             .contains("echo bye"));
         assert!(sync(d).unwrap().conflicts.is_empty());
@@ -1417,13 +1350,13 @@ Says hello.
             "plugins/hello.md",
             &PLUGIN.replace("echo hi", "echo again"),
         );
-        put(d, "scripts/hello/added.txt", "x");
+        put(d, "machines/hello/scripts/added.txt", "x");
         let s = sync(d).unwrap();
         assert_eq!(s.conflicts, ["hello"], "an added file is an edit");
-        std::fs::remove_file(d.join("scripts/hello/added.txt")).unwrap();
+        std::fs::remove_file(d.join("machines/hello/scripts/added.txt")).unwrap();
         let s = sync(d).unwrap();
         assert_eq!(s.installed, ["hello"]);
-        assert!(get(d, "scripts/hello/greet.sh")
+        assert!(get(d, "machines/hello/scripts/greet.sh")
             .unwrap()
             .contains("echo again"));
 
@@ -1432,8 +1365,8 @@ Says hello.
         std::fs::remove_file(d.join("plugins/hello.md")).unwrap();
         let s = sync(d).unwrap();
         assert_eq!(s.removed, ["hello"]);
-        assert!(!d.join("machines/hello.yml").exists());
-        assert!(!d.join("scripts/hello").exists());
+        assert!(!d.join("machines/hello/machine.yml").exists());
+        assert!(!d.join("machines/hello/scripts").exists());
         assert!(d.join("machines/extra.yml").exists());
         assert!(!record_path(d, "hello").exists());
     }
@@ -1446,11 +1379,11 @@ Says hello.
         // Written by hand, with a comment: equal as YAML.
         put(
             d,
-            "machines/hello.yml",
+            "machines/hello/machine.yml",
             &format!("# by hand\n{}", plugin.machine_text().unwrap()),
         );
         for (path, text) in &plugin.scripts {
-            put(d, &format!("scripts/hello/{path}"), text);
+            put(d, &format!("machines/hello/scripts/{path}"), text);
         }
         put(d, "plugins/hello.md", PLUGIN);
         let s = sync(d).unwrap();
@@ -1459,12 +1392,12 @@ Says hello.
             std::fs::read(record_path(d, "hello")).unwrap(),
             PLUGIN.as_bytes()
         );
-        assert!(get(d, "machines/hello.yml")
+        assert!(get(d, "machines/hello/machine.yml")
             .unwrap()
             .starts_with("# by hand"));
 
         std::fs::remove_file(record_path(d, "hello")).unwrap();
-        put(d, "scripts/hello/greet.sh", "different");
+        put(d, "machines/hello/scripts/greet.sh", "different");
         assert_eq!(sync(d).unwrap().conflicts, ["hello"]);
     }
 
@@ -1474,11 +1407,11 @@ Says hello.
         let d = tmp.path();
         put(d, "plugins/hello.md", PLUGIN);
         sync(d).unwrap();
-        put(d, "scripts/hello/greet.sh", "edited");
+        put(d, "machines/hello/scripts/greet.sh", "edited");
         std::fs::remove_file(d.join("plugins/hello.md")).unwrap();
         let s = sync(d).unwrap();
         assert_eq!(s.kept, ["hello"]);
-        assert_eq!(get(d, "scripts/hello/greet.sh").unwrap(), "edited");
+        assert_eq!(get(d, "machines/hello/scripts/greet.sh").unwrap(), "edited");
         assert!(!record_path(d, "hello").exists());
     }
 
@@ -1493,7 +1426,7 @@ Says hello.
         );
         let s = sync(d).unwrap();
         assert_eq!(s.invalid.len(), 1);
-        assert!(!d.join("machines/hello.yml").exists());
+        assert!(!d.join("machines/hello/machine.yml").exists());
         assert!(s.notices()[0].starts_with("plugins/hello.md: line 4: script path `../x.sh`"));
     }
 
@@ -1511,8 +1444,8 @@ Says hello.
         let s = sync(d).unwrap();
         assert_eq!(s.invalid.len(), 1);
         assert!(s.removed.is_empty() && s.kept.is_empty());
-        assert!(d.join("machines/hello.yml").exists());
-        assert!(d.join("scripts/hello/greet.sh").exists());
+        assert!(d.join("machines/hello/machine.yml").exists());
+        assert!(d.join("machines/hello/scripts/greet.sh").exists());
         assert_eq!(
             std::fs::read(record_path(d, "hello")).unwrap(),
             PLUGIN.as_bytes()
@@ -1530,11 +1463,12 @@ Says hello.
         put(d, "shared/keep.txt", "mine");
         put(d, "plugins/hello.md", PLUGIN);
         sync(d).unwrap();
-        std::os::unix::fs::symlink("../../shared", d.join("scripts/hello/shared")).unwrap();
+        std::os::unix::fs::symlink("../../../shared", d.join("machines/hello/scripts/shared"))
+            .unwrap();
         let found = read_one(d, "hello").unwrap();
         install(d, &found.parsed.unwrap(), &found.text).unwrap();
         assert_eq!(get(d, "shared/keep.txt").unwrap(), "mine");
-        assert!(d.join("scripts/hello/shared").is_symlink());
+        assert!(d.join("machines/hello/scripts/shared").is_symlink());
     }
 
     const KIT: &str = "\
@@ -1547,13 +1481,13 @@ cron:
     machine: hello
     ---
     Daily.
-migrations:
+order:
   A01-kit.md: |
     ---
     machine: hello
     ---
     Set up.
-store:
+state:
   seeds/list.txt: |
     a
 scripts:
@@ -1567,27 +1501,31 @@ x-exist-services:
 ";
 
     #[test]
-    fn a_plugin_without_a_machine_installs_cron_migrations_and_store() {
+    fn a_plugin_without_a_machine_installs_cron_state_and_order() {
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/kit.md", KIT);
         let s = sync(d).unwrap();
         assert_eq!(s.installed, ["kit"]);
-        assert!(!d.join("machines/kit.yml").exists());
-        assert!(get(d, "scripts/kit/lib.sh").unwrap().starts_with("#!"));
-        assert!(get(d, "cron/kit/daily.md")
+        assert!(!d.join("machines/kit/machine.yml").exists());
+        assert!(get(d, "machines/kit/scripts/lib.sh")
+            .unwrap()
+            .starts_with("#!"));
+        assert!(get(d, "machines/kit/cron/daily.md")
             .unwrap()
             .contains("cron: 0 9 * * *"));
-        assert!(get(d, "migrations/A01-kit.md").unwrap().contains("Set up."));
-        assert_eq!(get(d, "store/kit/seeds/list.txt").unwrap(), "a\n");
+        assert!(get(d, "machines/kit/order/A01-kit.md")
+            .unwrap()
+            .contains("Set up."));
+        assert_eq!(get(d, "machines/kit/state/seeds/list.txt").unwrap(), "a\n");
         assert_eq!(
-            crate::cron::file_names(&d.join("cron")).unwrap(),
-            ["kit/daily.md"]
+            crate::cron::file_names(d).unwrap(),
+            [("kit".to_string(), "daily.md".to_string())]
         );
 
-        // The store and a written migration are never overwritten; the cron file is.
-        put(d, "store/kit/seeds/list.txt", "mine\n");
-        put(d, "migrations/A01-kit.md", "edited\n");
+        // The state and order seeds are never overwritten; the cron file is.
+        put(d, "machines/kit/state/seeds/list.txt", "mine\n");
+        put(d, "machines/kit/order/A01-kit.md", "edited\n");
         put(
             d,
             "plugins/kit.md",
@@ -1596,62 +1534,59 @@ x-exist-services:
                 .replace("Daily.", "Each day."),
         );
         assert_eq!(sync(d).unwrap().installed, ["kit"]);
-        assert_eq!(get(d, "store/kit/seeds/list.txt").unwrap(), "mine\n");
-        assert_eq!(get(d, "migrations/A01-kit.md").unwrap(), "edited\n");
-        assert!(get(d, "cron/kit/daily.md").unwrap().contains("Each day."));
+        assert_eq!(
+            get(d, "machines/kit/state/seeds/list.txt").unwrap(),
+            "mine\n"
+        );
+        assert_eq!(get(d, "machines/kit/order/A01-kit.md").unwrap(), "edited\n");
+        assert!(get(d, "machines/kit/cron/daily.md")
+            .unwrap()
+            .contains("Each day."));
 
         // An edited cron file is an edit: a plugin change over it is a conflict.
         put(
             d,
-            "cron/kit/daily.md",
+            "machines/kit/cron/daily.md",
             "---\ncron: '@reboot'\nmachine: hello\n---\n",
         );
         put(d, "plugins/kit.md", KIT);
         assert_eq!(sync(d).unwrap().conflicts, ["kit"]);
 
-        // Export keeps the x- keys, the migrations and the store, and takes the edited cron file.
+        // Export keeps the x- keys and the state and order seeds, and takes the edited cron file.
         let out = export(d, "kit").unwrap();
         assert!(out.machine.is_none());
         assert!(out.cron["daily.md"].contains("@reboot"));
-        assert_eq!(out.migrations, Plugin::parse(KIT, None).unwrap().migrations);
-        assert_eq!(out.store["seeds/list.txt"], "a\n");
+        assert_eq!(out.order, Plugin::parse(KIT, None).unwrap().order);
+        assert_eq!(out.state["seeds/list.txt"], "a\n");
         let text = String::from_utf8(out.to_bytes()).unwrap();
         assert!(text.contains("x-exist-services:\n- web\n"), "{text}");
         assert_eq!(Plugin::parse(&text, Some("kit")).unwrap(), out);
     }
 
     #[test]
-    fn removing_a_plugin_drops_its_unrun_migrations_and_keeps_its_store() {
+    fn removing_a_plugin_keeps_its_state_and_order() {
         let tmp = project();
         let d = tmp.path();
-        let two = KIT.replace(
-            "migrations:\n",
-            "migrations:\n  A00-ran.md: |\n    ---\n    machine: hello\n    ---\n    Ran.\n",
-        );
-        put(d, "plugins/kit.md", &two);
+        put(d, "plugins/kit.md", KIT);
         sync(d).unwrap();
-        assert!(d.join("migrations/A00-ran.md").exists());
-        put(d, "processed.md", "A00-ran.md\n");
         std::fs::remove_file(d.join("plugins/kit.md")).unwrap();
         assert_eq!(sync(d).unwrap().removed, ["kit"]);
-        assert!(!d.join("cron/kit").exists() && !d.join("scripts/kit").exists());
-        assert!(!d.join("migrations/A01-kit.md").exists());
-        assert!(d.join("migrations/A00-ran.md").exists());
-        assert!(d.join("store/kit/seeds/list.txt").exists());
+        assert!(!d.join("machines/kit/cron").exists() && !d.join("machines/kit/scripts").exists());
+        assert!(d.join("machines/kit/order/A01-kit.md").exists());
+        assert!(d.join("machines/kit/state/seeds/list.txt").exists());
 
-        // A processed migration is not written again.
-        std::fs::remove_file(d.join("migrations/A00-ran.md")).unwrap();
-        put(d, "plugins/kit.md", &two);
+        // A seed already there is not written again.
+        put(d, "machines/kit/order/A01-kit.md", "mine\n");
+        put(d, "plugins/kit.md", KIT);
         sync(d).unwrap();
-        assert!(!d.join("migrations/A00-ran.md").exists());
-        assert!(d.join("migrations/A01-kit.md").exists());
+        assert_eq!(get(d, "machines/kit/order/A01-kit.md").unwrap(), "mine\n");
     }
 
     #[test]
     fn no_plugins_touches_nothing() {
         let tmp = tempfile::TempDir::new().unwrap();
         let d = tmp.path();
-        put(d, "machines/a.yml", "name: a\n");
+        put(d, "machines/a/machine.yml", "name: a\n");
         let s = sync(d).unwrap();
         assert!(s.installed.is_empty() && s.removed.is_empty());
         assert!(!d.join(CACHE_DIR).exists());

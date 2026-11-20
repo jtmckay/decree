@@ -58,7 +58,7 @@ machine:
 scripts:
   ai.sh: |
     # The AI helper the official plugins' scripts source, a copy in each one's scripts
-    # directory, by its path from the project root (`. .decree/scripts/develop/ai.sh`); then
+    # directory, by its path from the project root (`. .decree/machines/develop/scripts/ai.sh`); then
     # `ai "<prompt>"` asks the AI and prints its reply.
     #
     # Every backend is a function here: ai_claude, ai_opencode, ai_copilot. `ai` calls,
@@ -366,7 +366,7 @@ scripts:
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
-    # this one commit; git ignores machines/ and scripts/. A failed run exports nothing: `keep`
+    # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
     "${DECREE}" plugin export
@@ -389,7 +389,7 @@ scripts:
     # develop's fix: the AI fixes what the gate reported. Like implement, it
     # writes STOP instead of guessing.
     set -euo pipefail
-    . .decree/scripts/develop/ai.sh
+    . .decree/machines/develop/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -402,7 +402,7 @@ scripts:
     stopped && exit 0
 
     prompt="Read ${DECREE_MESSAGE}. The project's gate
-    (.decree/scripts/develop/gate.sh) failed; its output is in
+    (.decree/machines/develop/scripts/gate.sh) failed; its output is in
     ${DECREE_ROOT_RUN_DIR}/gate.log, and ${progress} notes what was done so far.
     Fix the failures, append a line to ${progress} for each fix, and run the
     gate again. If ${plan} exists, follow it. If a failure needs a decision the
@@ -434,12 +434,12 @@ scripts:
 
     # The checks, as one && chain: the first that fails names `fail`.
     checks() {
-      echo "gate: no checks configured; edit .decree/scripts/develop/gate.sh, then keep it with \`decree plugin export develop\`"
+      echo "gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with \`decree plugin export develop\`"
       # cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
       # npm ci && npm run lint && npm test
       # gofmt -l . | (! grep .) && go vet ./... && go test ./...
       # and, once qa has found bugs, its chaos suite:
-      # (. .decree/scripts/qa/qa.sh && bash -c "${QA_RUN}")
+      # (. .decree/machines/qa/scripts/qa.sh && bash -c "${QA_RUN}")
     }
 
     if checks 2>&1 | tee "${log}"; then
@@ -457,7 +457,7 @@ scripts:
     # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
     # whose steps are develop's scripts shares them.
     set -euo pipefail
-    . .decree/scripts/develop/ai.sh
+    . .decree/machines/develop/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -519,11 +519,11 @@ scripts:
     echo "no other run starts until then (${attention})"
   precheck.sh: |
     #!/usr/bin/env bash
-    # Fail fast if the environment every .decree/scripts/*/requirements declares is not all
+    # Fail fast if the environment every .decree/machines/*/scripts/requirements declares is not all
     # there, such as the AI CLI or git missing from PATH. An infra message adds what is missing;
     # develop does not.
     set -euo pipefail
-    .decree/scripts/infra/run.sh check
+    .decree/machines/infra/scripts/run.sh check
   verify.sh: |
     #!/usr/bin/env bash
     # develop's verify: the AI checks the acceptance criteria and ends its reply
@@ -532,7 +532,7 @@ scripts:
     # writes STOP instead of guessing. On `fail` it leaves gaps.md, what is missing, for
     # the next round or retry; an attempt that dies keeps the last one.
     set -euo pipefail
-    . .decree/scripts/develop/ai.sh
+    . .decree/machines/develop/scripts/ai.sh
 
     progress="${DECREE_ROOT_RUN_DIR}/progress.md"
     plan="${DECREE_ROOT_RUN_DIR}/plan.md"
@@ -582,9 +582,9 @@ Implements a message, such as a migration describing a change, with an AI coding
 ## What it does
 
 1. `clean_tree` (on entry): the run starts from a clean git work tree, so the commit at the end holds this run's work only.
-2. `precheck`: fails fast if anything that `.decree/scripts/*/requirements` declares is missing, by running infra's `run.sh check` (so `develop` needs `infra`).
+2. `precheck`: fails fast if anything that `.decree/machines/*/scripts/requirements` declares is missing, by running infra's `run.sh check` (so `develop` needs `infra`).
 3. `implement`: the agent implements the message in small steps, logging each in the run's `progress.md`. If the message is ambiguous it writes `STOP` with its question instead of guessing, and the run ends in `failed`.
-4. `gate`: your project's checks, `.decree/scripts/develop/gate.sh`. Passing goes to `verify`; failing goes to `fix`, where the agent fixes what `gate.log` reports, then to `final_gate`, whose failure ends the run.
+4. `gate`: your project's checks, `.decree/machines/develop/scripts/gate.sh`. Passing goes to `verify`; failing goes to `fix`, where the agent fixes what `gate.log` reports, then to `final_gate`, whose failure ends the run.
 5. `verify`: the agent checks every acceptance criterion and ends its reply with `VERDICT: pass` or `VERDICT: fail`.
 6. `done`: `commit` exports every plugin a run edited (`decree plugin export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree process --retry <id>`, and holds the queue.
 
@@ -596,6 +596,6 @@ Implements a message, such as a migration describing a change, with an AI coding
 
 ## How to use it
 
-1. Put your project's checks in `.decree/scripts/develop/gate.sh` (it prints `gate: no checks configured` until you do), for instance `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. The edit is kept in this file by `decree plugin export develop`, or by the next run's `commit`.
+1. Put your project's checks in `.decree/machines/develop/scripts/gate.sh` (it prints `gate: no checks configured` until you do), for instance `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. The edit is kept in this file by `decree plugin export develop`, or by the next run's `commit`.
 2. Write a migration, `.decree/migrations/01-<what>.md`, with `machine: develop` in its frontmatter, saying what to change and how to tell it is done.
 3. Run `decree process`.

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::machine::is_ident;
 
 /// Directory holding scripts, relative to `.decree/`.
-pub const SCRIPTS_DIR: &str = "scripts";
+pub use crate::layout::SCRIPTS_DIR;
 
 /// Why a script name does not resolve to exactly one executable file (V12).
 #[derive(Debug, thiserror::Error)]
@@ -49,11 +49,11 @@ fn join_paths(paths: &[PathBuf]) -> String {
         .join(", ")
 }
 
-/// The directories script `name` is looked up in for `machine`, in order:
-/// `scripts/<machine>/`, then `scripts/`.
+/// The directories script `name` is looked up in for `machine`: only its own
+/// `machines/<machine>/scripts/`. A script another machine ships is reached by path, from a
+/// script, never by name.
 fn search_dirs(decree_dir: &Path, machine: &str) -> Vec<PathBuf> {
-    let scripts = decree_dir.join(SCRIPTS_DIR);
-    vec![scripts.join(machine), scripts]
+    vec![crate::layout::machine_dir(decree_dir, machine).join(SCRIPTS_DIR)]
 }
 
 /// Resolve script `name` used by `machine` (docs/reference/scripts.md, Resolution). The first directory from
@@ -191,38 +191,21 @@ mod tests {
     #[test]
     fn exact_name_resolves() {
         let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x", 0o755);
+        let x = f.script("project/.decree/machines/m/scripts/x", 0o755);
         assert_eq!(f.resolve("m", "x").unwrap(), x);
     }
 
     #[test]
     fn one_extension_resolves() {
         let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x.sh", 0o755);
+        let x = f.script("project/.decree/machines/m/scripts/x.sh", 0o755);
         assert_eq!(f.resolve("m", "x").unwrap(), x);
     }
 
     #[test]
-    fn machine_dir_overrides_flat_dir_for_that_machine_only() {
+    fn another_machines_script_is_not_found() {
         let f = Fixture::new();
-        let own = f.script("project/.decree/scripts/m/x.sh", 0o755);
-        let flat = f.script("project/.decree/scripts/x.sh", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), own);
-        assert_eq!(f.resolve("n", "x").unwrap(), flat);
-    }
-
-    #[test]
-    fn full_precedence_order() {
-        let f = Fixture::new();
-        let paths = [
-            f.script("project/.decree/scripts/x", 0o755),
-            f.script("project/.decree/scripts/m/x", 0o755),
-        ];
-        // Remove the winner each time; the next directory down must win.
-        for winner in paths.iter().rev() {
-            assert_eq!(&f.resolve("m", "x").unwrap(), winner);
-            fs::remove_file(winner).unwrap();
-        }
+        f.script("project/.decree/machines/n/scripts/x.sh", 0o755);
         assert!(matches!(
             f.resolve("m", "x"),
             Err(ScriptError::Missing { .. })
@@ -232,8 +215,8 @@ mod tests {
     #[test]
     fn two_matches_in_one_dir_fail_naming_both() {
         let f = Fixture::new();
-        let sh = f.script("project/.decree/scripts/x.sh", 0o755);
-        let py = f.script("project/.decree/scripts/x.py", 0o755);
+        let sh = f.script("project/.decree/machines/m/scripts/x.sh", 0o755);
+        let py = f.script("project/.decree/machines/m/scripts/x.py", 0o755);
         let err = f.resolve("m", "x").unwrap_err();
         match &err {
             ScriptError::Ambiguous { matches, .. } => assert_eq!(matches, &vec![py, sh]),
@@ -244,18 +227,9 @@ mod tests {
     }
 
     #[test]
-    fn higher_match_hides_lower_ambiguous_pair() {
-        let f = Fixture::new();
-        f.script("project/.decree/scripts/x.sh", 0o755);
-        f.script("project/.decree/scripts/x.py", 0o755);
-        let own = f.script("project/.decree/scripts/m/x", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), own);
-    }
-
-    #[test]
     fn not_executable_fails() {
         let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x.sh", 0o644);
+        let x = f.script("project/.decree/machines/m/scripts/x.sh", 0o644);
         match f.resolve("m", "x").unwrap_err() {
             ScriptError::NotExecutable { path, .. } => assert_eq!(path, x),
             other => panic!("expected NotExecutable, got {other:?}"),
@@ -265,30 +239,19 @@ mod tests {
     #[test]
     fn any_execute_bit_is_enough() {
         let f = Fixture::new();
-        let x = f.script("project/.decree/scripts/x", 0o640 | 0o001);
+        let x = f.script("project/.decree/machines/m/scripts/x", 0o640 | 0o001);
         assert_eq!(f.resolve("m", "x").unwrap(), x);
-    }
-
-    #[test]
-    fn non_executable_winner_does_not_fall_through() {
-        let f = Fixture::new();
-        f.script("project/.decree/scripts/x.sh", 0o755);
-        f.script("project/.decree/scripts/m/x.sh", 0o644);
-        assert!(matches!(
-            f.resolve("m", "x"),
-            Err(ScriptError::NotExecutable { .. })
-        ));
     }
 
     #[test]
     fn missing_fails_listing_searched_dirs() {
         let f = Fixture::new();
-        f.script("project/.decree/scripts/y.sh", 0o755);
+        f.script("project/.decree/machines/m/scripts/y.sh", 0o755);
         let err = f.resolve("m", "x").unwrap_err();
         match &err {
             ScriptError::Missing { searched, .. } => {
                 assert_eq!(searched, &search_dirs(&f.decree_dir(), "m"));
-                assert_eq!(searched.len(), 2);
+                assert_eq!(searched.len(), 1);
             }
             other => panic!("expected Missing, got {other:?}"),
         }
@@ -298,10 +261,10 @@ mod tests {
     #[test]
     fn similar_names_do_not_match() {
         let f = Fixture::new();
-        f.script("project/.decree/scripts/xy.sh", 0o755);
-        f.script("project/.decree/scripts/x.tar.gz", 0o755);
-        f.script("project/.decree/scripts/x.", 0o755);
-        f.script("project/.decree/scripts/.x", 0o755);
+        f.script("project/.decree/machines/m/scripts/xy.sh", 0o755);
+        f.script("project/.decree/machines/m/scripts/x.tar.gz", 0o755);
+        f.script("project/.decree/machines/m/scripts/x.", 0o755);
+        f.script("project/.decree/machines/m/scripts/.x", 0o755);
         assert!(matches!(
             f.resolve("m", "x"),
             Err(ScriptError::Missing { .. })
@@ -309,18 +272,9 @@ mod tests {
     }
 
     #[test]
-    fn machine_dir_named_like_script_is_not_a_match() {
-        let f = Fixture::new();
-        // `scripts/x/` is machine x's directory, not script x.
-        f.script("project/.decree/scripts/x/other.sh", 0o755);
-        let flat = f.script("project/.decree/scripts/x.sh", 0o755);
-        assert_eq!(f.resolve("m", "x").unwrap(), flat);
-    }
-
-    #[test]
     fn non_regular_file_fails() {
         let f = Fixture::new();
-        let dir = f.decree_dir().join("scripts");
+        let dir = f.decree_dir().join("machines/m/scripts");
         fs::create_dir_all(&dir).unwrap();
         let link = dir.join("x");
         std::os::unix::fs::symlink(dir.join("nowhere"), &link).unwrap();
@@ -334,7 +288,7 @@ mod tests {
     fn symlink_to_executable_resolves() {
         let f = Fixture::new();
         let target = f.script("elsewhere/real.sh", 0o755);
-        let dir = f.decree_dir().join("scripts");
+        let dir = f.decree_dir().join("machines/m/scripts");
         fs::create_dir_all(&dir).unwrap();
         let link = dir.join("x.sh");
         std::os::unix::fs::symlink(&target, &link).unwrap();
@@ -344,7 +298,7 @@ mod tests {
     #[test]
     fn invalid_names_fail() {
         let f = Fixture::new();
-        f.script("project/.decree/scripts/X.sh", 0o755);
+        f.script("project/.decree/machines/m/scripts/X.sh", 0o755);
         for name in ["", "X", "../x", "m/x", "x.sh", "1x", "x-y"] {
             assert!(
                 matches!(f.resolve("m", name), Err(ScriptError::InvalidName(_))),

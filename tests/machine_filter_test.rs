@@ -2,7 +2,6 @@
 //! `DECREE_EXCLUDE_MACHINES` (docs/reference/cli.md, Several processes; docs/decisions.md,
 //! D69): several `process` commands on one project, each running its own machines.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use std::fs;
 use std::path::PathBuf;
@@ -42,8 +41,8 @@ impl Project {
                 "  call:\n    invoke: { machine: b }\n    transitions: { done: done }\n",
             ),
         ] {
-            fs::write(
-                decree.join(format!("machines/{name}.yml")),
+            common::write_file(
+                &decree.join(format!("machines/{name}/machine.yml")),
                 format!(
                     "name: {name}\ndescription: One script.\n\
                      data:\n  fail: {{ type: bool, default: false }}\n\
@@ -51,8 +50,7 @@ impl Project {
                      transitions: {{ done: {after} }}\n{call}  \
                      done: {{ final: true }}\n  failed: {{ final: true }}\n"
                 ),
-            )
-            .unwrap();
+            );
         }
         write_script(&decree.join("scripts/work"), WORK);
         Project { tmp }
@@ -101,9 +99,8 @@ impl Project {
     }
 
     fn decree_cmd(&self, args: &[&str]) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path())
-            .env("NO_COLOR", "1")
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1")
             .env_remove("DECREE_MACHINES")
             .env_remove("DECREE_EXCLUDE_MACHINES")
             .args(args);
@@ -417,9 +414,9 @@ fn check_still_rejects_other_decree_keys() {
 fn a_machine_env_file_may_not_set_the_filter() {
     let p = Project::new();
     p.write(".gitignore", ".env*\n");
-    let yml = fs::read_to_string(p.decree().join("machines/a.yml")).unwrap();
+    let yml = fs::read_to_string(p.decree().join("machines/a/machine.yml")).unwrap();
     p.write(
-        "machines/a.yml",
+        "machines/a/machine.yml",
         &yml.replace(
             "description: One script.\n",
             "description: One script.\nenv_file: .env.a\n",

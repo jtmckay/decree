@@ -2,7 +2,6 @@
 //! truth, Run status, Stopping, Run lock; docs/reference/runs.md, step 1). Each test builds its own
 //! `.decree/` in a temp directory and drives the `decree` binary.
 
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use serde_json::{json, Value};
 use std::fs;
@@ -78,8 +77,8 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        fs::write(decree.join("machines/slow.yml"), SLOW).unwrap();
-        fs::write(decree.join("machines/ask.yml"), ASK).unwrap();
+        common::write_file(&decree.join("machines/slow/machine.yml"), SLOW);
+        common::write_file(&decree.join("machines/ask/machine.yml"), ASK);
         let scripts = [
             ("root_entry", RECORD),
             ("root_exit", RECORD),
@@ -168,17 +167,14 @@ impl Project {
     }
 
     fn process(&self) -> Command {
-        let mut cmd = cargo_bin_cmd!("decree");
-        cmd.current_dir(self.tmp.path())
-            .env("NO_COLOR", "1")
-            .arg("process");
+        let mut cmd = common::decree_at(self.tmp.path());
+        cmd.env("NO_COLOR", "1").arg("process");
         cmd
     }
 
     /// `decree process` in the background.
     fn spawn_process(&self) -> Child {
-        std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-            .current_dir(self.tmp.path())
+        common::std_decree_at(self.tmp.path())
             .env("NO_COLOR", "1")
             .arg("process")
             .stdout(Stdio::null())
@@ -522,10 +518,8 @@ fn mirror_that_disagrees_with_the_events_is_rewritten() {
 
 /// `decree <args>` in the project.
 fn decree(p: &Project, args: &[&str]) -> Command {
-    let mut cmd = cargo_bin_cmd!("decree");
-    cmd.current_dir(p.tmp.path())
-        .env("NO_COLOR", "1")
-        .args(args);
+    let mut cmd = common::decree_at(p.tmp.path());
+    cmd.env("NO_COLOR", "1").args(args);
     cmd
 }
 

@@ -20,7 +20,7 @@ use crate::dotenv;
 use crate::error::DecreeError;
 use crate::layout::{self, DECREE_DIR};
 use crate::machine::validate::CheckEnv;
-use crate::machine::{self, LoadedMachine, MACHINES_DIR};
+use crate::machine::{self, LoadedMachine};
 use crate::message::{self, validate, Message};
 use crate::plugin;
 
@@ -236,7 +236,7 @@ fn plugin_warnings(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> 
         plugin::unplugged(&project.decree_dir, &project.machine_ids)?
             .into_iter()
             .map(|id| CheckWarning {
-                file: format!("{MACHINES_DIR}/{id}.yml"),
+                file: layout::machine_file_rel(&id),
                 message: format!(
                 "no plugin installed this machine; run `decree plugin export {id}` to write `{}`",
                 plugin::plugin_file(&id)
@@ -265,7 +265,7 @@ fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>,
                 message: format!("{message}; run `decree schema`"),
             }),
     );
-    out.extend(store_warnings(&project_root.join(DECREE_DIR))?);
+    out.extend(state_warnings(&project_root.join(DECREE_DIR))?);
     out.extend(resolve_env(project)?.1);
     out.extend(inserted_migrations(project)?);
     Ok(out)
@@ -294,57 +294,34 @@ fn inserted_migrations(project: &Project) -> Result<Vec<CheckWarning>, DecreeErr
         .collect())
 }
 
-/// What `.decree/store/` holds that no machine declares (docs/reference/machines.md, Store):
-/// a file or folder in `store/<machine>/` that the machine's `store:` does not name, and
-/// anything in `store/` that is not a machine's folder. A machine that fails to load is
-/// reported as an error, and its folder is not looked into.
-fn store_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
-    let store_dir = decree_dir.join(layout::STORE_DIR);
-    let entries = match std::fs::read_dir(&store_dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e.into()),
-    };
-    let paths = machine::machine_paths(decree_dir)?;
-    let mut names = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        names.push((
-            entry.file_name().to_string_lossy().into_owned(),
-            entry.path(),
-        ));
-    }
-    names.sort();
+/// What a machine's `state/` holds that its `state_files:` does not declare
+/// (docs/reference/machines.md, State): one warning per file or folder directly in
+/// `machines/<name>/state/`. A machine that fails to load is reported as an error, and its
+/// folder is not looked into.
+fn state_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
     let mut out = Vec::new();
-    for (name, path) in names {
-        let file = format!("{}/{name}", layout::STORE_DIR);
-        let message = if !path.is_dir() {
-            "is not a folder: `store/` holds one folder per machine".to_string()
-        } else if !paths.contains_key(&name) {
-            format!("is a store folder with no machine: no `{MACHINES_DIR}/{name}.yml`")
-        } else {
-            String::new()
-        };
-        if !message.is_empty() {
-            out.push(CheckWarning { file, message });
+    for (name, path) in machine::machine_paths(decree_dir)? {
+        let dir = layout::machine_dir(decree_dir, &name).join(layout::STATE_DIR);
+        if !dir.is_dir() {
             continue;
         }
-        let Ok(m) = std::fs::read_to_string(&paths[&name])
+        let Ok(m) = std::fs::read_to_string(&path)
             .map_err(DecreeError::from)
             .and_then(|text| machine::load_machine_text(&name, &text))
         else {
             continue;
         };
-        let mut kept: Vec<String> = std::fs::read_dir(&path)?
+        let mut kept: Vec<String> = std::fs::read_dir(&dir)?
             .map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned()))
             .collect::<Result<_, _>>()?;
         kept.sort();
+        let file = format!("{}/{}", layout::machine_dir_rel(&name), layout::STATE_DIR);
         out.extend(
             kept.into_iter()
-                .filter(|kept| !m.store.contains_key(kept))
+                .filter(|kept| !m.state_files.contains_key(kept))
                 .map(|kept| CheckWarning {
                     file: format!("{file}/{kept}"),
-                    message: format!("is not declared in {name}'s `store:`"),
+                    message: format!("is not declared in {name}'s `state_files:`"),
                 }),
         );
     }
@@ -369,13 +346,14 @@ fn check(project: &Project) -> Result<Vec<CheckError>, DecreeError> {
     let mut problems = project.problems.clone();
     let decree_dir = &project.decree_dir;
     for name in project.pending_migrations()? {
-        project.check_file(layout::MIGRATIONS_DIR, &name, "M1", false, &mut problems)?;
+        project.check_file(layout::MIGRATIONS_DIR, &name, "M1", None, &mut problems)?;
     }
     for name in md_files(&decree_dir.join(layout::INBOX_DIR))? {
-        project.check_file(layout::INBOX_DIR, &name, "M2", false, &mut problems)?;
+        project.check_file(layout::INBOX_DIR, &name, "M2", None, &mut problems)?;
     }
-    for name in crate::cron::file_names(&decree_dir.join(layout::CRON_DIR))? {
-        project.check_file(layout::CRON_DIR, &name, "M3", true, &mut problems)?;
+    for (owner, file) in crate::cron::file_names(decree_dir)? {
+        let dir = format!("{}/{}", layout::machine_dir_rel(&owner), layout::CRON_DIR);
+        project.check_file(&dir, &file, "M3", Some(&owner), &mut problems)?;
     }
     let env_problems = env_problems(project)?;
     if env_problems.is_empty() {
@@ -624,7 +602,7 @@ impl Project {
         let mut problems = Vec::new();
         let mut machines = BTreeMap::new();
         let mut sources = BTreeMap::new();
-        let file = |id: &str| format!("{MACHINES_DIR}/{id}.yml");
+        let file = |id: &str| layout::machine_file_rel(id);
         for (id, path) in paths {
             let text = std::fs::read_to_string(&path)?;
             match machine::load_machine_located(&id, &text) {
@@ -677,13 +655,13 @@ impl Project {
         dir: &str,
         name: &str,
         rule: &str,
-        is_cron: bool,
+        cron: Option<&str>,
         problems: &mut Vec<CheckError>,
     ) -> Result<(), DecreeError> {
         let rel = format!("{dir}/{name}");
         let bytes = std::fs::read(self.decree_dir.join(dir).join(name))?;
         let errors = match String::from_utf8(bytes) {
-            Ok(text) => self.check_text(&text, is_cron),
+            Ok(text) => self.check_text(&text, cron),
             Err(_) => vec![(1, "file is not valid UTF-8".to_string())],
         };
         for (line, message) in errors {
@@ -738,13 +716,16 @@ impl Project {
     /// Errors in one message as `(file line, message)`: it parses, names a known machine,
     /// and its `params` fit that machine's `data`. Cron files
     /// also need a `cron:` expression that parses.
-    fn check_text(&self, text: &str, is_cron: bool) -> Vec<(usize, String)> {
-        let fm = match Message::parse(text) {
+    /// Errors in a message's text. `cron`, for a cron file, is the machine whose folder holds
+    /// it, its `machine` when it names none.
+    fn check_text(&self, text: &str, cron: Option<&str>) -> Vec<(usize, String)> {
+        let mut fm = match Message::parse(text) {
             Ok(fm) => fm,
             Err(e) => return vec![e],
         };
         let mut errors = Vec::new();
-        if is_cron {
+        if let Some(owner) = cron {
+            cron::default_machine(&mut fm, owner);
             match fm.frontmatter.get("cron") {
                 None => errors.push((1, "no `cron:` expression".to_string())),
                 Some(Value::String(expr)) => {
