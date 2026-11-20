@@ -225,13 +225,45 @@ fn yes() -> bool {
     true
 }
 
-/// `{ machine: { name, params? } }`, or `{ machine: <name> }`.
+/// `{ machine: { name, params? } }`, `{ machine: <name> }`, or `{ machine: { message } }`:
+/// run a message file as the child, its machine, params and body taken from it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MachineInvoke {
-    pub name: String,
+    /// The child machine, written in the machine file.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// A message file, relative to the run's folder, whose `machine`, `params` and body make
+    /// the child run: the child is decided when the state runs, as SCXML's `srcexpr`.
+    #[serde(default)]
+    pub message: Option<String>,
     #[serde(default)]
     pub params: serde_norway::Mapping,
+}
+
+impl MachineInvoke {
+    /// The child machine the machine file names; `None` for a `message` invoke.
+    pub fn child(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Exactly one of `name` and `message`, `params` only with `name`, and a plain relative
+    /// `message` path.
+    fn check(self) -> Result<MachineInvoke, String> {
+        match (&self.name, &self.message) {
+            (Some(_), Some(_)) => {
+                Err("a `machine` invoke has `name` or `message`, not both".to_string())
+            }
+            (None, None) => Err("a `machine` invoke needs `name` or `message`".to_string()),
+            (None, Some(_)) if !self.params.is_empty() => Err(
+                "`params` go in the message file of a `machine: { message }` invoke".to_string(),
+            ),
+            (None, Some(path)) if !crate::plugin::is_plain_path(path) => Err(format!(
+                "`message` `{path}` is not a plain path in the run's folder: no `..`, `.`, empty parts or leading `/`"
+            )),
+            _ => Ok(self),
+        }
+    }
 }
 
 /// The kinds `invoke` names, in the order the reference lists them.
@@ -280,7 +312,9 @@ impl<'de> Deserialize<'de> for Invoke {
             "reply" => serde_norway::from_value(value)
                 .map(Invoke::Reply)
                 .map_err(|e| e.to_string()),
-            "machine" => named(value).map(Invoke::Machine),
+            "machine" => named::<MachineInvoke>(value)
+                .and_then(MachineInvoke::check)
+                .map(Invoke::Machine),
             other => Err(format!(
                 "unknown invoke kind `{other}`: `invoke` names one of {INVOKE_KINDS}"
             )),
@@ -1053,7 +1087,7 @@ impl LoadedMachine {
         let mut out = Vec::new();
         for (i, node) in self.nodes.iter().enumerate() {
             let child = match &node.invoke {
-                Some(Invoke::Machine(m)) => Some(m.name.as_str()),
+                Some(Invoke::Machine(m)) => m.child(),
                 Some(Invoke::Model(c)) => Some(c.router.as_deref().unwrap_or(ROUTER_MACHINE)),
                 _ => None,
             };

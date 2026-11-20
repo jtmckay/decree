@@ -429,7 +429,9 @@ impl Validator<'_> {
                     }
                 }
                 Some(Invoke::Machine(mi)) => {
-                    let Some(child) = self.env.machines.get(&mi.name) else {
+                    // A `message` invoke's child is known only when it runs: it ends in
+                    // `done` or `error`, as a script does.
+                    let Some(child) = mi.child().and_then(|c| self.env.machines.get(c)) else {
                         continue; // V16
                     };
                     for event in child.final_events() {
@@ -438,7 +440,7 @@ impl Validator<'_> {
                                 at.clone(),
                                 format!(
                                     "machine `{}` can end in `{event}`, which this state does not handle, itself or through an ancestor (V8)",
-                                    mi.name
+                                    mi.child().unwrap_or_default()
                                 ),
                             );
                         }
@@ -837,16 +839,20 @@ impl Validator<'_> {
         }
     }
 
-    /// V16 for `invoke: { machine: { name, params } }`.
+    /// V16 for `invoke: { machine: { name, params } }`. A `message` invoke's child is known
+    /// only when it runs.
     fn child_machine(&mut self, at: &str, mi: &MachineInvoke) {
-        if !self.env.machine_ids.contains(&mi.name) {
+        let Some(name) = mi.child() else {
+            return;
+        };
+        if !self.env.machine_ids.contains(name) {
             self.push(
                 at.to_string(),
-                format!("machine `{}` does not exist (V16)", mi.name),
+                format!("machine `{name}` does not exist (V16)"),
             );
             return;
         }
-        let Some(child) = self.env.machines.get(&mi.name) else {
+        let Some(child) = self.env.machines.get(name) else {
             return; // it fails to load, and is reported on its own
         };
         for (key, value) in &mi.params {
@@ -854,10 +860,7 @@ impl Validator<'_> {
             match child.data.get(key) {
                 None => self.push(
                     at.to_string(),
-                    format!(
-                        "unknown param `{key}`: machine `{}` has no data `{key}` (V16)",
-                        mi.name
-                    ),
+                    format!("unknown param `{key}`: machine `{name}` has no data `{key}` (V16)"),
                 ),
                 Some(spec) => {
                     if let Some(problem) = spec.param_problem(key, value) {

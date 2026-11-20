@@ -1855,6 +1855,79 @@ fn is_run_id(id: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// A parent that writes `next.md` with a script, then runs it with `machine: { message }`.
+const FROM_MESSAGE: &str = "\
+name: from_message
+description: Write a message, then run it as a child.
+initial: write
+states:
+  write:
+    invoke: write_next
+    transitions: { done: run }
+  run:
+    invoke:
+      machine: { message: next.md }
+    transitions: { done: done, error: failed }
+  done: { final: true }
+  failed: { final: true }
+";
+
+fn message_project(child_work: &str) -> Project {
+    Project::from_texts(
+        &[
+            ("from_message", FROM_MESSAGE),
+            ("step_child", &fixture("step_child")),
+        ],
+        &[("write_next", "write_next"), ("child_work", child_work)],
+    )
+}
+
+/// `machine: { message }` takes the child's machine, params, body and own keys from the file,
+/// and any final state but `failed` is `done`.
+#[test]
+fn machine_message_invoke_runs_the_file_as_the_child() {
+    let p = message_project("name_reject");
+    assert_eq!(p.run(), Outcome::Finished("done".into()));
+    let child = p.child_id();
+    let message = fs::read_to_string(p.child_dir(&child).join(MESSAGE_FILE)).unwrap();
+    assert!(
+        message.starts_with("---\norder: develop/A01-x.md\nmachine: step_child\n"),
+        "{message}"
+    );
+    assert!(
+        message.contains("\nparams:\n  label: from-file\n"),
+        "{message}"
+    );
+    assert!(message.ends_with("---\n# From the file\n"), "{message}");
+    let events = p.child_events(&child);
+    assert_eq!(events.last().unwrap()["state"], "rejected");
+    let received = &p.events_of("received")[0];
+    assert_eq!(received["event"], "done");
+}
+
+/// A child that ends in `failed` is `error`; a file that names no machine starts no child.
+#[test]
+fn machine_message_invoke_failed_or_unstartable_is_error() {
+    let p = message_project("exit_three");
+    assert_eq!(p.run(), Outcome::Finished("failed".into()));
+    assert_eq!(p.events_of("received")[0]["event"], "error");
+
+    let p = Project::from_texts(
+        &[
+            ("from_message", FROM_MESSAGE),
+            ("step_child", &fixture("step_child")),
+        ],
+        &[("write_next", "exit_zero"), ("child_work", "exit_zero")],
+    );
+    assert_eq!(p.run(), Outcome::Finished("failed".into()));
+    assert!(p.events_of("waiting").is_empty(), "no child started");
+    let error = p.transitions();
+    assert!(
+        error.iter().any(|t| t.contains("run error failed")),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn machine_invoke_runs_a_child_run_in_its_own_folder() {
     let p = parent_project("print_env");

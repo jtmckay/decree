@@ -361,7 +361,9 @@ impl<'a> Interpreter<'a> {
                 InterpreterError::NotReceived(format!("child run `{child}` has not finished"))
             })?;
             let decision = match invoke {
-                Some(Invoke::Machine(_)) => self.machine_finished(&child, &finished)?,
+                Some(Invoke::Machine(mi)) => {
+                    self.machine_finished(&child, &finished, mi.message.is_some())?
+                }
                 Some(Invoke::Model(c)) => {
                     let duration_ms = self.child_duration(&child)?;
                     self.model_finished(s, c, &child, &finished, duration_ms)?

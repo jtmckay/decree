@@ -72,21 +72,55 @@ impl Interpreter<'_> {
         s: usize,
         invoke: &MachineInvoke,
     ) -> Result<Invoked, InterpreterError> {
-        let child = match self.run_child(s, &invoke.name, &invoke.params, None)? {
+        let not_started = |reason: String| {
+            Invoked::Event(Decision {
+                error: Some(reason),
+                ..Decision::new("error", "machine", None)
+            })
+        };
+        let started = match (&invoke.name, &invoke.message) {
+            (Some(name), _) => self.run_child(s, name, &invoke.params, None, None)?,
+            (None, Some(file)) => match self.message_file(file) {
+                Ok((name, params, message)) => {
+                    self.run_child(s, &name, &params, None, Some(&message))?
+                }
+                Err(reason) => return Ok(not_started(reason)),
+            },
+            (None, None) => return Ok(not_started("no `name` or `message`".to_string())),
+        };
+        let child = match started {
             Ok(child) => child,
-            Err(reason) => {
-                return Ok(Invoked::Event(Decision {
-                    error: Some(reason),
-                    ..Decision::new("error", "machine", None)
-                }))
-            }
+            Err(reason) => return Ok(not_started(reason)),
         };
         match child.outcome {
-            Outcome::Finished(state) => {
-                self.machine_finished(&child.id, &state).map(Invoked::Event)
-            }
+            Outcome::Finished(state) => self
+                .machine_finished(&child.id, &state, invoke.message.is_some())
+                .map(Invoked::Event),
             outcome => Ok(self.wait_for_child(s, child.id, outcome)),
         }
+    }
+
+    /// The message file of a `machine: { message }` invoke, `file` in this run's folder: its
+    /// `machine`, its `params`, and the message. `Err` says why it cannot start a child.
+    fn message_file(&self, file: &str) -> Result<(String, serde_norway::Mapping, Message), String> {
+        let path = self.executor.info().run_dir.join(file);
+        let message = Message::read(&path)
+            .map_err(|e| format!("message `{file}` in the run's folder: {e}"))?;
+        let name = message
+            .machine()
+            .ok_or_else(|| format!("message `{file}` names no `machine`"))?
+            .to_string();
+        if !self.ctx.machines.contains_key(&name) {
+            return Err(format!(
+                "message `{file}` names machine `{name}`, which does not exist"
+            ));
+        }
+        let params = match message.frontmatter.get("params") {
+            None => serde_norway::Mapping::new(),
+            Some(serde_norway::Value::Mapping(m)) => m.clone(),
+            Some(_) => return Err(format!("message `{file}`: `params` must be a mapping")),
+        };
+        Ok((name, params, message))
     }
     /// The parent's side of a child that stopped before finishing: the run stays `waiting`.
     pub(super) fn wait_for_child(&self, s: usize, child: String, outcome: Outcome) -> Invoked {
@@ -97,13 +131,19 @@ impl Interpreter<'_> {
         })
     }
     /// A `machine` invoke's child reached root final state `state`: append the `received`
-    /// event, whose event is that state (`failed` as `error`).
+    /// event, whose event is that state (`failed` as `error`); for a `message` invoke, whose
+    /// child the machine file does not know, any other final state is `done`.
     pub(super) fn machine_finished(
         &mut self,
         child: &str,
         state: &str,
+        from_message: bool,
     ) -> Result<Decision, InterpreterError> {
-        let event = if state == FAILED { "error" } else { state };
+        let event = match state {
+            FAILED => "error",
+            _ if from_message => "done",
+            state => state,
+        };
         let mut fields = json!({ "event": event, "child": child });
         if let Some(span) = self.child_span(child)? {
             fields["span_id"] = json!(span);
@@ -114,7 +154,8 @@ impl Interpreter<'_> {
     /// Start machine `name` as a child run of state `s` and step it until it finishes, waits
     /// or is interrupted (docs/reference/runs.md, Sub-machines). The child's `message.md` holds `machine`,
     /// `id`, `parent`, `depth`, `trigger: invoke`, any `params` and this run's body; a
-    /// `request` is written to its `request.json`, which makes it a router run. Appends the
+    /// `request` is written to its `request.json`, which makes it a router run. With `from`,
+    /// a message file, the child takes its body and its other keys instead. Appends the
     /// `waiting` event naming the child first. `Err` holds why no child started: its
     /// `depth` would exceed `max_depth`.
     pub(super) fn run_child(
@@ -123,6 +164,7 @@ impl Interpreter<'_> {
         name: &str,
         params: &serde_norway::Mapping,
         request: Option<&str>,
+        from: Option<&Message>,
     ) -> Result<Result<Child, String>, InterpreterError> {
         let ctx = self.ctx;
         let machine = ctx
@@ -135,7 +177,19 @@ impl Interpreter<'_> {
         }
         let (id, run_dir) = create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
         let parent = self.executor.info().run_id.clone();
-        let mut message = Message::new(self.message_body.as_str());
+        let body = from.map_or_else(|| self.message_body.clone(), |m| m.body.clone());
+        let mut message = Message::new(body.as_str());
+        // A message file's own keys (an `order:`, a title) go with it; decree sets the rest.
+        for (key, value) in from.map(|m| &m.frontmatter).into_iter().flatten() {
+            let owned = matches!(
+                key.as_str(),
+                Some("machine" | "id" | "parent" | "depth" | "trigger" | "params" | "state")
+                    | Some(TRACEPARENT_KEY | TRACESTATE_KEY)
+            );
+            if !owned {
+                message.frontmatter.insert(key.clone(), value.clone());
+            }
+        }
         message.set("machine", name);
         message.set("id", id.as_str());
         message.set("parent", parent.as_str());
@@ -166,7 +220,7 @@ impl Interpreter<'_> {
         let executor = ctx.executor(machine, &id, "invoke", params, Some(&parent))?;
         let input = RunInput {
             params: params.clone(),
-            message_body: self.message_body.clone(),
+            message_body: body,
             file: None,
             depth,
         };

@@ -115,7 +115,10 @@ fn invoke_suffix(invoke: &Invoke, is_error: bool) -> String {
             None => " (model)".into(),
         },
         Invoke::Reply(_) => " (reply)".into(),
-        Invoke::Machine(mi) => format!(" (machine: {})", mi.name),
+        Invoke::Machine(mi) => match (&mi.name, &mi.message) {
+            (Some(name), _) => format!(" (machine: {name})"),
+            (None, message) => format!(" (machine: message {})", message.as_deref().unwrap_or("")),
+        },
     }
 }
 
@@ -145,7 +148,13 @@ fn notes(m: &LoadedMachine, out: &mut String) {
                 }
                 lines.push(line);
             }
-            Some(Invoke::Machine(mi)) => lines.push(format!("machine: {}", mi.name)),
+            Some(Invoke::Machine(mi)) => match (&mi.name, &mi.message) {
+                (Some(name), _) => lines.push(format!("machine: {name}")),
+                (None, message) => lines.push(format!(
+                    "machine: message {}",
+                    message.as_deref().unwrap_or("")
+                )),
+            },
             Some(Invoke::Reply(c)) => lines.push(format!(
                 "reply: {}",
                 c.notify.as_deref().unwrap_or_default()

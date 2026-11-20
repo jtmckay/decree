@@ -109,7 +109,8 @@ fn reference_examples_load() {
     assert_eq!(
         build.invoke,
         Some(Invoke::Machine(MachineInvoke {
-            name: "feature".into(),
+            name: Some("feature".into()),
+            message: None,
             params: serde_norway::Mapping::new(),
         }))
     );
@@ -994,7 +995,7 @@ fn script_and_machine_take_a_bare_name_or_the_long_form() {
     let Some(Invoke::Machine(child)) = &m.nodes[m.find("c").unwrap()].invoke else {
         panic!();
     };
-    assert_eq!(child.name, "child");
+    assert_eq!(child.name.as_deref(), Some("child"));
     assert_eq!(child.params.len(), 1);
 }
 
@@ -1162,4 +1163,44 @@ fn env_file_is_a_root_key_and_invoke_env_is_gone() {
     );
     let err = load_machine_text("m", &text).unwrap_err().to_string();
     assert!(err.contains("unknown field `env`"), "{err}");
+}
+
+/// `machine: { message }` parses; `name` and `message` together, neither, `params` with
+/// `message`, or a path that leaves the run's folder do not.
+#[test]
+fn machine_message_invoke_shapes() {
+    let machine = |invoke: &str| {
+        format!(
+            "name: m\ndescription: d\ninitial: run\nstates:\n  run:\n    invoke:\n      machine: {invoke}\n    transitions: {{ done: done }}\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        )
+    };
+    let m = load("m", &machine("{ message: next.md }"));
+    let run = &m.nodes[m.find("run").unwrap()];
+    assert_eq!(
+        run.invoke,
+        Some(Invoke::Machine(MachineInvoke {
+            name: None,
+            message: Some("next.md".into()),
+            params: serde_norway::Mapping::new(),
+        }))
+    );
+    assert!(m.invoked_machines().is_empty());
+    for (invoke, error) in [
+        (
+            "{ name: x, message: next.md }",
+            "`name` or `message`, not both",
+        ),
+        ("{ params: { a: 1 } }", "needs `name` or `message`"),
+        (
+            "{ message: next.md, params: { a: 1 } }",
+            "`params` go in the message file",
+        ),
+        (
+            "{ message: ../next.md }",
+            "is not a plain path in the run's folder",
+        ),
+    ] {
+        let err = load_err("m", &machine(invoke));
+        assert!(err.contains(error), "{invoke}: {err}");
+    }
 }

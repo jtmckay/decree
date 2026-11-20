@@ -399,7 +399,7 @@
       "examples": [{ "question": "Tests still fail. What next?", "notify": "notify_person", "timeout": "2d" }]
     },
     "machineInvoke": {
-      "description": "SCXML's own invoke type: run another machine as a child run. Its event is the id of the root-level final state the child reached (`done`, `rejected`, ...), and `failed` becomes `error`; this state must handle each of them (V8). A bare name is short for `{ name: <name> }`. A machine never invokes itself, directly or through others (V20).",
+      "description": "SCXML's own invoke type: run another machine as a child run. With `name`, its event is the id of the root-level final state the child reached (`done`, `rejected`, ...), and `failed` becomes `error`; this state must handle each of them (V8). With `message`, the child is decided when the state runs, as SCXML's `srcexpr`: a message file in the run's folder (one a script of this run wrote) names the machine, its `params` and the body, and the event is `done`, or `error` when the child ends in `failed` or cannot start. A bare name is short for `{ name: <name> }`. A machine never invokes itself, directly or through others (V20).",
       "anyOf": [
         { "$ref": "#/$defs/machineName" },
         {
@@ -414,9 +414,21 @@
               "additionalProperties": { "type": ["string", "number", "boolean"] }
             }
           }
+        },
+        {
+          "type": "object",
+          "required": ["message"],
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string",
+              "pattern": "^(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)(?:/(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+))*$",
+              "description": "The message file, relative to the run's folder ($DECREE_RUN_DIR): its `machine` is the child, its `params` set the child's `data`, and its body and other keys are the child's. Plain and relative: no `..`, `.`, empty parts or leading `/`."
+            }
+          }
         }
       ],
-      "examples": ["deploy", { "name": "deploy", "params": { "label": "release" } }]
+      "examples": ["deploy", { "name": "deploy", "params": { "label": "release" } }, { "message": "next.md" }]
     },
     "condition": {
       "type": "object",

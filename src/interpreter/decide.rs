@@ -255,7 +255,7 @@ impl Interpreter<'_> {
         let request = self.request(s, model)?;
         let router = Self::router(model);
         let params = serde_norway::Mapping::new();
-        let child = match self.run_child(s, &router, &params, Some(&request))? {
+        let child = match self.run_child(s, &router, &params, Some(&request), None)? {
             Ok(child) => child,
             Err(reason) => {
                 let reply = Reply::Rejected(reason);
