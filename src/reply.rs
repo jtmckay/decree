@@ -277,6 +277,31 @@ pub fn overdue(
     Ok(overdue)
 }
 
+/// The earliest `timeout_at` of a run that `owns` is true for and that waits only on a timer:
+/// a reply wait with `attention: false` and a `timeout` (docs/reference/cli.md, `daemon
+/// --once`). A wait for a person or a program is no timer: `--once` leaves it for the summary.
+pub fn next_timer(
+    ctx: &Context,
+    owns: impl Fn(&str) -> bool,
+) -> Result<Option<DateTime<Utc>>, InterpreterError> {
+    let runs_dir = ctx.runs_dir();
+    let mut next: Option<DateTime<Utc>> = None;
+    for id in run_ids(&runs_dir).map_err(io_err(&runs_dir))? {
+        if ctx.run_finished(&id)?.is_some() || !owns(&id) {
+            continue;
+        }
+        let events = ctx.events(&id)?;
+        let Some(last) = events.last() else { continue };
+        let timer = is_type(last, "waiting")
+            && text(last, "wait_id").is_some()
+            && !crate::attention::wants_attention(last);
+        if let Some(at) = deadline(last).filter(|_| timer) {
+            next = Some(next.map_or(at, |n| n.min(at)));
+        }
+    }
+    Ok(next)
+}
+
 /// docs/reference/messages.md, Replies, step 5: every run waiting past its `timeout_at` gets a `received`
 /// event for `error` with `timed_out: true`. Returns those runs, in `id` order, now
 /// `pending`. A run another process holds is skipped, as is one `owns` is false for: a run

@@ -78,6 +78,7 @@ pub fn run(
     format: Format,
     quiet: bool,
     select: &Select,
+    boot: bool,
 ) -> Result<(), DecreeError> {
     let mut plugin_notes = BTreeSet::new();
     plugin_notices(project_root, &mut plugin_notes, "");
@@ -103,7 +104,19 @@ pub fn run(
         pipeline.retry(&retry)?;
     }
     let result = reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
-        pipeline.recover().and_then(|()| pipeline.drain())
+        pipeline.recover()?;
+        if !boot {
+            return pipeline.drain();
+        }
+        // `daemon --once` is a daemon start: its `@reboot` cron files fire, then it works
+        // until only a person or a program can move a run on.
+        crate::commands::daemon::fire_cron_jobs(
+            project_root,
+            pipeline.filter(),
+            "cron fired at daemon start",
+            |cf| matches!(cf.when, crate::cron::When::DaemonStart),
+        );
+        pipeline.drain_with_timers()
     });
     print_waiting(&pipeline.ctx, &pipeline.filter)?;
     if result.is_ok() {
@@ -419,6 +432,26 @@ impl Pipeline {
             }
             if !self.next_migration()? {
                 return Ok(());
+            }
+        }
+    }
+
+    /// `drain`, and again after each timer a run waits on (a reply wait with `attention:
+    /// false` and a `timeout`, docs/reference/cli.md, `daemon --once`), sleeping until the
+    /// earliest: returns when nothing can move on without outside input.
+    pub(crate) fn drain_with_timers(&mut self) -> Result<(), Stop> {
+        loop {
+            self.drain()?;
+            let Some(at) = reply::next_timer(&self.ctx, |id| self.owns(id))? else {
+                return Ok(());
+            };
+            while chrono::Utc::now() < at {
+                self.may_run()?;
+                let left = (at - chrono::Utc::now())
+                    .to_std()
+                    .unwrap_or_default()
+                    .min(std::time::Duration::from_millis(100));
+                std::thread::sleep(left);
             }
         }
     }

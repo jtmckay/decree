@@ -172,7 +172,7 @@ fn fire_due_cron_jobs(project_root: &Path, tracker: &mut CronTracker, filter: &M
 
 /// Queue each cron file `fires` picks, for the machines `filter` runs, through the one
 /// writer (`message::queue`). Returns those queued; `what` names them in the output.
-fn fire_cron_jobs(
+pub(crate) fn fire_cron_jobs(
     project_root: &Path,
     filter: &MachineFilter,
     what: &str,

@@ -151,6 +151,19 @@ pub enum Command {
 
     /// Run the process loop repeatedly, plus cron, until stopped; waits for replies instead of exiting
     Daemon {
+        /// Start, fire the @reboot cron files, work until nothing can go on without a person
+        /// or a program, print what waits or failed, and exit (for CI and cron)
+        #[arg(long, conflicts_with = "interval")]
+        once: bool,
+
+        /// With --once: show what would run, without running it
+        #[arg(long, requires = "once", conflicts_with_all = ["retry", "quiet"])]
+        dry_run: bool,
+
+        /// Output format of --dry-run
+        #[arg(long, value_enum, default_value_t, requires = "dry_run")]
+        format: Format,
+
         /// Polling interval: a whole number and s, m, h or d (2s, 1m)
         #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]
         interval: std::time::Duration,

@@ -67,7 +67,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         } => {
             let retry = commands::process::Retry::from_args(retry, state);
             let select = filter::Select::new(machines, exclude_machines);
-            commands::process::run(&root()?, dry_run, retry, format, quiet, &select)
+            commands::process::run(&root()?, dry_run, retry, format, quiet, &select, false)
         }
         Command::Check { format } => commands::check::run(&root()?, format),
         Command::Graph { format } => commands::graph::run(&root()?, format),
@@ -85,6 +85,9 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             format,
         } => commands::event::run(&root()?, &target, &event, note.as_deref(), format),
         Command::Daemon {
+            once,
+            dry_run,
+            format,
             interval,
             retry,
             state,
@@ -94,7 +97,11 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         } => {
             let retry = commands::process::Retry::from_args(retry, state);
             let select = filter::Select::new(machines, exclude_machines);
-            commands::daemon::run(&root()?, interval, retry, quiet, &select)
+            if once {
+                commands::process::run(&root()?, dry_run, retry, format, quiet, &select, true)
+            } else {
+                commands::daemon::run(&root()?, interval, retry, quiet, &select)
+            }
         }
         Command::Plugin { action } => match action {
             PluginAction::List { format } => commands::plugin::list(&root()?, format),
