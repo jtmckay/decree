@@ -109,7 +109,6 @@ fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
                 "fix.sh",
                 "gate.sh",
                 "implement.sh",
-                "restart.sh",
                 "run-queue.sh",
                 "verify.sh",
             ],
@@ -117,13 +116,17 @@ fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
         ("infra", &["requirements"]),
         ("qa", &["qa.sh"]),
         ("router", &[]),
+        ("order", &[]),
     ];
     let mut names: Vec<String> = fs::read_dir(repo().join(".decree/plugins"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    assert_eq!(names, ["develop.md", "infra.md", "qa.md", "router.md"]);
+    assert_eq!(
+        names,
+        ["develop.md", "infra.md", "order.md", "qa.md", "router.md"]
+    );
     for (name, edited) in edits {
         let ours = frontmatter(&repo().join(format!(".decree/plugins/{name}.md")));
         let official = frontmatter(&repo().join(format!("plugins/{name}.md")));

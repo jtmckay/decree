@@ -323,11 +323,11 @@ fn repository_files() -> Vec<PathBuf> {
 fn nothing_mentions_the_removed_spec() {
     let root = repo();
     // Migrations are immutable, so theirs stay.
-    let migrations = root.join(".decree/migrations");
+    let history = root.join(".decree/machines/develop/order");
     let needle = concat!("0.5", "-spec").as_bytes();
     let hits: Vec<String> = repository_files()
         .iter()
-        .filter(|f| !f.starts_with(&migrations))
+        .filter(|f| !f.starts_with(&history))
         .filter(|f| {
             std::fs::read(f).is_ok_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle))
         })
@@ -340,12 +340,12 @@ fn nothing_mentions_the_removed_spec() {
 }
 
 /// Messages describe the outcome, not the steps: no file outside the recorded history (the
-/// repository's migrations and runs, and the test fixtures) has a `## Requirements` heading.
+/// repository's order files and runs, and the test fixtures) has a `## Requirements` heading.
 #[test]
 fn no_message_has_a_requirements_heading() {
     let root = repo();
     let kept = [
-        root.join(".decree/migrations"),
+        root.join(".decree/machines/develop/order"),
         root.join(".decree/runs"),
         root.join("tests/fixtures"),
     ];
@@ -471,12 +471,12 @@ fn the_readme_links_the_security_policy_and_the_0_4_note() {
 fn nothing_mentions_the_removed_statement_of_work() {
     let root = repo();
     // Migrations are immutable, so theirs stay.
-    let migrations = root.join(".decree/migrations");
+    let history = root.join(".decree/machines/develop/order");
     let needle = concat!("S", "OW.md").as_bytes();
     assert!(!root.join(concat!("S", "OW.md")).exists());
     let hits: Vec<String> = repository_files()
         .iter()
-        .filter(|f| !f.starts_with(&migrations))
+        .filter(|f| !f.starts_with(&history))
         .filter(|f| {
             std::fs::read(f).is_ok_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle))
         })
@@ -487,7 +487,7 @@ fn nothing_mentions_the_removed_statement_of_work() {
 
 /// The hold file `.decree/attention/` replaced is gone (docs/decisions.md, D67): no file git
 /// tracks or would track names it as a word, as `rg '\bHOLD\b'` would find it, but the
-/// migrations and runs that record its history, the changelog and the decision log.
+/// order files and runs that record its history, the changelog and the decision log.
 #[test]
 fn hold_is_named_only_in_history() {
     let out = std::process::Command::new("git")
@@ -504,7 +504,7 @@ fn hold_is_named_only_in_history() {
     assert!(out.status.success());
     let word = regex::Regex::new(r"\bHOLD\b").unwrap();
     let history = |f: &str| {
-        f.starts_with(".decree/migrations/")
+        f.starts_with(".decree/machines/develop/order/")
             || f.starts_with(".decree/runs/")
             || f == "CHANGELOG.md"
             || f == "docs/decisions.md"
