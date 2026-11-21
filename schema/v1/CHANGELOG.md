@@ -13,7 +13,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only ([V
 
 ### Removed
 
-- `cli/prune.schema.json`, with `decree prune`.
+- `cli/prune.schema.json`, with `decree prune`, and `cli/skill.schema.json`, with `decree skill`.
 - `message.schema.json`: the `migration` key and the `migration` trigger; `cli/status.schema.json` and `cli/check.schema.json`: their migration fields (`status`'s `blocked` and `queued.migrations`, `check`'s rule `M1`); `attention.schema.json`'s `message` is always `inbox`.
 
 - `plugin.schema.json`: the frontmatter of a plugin, `.decree/plugins/<name>.md`: `name`, `machine` (without `name`), `scripts` (plain relative paths to their text) and `needs` ([plugins.md](../../docs/reference/plugins.md)).

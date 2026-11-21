@@ -403,4 +403,4 @@ size_up:
 
 ### Where it does not apply
 
-A script step that wants a second opinion, such as a `verify` that reads `VERDICT:` from an agent, is not a `model` decision and has no router. Its second opinion stays in the script: it calls `ai` twice, with a different `ai_cli` or model for each call, and names `pass` only if both replies say `VERDICT: pass`. Which agents to ask, and how to combine them, is a choice of how that one step does its job, not of which step runs next ([Scripts choose how](../src/templates/skills/decree/SKILL.md)).
+A script step that wants a second opinion, such as a `verify` that reads `VERDICT:` from an agent, is not a `model` decision and has no router. Its second opinion stays in the script: it calls `ai` twice, with a different `ai_cli` or model for each call, and names `pass` only if both replies say `VERDICT: pass`. Which agents to ask, and how to combine them, is a choice of how that one step does its job, not of which step runs next ([Scripts choose how](../plugins/skill.md)).

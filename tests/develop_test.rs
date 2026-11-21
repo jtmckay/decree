@@ -355,7 +355,7 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
         let decree = p.root().join(".decree");
         assert_eq!(
             files_under(&decree.join("plugins")),
-            ["order.md", "prune.md"]
+            ["ai.md", "order.md", "prune.md", "skill.md"]
         );
         common::drop_default_plugins(p.root());
         assert_eq!(

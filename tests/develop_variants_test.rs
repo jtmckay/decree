@@ -191,7 +191,8 @@ fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
             "develop_rust.md",
             "infra.md",
             "order.md",
-            "prune.md"
+            "prune.md",
+            "skill.md"
         ]
     );
     let (code, stdout, stderr) = decree(p.path(), &["check"]);

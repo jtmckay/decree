@@ -16,10 +16,10 @@ machine declares, in a state that invokes `model` or `reply`.
 
 Commands:
   decree init [--ai AI] [--permissions]
-                              Create .decree/ (no plugin installed) and list
-                              the official plugins; --ai (claude, copilot or
-                              opencode) sets AI_CLI in .env.example. claude
-                              and copilot also get the skill
+                              Create .decree/, add the plugins ai, order,
+                              prune and skill, and list the others; --ai
+                              (claude, copilot or opencode) sets AI_CLI in
+                              .env.example. claude and copilot get the skill
   decree check                Validate machines and pending messages
                               (--format sarif: a SARIF 2.1.0 log for code
                               scanning)
@@ -45,9 +45,6 @@ Commands:
                               Install new and changed plugins, keeping
                               edited copies; with NAMEs, install those over
                               any edit. Nothing else installs plugins
-  decree skill [--ai AI]      Refresh the decree skill (.claude/skills/decree/
-                              or .github/skills/decree/) after an upgrade;
-                              your own files there are kept
   decree daemon --once [--dry-run] [--quiet]
                               Start (firing @reboot cron files, so the order
                               plugin runs each machine's order/), deliver
@@ -89,7 +86,7 @@ Commands:
                               nothing (run the queue with decree daemon --once)
   decree --version            Print the version
 
-  --format json on check, status, emit, event, stop, graph, schema, skill, upgrade,
+  --format json on check, status, emit, event, stop, graph, schema, upgrade,
   plugin and daemon --once --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 

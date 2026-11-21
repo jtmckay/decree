@@ -18,7 +18,7 @@ fn decree_cmd(dir: &TempDir) -> Command {
 // --- decree init ---
 
 /// After `init`, `.decree/` holds exactly the entries of docs/reference/README.md, File layout:
-/// the default plugins `order` and `prune` (D86), installed into `machines/`, their graphs and
+/// the default plugins `ai`, `order`, `prune` and `skill` (D86), installed into `machines/`, their graphs and
 /// install records, and no `scripts/`.
 #[test]
 fn test_init_creates_directory_structure() {
@@ -57,8 +57,8 @@ fn test_init_creates_directory_structure() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     plugins.sort();
-    assert_eq!(plugins, ["order.md", "prune.md"]);
-    for name in ["order", "prune"] {
+    assert_eq!(plugins, ["ai.md", "order.md", "prune.md", "skill.md"]);
+    for name in ["order", "prune", "skill"] {
         let dir = decree.join("machines").join(name);
         assert!(dir.join("machine.yml").is_file(), "{name}");
         assert!(dir.join("graph.md").is_file(), "{name}");
@@ -69,7 +69,7 @@ fn test_init_creates_directory_structure() {
 }
 
 /// The official plugins `init` lists: every one, by name.
-const OFFICIAL: [&str; 17] = [
+const OFFICIAL: [&str; 18] = [
     "ai",
     "comfy",
     "develop",
@@ -87,6 +87,7 @@ const OFFICIAL: [&str; 17] = [
     "prune",
     "qa",
     "router",
+    "skill",
 ];
 
 /// Snapshot of every file under `root` with its contents, for "changes nothing" checks.
@@ -129,7 +130,7 @@ fn test_init_stdin_closed_asks_nothing() {
     assert!(!all.contains("[y/N]") && !all.contains("[Y/n]"));
 
     let decree = dir.path().join(".decree");
-    assert_eq!(fs::read_dir(decree.join("plugins")).unwrap().count(), 2);
+    assert_eq!(fs::read_dir(decree.join("plugins")).unwrap().count(), 4);
     assert!(!decree.join("scripts").exists());
     // Every official plugin, one line each with its description, then the line that adds one.
     let listed: Vec<&str> = stdout
@@ -530,13 +531,17 @@ fn test_status_cron_lists_files_and_next_fire_time() {
         .clone();
     let out = String::from_utf8(out).unwrap();
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 3, "{out}");
+    assert_eq!(lines.len(), 4, "{out}");
     assert!(
         lines[1].starts_with("order/boot.md") && lines[1].ends_with("daemon start"),
         "{out}"
     );
     assert!(
         lines[2].starts_with("prune/weekly.md") && lines[2].contains("0 3 * * Sun"),
+        "{out}"
+    );
+    assert!(
+        lines[3].starts_with("skill/boot.md") && lines[3].ends_with("daemon start"),
         "{out}"
     );
     common::drop_default_plugins(dir.path());
@@ -680,12 +685,10 @@ fn test_init_writes_decree_skill_for_claude_and_copilot() {
     }
 }
 
-/// The skill `init` writes is regular files with the content of `src/templates/skills/decree/`,
-/// even though this repository's own `.claude/skills/decree` is a symlink to that directory.
+/// The skill `init` writes is regular files with the content of the `skill` plugin's
+/// `scripts/skill/`, even though this repository's own `.claude/skills/decree` is a symlink.
 #[test]
 fn test_init_writes_skill_as_regular_files_matching_the_template() {
-    let template =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/templates/skills/decree");
     let names = [
         "SKILL.md",
         "reference/machines.md",
@@ -713,8 +716,8 @@ fn test_init_writes_skill_as_regular_files_matching_the_template() {
             let kind = fs::symlink_metadata(&written).unwrap().file_type();
             assert!(kind.is_file(), "{ai}: {name} is not a regular file");
             assert_eq!(
-                fs::read(&written).unwrap(),
-                fs::read(template.join(name)).unwrap(),
+                fs::read_to_string(&written).unwrap(),
+                common::plugin_script("plugins/skill.md", &format!("skill/{name}")),
                 "{ai}: {name}"
             );
         }
@@ -861,18 +864,4 @@ fn test_init_keeps_existing_skill_files() {
         fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap(),
         "{}"
     );
-}
-
-/// 0.4's `skill` flags are gone: `decree skill` refreshes the skill and takes only `--ai`
-/// and `--format` (docs/reference/cli.md; docs/decisions.md, D54).
-#[test]
-fn test_skill_04_flags_are_usage_errors() {
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir(dir.path().join(".decree")).unwrap();
-    decree_cmd(&dir)
-        .args(["skill", "--scope", "project", "--target", "claude"])
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("unexpected argument '--scope'"));
-    assert!(!dir.path().join(".claude").exists());
 }

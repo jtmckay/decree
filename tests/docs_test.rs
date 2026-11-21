@@ -34,8 +34,8 @@ fn files_under(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) {
 }
 
 /// The Markdown files whose links must resolve: `README.md`, `SECURITY.md`, `docs/`,
-/// `examples/*/README.md` and the decree skill (`src/templates/skills/`; `.claude/skills/decree` and
-/// `.github/skills/decree` are symlinks to it).
+/// `examples/*/README.md`. (The decree skill's files are in `plugins/skill.md`; its links are
+/// to the repository on GitHub.)
 fn markdown_files() -> Vec<PathBuf> {
     let root = repo();
     let mut all = vec![root.join("README.md"), root.join("SECURITY.md")];
@@ -45,9 +45,7 @@ fn markdown_files() -> Vec<PathBuf> {
             all.push(readme);
         }
     }
-    for dir in ["docs", "src/templates/skills"] {
-        files_under(&root.join(dir), &[], &mut all);
-    }
+    files_under(&root.join("docs"), &[], &mut all);
     all.retain(|p| p.extension().is_some_and(|e| e == "md"));
     all.sort();
     all

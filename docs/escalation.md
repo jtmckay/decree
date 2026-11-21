@@ -2,7 +2,7 @@
 
 The official `develop` plugin gives a message one pass: implement, gate, fix, verify. When `verify` fails, or the gate still fails after `fix`, the run ends in `failed`. This recipe adds a ladder: rounds that close what is still missing, first with a cheap agent (a local model through OpenCode), then one round with Claude, then a person. It comes from a beta project where it worked well.
 
-It is more machinery than the simplest machine, which is where a project should start ([Start with the simplest machine](../src/templates/skills/decree/SKILL.md)). Add it once plain `develop` runs show that failed verifies are worth more rounds.
+It is more machinery than the simplest machine, which is where a project should start ([Start with the simplest machine](../plugins/skill.md)). Add it once plain `develop` runs show that failed verifies are worth more rounds.
 
 ## How it works
 

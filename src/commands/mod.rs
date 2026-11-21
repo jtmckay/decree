@@ -8,7 +8,6 @@ pub mod plugin;
 pub mod process;
 pub(crate) mod report;
 pub mod schema;
-pub mod skill;
 pub mod status;
 pub mod stop;
 pub mod tail;

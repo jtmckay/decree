@@ -396,8 +396,9 @@ fn text_to_media_readme_commands_run() {
     );
     let project = dir.path().join("renders");
     assert_eq!(ordered(&project, "comfy").len(), 4);
-    // The four order files, the lighthouse, and the `order` run of each of the two daemon starts.
-    assert_eq!(all_runs_done(&project), 7);
+    // The four order files, the lighthouse, and the `order` and `skill` runs of each of the
+    // two daemon starts.
+    assert_eq!(all_runs_done(&project), 9);
     for render in [
         "unicorn_landscape",
         "character_lily_fullbody",

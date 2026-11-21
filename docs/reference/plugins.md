@@ -96,7 +96,7 @@ Export is deterministic, so git diffs show only real changes: installing a plugi
 
 ## Official plugins
 
-decree is built with its official plugins: the decree repository's [`plugins/`](../../plugins/), each compiled into the binary, so adding one needs no network and its version is the binary's. `decree init` adds `order` and `prune`, which a project drops by deleting their files; the others are opt-in: `decree plugin list` shows them and `decree plugin add <name>` adds one ([D86](../decisions.md#d86-machines-own-their-folders-order-replaces-migrations)).
+decree is built with its official plugins: the decree repository's [`plugins/`](../../plugins/), each compiled into the binary, so adding one needs no network and its version is the binary's. `decree init` adds `ai`, `order`, `prune` and `skill`, which a project drops by deleting their files; the others are opt-in: `decree plugin list` shows them and `decree plugin add <name>` adds one ([D86](../decisions.md#d86-machines-own-their-folders-order-replaces-migrations)).
 
 | Plugin | What it does | Needs |
 | --- | --- | --- |
@@ -112,9 +112,10 @@ decree is built with its official plugins: the decree repository's [`plugins/`](
 | [`develop_by_size`](../../plugins/develop_by_size.md) | Sizes a change with a classifier, then implements it locally first or with Claude ([route-by-complexity](../../examples/route-by-complexity/README.md)). | `ai`, `gliner_router` |
 | [`gliner_router`](../../plugins/gliner_router.md) | A typed router: the GLiNER2.5-Decide classifier. | |
 | [`llm_router`](../../plugins/llm_router.md) | A typed router: a local model held to the request's `reply_schema`. | |
-| [`ai`](../../plugins/ai.md) | A library, no machine: `ai.sh`, the `ai` function the official plugins ask an AI CLI through. | |
+| [`ai`](../../plugins/ai.md) | A library, no machine: `ai.sh`, the `ai` function the official plugins ask an AI CLI through. Added by `decree init`. | |
 | [`order`](../../plugins/order.md) | Runs each machine's `order/` files at each daemon start, in file-name order, each once and again when it changes, recording each in that machine's `state/order.git.txt` ([Order files](messages.md#order-files-run-in-order-at-each-start)). Also a library: `emit_if_changed.sh` and `emit_if_changed_git.sh` queue a message only when it differs from the last one. Added by `decree init`. | |
 | [`prune`](../../plugins/prune.md) | Each week, deletes the folders of finished runs older than `PRUNE_OLDER_THAN` (`30d`), but a child whose parent is not finished and a run a process holds. Added by `decree init`. | |
+| [`skill`](../../plugins/skill.md) | The decree skill for Claude Code and Copilot: `decree init` writes it, and each daemon start copies each file that differs into `.claude/skills/decree/` and `.github/skills/decree/`. Added by `decree init`. | |
 | [`plugin_install`](../../plugins/plugin_install.md) | Runs `decree plugin install` each time `decree daemon` starts (its cron file is `@reboot`), so a restart after a pull runs the plugins as pulled. | |
 | [`lease`](../../plugins/lease.md) | One holder per resource (a GPU, an LLM server, a paid API) for a limited time, the next picked to keep mode swaps rare ([D83](../decisions.md#d83-leases-are-an-official-plugin-not-core)). | |
 

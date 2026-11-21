@@ -25,7 +25,10 @@ const TWO_COPIES: &str = "If `which -a decree` lists two copies, the one first o
 /// The official plugins are built into decree, so a new version may change them: `plugin list`
 /// marks each one the project's copy differs from, and `plugin add --force` takes the new copy.
 const AFTER: [(&str, Option<&str>); 4] = [
-    ("decree skill", None),
+    (
+        "decree plugin add --force skill",
+        Some("the project has the skill plugin: the next daemon start writes the new skill"),
+    ),
     ("decree schema", Some("the project has .decree/schema/")),
     (
         "decree plugin list",

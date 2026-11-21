@@ -70,7 +70,9 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         install.clone(),
         format!("{install} -s -- <tag>"),
         "cargo install --git https://github.com/jtmckay/decree --tag <tag> --force".into(),
-        "decree skill".into(),
+        "decree plugin add --force skill  (if the project has the skill plugin: the next daemon \
+         start writes the new skill)"
+            .into(),
     ] {
         assert!(
             lines.contains(&want.as_str()),
@@ -150,7 +152,7 @@ fn json_output_matches_its_schema() {
         assert_eq!(
             after,
             [
-                "decree skill",
+                "decree plugin add --force skill",
                 "decree schema",
                 "decree plugin list",
                 "decree plugin add --force <name>"

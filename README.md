@@ -51,7 +51,7 @@ Every command in this section runs as written, in order, in an empty directory.
 decree init
 ```
 
-This writes `.decree/`: the empty queues, an empty `plugins/`, a `.gitignore`, a `.env.example` (`AI_CLI`, which `--ai claude|copilot|opencode` sets) and the decree skill for Claude Code or Copilot. It installs no machine, and asks nothing: it ends by listing the official plugins and the line that adds one.
+This writes `.decree/`: the empty queues, a `.gitignore`, a `.env.example` (`AI_CLI`, which `--ai claude|copilot|opencode` sets), the official plugins `ai`, `order`, `prune` and `skill`, and the decree skill for Claude Code or Copilot. It asks nothing: it ends by listing the other official plugins and the line that adds one.
 
 **2. Add an official plugin.** A plugin is one machine and its scripts, kept in one file, `.decree/plugins/<name>.md` ([Plugins](docs/reference/plugins.md)). decree is built with its official plugins, so adding one needs no network:
 
@@ -252,12 +252,11 @@ An agent a script starts runs with your own configuration, because decree adds n
 
 | Command | What it does |
 | --- | --- |
-| `decree init [--ai AI] [--permissions]` | Create `.decree/` and the decree skill, installing no plugin; list the official plugins |
+| `decree init [--ai AI] [--permissions]` | Create `.decree/`, add the default plugins (`ai`, `order`, `prune`, `skill`) and write the decree skill; list the other official plugins |
 | `decree plugin list\|add\|export\|import\|install` | List and add the official plugins built into decree; export, import and install plugins, `.decree/plugins/<name>.md` |
 | `decree check [--format text\|json\|sarif]` | Validate machines and pending messages; `sarif` for code scanning |
 | `decree graph` | Write a Mermaid diagram per machine, `.decree/machines/<name>/graph.md`, and `.decree/system.md` |
 | `decree schema` | Write a local copy of the JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
-| `decree skill [--ai AI]` | Refresh the decree skill in `.claude/skills/decree/` or `.github/skills/decree/` after an upgrade |
 | `decree daemon --once [--dry-run] [--machine M \| --exclude-machine M]` | Start, fire `@reboot` cron files (so `order` runs the order files), deliver replies, continue pending runs and drain `inbox/`, then exit; `--machine` runs only those machines, `--exclude-machine` all but those, so several processes can share one folder |
 | `decree daemon --once --retry ID [--state S]` | First continue a failed or interrupted run |
 | `decree daemon [--interval D] [--retry ID] [--machine M \| --exclude-machine M]` | The same, plus scheduled cron, every `D` (default `2s`), until stopped: what unattended work runs under, since `--once` exits while a run waits for a person |
@@ -267,12 +266,12 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree status [ID]` | What needs attention, runs by status and queued messages; one run's events |
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
-| `decree upgrade` | Print how to upgrade decree: the install line, pinned to a release, and for a `cargo install` copy; then `decree skill` (and `decree schema`) in each project, and `decree plugin list` to see which plugins the new version changed. It runs nothing itself |
+| `decree upgrade` | Print how to upgrade decree: the install line, pinned to a release, and for a `cargo install` copy; then `decree plugin add --force skill` (and `decree schema`) in each project, and `decree plugin list` to see which plugins the new version changed. It runs nothing itself |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree` | Print a synopsis of the quick start; it runs nothing (`decree daemon --once` runs the queue) |
 | `decree --version` | Print the version |
 
-`--format json` on `check`, `status`, `emit`, `event`, `stop`, `graph`, `schema`, `skill`, `upgrade` and `daemon --once --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
+`--format json` on `check`, `status`, `emit`, `event`, `stop`, `graph`, `schema`, `upgrade` and `daemon --once --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
 decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree daemon --once --retry`, because a kill may be deliberate. `decree daemon --once` prints the exact command that continues it.
 

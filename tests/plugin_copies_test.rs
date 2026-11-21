@@ -137,6 +137,7 @@ fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
         ("router", &[]),
         ("order", &[]),
         ("ai", &[]),
+        ("skill", &[]),
     ];
     let mut names: Vec<String> = fs::read_dir(repo().join(".decree/plugins"))
         .unwrap()
@@ -151,7 +152,8 @@ fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
             "infra.md",
             "order.md",
             "qa.md",
-            "router.md"
+            "router.md",
+            "skill.md"
         ]
     );
     for (name, edited) in edits {

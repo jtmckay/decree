@@ -57,17 +57,6 @@ pub enum Command {
         format: Format,
     },
 
-    /// Write the decree skill (.claude/skills/decree/ or .github/skills/decree/), overwriting decree's own files
-    Skill {
-        /// AI backend whose skill folder to write [default: every skill folder that exists, else the backend init would pick]
-        #[arg(long, value_enum)]
-        ai: Option<AiBackend>,
-
-        /// Output format
-        #[arg(long, value_enum, default_value_t)]
-        format: Format,
-    },
-
     /// Queue a message in inbox/ from stdin: a body, or a whole message with frontmatter. Prints its id
     Emit {
         /// Machine the message names; may be left out when stdin's frontmatter names one

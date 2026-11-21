@@ -1,9 +1,9 @@
 use crate::cli::AiBackend;
 use crate::commands::graph;
 use crate::commands::plugin;
-use crate::commands::skill::DECREE_SKILL;
 use crate::error::DecreeError;
 use crate::layout;
+use crate::official::skill_files;
 use crate::plugin::PLUGINS_DIR;
 use std::path::Path;
 use std::process::Command;
@@ -70,18 +70,6 @@ fn select_backend(ai: Option<AiBackend>, found: impl Fn(&str) -> bool) -> Backen
         .copied()
         .find(|b| found(b.name))
         .unwrap_or(OPENCODE)
-}
-
-/// Where decree writes the skill for `ai`, or, without it, for the backend `init` would
-/// pick; `None` if that backend reads no skills. Also the backend's name, for messages.
-pub(crate) fn skill_dir(ai: Option<AiBackend>) -> (&'static str, Option<&'static str>) {
-    let backend = select_backend(ai, command_exists);
-    (backend.name, backend.skill_dir)
-}
-
-/// Every directory decree writes the skill into, in detection order.
-pub(crate) fn skill_dirs() -> impl Iterator<Item = &'static str> {
-    AI_BACKENDS.iter().filter_map(|b| b.skill_dir)
 }
 
 /// Create a default permissions file for the selected AI backend.
@@ -212,8 +200,9 @@ fn write_skill(root: &Path, backend: Backend) -> Result<(), DecreeError> {
         return Ok(());
     };
     let skill_dir = root.join(skill_dir);
+    let files = skill_files();
     let mut kept = 0;
-    for (name, content) in DECREE_SKILL {
+    for (name, content) in &files {
         let path = skill_dir.join(name);
         if path.exists() {
             kept += 1;
@@ -227,7 +216,7 @@ fn write_skill(root: &Path, backend: Backend) -> Result<(), DecreeError> {
     println!(
         "Decree skill: {} ({} written, {kept} existing kept)",
         skill_dir.display(),
-        DECREE_SKILL.len() - kept
+        files.len() - kept
     );
     Ok(())
 }
@@ -316,23 +305,30 @@ mod tests {
     }
 
     fn skill_names() -> Vec<String> {
-        let mut names: Vec<String> = DECREE_SKILL.iter().map(|(n, _)| n.to_string()).collect();
+        let mut names: Vec<String> = skill_files().into_iter().map(|(n, _)| n).collect();
         names.sort();
         names
     }
 
-    /// `DECREE_SKILL` lists exactly the files in `src/templates/skills/decree/`.
+    /// The `skill` plugin ships `SKILL.md` and the four reference files.
     #[test]
-    fn test_decree_skill_lists_every_template_file() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let dir = root.join("src/templates/skills/decree");
-        assert_eq!(files_under(&dir), skill_names());
+    fn test_decree_skill_lists_every_file() {
+        assert_eq!(
+            skill_names(),
+            [
+                "SKILL.md",
+                "reference/machines.md",
+                "reference/messages.md",
+                "reference/runs.md",
+                "reference/scripts.md"
+            ]
+        );
     }
 
     /// The skill names no `outbox`, `hooks` or `router.md`: decree has none of them.
     #[test]
     fn test_decree_skill_names_no_removed_concept() {
-        for (name, content) in DECREE_SKILL {
+        for (name, content) in skill_files() {
             let lower = content.to_lowercase();
             for term in ["outbox", "hooks", "router.md"] {
                 assert!(!lower.contains(term), "{name} mentions {term}");
@@ -344,9 +340,10 @@ mod tests {
     /// blocks and commands.
     #[test]
     fn test_decree_skill_covers_messages_machines_scripts_and_commands() {
-        let skill = DECREE_SKILL[0].1;
+        let files = skill_files();
+        let skill = &files[0].1;
         assert!(skill.starts_with("---\nname: decree\ndescription: "));
-        for (name, _) in &DECREE_SKILL[1..] {
+        for (name, _) in &files[1..] {
             assert!(
                 skill.contains(&format!("`{name}`")),
                 "SKILL.md omits {name}"
@@ -368,7 +365,7 @@ mod tests {
     /// `feature` fixture's verify script.
     #[test]
     fn test_decree_skill_examples_are_the_example_files() {
-        let text: String = DECREE_SKILL.iter().map(|(_, c)| *c).collect();
+        let text: String = skill_files().into_iter().map(|(_, c)| c).collect();
         // `hello` is a plugin in `examples/project`; the skill shows its machine as written by
         // hand, as docs/reference/machines.md does (tests/docs_test.rs holds that equal to it).
         let plugin = example("plugins/hello.md");
@@ -394,7 +391,7 @@ mod tests {
         );
     }
 
-    /// This repository's installed copies are the templates, byte for byte.
+    /// This repository's installed copies are the `skill` plugin's, byte for byte.
     #[test]
     fn test_repository_skill_copies_are_the_templates() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -404,9 +401,9 @@ mod tests {
             };
             let dir = root.join(skill_dir);
             assert_eq!(files_under(&dir), skill_names(), "{skill_dir}");
-            for (name, content) in DECREE_SKILL {
-                let installed = std::fs::read_to_string(dir.join(name)).unwrap();
-                assert_eq!(&installed, content, "{skill_dir}/{name}");
+            for (name, content) in skill_files() {
+                let installed = std::fs::read_to_string(dir.join(&name)).unwrap();
+                assert_eq!(installed, content, "{skill_dir}/{name}");
             }
         }
     }

@@ -6,7 +6,7 @@
 //!
 //! The documents are `docs/reference/`, `README.md`, `docs/routers.md`, `docs/services.md`,
 //! `SECURITY.md`, `tests/README.md`, every `examples/*/README.md`, the decree skill
-//! (`src/templates/skills/decree/`) and `src/templates/help.txt`. `CHANGELOG.md`,
+//! (`plugins/skill.md/skill/`) and `src/templates/help.txt`. `CHANGELOG.md`,
 //! `docs/decisions.md` and `docs/code-review.md` are history and are not checked.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -63,7 +63,6 @@ fn documents() -> Vec<String> {
     ];
     let mut more = Vec::new();
     files_under(&root.join("docs/reference"), &mut more);
-    files_under(&root.join("src/templates/skills/decree"), &mut more);
     for entry in fs::read_dir(root.join("examples")).unwrap() {
         let readme = entry.unwrap().path().join("README.md");
         if readme.is_file() {
@@ -75,11 +74,28 @@ fn documents() -> Vec<String> {
             .filter(|p| p.extension().is_some_and(|e| e == "md"))
             .map(|p| p.strip_prefix(&root).unwrap().display().to_string()),
     );
+    for name in SKILL_FILES {
+        docs.push(format!("{SKILL}{name}"));
+    }
     docs.sort();
     docs
 }
 
+/// The decree skill's files live in the `skill` plugin: `plugins/skill.md/skill/<name>` names
+/// one, its `scripts` entry `skill/<name>`.
+const SKILL: &str = "plugins/skill.md/skill/";
+const SKILL_FILES: [&str; 5] = [
+    "SKILL.md",
+    "reference/machines.md",
+    "reference/messages.md",
+    "reference/runs.md",
+    "reference/scripts.md",
+];
+
 fn read(rel: &str) -> String {
+    if let Some(name) = rel.strip_prefix(SKILL) {
+        return common::plugin_script("plugins/skill.md", &format!("skill/{name}"));
+    }
     fs::read_to_string(repo().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
 }
 
@@ -1220,7 +1236,11 @@ fn named_environment() -> BTreeMap<String, String> {
     let name = Regex::new(r"\bDECREE_[A-Z0-9_]*[A-Z0-9]").unwrap();
     let mut out = BTreeMap::new();
     for rel in files {
-        let Ok(text) = fs::read_to_string(root.join(&rel)) else {
+        let text = if rel.starts_with(SKILL) {
+            read(&rel)
+        } else if let Ok(text) = fs::read_to_string(root.join(&rel)) {
+            text
+        } else {
             continue; // not UTF-8, such as an image
         };
         for (i, line) in text.lines().enumerate() {
@@ -1274,7 +1294,7 @@ fn the_environment_table_matches_what_decree_sets() {
 /// states in a straight line, ending in `done`; what it grows into is shown as a fragment.
 #[test]
 fn the_skill_writes_the_simplest_machine_first() {
-    let skill = read("src/templates/skills/decree/SKILL.md");
+    let skill = read("plugins/skill.md/skill/SKILL.md");
     let first_rule = skill
         .lines()
         .skip_while(|l| *l != "## Rules")
@@ -1325,7 +1345,7 @@ fn the_skill_writes_the_simplest_machine_first() {
 /// environment without `sudo` (D61), boundaries checked by a script, re-runs after a failure.
 #[test]
 fn the_skill_has_the_files_env_runs_and_timeout_rules() {
-    let skill = fs::read_to_string(repo().join("src/templates/skills/decree/SKILL.md")).unwrap();
+    let skill = read("plugins/skill.md/skill/SKILL.md");
     let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
     for rule in [
         "A machine's helpers, config and data go in `machines/<machine>/scripts/`**, beside the scripts its states invoke",
@@ -1349,7 +1369,7 @@ fn the_skill_has_the_files_env_runs_and_timeout_rules() {
 fn the_escalate_fragment_is_a_machine_that_passes_decree_check() {
     for rel in [
         "docs/reference/machines.md",
-        "src/templates/skills/decree/reference/machines.md",
+        "plugins/skill.md/skill/reference/machines.md",
     ] {
         let text = read(rel);
         let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -1388,7 +1408,7 @@ fn the_escalate_fragment_is_a_machine_that_passes_decree_check() {
         );
         assert_eq!(check_machine(&machine), None, "{rel}:\n{machine}");
     }
-    let skill = read("src/templates/skills/decree/SKILL.md");
+    let skill = read("plugins/skill.md/skill/SKILL.md");
     let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
     let line = "`attempts` retries after `error` only; to have a stronger model answer a weaker one's `STOP`, transition to a child machine.";
     assert!(skill.contains(line), "the skill lacks: {line}");

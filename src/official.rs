@@ -12,7 +12,7 @@ pub struct Official {
 }
 
 /// Every official plugin, by name.
-pub const OFFICIAL: [Official; 17] = [
+pub const OFFICIAL: [Official; 18] = [
     Official {
         name: "ai",
         text: include_str!("../plugins/ai.md"),
@@ -81,12 +81,33 @@ pub const OFFICIAL: [Official; 17] = [
         name: "router",
         text: include_str!("../plugins/router.md"),
     },
+    Official {
+        name: "skill",
+        text: include_str!("../plugins/skill.md"),
+    },
 ];
 
 /// The official plugin `name`.
 /// The official plugins `decree init` adds: a project removes one by deleting its file in
 /// `.decree/plugins/` (D86).
-pub const DEFAULTS: [&str; 2] = ["order", "prune"];
+pub const DEFAULTS: [&str; 4] = ["ai", "order", "prune", "skill"];
+
+/// The decree skill the official `skill` plugin installs: each file's path under the skill
+/// folder (`SKILL.md`, `reference/<file>.md`) and its text.
+pub fn skill_files() -> Vec<(String, String)> {
+    get("skill")
+        .and_then(|o| o.plugin().ok())
+        .map(|p| {
+            p.scripts
+                .iter()
+                .filter_map(|(path, text)| {
+                    path.strip_prefix("skill/")
+                        .map(|rel| (rel.to_string(), text.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 pub fn get(name: &str) -> Option<Official> {
     OFFICIAL.iter().copied().find(|o| o.name == name)
