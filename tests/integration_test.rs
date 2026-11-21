@@ -69,7 +69,8 @@ fn test_init_creates_directory_structure() {
 }
 
 /// The official plugins `init` lists: every one, by name.
-const OFFICIAL: [&str; 16] = [
+const OFFICIAL: [&str; 17] = [
+    "ai",
     "comfy",
     "develop",
     "develop_by_size",

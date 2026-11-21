@@ -224,8 +224,12 @@ fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded
         assert!(!plugins.is_empty(), "{name}: no plugins");
         for plugin in plugins {
             let stem = plugin.file_stem().unwrap().to_string_lossy();
+            // A library has no machine to draw.
+            let library = !fs::read_to_string(&plugin)
+                .unwrap()
+                .contains("\nmachine:\n");
             assert!(
-                decree.join(format!("machines/{stem}/graph.md")).is_file(),
+                library || decree.join(format!("machines/{stem}/graph.md")).is_file(),
                 "{}: no graph",
                 plugin.display()
             );

@@ -1226,14 +1226,14 @@ fn scripts_get_no_decree_lib() {
         ));
 }
 
-/// AC (A08): `machines/develop/scripts/` may hold `conventions.md`, `ai.sh` and `requirements` beside
+/// AC (A08): `machines/develop/scripts/` may hold `conventions.md` and `requirements` beside
 /// the scripts its states invoke; `decree check` passes with no warning about them.
 #[test]
 fn check_ignores_the_files_beside_a_machines_scripts() {
     let p = Project::init();
     p.decree(&["plugin", "add", "develop"]).assert().success();
     let develop = p.decree_dir().join("machines/develop/scripts");
-    assert!(develop.join("ai.sh").is_file());
+    assert!(develop.join("commit.sh").is_file());
     fs::write(develop.join("conventions.md"), "# Conventions\n").unwrap();
     fs::write(develop.join("requirements"), "command   git\n").unwrap();
     p.decree(&["check"])

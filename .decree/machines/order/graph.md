@@ -23,6 +23,9 @@ stateDiagram-v2
     settle --> done: other
     done --> [*]
     failed --> [*]
+    note left of settle
+        state_files: running
+    end note
     note right of pause
         reply: wait
     end note

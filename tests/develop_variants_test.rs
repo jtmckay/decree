@@ -186,6 +186,7 @@ fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
     assert_eq!(
         files,
         [
+            "ai.md",
             "develop_react.md",
             "develop_rust.md",
             "infra.md",

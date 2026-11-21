@@ -12,7 +12,11 @@ pub struct Official {
 }
 
 /// Every official plugin, by name.
-pub const OFFICIAL: [Official; 16] = [
+pub const OFFICIAL: [Official; 17] = [
+    Official {
+        name: "ai",
+        text: include_str!("../plugins/ai.md"),
+    },
     Official {
         name: "comfy",
         text: include_str!("../plugins/comfy.md"),
@@ -195,16 +199,21 @@ mod tests {
         assert_eq!(carriers("commit.sh"), with_infra_qa);
         assert_eq!(carriers("keep.sh"), with_infra_qa);
         assert_eq!(carriers("clean_tree.sh"), with_infra_qa);
-        assert_eq!(
-            carriers("ai.sh"),
-            [
-                &develops[..1],
-                &["develop_by_size"],
-                &develops[1..],
-                &["infra", "qa"]
-            ]
-            .concat()
-        );
+        // One `ai.sh`, the `ai` library's; every plugin that asks AI needs it.
+        assert_eq!(carriers("ai.sh"), ["ai"]);
+        for o in OFFICIAL.iter().filter(|o| o.name != "ai") {
+            let plugin = o.plugin().unwrap();
+            let sources = plugin
+                .scripts
+                .values()
+                .any(|t| t.contains(". .decree/machines/ai/scripts/ai.sh"));
+            assert_eq!(
+                sources,
+                plugin.needs.iter().any(|n| n == "ai"),
+                "{}",
+                o.name
+            );
+        }
     }
 
     /// No official plugin names the backend `decree init --ai` used to bake into installed

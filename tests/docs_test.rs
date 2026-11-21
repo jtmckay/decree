@@ -447,7 +447,7 @@ fn the_security_policy_matches_the_claude_script() {
         assert!(policy.contains(dir), "{dir}");
     }
 
-    let script = common::plugin_script("plugins/develop.md", "ai.sh");
+    let script = common::plugin_script("plugins/ai.md", "ai.sh");
     assert_eq!(
         shell_default(&script, "CLAUDE_PERMISSION_MODE").as_deref(),
         Some("auto"),

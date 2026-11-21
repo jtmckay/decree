@@ -1,6 +1,6 @@
 //! Copies of official plugin files stay the official ones (docs/reference/plugins.md, Official
-//! plugins): a file that several plugins carry (`ai.sh`, `clean_tree.sh`, `commit.sh`,
-//! `keep.sh`) is the same in every plugin file of this repository, the escalation fixture's
+//! plugins): a file that several plugins carry (`clean_tree.sh`, `commit.sh`, `keep.sh`) is
+//! the same in every plugin file of this repository, the escalation fixture's
 //! `gliner_router` is the official one, and this repository's own `.decree/plugins/` are the
 //! official ones but for the edits it names. Reads this repository's files only.
 
@@ -45,8 +45,9 @@ fn plugin_files() -> Vec<String> {
     out
 }
 
-/// Every copy of `ai.sh`, `clean_tree.sh`, `commit.sh` and `keep.sh` in a plugin file is the
-/// official `develop`'s, byte for byte; `ai.sh` is in each plugin whose scripts ask AI.
+/// Every copy of `clean_tree.sh`, `commit.sh` and `keep.sh` in a plugin file is the official
+/// `develop`'s, byte for byte; `ai.sh` is only the `ai` library's, which every plugin whose
+/// scripts source it lists in `needs`.
 #[test]
 fn shared_files_are_the_official_ones_in_every_plugin() {
     let files = plugin_files();
@@ -59,7 +60,7 @@ fn shared_files_are_the_official_ones_in_every_plugin() {
         assert!(files.iter().any(|f| f == must), "{must} missing: {files:?}");
     }
     let mut found: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for shared in ["ai.sh", "clean_tree.sh", "commit.sh", "keep.sh"] {
+    for shared in ["clean_tree.sh", "commit.sh", "keep.sh"] {
         let official = common::plugin_script("plugins/develop.md", shared);
         for file in &files {
             let scripts = &frontmatter(&repo().join(file))["scripts"];
@@ -72,7 +73,25 @@ fn shared_files_are_the_official_ones_in_every_plugin() {
             }
         }
     }
-    assert!(found["ai.sh"].contains(&"examples/project/.decree/plugins/develop.md".to_string()));
+    for file in &files {
+        let fm = frontmatter(&repo().join(file));
+        let name = fm["name"].as_str().unwrap();
+        if name != "ai" {
+            assert!(fm["scripts"].get("ai.sh").is_none(), "{file} carries ai.sh");
+        }
+        let sources = fs::read_to_string(repo().join(file))
+            .unwrap()
+            .contains(". .decree/machines/ai/scripts/ai.sh");
+        let needs_ai = fm["needs"]
+            .as_sequence()
+            .is_some_and(|n| n.iter().any(|v| v.as_str() == Some("ai")));
+        if name != "ai" {
+            assert_eq!(sources, needs_ai, "{file}: sources ai.sh, needs ai");
+        }
+    }
+    assert!(files
+        .iter()
+        .any(|f| f == "examples/project/.decree/plugins/ai.md"));
     assert!(found["commit.sh"].contains(&".decree/plugins/develop.md".to_string()));
 }
 
@@ -117,6 +136,7 @@ fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
         ("qa", &["qa.sh"]),
         ("router", &[]),
         ("order", &[]),
+        ("ai", &[]),
     ];
     let mut names: Vec<String> = fs::read_dir(repo().join(".decree/plugins"))
         .unwrap()
@@ -125,7 +145,14 @@ fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
     names.sort();
     assert_eq!(
         names,
-        ["develop.md", "infra.md", "order.md", "qa.md", "router.md"]
+        [
+            "ai.md",
+            "develop.md",
+            "infra.md",
+            "order.md",
+            "qa.md",
+            "router.md"
+        ]
     );
     for (name, edited) in edits {
         let ours = frontmatter(&repo().join(format!(".decree/plugins/{name}.md")));

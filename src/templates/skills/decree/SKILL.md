@@ -244,7 +244,7 @@ git worktree the user makes and runs decree in (`git worktree add ../app-exp -b 
 
 `develop`: `precheck` →
 `implement` → `gate` → `verify`, with `fix` and `final_gate` only when the gate fails. Its scripts
-source the `ai.sh` beside them (`ai`, which calls `ai_<backend>`: a data entry `ai_cli`, else
+source the `ai` library's `ai.sh` (`ai`, which calls `ai_<backend>`: a data entry `ai_cli`, else
 `AI_CLI`, else the first of `claude`, `opencode` and `copilot` on `PATH`) and
 follow the run-directory files in `reference/scripts.md` (`progress.md`, `STOP`, `gate.log`,
 `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and

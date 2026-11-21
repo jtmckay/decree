@@ -71,6 +71,13 @@ fn project_machines() -> Vec<(String, String)> {
     plugin_dirs.extend(example_projects().iter().map(|p| p.join(".decree/plugins")));
     for path in plugin_dirs.iter().flat_map(|d| files_in(d, ".md")) {
         let rel = path.strip_prefix(repo()).unwrap().display().to_string();
+        // A library (`ai`) has no machine.
+        if !std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("\nmachine:\n")
+        {
+            continue;
+        }
         let machine = common::plugin_machine(&rel);
         out.push((rel, machine));
     }
@@ -210,7 +217,7 @@ fn every_machine_in_the_repository_validates() {
 #[test]
 fn every_official_plugin_validates() {
     let paths = files_in(&repo().join("plugins"), ".md");
-    assert_eq!(paths.len(), 16);
+    assert_eq!(paths.len(), 17);
     let plugin_validator = schema::validator(schema::PLUGIN_SCHEMA);
     let mut machines = Vec::new();
     for (name, text) in read(&paths) {
@@ -222,6 +229,9 @@ fn every_official_plugin_validates() {
         let frontmatter: serde_json::Value = serde_norway::from_str(yaml).unwrap();
         let errors = schema::errors(&plugin_validator, &frontmatter);
         assert!(errors.is_empty(), "{name}: {errors:?}");
+        if frontmatter.get("machine").is_none() {
+            continue;
+        }
         let mut machine = frontmatter["machine"].clone();
         machine
             .as_object_mut()

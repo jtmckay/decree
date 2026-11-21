@@ -369,7 +369,7 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             .success();
         assert_eq!(
             files_under(&decree.join("plugins")),
-            ["develop.md", "infra.md", "qa.md", "router.md"],
+            ["ai.md", "develop.md", "infra.md", "qa.md", "router.md"],
             "{ai}"
         );
         let machines: Vec<String> = files_under(&decree.join("machines"))
@@ -393,7 +393,7 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
         assert_eq!(
             scripts,
             [
-                "develop/ai.sh",
+                "ai/ai.sh",
                 "develop/clean_tree.sh",
                 "develop/commit.sh",
                 "develop/fix.sh",
@@ -402,7 +402,6 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
                 "develop/keep.sh",
                 "develop/precheck.sh",
                 "develop/verify.sh",
-                "infra/ai.sh",
                 "infra/apply.sh",
                 "infra/clean_tree.sh",
                 "infra/commit.sh",
@@ -411,7 +410,6 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
                 "infra/kinds/command.sh",
                 "infra/requirements",
                 "infra/run.sh",
-                "qa/ai.sh",
                 "qa/attack.sh",
                 "qa/clean_tree.sh",
                 "qa/commit.sh",
@@ -428,12 +426,8 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             "{ai}"
         );
         assert!(!decree.join("lib").exists(), "{ai}");
-        for machine in ["develop", "infra", "qa"] {
-            let helper =
-                fs::read_to_string(decree.join("machines").join(machine).join("scripts/ai.sh"))
-                    .unwrap();
-            assert!(helper.contains("\nai() {\n"), "{ai}: {machine}");
-        }
+        let helper = fs::read_to_string(decree.join("machines/ai/scripts/ai.sh")).unwrap();
+        assert!(helper.contains("\nai() {\n"), "{ai}");
         let mut texts = Vec::new();
         for script in &scripts {
             let (m, f) = script.split_once('/').unwrap();
@@ -1102,10 +1096,7 @@ fn ai_without_ai_cli_uses_the_first_cli_on_path() {
     let ask = |clis: &[&str]| {
         let path = path_with_only(&p, clis);
         let out = std::process::Command::new(path.join("bash"))
-            .args([
-                "-c",
-                ". .decree/machines/develop/scripts/ai.sh && ai 'Say hi.'",
-            ])
+            .args(["-c", ". .decree/machines/ai/scripts/ai.sh && ai 'Say hi.'"])
             .current_dir(p.root())
             .env_clear()
             .env("PATH", &path)
@@ -1203,7 +1194,7 @@ fn a_runs_ai_cli_wins_over_the_projects() {
     );
     write_script(
         &decree.join("scripts/say.sh"),
-        "#!/usr/bin/env bash\nset -euo pipefail\n. .decree/machines/develop/scripts/ai.sh\nai \"Say hi from $DECREE_MACHINE.\"\n",
+        "#!/usr/bin/env bash\nset -euo pipefail\n. .decree/machines/ai/scripts/ai.sh\nai \"Say hi from $DECREE_MACHINE.\"\n",
     );
     p.stub(
         "opencode",

@@ -280,6 +280,15 @@ impl Plugin {
             .as_ref()
             .and_then(|m| m.get("description"))
             .and_then(Value::as_str)
+            .unwrap_or_else(|| self.body_summary())
+    }
+
+    /// A library's description: the first line of its body that is not a heading.
+    fn body_summary(&self) -> &str {
+        self.body
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.starts_with('#'))
             .unwrap_or("")
     }
 

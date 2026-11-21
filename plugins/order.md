@@ -2,6 +2,8 @@
 name: order
 machine:
   description: At daemon start, run each machine's order/ files one at a time in file-name order, once each, and again when a file changes.
+  state_files:
+    running: The id of the order run working now, so a second one ends with `other`. idle writes it.
   initial: settle
   states:
     settle:

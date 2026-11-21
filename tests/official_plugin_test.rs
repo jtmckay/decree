@@ -13,7 +13,8 @@ mod common;
 #[path = "common/schema.rs"]
 mod schema;
 
-const OFFICIAL: [&str; 16] = [
+const OFFICIAL: [&str; 17] = [
+    "ai",
     "comfy",
     "develop",
     "develop_by_size",
@@ -87,12 +88,16 @@ fn add_develop_adds_what_it_needs_and_names_it() {
         out.contains("added .decree/plugins/infra.md, needed by develop\n"),
         "{out}"
     );
+    assert!(
+        out.contains("added .decree/plugins/ai.md, needed by develop"),
+        "{out}"
+    );
     let mut files: Vec<String> = fs::read_dir(p.path().join(".decree/plugins"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     files.sort();
-    assert_eq!(files, ["develop.md", "infra.md"]);
+    assert_eq!(files, ["ai.md", "develop.md", "infra.md"]);
     for name in ["develop", "infra"] {
         assert_eq!(
             fs::read_to_string(p.path().join(format!(".decree/plugins/{name}.md"))).unwrap(),
@@ -152,12 +157,12 @@ fn an_edited_plugin_is_marked_kept_and_replaced_only_with_force() {
         .map(|p| p["name"].as_str().unwrap())
         .collect();
     assert_eq!(names, OFFICIAL);
-    let develop = &doc["plugins"][1];
+    let develop = &doc["plugins"][2];
     assert_eq!(
         (develop["added"].clone(), develop["differs"].clone()),
         (true.into(), true.into())
     );
-    assert_eq!(doc["plugins"][0]["added"], false);
+    assert_eq!(doc["plugins"][1]["added"], false); // comfy
 
     let before = fs::read_to_string(&gate).unwrap();
     let out = ok(p.path(), &["plugin", "add", "develop"]);

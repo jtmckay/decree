@@ -132,7 +132,7 @@ for s in gate fix verify gate_gaps; do ln -s "../../develop/scripts/$s.sh" ".dec
 #!/usr/bin/env bash
 # gaps' fill: close each gap in gaps.md, test first, with the agent the round names.
 set -euo pipefail
-. .decree/machines/develop/scripts/ai.sh
+. .decree/machines/ai/scripts/ai.sh
 
 dir=${DECREE_ROOT_RUN_DIR}
 gaps="${dir}/gaps.md"
