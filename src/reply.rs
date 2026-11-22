@@ -51,6 +51,35 @@ pub fn check(
     }))
 }
 
+/// Whether a reply addressed to run id `to` (not a wait id) may be queued for a run that is
+/// not waiting now but will be: it is `active` or `pending`, and `event` is an option of some
+/// `reply` state of its machine. Delivery holds it until the run waits (docs/reference/
+/// messages.md, Replies); one the wait then does not take is rejected as any is.
+pub fn check_later(ctx: &Context, to: &str, event: &str) -> Result<Result<(), String>, InterpreterError> {
+    let runs_dir = ctx.runs_dir();
+    let Some((run_id, None)) = resolve(&runs_dir, to) else {
+        return Ok(Err(format!("`{to}` is not a run id")));
+    };
+    let (status, events) = ctx.status_of(run_id)?;
+    if !matches!(status, RunStatus::Active | RunStatus::Pending) {
+        return Ok(Err(format!("run {run_id} is {}", status.as_str())));
+    }
+    let machine = first_text(&events, "machine").unwrap_or_default();
+    let Some(m) = ctx.machines.get(machine) else {
+        return Ok(Err(format!("run {run_id}'s machine `{machine}` does not load")));
+    };
+    let takes = (0..m.nodes.len())
+        .filter(|&i| matches!(m.nodes[i].invoke, Some(crate::machine::Invoke::Reply(_))))
+        .any(|i| m.accepted_events(i).iter().any(|e| e == event));
+    if takes {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(format!(
+            "no `reply` state of machine `{machine}` takes `{event}`"
+        )))
+    }
+}
+
 /// The wait `to` names, if its run is `waiting` for a reply and `to` is not stale.
 fn find_wait(
     ctx: &Context,

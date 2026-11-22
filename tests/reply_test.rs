@@ -459,21 +459,48 @@ fn event_while_a_reply_is_already_queued_exits_1() {
         .get_output()
         .clone();
     let first = format!("{}.md", String::from_utf8_lossy(&out.stdout).trim());
-    // By wait id or by run id: either would answer the same wait.
-    for target in [wait_id.as_str(), RUN] {
-        let out = p
-            .event(&[target, "reject"])
-            .assert()
-            .code(1)
-            .get_output()
-            .clone();
-        let expected = format!("wait {wait_id} already has a reply queued: .decree/inbox/{first}");
-        assert!(stderr(&out).contains(&expected), "{}", stderr(&out));
-    }
-    assert_eq!(p.inbox(), [first]);
-    p.process().assert().code(0);
+    // A second reply to the same wait id could never be delivered: refused.
+    let out = p
+        .event(&[&wait_id, "reject"])
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    let expected = format!("wait {wait_id} already has a reply queued: .decree/inbox/{first}");
+    assert!(stderr(&out).contains(&expected), "{}", stderr(&out));
+    // One to the run id goes to the wait the run is in when it is delivered, so it is
+    // queued after the first; here the first finishes the run, and it is rejected then.
+    let out = p.event(&[RUN, "reject"]).assert().code(0).get_output().clone();
+    let second = format!("{}.md", String::from_utf8_lossy(&out.stdout).trim());
+    assert_eq!(p.inbox(), [first, second]);
+    // `--once` exits 1 for the rejected reply's failed run, which names why.
+    p.process().assert().code(1);
     assert_eq!(last_transition(&p.events(RUN))["to"], "done");
-    assert_eq!(p.runs(), [RUN]);
+    let rejected = p.other_run();
+    assert!(invalid_message(&p.events(&rejected)).contains("is not waiting"));
+}
+
+/// AC: a reply to a run id may be queued while the run is busy (pending, or executing in
+/// another process), when a `reply` state of its machine takes the event; one no state
+/// takes is refused.
+#[test]
+fn a_reply_to_a_busy_run_is_queued_for_its_next_wait() {
+    let p = Project::new("1h");
+    p.wait();
+    // Pending: a reply was delivered and the run not yet continued.
+    p.event(&[RUN, "approve"]).assert().code(0);
+    let decree = p.decree();
+    let events = decree.join("runs").join(RUN).join("events.jsonl");
+    let mut log = fs::read_to_string(&events).unwrap();
+    let wait_id = p.events(RUN).last().unwrap()["wait_id"].as_str().unwrap().to_string();
+    log.push_str(&format!(
+        "{}\n",
+        json!({"type": "received", "run_id": RUN, "machine": "deploy", "seq": 99, "wait_id": wait_id, "event": "approve", "ts": "2026-01-01T00:00:00Z"})
+    ));
+    fs::write(&events, log).unwrap();
+    let out = p.event(&[RUN, "nope"]).assert().code(1).get_output().clone();
+    assert!(stderr(&out).contains("no `reply` state of machine `deploy` takes `nope`"), "{}", stderr(&out));
+    p.event(&[RUN, "reject"]).assert().code(0);
 }
 
 // ---------------------------------------------------------------
