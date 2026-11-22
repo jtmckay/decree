@@ -169,7 +169,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
 | `decree_version` | string | The claim (`claim` or `invalid_message`), and `retry` | The version of the decree that started or retried the run, for example `0.5.0-beta.11`. Runs recorded before decree wrote it have none. `decree status <id>` shows it on these rows. |
 
-`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes; `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline, or a `timeout_at` with no instant to read; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree daemon --once --retry`.
+`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes (`reply` also with `error` when a `timeout_at` has no instant to read, so the run does not wait); `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline that passed; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree daemon --once --retry`.
 
 **`script`**: one script execution finished. Written after the script exits, before any `transition` it causes.
 

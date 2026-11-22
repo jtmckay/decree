@@ -449,16 +449,24 @@ impl Pipeline {
     }
 
     /// `drain`, and again after each timer a run waits on (a reply wait with `attention:
-    /// false` and a `timeout`, docs/reference/cli.md, `daemon --once`), sleeping until the
-    /// earliest: returns when nothing can move on without outside input.
+    /// false` and a `timeout` or `timeout_at`, docs/reference/cli.md, `daemon --once`),
+    /// sleeping until the earliest or until a file arrives in `inbox/`: returns when nothing
+    /// can move on without outside input.
     pub(crate) fn drain_with_timers(&mut self) -> Result<(), Stop> {
         loop {
             self.drain()?;
             let Some(at) = reply::next_timer(&self.ctx, |id| self.owns(id))? else {
                 return Ok(());
             };
+            // A file arriving in inbox/ meanwhile (a reply, a message) ends the sleep, so the
+            // runs it answers go on now, not at the timer.
+            let inbox = self.ctx.project_root.join(DECREE_DIR).join(INBOX_DIR);
+            let queued = md_files(&inbox)?;
             while chrono::Utc::now() < at {
                 self.may_run()?;
+                if md_files(&inbox)? != queued {
+                    break;
+                }
                 let left = (at - chrono::Utc::now())
                     .to_std()
                     .unwrap_or_default()

@@ -238,24 +238,25 @@ impl ReplyInvoke {
             return Ok(self);
         };
         if self.timeout.is_some() {
-            return Err("a `reply` has `timeout` or `timeout_at`, not both".to_string());
+            return Err("a `reply` has `timeout` or `timeout_at`, not both (V16)".to_string());
         }
         let (file, pointer) = split_timeout_at(at);
         if !crate::plugin::is_plain_path(file) {
             return Err(format!(
-                "`timeout_at` `{at}`: `{file}` is not a plain path in the run's folder: no `..`, `.`, empty parts or leading `/`"
+                "`timeout_at` `{at}`: `{file}` is not a plain path in the run's folder: no `..`, `.`, empty parts or leading `/` (V16)"
             ));
         }
         if pointer.is_some_and(|p| !p.is_empty() && !p.starts_with('/')) {
             return Err(format!(
-                "`timeout_at` `{at}`: after `#` comes a JSON Pointer, such as `#/expires`"
+                "`timeout_at` `{at}`: after `#` comes a JSON Pointer, such as `#/expires` (V16)"
             ));
         }
         Ok(self)
     }
 }
 
-/// A `timeout_at` value: the file, and the JSON Pointer after `#` when there is one.
+/// A `timeout_at` value: the file, before the first `#`, and the JSON Pointer after it when
+/// there is one (which may itself hold `#`). `machine.schema.json`'s pattern says the same.
 pub fn split_timeout_at(at: &str) -> (&str, Option<&str>) {
     match at.split_once('#') {
         Some((file, pointer)) => (file, Some(pointer)),
@@ -294,14 +295,14 @@ impl MachineInvoke {
     fn check(self) -> Result<MachineInvoke, String> {
         match (&self.name, &self.message) {
             (Some(_), Some(_)) => {
-                Err("a `machine` invoke has `name` or `message`, not both".to_string())
+                Err("a `machine` invoke has `name` or `message`, not both (V16)".to_string())
             }
             (None, None) => Err("a `machine` invoke needs `name` or `message`".to_string()),
             (None, Some(_)) if !self.params.is_empty() => Err(
                 "`params` go in the message file of a `machine: { message }` invoke".to_string(),
             ),
             (None, Some(path)) if !crate::plugin::is_plain_path(path) => Err(format!(
-                "`message` `{path}` is not a plain path in the run's folder: no `..`, `.`, empty parts or leading `/`"
+                "`message` `{path}` is not a plain path in the run's folder: no `..`, `.`, empty parts or leading `/` (V16)"
             )),
             _ => Ok(self),
         }

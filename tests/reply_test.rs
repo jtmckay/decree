@@ -778,3 +778,42 @@ fn daemon_takes_a_reply_sent_before_the_deadline() {
         "{attention:?}"
     );
 }
+
+/// AC: `daemon --once` sleeping until a timer (a wait with `attention: false` and a deadline a
+/// day away) wakes when a reply arrives in `inbox/`, delivers it and ends, without waiting
+/// for the deadline.
+#[test]
+fn once_sleeping_on_a_timer_delivers_a_reply_that_arrives() {
+    let p = Project::new("1d");
+    let machine = DEPLOY
+        .replace("TIMEOUT", "1d")
+        .replace("timeout: 1d", "timeout: 1d\n        attention: false");
+    common::write_file(&p.decree().join("machines/deploy/machine.yml"), machine);
+    let mut once = common::std_decree_at(p.tmp.path())
+        .args(["daemon", "--once"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // Once the run waits, reply.
+    let start = std::time::Instant::now();
+    let events = p.decree().join("runs").join(RUN).join("events.jsonl");
+    while !fs::read_to_string(&events).is_ok_and(|t| t.contains("\"type\":\"waiting\"")) {
+        assert!(start.elapsed() < std::time::Duration::from_secs(20), "never waited");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    p.event(&[RUN, "approve"]).assert().code(0);
+    let replied = std::time::Instant::now();
+    loop {
+        if let Some(status) = once.try_wait().unwrap() {
+            assert!(status.success(), "{status}");
+            break;
+        }
+        if replied.elapsed() > std::time::Duration::from_secs(15) {
+            let _ = once.kill();
+            panic!("daemon --once kept sleeping until the timer");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(last_transition(&p.events(RUN))["to"], "done");
+}

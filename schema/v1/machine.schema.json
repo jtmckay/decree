@@ -405,7 +405,7 @@
         },
         "timeout_at": {
           "type": "string",
-          "pattern": "^[^#/\\\\][^#\\\\]*(#(/[^#]*)?)?$",
+          "pattern": "^(?:(?!\\.\\.?(?:/|#|$))[^/#\\\\]+/)*(?!\\.\\.?(?:#|$))[^/#\\\\]+(?:#(?:/.*)?)?$",
           "description": "Instead of `timeout`: where the deadline is, read when the wait starts (after `notify` ran). `<file>`, a file in the run's folder holding an RFC 3339 instant, or `<file>#<JSON Pointer>` (RFC 6901), the instant at that place in a JSON file, as AWS Step Functions' Wait state takes `TimestampPath`. A script writes it, and each entry to the state reads it again. With no instant to read, the event is `error` at once, naming why. The path stays in the run's folder (no `..` or `.` parts)."
         },
         "attention": {

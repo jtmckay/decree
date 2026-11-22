@@ -229,10 +229,11 @@ impl Interpreter<'_> {
             ),
             (None, Some(at)) => match self.deadline_at(at) {
                 Ok(deadline) => Some(deadline),
+                // No instant to wait for is the invoke failing, not a deadline passing.
                 Err(reason) => {
                     return Ok(Invoked::Event(Decision {
                         error: Some(reason),
-                        ..Decision::new("error", "timeout", None)
+                        ..Decision::new("error", "reply", None)
                     }))
                 }
             },
@@ -258,11 +259,27 @@ impl Interpreter<'_> {
     /// `<file>` in the run's folder holding an RFC 3339 instant, or `<file>#<pointer>`, the
     /// string a JSON Pointer (RFC 6901) picks in that JSON file. `Err` says why there is none.
     fn deadline_at(&self, at: &str) -> Result<DateTime<Utc>, String> {
+        /// The most of the file read, and of a bad instant quoted in the error.
+        const MAX_BYTES: u64 = 64 * 1024;
+        const MAX_QUOTED: usize = 80;
         let (file, pointer) = split_timeout_at(at);
-        let path = self.executor.info().run_dir.join(file);
-        let text = std::fs::read_to_string(&path).map_err(|e| {
+        let run_dir = &self.executor.info().run_dir;
+        let cannot = |e: &dyn std::fmt::Display| {
             format!("`timeout_at` `{at}`: cannot read `{file}` in the run's folder: {e}")
-        })?;
+        };
+        // A symlink may not lead out of the run's folder.
+        let path = run_dir.join(file).canonicalize().map_err(|e| cannot(&e))?;
+        let inside = run_dir.canonicalize().map_err(|e| cannot(&e))?;
+        if !path.starts_with(&inside) {
+            return Err(cannot(&"it leads out of the run's folder"));
+        }
+        let mut text = String::new();
+        {
+            use std::io::Read;
+            std::fs::File::open(&path)
+                .and_then(|f| f.take(MAX_BYTES).read_to_string(&mut text))
+                .map_err(|e| cannot(&e))?;
+        }
         let instant = match pointer {
             None => text.trim().to_string(),
             Some(pointer) => {
@@ -279,7 +296,9 @@ impl Interpreter<'_> {
         DateTime::parse_from_rfc3339(&instant)
             .map(|t| t.with_timezone(&Utc))
             .map_err(|e| {
-                format!("`timeout_at` `{at}`: `{instant}` is not an RFC 3339 instant: {e}")
+                let quoted: String = instant.chars().take(MAX_QUOTED).collect();
+                let more = if quoted.len() < instant.len() { "…" } else { "" };
+                format!("`timeout_at` `{at}`: `{quoted}{more}` is not an RFC 3339 instant: {e}")
             })
     }
     /// `<run id>.w<seq>`, where `seq` is that of the `transition` event that entered the

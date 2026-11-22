@@ -1622,9 +1622,31 @@ fn reply_timeout_at_without_a_deadline_is_error() {
         let t = p.events_of("transition");
         let taken = t.iter().find(|e| e["from"] == "approval").unwrap();
         assert_eq!(taken["event"], "error");
-        assert_eq!(taken["source"], "timeout");
+        // The invoke failed: not a deadline that passed.
+        assert_eq!(taken["source"], "reply");
         let error = taken["error"].as_str().unwrap();
         assert!(error.contains(why), "{at}: {error}");
+    }
+}
+
+/// `timeout_at` reads only inside the run's folder: a symlink out of it is no deadline, and a
+/// bad instant is quoted in the error cut to 80 characters, not copied whole.
+#[test]
+fn reply_timeout_at_stays_in_the_run_folder_and_quotes_little() {
+    for (at, why) in [
+        ("link", "leads out of the run's folder"),
+        ("long", "…` is not an RFC 3339 instant"),
+    ] {
+        let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_reply.yml"))
+            .unwrap()
+            .replace("timeout: 60s", &format!("timeout_at: '{at}'"));
+        let p = Project::from_text("step_reply", &text, &[("ask_person", "write_odd_deadlines")]);
+        assert_eq!(p.run(), Outcome::Finished("failed".into()), "{at}");
+        let t = p.events_of("transition");
+        let taken = t.iter().find(|e| e["from"] == "approval").unwrap();
+        let error = taken["error"].as_str().unwrap();
+        assert!(error.contains(why), "{at}: {error}");
+        assert!(error.len() < 300, "{at}: {error}");
     }
 }
 
