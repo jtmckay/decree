@@ -234,6 +234,24 @@ fn overview(
             .get(machine)
             .map_or(1, crate::machine::LoadedMachine::concurrency)
     };
+    // A machine in a `concurrency_group` shares the group's slots: its limit is the group's,
+    // and what counts against it is every run of the group.
+    let group_of = |machine: &str| {
+        project
+            .machines
+            .get(machine)
+            .and_then(|m| m.concurrency_group.clone())
+    };
+    let mut in_group: BTreeMap<String, usize> = BTreeMap::new();
+    for (m, n) in &executing {
+        if let Some(g) = group_of(m) {
+            *in_group.entry(g).or_default() += n;
+        }
+    }
+    let entry = |m: &str, n: usize| match group_of(m) {
+        Some(g) => json!({ "running": n, "limit": limit(m), "group": g, "group_running": in_group[&g] }),
+        None => json!({ "running": n, "limit": limit(m) }),
+    };
     if format == Format::Json {
         let mut counts = json!({ "total": ids.len() });
         let mut runs = json!({});
@@ -255,7 +273,7 @@ fn overview(
             "queued": { "inbox": inbox },
             "executing": executing
                 .iter()
-                .map(|(m, n)| (m.to_string(), json!({ "running": n, "limit": limit(m) })))
+                .map(|(m, n)| (m.to_string(), entry(m, *n)))
                 .collect::<serde_json::Map<String, Value>>(),
         });
         let nested: Vec<Value> = nested_projects(&ctx.project_root)?
@@ -294,7 +312,10 @@ fn overview(
         if status == RunStatus::Active && !executing.is_empty() {
             let each: Vec<String> = executing
                 .iter()
-                .map(|(m, n)| format!("{m} {n}/{}", limit(m)))
+                .map(|(m, n)| match group_of(m) {
+                    Some(g) => format!("{m} {n} (group {g} {}/{})", in_group[&g], limit(m)),
+                    None => format!("{m} {n}/{}", limit(m)),
+                })
                 .collect();
             println!("    by machine: {}", each.join(", "));
         }

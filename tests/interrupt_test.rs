@@ -270,10 +270,12 @@ fn sigterm_stops_the_child_appends_interrupted_and_exits_130() {
         "---\nid: 20260101T000000.000000Z-000000\nmachine: slow\n---\n",
     );
     let (mut decree, script, child) = p.sleeping("20260101T000000.000000Z-000000");
-    // The lock holds decree's pid while the run is stepped.
+    // The lock holds decree's pid, then its token, while the run is stepped.
     assert_eq!(
-        p.read("runs/20260101T000000.000000Z-000000/.lock"),
-        decree.id().to_string()
+        p.read("runs/20260101T000000.000000Z-000000/.lock")
+            .split_whitespace()
+            .next(),
+        Some(decree.id().to_string().as_str())
     );
 
     let sent = Instant::now();

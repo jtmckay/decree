@@ -1256,6 +1256,7 @@ fn concurrency_and_its_group() {
                   done: { final: true }\n  failed: { final: true }\n";
     let m = |head: &str| format!("name: m\ndescription: d\n{head}{body}");
     let m_text = m("concurrency: 2\nconcurrency_group: tree\n");
+    let leaf = |group: &str| leaf(group).replace("concurrency_group", "concurrency: 2\nconcurrency_group");
     let loaded = load("m", &m_text);
     assert_eq!(loaded.concurrency(), 2);
     assert_eq!(loaded.slot_key(), "group/tree");
@@ -1264,9 +1265,29 @@ fn concurrency_and_its_group() {
     // `m` reaches `c` through `b`: in its group, a problem; in another, none.
     assert_eq!(
         problems_with(&m_text, &[("b", middle), ("c", &leaf("tree"))]),
-        ["m: machine `m` invokes `c`, which is in its concurrency_group `tree`: the child would wait for a slot its parent holds (V20)"]
+        ["m: machine `m` holds a slot of concurrency_group `tree` and, through m -> b, b -> c, would wait for another of `tree`, which a run that waits on it may hold (V20)"]
+    );
+    // Two groups each invoking a machine of the other wait on each other: both are refused.
+    let a = "name: m\ndescription: d\nconcurrency: 2\nconcurrency_group: g\ninitial: a\nstates:\n  \
+             a: { invoke: { machine: b }, transitions: { done: done } }\n  \
+             done: { final: true }\n  failed: { final: true }\n";
+    let b = &leaf("h").replace("name: c", "name: b");
+    let c = "name: c\ndescription: d\nconcurrency: 2\nconcurrency_group: h\ninitial: a\nstates:\n  \
+             a: { invoke: { machine: d }, transitions: { done: done } }\n  \
+             done: { final: true }\n  failed: { final: true }\n";
+    let d = &leaf("g").replace("name: c", "name: d");
+    assert_eq!(
+        problems_with(a, &[("b", b), ("c", c), ("d", d)]),
+        ["m: machine `m` holds a slot of concurrency_group `g` and, through m -> b, c -> d, would wait for another of `g`, which a run that waits on it may hold (V20)"]
     );
     assert!(problems_with(&m_text, &[("b", middle), ("c", &leaf("other"))]).is_empty());
+    // Every machine of a group gives the same `concurrency`: `m` says 2, `c` 1.
+    let c_tree = leaf("tree").replace("concurrency: 2", "concurrency: 1");
+    let alone = m("concurrency: 2\nconcurrency_group: tree\n").replace("invoke: { machine: b }", "invoke: x");
+    assert_eq!(
+        problems_with(&alone, &[("c", &c_tree)]),
+        ["line 4: concurrency_group `tree` has one number of slots, but `m` says 2 and `c` (1) another; give every machine in it the same `concurrency` (V14)"]
+    );
     let bad = m("concurrency: 0\nconcurrency_group: Tree\n");
     let found = problems_with(&bad, &[("b", middle), ("c", &leaf("other"))]);
     assert!(

@@ -234,7 +234,16 @@ impl<'a> Interpreter<'a> {
     /// Start a new run (step 1) and step it until it finishes, waits or is interrupted.
     /// The run lock is held throughout.
     pub fn start(&mut self) -> Result<Outcome, InterpreterError> {
-        let _lock = self.lock()?;
+        self.start_holding(None)
+    }
+
+    /// `start`, with the run lock already taken by the caller (the dispatcher takes it at the
+    /// claim, so the run is `active` before its worker starts), or taken here when `None`.
+    pub fn start_holding(&mut self, lock: Option<RunLock>) -> Result<Outcome, InterpreterError> {
+        let _lock = match lock {
+            Some(lock) => lock,
+            None => self.lock()?,
+        };
         let result = self.claim_and_run();
         let outcome = self.interrupt_on_signal(result)?;
         self.record_attention()?;

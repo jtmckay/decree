@@ -805,6 +805,26 @@ impl Validator<'_> {
                     format!("concurrency_group `{group}` does not match ^[a-z][a-z0-9_]*$ (V14)"),
                 );
             }
+            // A group has one number of slots: every machine in it says the same.
+            let mine = self.m.concurrency();
+            let others: Vec<String> = self
+                .env
+                .machines
+                .values()
+                .filter(|m| m.id != self.m.id && m.concurrency_group.as_deref() == Some(group.as_str()))
+                .filter(|m| m.concurrency() != mine)
+                .map(|m| format!("`{}` ({})", m.id, m.concurrency()))
+                .collect();
+            if !others.is_empty() {
+                self.push(
+                    self.root_line("concurrency_group"),
+                    format!(
+                        "concurrency_group `{group}` has one number of slots, but `{}` says {mine} and {} another; give every machine in it the same `concurrency` (V14)",
+                        self.m.id,
+                        others.join(", ")
+                    ),
+                );
+            }
         }
     }
 
@@ -985,42 +1005,72 @@ impl Validator<'_> {
         }
     }
 
-    /// V20 for `concurrency_group`: no machine this one invokes, directly or through others,
-    /// is in its group, since the child would wait for a slot its parent holds.
+    /// V20 for slots (docs/reference/machines.md, Concurrency): a child waits for a slot of its
+    /// own machine, or of its group, while its parent holds one of its own. So no chain of
+    /// invokes may lead from a slot back to the same slot, counting each group as one: from
+    /// this machine's group, through what any machine of a group reached invokes, never back
+    /// to it. That is lock ordering (a hierarchy of locks, taken in one order); it covers a
+    /// child in its parent's group and two groups each waiting on the other. A cycle through
+    /// machines alone is the other half of V20.
     fn v20_group(&mut self) {
         let Some(group) = self.m.concurrency_group.clone() else {
             return;
         };
         let me = self.m.id.as_str();
-        let mut queue: Vec<&str> = self
-            .m
-            .invoked_machines()
-            .into_iter()
-            .map(|(_, c)| c)
-            .collect();
-        let mut seen: BTreeSet<&str> = queue.iter().copied().collect();
-        let mut found = Vec::new();
-        while let Some(id) = queue.pop() {
-            let Some(m) = self.env.machines.get(id) else {
-                continue;
-            };
-            if m.concurrency_group.as_deref() == Some(group.as_str()) {
-                found.push(id.to_string());
-            }
-            for (_, child) in m.invoked_machines() {
-                if seen.insert(child) {
-                    queue.push(child);
+        let start = self.m.slot_key();
+        let key_of = |id: &str| -> String {
+            self.env
+                .machines
+                .get(id)
+                .map_or_else(|| format!("machine/{id}"), LoadedMachine::slot_key)
+        };
+        // The machines whose runs take each slot key's slots.
+        let mut members: BTreeMap<String, Vec<&LoadedMachine>> = BTreeMap::new();
+        for m in self.env.machines.values() {
+            members.entry(m.slot_key()).or_default().push(m);
+        }
+        for (_, first) in self.m.invoked_machines() {
+            // From this machine's slot, through `first`, back to it?
+            let mut path: BTreeMap<String, (String, String, String)> = BTreeMap::new();
+            let first_key = key_of(first);
+            let mut queue = std::collections::VecDeque::from([first_key.clone()]);
+            let mut seen = BTreeSet::from([first_key.clone()]);
+            let mut back = first_key == start;
+            while let Some(key) = queue.pop_front() {
+                if back {
+                    break;
+                }
+                for m in members.get(&key).into_iter().flatten() {
+                    for (_, child) in m.invoked_machines() {
+                        let next = key_of(child);
+                        if seen.insert(next.clone()) {
+                            path.insert(next.clone(), (key.clone(), m.id.clone(), child.to_string()));
+                            back |= next == start;
+                            queue.push_back(next);
+                        }
+                    }
                 }
             }
-        }
-        found.sort();
-        for child in found {
-            self.push(
-                me.to_string(),
-                format!(
-                    "machine `{me}` invokes `{child}`, which is in its concurrency_group `{group}`: the child would wait for a slot its parent holds (V20)"
-                ),
+            if !back {
+                continue;
+            }
+            // The hops from this machine back to its own slots, to name the cycle.
+            let mut hops = Vec::new();
+            let mut key = start.clone();
+            while key != first_key {
+                let Some((prev, from, to)) = path.get(&key) else {
+                    break;
+                };
+                hops.push(format!("{from} -> {to}"));
+                key = prev.clone();
+            }
+            hops.push(format!("{me} -> {first}"));
+            hops.reverse();
+            let message = format!(
+                "machine `{me}` holds a slot of concurrency_group `{group}` and, through {}, would wait for another of `{group}`, which a run that waits on it may hold (V20)",
+                hops.join(", ")
             );
+            self.push(me.to_string(), message);
         }
     }
 

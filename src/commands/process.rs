@@ -192,8 +192,6 @@ pub(crate) struct Pipeline {
     workers: Vec<std::thread::JoinHandle<()>>,
     done_tx: Sender<Done>,
     done_rx: Receiver<Done>,
-    /// A fault a worker hit, returned by the next pass.
-    fault: Option<Stop>,
 }
 
 /// Print, once each, every plugin `decree install` would install or remove and every
@@ -249,7 +247,6 @@ impl Pipeline {
             workers: Vec::new(),
             done_tx,
             done_rx,
-            fault: None,
         })
     }
 
@@ -413,7 +410,7 @@ impl Pipeline {
     /// Repeat until nothing is left and no run is executing: deliver timeouts and replies,
     /// start every `pending` run and inbox message whose machine has a free slot, and wait
     /// for a run to stop. A failed run is reported and the loop goes on. On a stop (a signal,
-    /// a held queue, a fault), every executing run is waited for first.
+    /// a held queue, an I/O error), every executing run is waited for first.
     pub(crate) fn drain(&mut self) -> Result<(), Stop> {
         let result = self.drain_until_idle();
         if result.is_err() {
@@ -423,14 +420,30 @@ impl Pipeline {
     }
 
     fn drain_until_idle(&mut self) -> Result<(), Stop> {
+        let inbox = self.ctx.project_root.join(DECREE_DIR).join(INBOX_DIR);
         loop {
-            self.reap(None)?;
-            let progressed = self.dispatch()?;
-            if !progressed {
-                if self.in_flight.is_empty() {
-                    return Ok(());
+            self.reap(None);
+            if self.dispatch()? {
+                continue;
+            }
+            if self.in_flight.is_empty() {
+                return Ok(());
+            }
+            // Nothing could start: look again when a run stops, a file arrives in inbox/, or
+            // a second passes (a deadline, a run another process made pending), not every
+            // `WAKE`, since a pass reads every run's events.
+            let listing = md_files(&inbox)?;
+            let since = std::time::Instant::now();
+            loop {
+                let before = self.in_flight.len();
+                self.reap(Some(WAKE));
+                if self.in_flight.len() < before
+                    || since.elapsed() >= RESCAN
+                    || md_files(&inbox)? != listing
+                {
+                    break;
                 }
-                self.reap(Some(WAKE))?;
+                self.may_run()?;
             }
         }
     }
@@ -458,7 +471,7 @@ impl Pipeline {
     /// One pass of the daemon: what can start starts, and the runs that stopped are
     /// collected; it never waits for a run. Returns whether anything moved.
     pub(crate) fn step(&mut self) -> Result<bool, Stop> {
-        self.reap(None)?;
+        self.reap(None);
         self.dispatch()
     }
 
@@ -470,7 +483,7 @@ impl Pipeline {
             return Ok(false);
         }
         let before = self.in_flight.len();
-        self.reap(Some(wait))?;
+        self.reap(Some(wait));
         Ok(self.in_flight.len() < before)
     }
 
@@ -498,9 +511,6 @@ impl Pipeline {
     /// moved.
     fn dispatch(&mut self) -> Result<bool, Stop> {
         self.may_run()?;
-        if let Some(fault) = self.fault.take() {
-            return Err(fault);
-        }
         self.refresh();
         let mut progressed = false;
         // Deadlines: replies queued before them first, then the timeouts. Both only append
@@ -512,11 +522,12 @@ impl Pipeline {
         let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let inbox = decree_dir.join(INBOX_DIR);
         message::arrive(&decree_dir)?;
-        // A machine found full keeps the rest of its messages queued, in order.
+        // A machine (or group) found full keeps the rest of its messages queued, in order.
         let mut full: HashSet<String> = HashSet::new();
-        // A run executing, or answered in this pass, gets its next reply once it has stopped
-        // again: replies to one run go in the order they were queued, each to the wait the
-        // run is in by then, as when one run went at a time.
+        // A run executing, about to (pending, its machine at its limit, in any process), or
+        // answered in this pass, gets its next reply once it waits again: replies to one run
+        // go in the order they were queued, each to the wait the run is in by then, as when
+        // one run went at a time.
         let mut answered: HashSet<String> = HashSet::new();
         for file in md_files(&inbox)? {
             self.may_run()?;
@@ -536,7 +547,7 @@ impl Pipeline {
                     .text("to")
                     .and_then(|to| reply::target_run(&self.ctx.runs_dir(), to));
                 if let Some(run) = run {
-                    if self.executing_here(&run) || !answered.insert(run) {
+                    if self.executing_here(&run) || self.not_yet_waiting(&run) || !answered.insert(run) {
                         continue;
                     }
                 }
@@ -552,11 +563,13 @@ impl Pipeline {
                 progressed |= self.claim_inline(file, None)?;
                 continue;
             };
-            if full.contains(&name) {
+            // Full is per slot key: a group found full keeps every member's messages queued.
+            let key = crate::interpreter::child::slot_of(&self.ctx, &name).0;
+            if full.contains(&key) {
                 continue;
             }
             let Some(slot) = self.try_slot(&name)? else {
-                full.insert(name);
+                full.insert(key);
                 continue;
             };
             let Some(claim) = message::claim(&decree_dir, &file)? else {
@@ -564,11 +577,17 @@ impl Pipeline {
                 continue;
             };
             let arrived = message.text(ARRIVED_AS).map(String::from).unwrap_or(file);
+            // The run is locked here, before its worker starts, so from its claim on it is
+            // `active` to every reader (`decree status`, the `order` plugin), never a run with
+            // no events and no lock, which reads as interrupted. The worker steps it holding
+            // this lock.
+            let lock = RunLock::acquire(&claim.run_dir)
+                .map_err(|e| DecreeError::Other(format!("{}: {e}", claim.run_dir.display())))?;
             self.spawn(
                 claim.id.clone(),
                 Some(arrived),
                 slot,
-                Job::Claim(Box::new(claim)),
+                Job::Claim(Box::new(claim), lock),
             );
             progressed = true;
         }
@@ -603,6 +622,15 @@ impl Pipeline {
             )
     }
 
+    /// Whether run `id` is `active` or `pending`: it will wait again, or finish, and a reply
+    /// to it is delivered then (or rejected, once it finished).
+    fn not_yet_waiting(&self, id: &str) -> bool {
+        matches!(
+            self.ctx.status_of(id).map(|(status, _)| status),
+            Ok(RunStatus::Active | RunStatus::Pending)
+        )
+    }
+
     /// A free slot of machine `name`.
     fn try_slot(&self, name: &str) -> Result<Option<SlotGuard>, Stop> {
         let (key, n) = crate::interpreter::child::slot_of(&self.ctx, name);
@@ -623,7 +651,9 @@ impl Pipeline {
         let tx = self.done_tx.clone();
         let handle = std::thread::spawn(move || {
             let notes = notes.as_ref();
-            let result = match job {
+            // A panic in the run is that run's error: the worker still reports back, so the
+            // run leaves `in_flight` and the daemon goes on.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
                 Job::Continue => {
                     match reported(notes, &ctx, &id, || continue_holding(&ctx, &id, Some(slot))) {
                         Ok(outcome) => Ok(Some(outcome)),
@@ -632,22 +662,30 @@ impl Pipeline {
                         Err(e) => Err(Stop::from(e)),
                     }
                 }
-                Job::Claim(claim) => {
+                Job::Claim(claim, lock) => {
                     let _slot = slot;
-                    reported(notes, &ctx, &id, || run_claim(&ctx, &project, *claim, None))
+                    reported(notes, &ctx, &id, || run_claim(&ctx, &project, *claim, None, lock))
                         .map(Some)
                         .map_err(Stop::from)
                 }
-            };
+            }))
+            .unwrap_or_else(|panic| {
+                let what = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "a panic".to_string());
+                Err(Stop::Error(DecreeError::Other(format!("it panicked: {what}"))))
+            });
             let _ = tx.send(Done { id, file, result });
         });
         self.workers.push(handle);
     }
 
     /// Collect the runs that stopped: each one ready now, or, with `wait`, the first to stop
-    /// within it and those ready after it. A run that ended in `failed` is reported; a fault
-    /// in one is returned by the next pass, once the others have been collected.
-    fn reap(&mut self, wait: Option<std::time::Duration>) -> Result<(), Stop> {
+    /// within it and those ready after it. A run that ended in `failed`, or stopped with an
+    /// error, is reported, and the others go on.
+    fn reap(&mut self, wait: Option<std::time::Duration>) {
         let first = match wait {
             Some(wait) if !self.in_flight.is_empty() => self.done_rx.recv_timeout(wait).ok(),
             _ => None,
@@ -661,22 +699,25 @@ impl Pipeline {
                     self.fail(&id, file.as_deref());
                 }
                 Ok(_) | Err(Stop::Interrupted) => {}
+                // One run's error is that run's: it is reported, and the others go on.
                 Err(stop) => {
-                    self.fault.get_or_insert(stop);
+                    let e = stop.into_error();
+                    report::notice(format!(
+                        "{}run {id} stopped with an error: {e}; see .decree/runs/{id}/",
+                        self.prefix
+                    ));
+                    self.failed.push(id.clone());
                 }
             }
         }
         self.workers.retain(|h| !h.is_finished());
-        Ok(())
     }
 
     /// Wait for every executing run to stop, collecting each: on a signal, each running
     /// script is stopped and its run `interrupted`.
     pub(crate) fn wait_all(&mut self) {
         while !self.in_flight.is_empty() {
-            if self.reap(Some(WAKE)).is_err() {
-                break;
-            }
+            self.reap(Some(WAKE));
         }
         for handle in self.workers.drain(..) {
             let _ = handle.join();
@@ -756,7 +797,7 @@ impl Pipeline {
         let id = claim.id.clone();
         let notes = self.report.as_ref().map(Reporter::notes);
         let outcome = reported(notes.as_ref(), &self.ctx, &id, || {
-            run_claim(&self.ctx, &self.project, claim, reply_problem)
+            run_claim(&self.ctx, &self.project, claim, reply_problem, None)
         })?;
         if matches!(&outcome, Outcome::Finished(state) if state == FAILED) {
             self.fail(&id, Some(arrived_as.as_deref().unwrap_or(&file)));
@@ -768,12 +809,16 @@ impl Pipeline {
 /// How long the dispatcher waits for a run to stop before it looks at the queue again.
 const WAKE: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// How long `daemon --once` waits, with runs executing and nothing else to start, before it
+/// reads every run again: for deadlines and for runs another process made pending.
+const RESCAN: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// What a worker thread does with its run.
 enum Job {
     /// Continue the `pending` run.
     Continue,
-    /// Run the claimed inbox message.
-    Claim(Box<Claim>),
+    /// Run the claimed inbox message, holding its run lock when the dispatcher took it.
+    Claim(Box<Claim>, Option<RunLock>),
 }
 
 /// A worker's report: run `id` (claimed from `file`, if it was) stopped with `result`;
@@ -872,6 +917,7 @@ fn run_claim(
     project: &Project,
     claim: Claim,
     reply_problem: Option<String>,
+    lock: Option<RunLock>,
 ) -> Result<Outcome, DecreeError> {
     let Claim {
         id,
@@ -907,7 +953,7 @@ fn run_claim(
         );
         return reject(ctx, &id, &name, &trigger, &file, &reason, true);
     }
-    start(ctx, project, &id, &trigger, &file, &message)
+    start(ctx, project, &id, &trigger, &file, &message, lock)
 }
 
 /// Validate `message`, now `runs/<id>/message.md`, and start its run; an invalid message
@@ -919,6 +965,7 @@ fn start(
     trigger: &str,
     file: &str,
     message: &Message,
+    lock: Option<RunLock>,
 ) -> Result<Outcome, DecreeError> {
     let name = match message::validate(message, &project.machines, &project.machine_ids) {
         Ok(name) => name,
@@ -939,7 +986,7 @@ fn start(
         .ok_or_else(|| DecreeError::Other(format!("machine `{name}` does not load")))?;
     let input = RunInput::new(message, Some(file.to_string()));
     let executor = ctx.executor(machine, id, trigger, &input.params, message.text("parent"))?;
-    Ok(Interpreter::new(ctx, machine, executor, input)?.start()?)
+    Ok(Interpreter::new(ctx, machine, executor, input)?.start_holding(lock)?)
 }
 
 /// Fail a run at its claim with `invalid_message` and `reason`: one `transition` event to

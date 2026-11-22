@@ -595,7 +595,8 @@ pub enum LockState {
 /// Read the `.lock` in `run_dir` and check its pid with `kill(pid, 0)`.
 pub fn lock_state(run_dir: &Path) -> io::Result<LockState> {
     match std::fs::read_to_string(run_dir.join(LOCK_FILE)) {
-        Ok(text) => Ok(match text.trim().parse::<u32>() {
+        // `<pid>` or `<pid> <token>`: the first word is the process.
+        Ok(text) => Ok(match text.split_whitespace().next().unwrap_or("").parse::<u32>() {
             Ok(pid) if pid_alive(pid) => LockState::Live(pid),
             _ => LockState::Stale,
         }),
@@ -618,56 +619,70 @@ fn pid_alive(pid: u32) -> bool {
     sent || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-/// A held run lock: `runs/<id>/.lock` holding this process's id. Dropping it deletes the
-/// lock, so a run that finishes, waits, is interrupted by a signal or hits an error
-/// releases it; only a killed process leaves a stale one behind.
+/// A held run lock: `runs/<id>/.lock` holding this process's id and a token of its own.
+/// Dropping it deletes the lock, so a run that finishes, waits, is interrupted by a signal or
+/// hits an error releases it; only a killed process leaves a stale one behind.
 #[derive(Debug)]
 pub struct RunLock {
     path: PathBuf,
+    /// What this lock's file holds: `<pid> <token>`. Threads of one process share the pid;
+    /// the token tells their locks apart, so one never deletes another's.
+    content: String,
 }
 
 impl RunLock {
-    /// Take the lock of the run in `run_dir` (docs/reference/messages.md, Run lock): create `.lock` with
-    /// `create_new` and write the process id into it. A stale lock is deleted first; it
-    /// never causes a takeover of a live one. `Ok(None)` means another live process holds
-    /// the lock: the run is `active`.
+    /// Take the lock of the run in `run_dir` (docs/reference/messages.md, Run lock). The
+    /// lock appears whole or not at all: its content is written to a temp file first, then
+    /// hard-linked to `.lock`, which fails if `.lock` exists, so no reader ever sees an
+    /// empty lock and takes it for stale. A stale lock is deleted first; it never causes a
+    /// takeover of a live one. `Ok(None)` means another live process, or another thread of
+    /// this one, holds the lock: the run is `active`.
     pub fn acquire(run_dir: &Path) -> io::Result<Option<RunLock>> {
-        use std::io::Write;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = run_dir.join(LOCK_FILE);
-        // Two tries: the second follows deleting a stale lock. Losing again means another
-        // process took the lock in between.
-        for _ in 0..2 {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut file) => {
-                    let lock = RunLock { path };
-                    file.write_all(std::process::id().to_string().as_bytes())?;
-                    return Ok(Some(lock));
+        let content = format!(
+            "{} {}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        let tmp = run_dir.join(format!("{LOCK_FILE}.{}", content.replace(' ', ".")));
+        std::fs::write(&tmp, &content)?;
+        let result = (|| {
+            // Two tries: the second follows deleting a stale lock. Losing again means another
+            // process took the lock in between.
+            for _ in 0..2 {
+                match std::fs::hard_link(&tmp, &path) {
+                    Ok(()) => {
+                        return Ok(Some(RunLock {
+                            path: path.clone(),
+                            content: content.clone(),
+                        }))
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(e),
                 }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e),
+                match lock_state(run_dir)? {
+                    LockState::Live(_) => return Ok(None),
+                    LockState::Stale => match std::fs::remove_file(&path) {
+                        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                        _ => {}
+                    },
+                    LockState::Free => {}
+                }
             }
-            match lock_state(run_dir)? {
-                LockState::Live(_) => return Ok(None),
-                LockState::Stale => match std::fs::remove_file(&path) {
-                    Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-                    _ => {}
-                },
-                LockState::Free => {}
-            }
-        }
-        Ok(None)
+            Ok(None)
+        })();
+        let _ = std::fs::remove_file(&tmp);
+        result
     }
 }
 
 impl Drop for RunLock {
     fn drop(&mut self) {
-        // Only this process's lock: never one another process created after a stale one.
-        let ours = std::fs::read_to_string(&self.path)
-            .is_ok_and(|text| text.trim() == std::process::id().to_string());
+        // Only this lock: never one another process created after a stale one, nor another
+        // thread's.
+        let ours = std::fs::read_to_string(&self.path).is_ok_and(|text| text.trim() == self.content);
         if ours {
             let _ = std::fs::remove_file(&self.path);
         }
@@ -1265,7 +1280,13 @@ mod tests {
         assert_eq!(lock_state(dir.path()).unwrap(), LockState::Free);
         let lock = RunLock::acquire(dir.path()).unwrap().expect("lock is free");
         let text = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
-        assert_eq!(text, std::process::id().to_string());
+        let (pid, token) = text.split_once(' ').unwrap();
+        assert_eq!(pid, std::process::id().to_string());
+        assert!(token.parse::<u64>().is_ok(), "{text}");
+        // A second lock of the same run, in this process, is refused: another thread holds it.
+        assert!(RunLock::acquire(dir.path()).unwrap().is_none());
+        // Nothing but the lock is left in the folder.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
         assert_eq!(
             lock_state(dir.path()).unwrap(),
             LockState::Live(std::process::id())

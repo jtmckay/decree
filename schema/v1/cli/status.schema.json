@@ -254,7 +254,16 @@
               "limit": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "The machine's `concurrency`: the most that may execute at once."
+                "description": "The machine's `concurrency`, which every machine of its group shares: the most that may execute at once, of the machine or, with `group`, of the group."
+              },
+              "group": {
+                "type": "string",
+                "description": "The machine's `concurrency_group`: its runs share that group's slots."
+              },
+              "group_running": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "With `group`: how many runs of every machine in the group execute now, against `limit`."
               }
             }
           }

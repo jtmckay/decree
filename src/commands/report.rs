@@ -306,15 +306,17 @@ fn print_header(ctx: &Context, console: &mut Console, run: &mut Current, now: bo
     if run.header {
         return;
     }
+    // A message failed at its claim (no machine, or one that does not exist) has none.
     let machine = machine_and_state(ctx, run.follower.root())
         .ok()
-        .and_then(|(machine, _)| machine);
+        .and_then(|(machine, _)| machine)
+        .filter(|m| !m.is_empty());
     if machine.is_some() || now {
         run.label = run.follower.root().to_string();
         let _ = console.run_line(&format!(
             "▶ {} · {}",
             run.label,
-            machine.as_deref().unwrap_or("?")
+            machine.as_deref().unwrap_or("(no machine)")
         ));
         run.header = true;
     }

@@ -2120,7 +2120,7 @@ fn child_waiting_for_a_reply_leaves_the_parent_waiting_until_the_reply_finishes_
         RunStatus::Waiting
     );
 
-    // The reply finishes the child, then the parent.
+    // The reply finishes the child; the parent is then pending, and continuing it finishes it.
     deliver(
         &p,
         &child,
@@ -2128,6 +2128,14 @@ fn child_waiting_for_a_reply_leaves_the_parent_waiting_until_the_reply_finishes_
     );
     assert_eq!(
         continue_run(&ctx, &child).unwrap(),
+        Outcome::Finished("done".into())
+    );
+    assert_eq!(
+        ctx.status(p.machine(), &p.events(), false),
+        RunStatus::Pending
+    );
+    assert_eq!(
+        continue_run(&ctx, RUN_ID).unwrap(),
         Outcome::Finished("done".into())
     );
     let child_events = p.child_events(&child);
@@ -2201,9 +2209,15 @@ fn parent_of_an_unfinished_child_does_not_continue() {
 
 #[test]
 fn interrupted_child_leaves_the_parent_waiting() {
-    let p = parent_project("print_env");
-    p.shutdown.store(true, Ordering::SeqCst);
+    let p = parent_project("sleep_long");
+    // The signal comes while the child's script runs.
+    let shutdown = Arc::clone(&p.shutdown);
+    let signal = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        shutdown.store(true, Ordering::SeqCst);
+    });
     let outcome = p.run();
+    signal.join().unwrap();
     let child = p.child_id();
     assert_eq!(
         outcome,
@@ -2223,6 +2237,21 @@ fn interrupted_child_leaves_the_parent_waiting() {
         p.ctx().status(p.machine(), &events, false),
         RunStatus::Waiting
     );
+}
+
+/// A signal before a child starts: the child is never started, and the parent is
+/// interrupted where it was, to be continued with `--retry`.
+#[test]
+fn no_child_starts_after_a_signal() {
+    let p = parent_project("print_env");
+    p.shutdown.store(true, Ordering::SeqCst);
+    let outcome = p.run();
+    assert!(
+        matches!(outcome, Outcome::Interrupted(_)),
+        "{outcome:?}"
+    );
+    assert!(p.events_of("waiting").is_empty());
+    assert_eq!(p.events().last().unwrap()["type"], "interrupted");
 }
 
 // ---------------------------------------------------------------

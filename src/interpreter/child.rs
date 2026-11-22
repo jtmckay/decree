@@ -1,6 +1,6 @@
 //! Child runs (docs/reference/runs.md, Sub-machines): a `machine` invoke, and the router run
 //! of a `model` invoke. The parent appends `waiting`, the same process steps the
-//! child, and a finished child continues its parent.
+//! child; a child that waited and then finishes leaves its parent pending, for the dispatcher.
 
 use std::time::Instant;
 
@@ -11,7 +11,7 @@ use super::{
     io_err, write_replace, Context, Decision, Interpreter, InterpreterError, Invoked, Outcome,
     RunInput,
 };
-use crate::events::{claim_event, is_type, text, waiting_child};
+use crate::events::{claim_event, is_type, text};
 use crate::layout::DECREE_DIR;
 use crate::layout::MESSAGE_FILE;
 use crate::machine::{MachineInvoke, FAILED};
@@ -28,25 +28,25 @@ pub(super) struct Child {
     pub(super) duration_ms: u64,
 }
 
-/// Continue `pending` run `run_id` from its folder (docs/reference/runs.md, step 1): its last event is
-/// `received`, or `waiting` for a child run that has finished. A child run that finishes
-/// continues its parent, if the parent waits for it, and so on up: the result is that of
-/// the last run continued.
+/// Continue `pending` run `run_id` from its folder (docs/reference/runs.md, step 1): its last
+/// event is `received`, or `waiting` for a child run that has finished.
 #[cfg(test)]
 pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterError> {
     continue_holding(ctx, run_id, None)
 }
 
 /// `continue_run`, for a caller holding `slot`, a slot of the run's machine
-/// (docs/reference/machines.md, Concurrency). A finished child gives its slot back before
-/// it takes one of its parent's machine, waiting for it, and the parent continues holding
-/// that: a wait for a slot never runs from child to parent, so two machines can never each
-/// hold the slot the other waits for.
+/// (docs/reference/machines.md, Concurrency), kept until the run stops. A child run that
+/// finishes leaves its parent `pending`, if the parent waits for it; the dispatcher continues
+/// the parent, in a worker of its own holding a slot of its own machine, as it does any
+/// pending run. So one path continues a run, and a finished child never waits for its
+/// parent's slot while holding anything.
 pub fn continue_holding(
     ctx: &Context,
     run_id: &str,
     slot: Option<SlotGuard>,
 ) -> Result<Outcome, InterpreterError> {
+    let _slot = slot;
     let message_path = ctx.runs_dir().join(run_id).join(MESSAGE_FILE);
     let message = Message::read(&message_path)?;
     let name = message.machine().ok_or_else(|| InterpreterError::Message {
@@ -67,40 +67,15 @@ pub fn continue_holding(
         .map(String::from);
     let input = RunInput::new(&message, file);
     let executor = ctx.executor(machine, run_id, trigger, &input.params, parent)?;
-    let outcome = Interpreter::new(ctx, machine, executor, input)?.resume()?;
-    let Some(parent) = parent.filter(|_| trigger == "invoke") else {
-        return Ok(outcome);
-    };
-    if !matches!(outcome, Outcome::Finished(_)) {
-        return Ok(outcome);
-    }
-    if waiting_child(&ctx.events(parent)?) != Some(run_id) {
-        return Ok(outcome);
-    }
-    drop(slot);
-    // A signal while waiting leaves the parent `pending`, continued at the next start.
-    let Some(slot) = take_slot(ctx, &run_machine(ctx, parent)?)? else {
-        return Ok(outcome);
-    };
-    continue_holding(ctx, parent, Some(slot))
-}
-
-/// The machine run `id` runs, from its `message.md`.
-fn run_machine(ctx: &Context, id: &str) -> Result<String, InterpreterError> {
-    let path = ctx.runs_dir().join(id).join(MESSAGE_FILE);
-    let message = Message::read(&path)?;
-    message
-        .machine()
-        .map(String::from)
-        .ok_or_else(|| InterpreterError::Message {
-            path,
-            message: "frontmatter names no `machine`".to_string(),
-        })
+    Interpreter::new(ctx, machine, executor, input)?.resume()
 }
 
 /// A slot of machine `name` (its group's, if it has one), waiting until one is free; `None`
-/// once a signal came.
+/// once a signal came, which is checked first, so no child starts after one.
 fn take_slot(ctx: &Context, name: &str) -> Result<Option<SlotGuard>, InterpreterError> {
+    if ctx.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(None);
+    }
     let (key, n) = slot_of(ctx, name);
     let dir = ctx.project_root.join(DECREE_DIR);
     ctx.slots

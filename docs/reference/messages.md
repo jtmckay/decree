@@ -119,7 +119,7 @@ A `reply` invoke ([machines.md](machines.md#invoke-the-states-function)) pauses 
 
 ## Run lock
 
-Before stepping a run, decree creates `runs/<id>/.lock` exclusively (`O_EXCL`) and writes the process id into it. If it already exists, decree reads the pid. If `kill(pid, 0)` says that process is alive, the run is `active`: skip it. Otherwise the lock is stale: the run was interrupted by a crash ([Lifecycle](#lifecycle)). decree deletes the lock when the run reaches a final state or is interrupted by a signal. The lock guards against two processes; it never causes a takeover.
+Before stepping a run, decree writes `<pid> <token>` (the process id, and a token of this lock) to a temp file in the run's folder and hard-links it to `runs/<id>/.lock`, which fails if `.lock` exists, so the lock appears whole or not at all, as `decree stop` writes `manual-stop.md`. If it already exists, decree reads the pid, its first word. If `kill(pid, 0)` says that process is alive, the run is `active`: skip it. Otherwise the lock is stale: the run was interrupted by a crash ([Lifecycle](#lifecycle)). decree deletes the lock when the run reaches a final state or is interrupted by a signal. The lock guards against two processes, and two threads of one (machines run at once): the token tells their locks apart, so a thread deletes only its own. It never causes a takeover.
 
 ## Order files: run in order at each start
 
