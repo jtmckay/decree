@@ -1,7 +1,7 @@
 ---
 name: lease
 machine:
-  description: One mode per resource at a time, held by one lease (or up to the resource's holders, all in that mode) for a limited time; the next holder is picked to keep mode swaps rare. Ask with params resource and mode (and optionally callback, an address to POST the lease's status to once it is held); the lease is held while its run is in held, until the expires of state/status/leases/<id>.json; give it back with decree reply <id> release.
+  description: One mode per resource at a time, held by one lease (or up to the resource's holders, all in that mode) for a limited time; the next holder is picked to keep mode swaps rare. Ask with params resource and mode (and optionally callback, an address to POST the lease's status to once it is held); the lease is held from when it is granted (state granted, then held once its callback answered) until the expires of state/status/leases/<id>.json; give it back with decree reply <id> release.
   concurrency: 16
   data:
     resource:
@@ -23,7 +23,7 @@ machine:
     resources.git.txt: 'The rules the project''s owner writes: <name> <max_lease> <linger> <max_wait> [modes] [holders], one resource per line. Every script reads it. Committed.'
     swap: 'swap/<resource>.git.sh: how to put each resource into a mode, written by the project''s owner; swap runs it. Committed.'
     leases: 'One folder per resource: queue (the leases waiting, with when each asked), holder (one line per lease that holds it, with its mode and expiry), mode (what the resource is set up for), mode_since (when that mode was swapped in, for max_wait), free_since (when it was last given back) and lock. turn, swap, renew and leave read and write it, each under flock.'
-    status: 'What anyone may read to check on a lease or a resource, rewritten under the lock after every change: leases/<lease id>.json ({run, resource, mode, holder, asked, state, position, expires, ended}; state waiting, swapping, granted (no swap needed), held, released, expired, failed or cancelled; kept a day after it ends) and resources/<resource>.json ({resource, mode, mode_since, free_since, holders, queue, updated}). Not committed.'
+    status: 'What anyone may read to check on a lease or a resource, rewritten under the lock after every change: leases/<lease id>.json ({run, resource, mode, holder, asked, state, position, expires, ended}; state waiting, swapping, granted (set up for its mode; its callback, if any, being told), held, released, expired, failed or cancelled; kept a day after it ends) and resources/<resource>.json ({resource, mode, mode_since, free_since, holders, queue, updated}). Not committed.'
   initial: turn
   states:
     turn:
@@ -35,7 +35,7 @@ machine:
         held: held
         expired: done
     waiting:
-      description: In line, looking at nothing. When the line or the holders change, the lease the rules would pick next is woken with again, and only that one; the deadline (lease.deadline, written by turn) is the next instant the pick can change by time alone (a holder's expiry, the linger's end, the mode's slice), at most a minute away, so a lease whose run died never holds the line for long.
+      description: In line, looking at nothing. When the line or the holders change, the lease the rules would pick next is woken with again, and only that one; the deadline (lease.deadline, written by turn) is the next instant the pick can change by time alone (a holder's expiry, the linger's end, the mode's slice), for the lease the rules would pick then, else a backstop of a minute and up to 15 s more, so a lease whose run died never holds the line for long.
       invoke:
         reply:
           question: This lease waits in line for its resource. Give up its place, or ask to keep it longer once held?
@@ -127,6 +127,7 @@ scripts:
     }
     if [ -n "$callback" ]; then
       locked still_holds
+      where="${callback%%[/?#]*}"
       [[ "$callback" =~ ^(https?://[^/?#]+) ]] && where="${BASH_REMATCH[1]}"
       rc=0
       code="$(curl -sS -o /dev/null -w '%{http_code}' --fail --retry 2 --retry-all-errors --retry-delay 1 --max-time 5 \
@@ -399,7 +400,8 @@ scripts:
       while read -r entry; do
         f="$(lease_file "$(jq -r .lease <<<"$entry")")"
         [ -f "$f" ] || continue
-        updated="$(jq --argjson e "$entry" '.state = ($e.state // "waiting") | .position = $e.position | .expires = $e.expires | del(.ended) | del(..|nulls)' "$f")"
+        # One unreadable lease file does not keep the others stale.
+        updated="$(jq --argjson e "$entry" '.state = ($e.state // "waiting") | .position = $e.position | .expires = $e.expires | del(.ended) | del(..|nulls)' "$f")" || continue
         put "$f" "$updated"
       done < <(jq -c --argjson old "$before" '
         def entries: [(.queue[] | {lease, position}), (.holders[] | {lease, state, expires})];
@@ -512,8 +514,9 @@ scripts:
       # A status kept a day after its lease ended is removed.
       local f
       while read -r f; do
-        jq -e '.ended' "$f" >/dev/null 2>&1 && rm -f "$f"
+        if jq -e '.ended' "$f" >/dev/null 2>&1; then rm -f "$f"; fi
       done < <(find "$status_dir/leases" -name '*.json' -mmin +1440 2>/dev/null)
+      return 0
     }
     locked give_back
     # Out of the line and the holders, nobody wakes it again: a wake still queued for it
@@ -524,7 +527,7 @@ scripts:
   renew.sh: |
     #!/usr/bin/env bash
     # renew: a held lease gets its duration again from now (etcd's keepalive), but only while
-    # no other lease waits for the resource; otherwise the renewal is refused and the expiry
+    # no lease waits that could not join the holders (another mode, or the holders full); otherwise the renewal is refused and the expiry
     # stays. Names held, waiting (not held yet) or expired. The renewal counts at the time it
     # reached the queue (its id), so one sent before the expiry is honoured even when decree
     # gets to it after; the new expiry is a duration from now.
@@ -632,7 +635,7 @@ scripts:
     #!/usr/bin/env bash
     # The ask script of waiting and held: on the first wait in line, says where the lease is
     # and how to answer; it says nothing when the lease waits again after a wake or its
-    # deadline. held says the same when the hold starts (swap), so here it says nothing.
+    # deadline. held says the same when the hold starts (callback), so here it says nothing.
     set -euo pipefail
     [ "${DECREE_VISITS:-1}" = 1 ] && [ "${DECREE_STATE}" = waiting ] || exit 0
     . .decree/machines/lease/scripts/lease.sh
@@ -797,7 +800,7 @@ A lease is a decree run of this machine, and its run id is the lease's id. Nothi
 ## What it needs
 
 - `bash`, `flock` (util-linux) and `jq`, listed in `machines/lease/scripts/requirements`, so `infra`'s `run.sh check` checks them.
-- `decree daemon` running: a waiting lease looks again only when it is the one the rules would pick next after a change to its line (a lease leaves the line or the holders, or is granted, and wakes that one alone) or when time alone could change the pick (a holder's expiry, the linger's end, the mode's slice), and at least once a minute; a held one waits, without looking, until its expiry. Both are the deadlines of their waits (`timeout_at`). `decree daemon --once` keeps going through both, until no lease is left waiting or held. Those waits are timers, not questions for a person (`attention: false`), so a lease never puts a file in `.decree/attention/`.
+- `decree daemon` running: a waiting lease looks again only when it is the one the rules would pick next after a change to its line (a lease leaves the line or the holders, or is granted, and wakes that one alone) or when time alone could change the pick (a holder's expiry, the linger's end, the mode's slice), and at least every 60 to 75 s; a held one waits, without looking, until its expiry. Both are the deadlines of their waits (`timeout_at`). `decree daemon --once` keeps going through both, until no lease is left waiting or held. Those waits are timers, not questions for a person (`attention: false`), so a lease never puts a file in `.decree/attention/`.
 
 ## Adding it
 

@@ -108,13 +108,16 @@ pub fn run(
     });
     print_waiting(&pipeline.ctx, &pipeline.filter)?;
     let failed = pipeline.take_failed();
+    let errored = pipeline.take_errored();
     print_failed(&failed);
     print_attention(project_root)?;
     result.map_err(Stop::into_error)?;
-    match failed.len() {
-        0 => Ok(()),
-        n => Err(DecreeError::Other(format!(
-            "{n} run(s) ended in `{FAILED}`"
+    match (failed.len(), errored.len()) {
+        (0, 0) => Ok(()),
+        (n, 0) => Err(DecreeError::Other(format!("{n} run(s) ended in `{FAILED}`"))),
+        (0, e) => Err(DecreeError::Other(format!("{e} run(s) stopped with an error"))),
+        (n, e) => Err(DecreeError::Other(format!(
+            "{n} run(s) ended in `{FAILED}`, and {e} stopped with an error"
         ))),
     }
 }
@@ -180,6 +183,9 @@ pub(crate) struct Pipeline {
     prefix: &'static str,
     /// Runs that ended in `failed` since the last `take_failed`.
     failed: Vec<String>,
+    /// Runs whose worker stopped with an error (an I/O error, a bug) since the last
+    /// `take_failed`: not `failed` runs, but each in whatever state it stopped.
+    errored: Vec<String>,
     /// Told when each run starts and stops, unless `--quiet`.
     pub(crate) report: Option<Reporter>,
     /// The last machine or `.env` problem `refresh` printed, so each is printed once.
@@ -239,6 +245,7 @@ impl Pipeline {
             filter,
             prefix,
             failed: Vec::new(),
+            errored: Vec::new(),
             report: None,
             machine_error: None,
             env_error: None,
@@ -393,6 +400,11 @@ impl Pipeline {
         std::mem::take(&mut self.failed)
     }
 
+    /// The runs whose worker stopped with an error since the last call.
+    pub(crate) fn take_errored(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.errored)
+    }
+
     /// At start: mark runs a crash left behind `interrupted` (never continued). The
     /// `pending` runs it leaves are dispatched by the next pass (docs/reference/messages.md,
     /// Run status).
@@ -409,8 +421,9 @@ impl Pipeline {
 
     /// Repeat until nothing is left and no run is executing: deliver timeouts and replies,
     /// start every `pending` run and inbox message whose machine has a free slot, and wait
-    /// for a run to stop. A failed run is reported and the loop goes on. On a stop (a signal,
-    /// a held queue, an I/O error), every executing run is waited for first.
+    /// for a run to stop. A failed run, or one whose worker stopped with an error, is
+    /// reported and the loop goes on. On a stop (a signal, a held queue, an I/O error of the
+    /// dispatcher itself), every executing run is waited for first.
     pub(crate) fn drain(&mut self) -> Result<(), Stop> {
         let result = self.drain_until_idle();
         if result.is_err() {
@@ -711,10 +724,11 @@ impl Pipeline {
                 Err(stop) => {
                     let e = stop.into_error();
                     report::notice(format!(
-                        "{}run {id} stopped with an error: {e}; see .decree/runs/{id}/",
+                        "{}run {id} stopped with an error: {e}; see .decree/runs/{id}/ and \
+                         `decree status {id}`, then continue it with `decree daemon --once --retry {id}`",
                         self.prefix
                     ));
-                    self.failed.push(id.clone());
+                    self.errored.push(id.clone());
                 }
             }
         }

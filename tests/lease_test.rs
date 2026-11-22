@@ -1219,3 +1219,28 @@ fn a_release_is_not_refused_while_a_wake_is_queued() {
     p.wait_finished(&a, "done");
     p.stop();
 }
+
+/// AC: a status file older than a day that never ended (a lease held, or waiting, that long)
+/// is kept, and does not keep another lease's release from finishing `done`.
+#[test]
+fn an_old_status_that_never_ended_does_not_fail_a_release() {
+    let p = Project::with_rules("gpu 20s 0s 30m\n");
+    let leases = p.lease_dir().join("status/leases");
+    fs::create_dir_all(&leases).unwrap();
+    let old = leases.join("20200101T000000.000000Z-0old00.json");
+    fs::write(&old, "{\"state\": \"held\"}\n").unwrap();
+    let two_days = std::time::SystemTime::now() - Duration::from_secs(2 * 86400);
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(two_days)
+        .unwrap();
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    p.send(&a, "release");
+    p.wait_finished(&a, "done");
+    assert!(old.exists(), "an unended status was removed");
+    p.stop();
+}

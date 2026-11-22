@@ -14,7 +14,7 @@ machine:
         busy: pause
         other: done
     pause:
-      description: A timer while the daemon works through the inbox, 1s at first and doubling to 30s while it stays busy (idle writes order.deadline), so a quick follow-up goes on soon and a long run costs a look every 30s; nothing answers it.
+      description: A timer while the daemon works through the inbox, 1s at first and doubling to 30s while it stays busy (idle writes order.deadline), so a quick follow-up goes on soon and a long run costs a look every 30s, at the cost of the next file starting up to 30s after the daemon goes idle; nothing answers it.
       invoke:
         reply:
           question: Nothing to answer; order waits for the inbox to empty.

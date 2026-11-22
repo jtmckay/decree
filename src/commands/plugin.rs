@@ -216,7 +216,11 @@ pub fn install(
     // With no argument, plugins that installed stay installed when another is a conflict,
     // so the schemas are written then too; a refused install by name or file writes nothing.
     if result.is_ok() || (sources.is_empty() && !force) {
-        crate::commands::schema::write(project_root)?;
+        // The install's own error, if any, is the one to report.
+        let written = crate::commands::schema::write(project_root);
+        result?;
+        written?;
+        return Ok(());
     }
     result
 }

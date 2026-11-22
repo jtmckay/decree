@@ -96,6 +96,7 @@ fn poll(
         }
         // The pipeline printed each failed run as it ended; the daemon keeps no list of them.
         pipeline.take_failed();
+        pipeline.take_errored();
         // Sleep, checking for a signal every 100 ms, until the interval passes or a run
         // stops, which frees a slot. An interval past what `Instant` holds sleeps until a
         // signal or a run stops.

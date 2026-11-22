@@ -46,9 +46,16 @@ pub fn run(
                 }
             }
         }
+        // Not waiting: queued anyway when the run will wait again; else the first reason,
+        // and the second only when it adds one (an event no reply state takes).
         Err(not_waiting) => {
             if let Err(why) = reply::check_later(&ctx, target, event)? {
-                return Err(DecreeError::Other(format!("{not_waiting} ({why})")));
+                let message = if why.starts_with("no `reply` state") {
+                    format!("{not_waiting}; {why}")
+                } else {
+                    not_waiting
+                };
+                return Err(DecreeError::Other(message));
             }
         }
     }
