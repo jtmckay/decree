@@ -736,6 +736,8 @@ Left out, and why: existential's flows, `project:` tags, `endpoints:`, `handlers
 
 **Consequences.** Nothing in decree changes for projects that do not add it. Every grant, swap, hold, release, expiry, cap and refused renewal is a `lease: <what> resource=… mode=… lease=…` line in the run's log, which the observability pipeline already collects. A lease needs `decree daemon` running, since `process` stops once every lease waits, and costs a few events a second while it waits or holds. The plugin needs `bash`, `flock` and `jq`, listed in its `requirements`. Evidence: the user's request (migration A12).
 
+**Later.** [D87](#d87-what-can-be-leased-is-the-projects-and-the-registry-says-where-to-go) moved the rules and swap scripts into `state/` and made the plugin name no kind of resource; [D88](#d88-a-wait-can-end-at-an-instant-a-script-wrote) replaced its look every second with deadlines and a wake for the lease next to go; `decree event` is `decree reply`.
+
 ## D84: `develop` variants are separate machines
 
 **Context.** The official `develop` plugin ships a gate that runs nothing until the project fills it in, and only `infra`'s requirements, which name what decree itself needs. Every Rust, Node or React project then wrote the same gate and declared the same tools by hand. The user wanted `develop` per ecosystem, as official plugins a project adds instead of `develop`. Prior art: GitHub's starter workflows and GitLab's CI templates, one per language, each a complete pipeline a project copies and edits rather than a generic one with switches; and the CI convention of installing with the lockfile's own manager (`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` or `--immutable`) so a gate fails on a lockfile out of step.

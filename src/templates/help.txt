@@ -93,7 +93,8 @@ Commands:
 
   --format json on check, status, emit, reply, stop, graph, schema, upgrade,
   install, list, export and daemon --once --dry-run prints one JSON document instead of text, described by
-  .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
+  .decree/schema/v1/cli/<command>.schema.json (install, list and export:
+  cli/plugin.schema.json); exit codes stay the same.
 
 Files (.decree/):
   plugins/<name>.md           A machine's folder as one file: machine, scripts,

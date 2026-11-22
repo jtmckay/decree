@@ -24,7 +24,7 @@ pub fn run(project_root: &Path, note: Option<&str>, format: Format) -> Result<()
     }
     match stopped {
         Stopped::Written => {
-            println!("stopping after the current run; delete {path} to resume")
+            println!("stopping after the runs executing now; delete {path} to resume")
         }
         Stopped::Exists => println!("already stopped: {path} exists; delete it to resume"),
     }

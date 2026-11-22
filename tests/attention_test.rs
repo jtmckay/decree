@@ -542,7 +542,7 @@ fn decree_stop_keeps_the_first_file_and_prints_json() {
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         stdout,
-        "stopping after the current run; delete .decree/attention/manual-stop.md to resume\n"
+        "stopping after the runs executing now; delete .decree/attention/manual-stop.md to resume\n"
     );
     let path = p.attention("manual-stop");
     let text = fs::read_to_string(&path).unwrap();
