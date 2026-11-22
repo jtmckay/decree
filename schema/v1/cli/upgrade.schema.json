@@ -51,11 +51,11 @@
         "properties": {
           "command": {
             "type": "string",
-            "description": "The command, such as `decree skill`."
+            "description": "The command, such as `decree install`."
           },
           "when": {
             "type": "string",
-            "description": "When it is needed; absent when always."
+            "description": "When it is needed (`always: …` for every project), and what it does; absent when always and nothing more needs saying."
           }
         }
       }
@@ -71,11 +71,12 @@
       "releases": "https://github.com/jtmckay/decree/releases",
       "after": [
         {
-          "command": "decree skill"
+          "command": "decree install",
+          "when": "always: it writes this version's .decree/schema/ and installs every plugin as its file says"
         },
         {
-          "command": "decree schema",
-          "when": "the project has .decree/schema/"
+          "command": "decree list",
+          "when": "if you want to see each official plugin the new version changed: it marks them `differs`"
         }
       ]
     }

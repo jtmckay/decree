@@ -84,7 +84,8 @@ Commands:
   decree upgrade [--yes]      Print how to upgrade decree (install line, pinned
                               and cargo install forms) and what to run in
                               each project after, then ask y/N before running
-                              the install line (--yes: without asking)
+                              the install line (--yes: without asking), and
+                              then decree install in this project
   decree help                 This help text
   decree                      A short synopsis of the quick start; runs
                               nothing (run the queue with decree daemon --once)
@@ -112,7 +113,7 @@ Files (.decree/):
                               (env_file:); gitignored but .env.example
   inbox/                      Queued messages, run in filename order
   runs/<id>/                  One folder per run: message.md, events.jsonl, logs
-  schema/v1/                  Optional; written by `decree schema`, not committed.
+  schema/v1/                  Written by init and `decree install`; not committed.
                               Editors use the hosted copy (docs/editors.md)
 
 Messages:

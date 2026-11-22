@@ -140,6 +140,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     write_layout(decree_dir, ai.map(|_| backend))?;
     write_skill(Path::new("."), backend)?;
     add_defaults(decree_dir)?;
+    // Installing writes the schemas, as `decree install` does.
+    crate::commands::schema::write(Path::new("."))?;
     // Draw the machines, so each graph is current from the start.
     graph::write(Path::new("."))?;
 
@@ -169,7 +171,7 @@ fn add_defaults(decree_dir: &Path) -> Result<(), DecreeError> {
 /// Write the `.decree/` layout (docs/reference/README.md) under `decree_dir`: `.gitignore`,
 /// `.env.example`, the empty queues and the empty `plugins/`. No plugin is
 /// installed, so `machines/` is not written. `decree graph` writes each machine's `graph.md`
-/// and `system.md`; `schema/` only `decree schema`, on request.
+/// and `system.md`; `schema/` is written as the defaults are installed.
 fn write_layout(decree_dir: &Path, ai: Option<Backend>) -> Result<(), DecreeError> {
     for dir in [layout::INBOX_DIR, layout::RUNS_DIR, PLUGINS_DIR] {
         std::fs::create_dir_all(decree_dir.join(dir))?;

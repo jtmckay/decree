@@ -70,8 +70,8 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         install.clone(),
         format!("{install} -s -- <tag>"),
         "cargo install --git https://github.com/jtmckay/decree --tag <tag> --force".into(),
-        "decree install --force skill  (if the project has the skill plugin: the next daemon \
-         start writes the new skill)"
+        "decree install  (always: it writes this version's .decree/schema/ and installs \
+         every plugin as its file says)"
             .into(),
     ] {
         assert!(
@@ -99,7 +99,7 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("decree schema") && l.contains(".decree/schema/")),
+            .any(|l| l.starts_with("decree install  (always") && l.contains(".decree/schema/")),
         "{stdout}"
     );
     // It wrote nothing.
@@ -152,8 +152,7 @@ fn json_output_matches_its_schema() {
         assert_eq!(
             after,
             [
-                "decree install --force skill",
-                "decree schema",
+                "decree install",
                 "decree list",
                 "decree install --force <name>"
             ]
@@ -168,8 +167,13 @@ fn upgrade_with(dir: &Path, args: &[&str], stdin: &str) -> (i32, String, String)
     std::fs::create_dir_all(&bin).unwrap();
     let curl = bin.join("curl");
     std::fs::write(&curl, "#!/bin/sh\necho 'echo stub install ran'\n").unwrap();
+    // The new copy on PATH, whose `decree install` the prompt after the install line runs.
+    let decree = bin.join("decree");
+    std::fs::write(&decree, "#!/bin/sh\necho \"stub decree $1 ran in $(pwd)\"\n").unwrap();
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for stub in [&curl, &decree] {
+        std::fs::set_permissions(stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let out = cargo_bin_cmd!("decree")
         .current_dir(dir)
         .env("NO_COLOR", "1")
@@ -221,4 +225,36 @@ fn runs_the_install_line_on_y_or_yes() {
     let (code, stdout, stderr) = upgrade_with(tmp.path(), &["--yes", "--format", "json"], "");
     assert_eq!((code, stdout.as_str()), (1, ""), "{stderr}");
     assert!(stderr.contains("--yes runs the install line"), "{stderr}");
+}
+
+/// After the install line, in a project, it offers to run the new copy's `decree install`
+/// there (with `--yes`, without asking), and says to run it in every other project.
+#[test]
+fn offers_decree_install_in_the_project_after_installing() {
+    for (args, answer, ran) in [
+        (&[][..], "y\ny\n", true),
+        (&[][..], "y\nn\n", false),
+        (&["--yes"][..], "", true),
+    ] {
+        let tmp = dir(true);
+        let (code, stdout, stderr) = upgrade_with(tmp.path(), args, answer);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("stub install ran\n"), "{stdout}");
+        assert_eq!(
+            stdout.contains(&format!("Run `decree install` in {} now? [y/N] ", tmp.path().display())),
+            args.is_empty(),
+            "{stdout}"
+        );
+        assert_eq!(stdout.contains("stub decree install ran in "), ran, "{stdout}");
+        let next = if ran {
+            "Run `decree install` in each other project too."
+        } else {
+            "Run `decree install` in each project before its next daemon start."
+        };
+        assert!(stdout.ends_with(&format!("{next}\n")), "{stdout}");
+    }
+    // Outside a project there is nothing to offer.
+    let tmp = dir(false);
+    let (_, stdout, _) = upgrade_with(tmp.path(), &["--yes"], "");
+    assert!(!stdout.contains("stub decree"), "{stdout}");
 }

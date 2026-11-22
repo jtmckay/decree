@@ -97,7 +97,7 @@ Each building block has its own directory in `.decree/`:
     order/*.md                      # messages run in order at each daemon start by the official `order` plugin; committed (messages.md, Order files)
     graph.md                        # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
   system.md                         # written by `decree graph`: how machines emit to and invoke each other; committed
-  schema/v1/*.schema.json           # optional local copy written by `decree schema`, for agents and offline editors; ignored by git (Schemas, below)
+  schema/v1/*.schema.json           # written by `init` and `decree install` (and `decree schema`), for agents and offline editors; ignored by git (Schemas, below)
   .env                              # optional, never committed: KEY=value variables every script gets, secrets included (scripts.md, .env files)
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it

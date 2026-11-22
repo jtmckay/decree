@@ -165,7 +165,22 @@ fn import(
 /// file says (`plugin::sync`). A name is a plugin, installed from `plugins/<name>.md`, or from
 /// decree's official copy when `plugins/` has none or with `force`. Anything else is a plugin
 /// file, or `-` for stdin, imported alone.
+///
+/// An install that succeeds also writes `.decree/schema/`, as `decree schema` does, quietly
+/// (it is generated, like a graph), so the step after a clone, a pull or an upgrade leaves the
+/// project's schemas this decree's.
 pub fn install(
+    project_root: &Path,
+    sources: &[String],
+    force: bool,
+    format: Format,
+) -> Result<(), DecreeError> {
+    install_plugins(project_root, sources, force, format)?;
+    crate::commands::schema::write(project_root)?;
+    Ok(())
+}
+
+fn install_plugins(
     project_root: &Path,
     sources: &[String],
     force: bool,

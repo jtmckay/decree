@@ -46,6 +46,7 @@ fn test_init_creates_directory_structure() {
             "machines",
             "plugins",
             "runs",
+            "schema",
             "system.md",
         ]
     );

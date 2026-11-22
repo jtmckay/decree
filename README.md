@@ -268,7 +268,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree status [ID]` | What needs attention, runs by status and queued messages; one run's events |
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
-| `decree upgrade` | Print how to upgrade decree: the install line, pinned to a release, and for a `cargo install` copy; then `decree install --force skill` (and `decree schema`) in each project, and `decree list` to see which plugins the new version changed. Then it asks before running the install line (`--yes`: without asking) |
+| `decree upgrade` | Print how to upgrade decree: the install line, pinned to a release, and for a `cargo install` copy; then `decree install` in each project, and `decree list` to see which plugins the new version changed. Then it asks before running the install line (`--yes`: without asking) |
 | `decree help` | Full reference: files, keys, environment variables |
 | `decree` | Print a synopsis of the quick start; it runs nothing (`decree daemon --once` runs the queue) |
 | `decree --version` | Print the version |
@@ -295,7 +295,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   inbox/                          # queued messages
   runs/<id>/                      # one folder per run: message.md, events.jsonl, traces.jsonl, logs
   attention/<id>.md               # what needs a person, with the command that continues it
-  schema/v1/                      # optional local copy written by decree schema; not committed
+  schema/v1/                      # written by init and decree install (and decree schema); not committed
 ```
 
 There is no configuration file. Each setting is a convention, a fixed limit or a variable:

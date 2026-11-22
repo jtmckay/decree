@@ -23,21 +23,21 @@ const TWO_COPIES: &str = "If `which -a decree` lists two copies, the one first o
                           so remove the other (`cargo uninstall decree`).";
 
 /// What to run in each project afterwards: the command, and when it is needed.
-/// The official plugins are built into decree, so a new version may change them: `list`
+/// `decree install` writes the new version's schemas and installs each plugin as its file
+/// says. The official plugins are built into decree, so a new version may change them: `list`
 /// marks each one the project's copy differs from, and `decree install --force` takes the new copy.
-const AFTER: [(&str, Option<&str>); 4] = [
+const AFTER: [(&str, Option<&str>); 3] = [
     (
-        "decree install --force skill",
-        Some("the project has the skill plugin: the next daemon start writes the new skill"),
+        "decree install",
+        Some("always: it writes this version's .decree/schema/ and installs every plugin as its file says"),
     ),
-    ("decree schema", Some("the project has .decree/schema/")),
     (
         "decree list",
-        Some("the project has .decree/plugins/: it marks `differs` each plugin the new version changed"),
+        Some("if you want to see each official plugin the new version changed: it marks them `differs`"),
     ),
     (
         "decree install --force <name>",
-        Some("you want the new version's copy of a plugin marked `differs`: it prints the edits it drops"),
+        Some("if you want the new version's copy of a plugin marked `differs`, such as skill: it prints the edits it drops"),
     ),
 ];
 
@@ -73,7 +73,8 @@ pub fn run(yes: bool, format: Format) -> Result<(), DecreeError> {
                     return Ok(());
                 }
             }
-            install()
+            install()?;
+            install_here(yes)
         }
         Format::Json if yes => Err(DecreeError::Other(
             "--yes runs the install line, whose output is not JSON; run `decree upgrade --yes` without --format json".into(),
@@ -113,7 +114,7 @@ fn text() -> String {
     );
     for (command, when) in AFTER {
         match when {
-            Some(when) => out.push_str(&format!("  {command}  (if {when})\n")),
+            Some(when) => out.push_str(&format!("  {command}  ({when})\n")),
             None => out.push_str(&format!("  {command}\n")),
         }
     }
@@ -133,6 +134,42 @@ fn install() -> Result<(), DecreeError> {
             "the install line failed ({status}); nothing in the projects changed"
         )));
     }
-    println!("Installed. Run `decree --version` to see the new version, then the steps above in each project.");
+    println!("Installed. Now run `decree install` in each project, then the other steps above.");
+    Ok(())
+}
+
+/// After the install line: offer to run the new `decree install` in the project around the
+/// working directory, if there is one (`yes` runs it without asking). It runs `decree` from
+/// `PATH`, the copy just installed, not this one.
+fn install_here(yes: bool) -> Result<(), DecreeError> {
+    let Some(root) = crate::error::find_project_root() else {
+        return Ok(());
+    };
+    if !yes {
+        use std::io::Write;
+        print!("Run `decree install` in {} now? [y/N] ", root.display());
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+            if answer.is_empty() {
+                println!();
+            }
+            println!("Run `decree install` in each project before its next daemon start.");
+            return Ok(());
+        }
+    }
+    let status = std::process::Command::new("decree")
+        .arg("install")
+        .current_dir(&root)
+        .status()
+        .map_err(|e| DecreeError::Other(format!("cannot run decree install: {e}")))?;
+    if !status.success() {
+        return Err(DecreeError::Other(format!(
+            "decree install failed in {} ({status})",
+            root.display()
+        )));
+    }
+    println!("Run `decree install` in each other project too.");
     Ok(())
 }

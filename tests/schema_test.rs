@@ -277,18 +277,28 @@ fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
     }
 }
 
-/// Editors read the hosted schemas (docs/editors.md): `decree init` writes no
-/// `.decree/schema/`, ignores one `decree schema` writes later, and `decree check` passes
-/// with no warning.
+/// `decree init` installs, so it writes `.decree/schema/` as `decree install` does; git ignores
+/// it, and `decree check` passes with no warning. After an upgrade, `decree install` writes the
+/// new version's.
 #[test]
-fn init_writes_no_schema_folder_and_check_does_not_ask_for_one() {
+fn init_and_install_write_the_schema_folder() {
     let tmp = TempDir::new().unwrap();
     common::decree_at(tmp.path())
         .env("NO_COLOR", "1")
         .args(["init", "--ai", "claude"])
         .assert()
         .success();
-    assert!(!tmp.path().join(".decree/schema").exists());
+    let machine = tmp.path().join(".decree/schema/v1/machine.schema.json");
+    assert!(machine.is_file());
+    // A stale copy, as an older decree left it: `install` writes this version's.
+    fs::write(&machine, "{}").unwrap();
+    fs::write(tmp.path().join(".decree/schema/v1/old.schema.json"), "{}").unwrap();
+    common::decree_at(tmp.path())
+        .args(["install"])
+        .assert()
+        .success();
+    assert_ne!(fs::read_to_string(&machine).unwrap(), "{}");
+    assert!(!tmp.path().join(".decree/schema/v1/old.schema.json").exists());
     let gitignore = fs::read_to_string(tmp.path().join(".decree/.gitignore")).unwrap();
     assert!(gitignore.lines().any(|l| l == "schema/"), "{gitignore}");
     assert!(gitignore.lines().any(|l| l == ".env*"), "{gitignore}");
