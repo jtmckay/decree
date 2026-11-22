@@ -175,9 +175,14 @@ impl Project {
         assert!(modes.len() <= 1, "holders in two modes: {held:?} {modes:?}");
     }
 
-    /// The run's `lease.json`, or Null before its hold starts.
+    /// The lease's status, `state/status/leases/<id>.json`, or Null before it joins the line.
     fn info(&self, id: &str) -> Value {
-        fs::read_to_string(self.root().join(".decree/runs").join(id).join("lease.json"))
+        self.status(&format!("leases/{id}.json"))
+    }
+
+    /// A file of the lease machine's `state/status/`, parsed, or Null.
+    fn status(&self, path: &str) -> Value {
+        fs::read_to_string(self.lease_dir().join("status").join(path))
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null)
@@ -238,8 +243,9 @@ impl Project {
         }
     }
 
-    /// `decree reply <id> <event>`. A lease looks every second, and for that instant it is
-    /// not waiting, so `decree reply` refuses; send again, as a client would.
+    /// `decree reply <id> <event>`. A woken lease is not waiting while its turn looks again,
+    /// and `decree reply` refuses then, or while a wake is queued; send again, as a client
+    /// would.
     fn send(&self, id: &str, event: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -651,6 +657,8 @@ fn a_renewal_with_nothing_waiting_extends_the_lease() {
     p.wait_for("the renewal", || {
         p.log(&a).contains("lease: renew resource=")
     });
+    // The status is rewritten as the renewal's lock is let go, just after the log line.
+    p.wait_for("the renewed status", || p.info(&a)["expires"] != expires.as_str());
     // The new expiry is later, and the held wait's deadline with it.
     let renewed = p.info(&a)["expires"].as_str().unwrap().to_string();
     assert!(renewed > expires, "{expires} -> {renewed}");
@@ -692,6 +700,7 @@ fn an_interrupted_holder_holds_nothing_past_its_expiry() {
     // The swap for `slow` takes a minute: the lease holds gpu while it swaps.
     let a = p.ask_mode("slow");
     p.wait_state(&a, "swap");
+    p.wait_for("the slow swap to start", || !p.swaps().is_empty());
     let b = p.ask_mode("x");
     p.stop();
     assert_eq!(p.state(&a), ("interrupted".into(), "swap".into()));
@@ -766,20 +775,23 @@ fn a_bad_request_fails_at_once() {
     assert!(p.swaps().is_empty());
 }
 
-/// AC: a held lease's `lease.json` says which run it is, what it holds, in which mode, and
-/// until when; the `held` wait's deadline is that `expires`; after a release it says
-/// `released` and keeps the rest.
+/// AC: a held lease's status in the state folder says which run it is, what it holds, in
+/// which mode, and until when; the `held` wait's deadline is that `expires`; after a release
+/// it says `released`, when it ended, and keeps the rest.
 #[test]
 fn a_held_lease_writes_what_it_holds() {
     let p = Project::new();
     p.start();
-    let a = p.ask(&["resource=gpu", "mode=y"]);
+    let a = p.ask(&["resource=gpu", "mode=y", "holder=job"]);
     p.wait_state(&a, "held");
     let info = p.info(&a);
     assert_eq!(info["run"], a.as_str(), "{info}");
     assert_eq!(info["resource"], "gpu", "{info}");
     assert_eq!(info["mode"], "y", "{info}");
+    assert_eq!(info["holder"], "job", "{info}");
     assert_eq!(info["state"], "held", "{info}");
+    assert!(info["asked"].as_str().unwrap().ends_with('Z'), "{info}");
+    assert!(info.get("position").is_none(), "{info}");
     let expires = info["expires"].as_str().unwrap();
     assert!(expires.ends_with('Z'), "{info}");
     // The state is mirrored before the wait starts, so look until the wait is there.
@@ -799,6 +811,81 @@ fn a_held_lease_writes_what_it_holds() {
     let after = p.info(&a);
     assert_eq!(after["state"], "released", "{after}");
     assert_eq!(after["expires"], expires, "{after}");
+    assert!(after["ended"].as_str().unwrap().ends_with('Z'), "{after}");
+    p.stop();
+}
+
+/// AC: the resource's status names its mode, its holders with their expiry, and its line in
+/// order with each place; each waiting lease's status has its `position`; a lease released
+/// while it waits is `cancelled`; once nobody holds the resource it has `free_since`.
+#[test]
+fn the_status_folder_shows_each_resource_and_each_place_in_line() {
+    let p = Project::with_rules("gpu 20s 1s 30m\n");
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    let b = p.ask_mode("y");
+    p.wait_state(&b, "waiting");
+    let c = p.ask_mode("y");
+    p.wait_state(&c, "waiting");
+    let res = p.status("resources/gpu.json");
+    assert_eq!(res["resource"], "gpu", "{res}");
+    assert_eq!(res["mode"], "x", "{res}");
+    assert_eq!(res["holders"][0]["lease"], a.as_str(), "{res}");
+    assert_eq!(res["holders"][0]["state"], "held", "{res}");
+    assert_eq!(res["holders"][0]["expires"], p.info(&a)["expires"], "{res}");
+    assert_eq!(res["queue"][0]["lease"], b.as_str(), "{res}");
+    assert_eq!(res["queue"][1]["lease"], c.as_str(), "{res}");
+    assert_eq!(res["queue"][1]["position"], 2, "{res}");
+    assert!(res["free_since"].is_null(), "{res}");
+    assert_eq!(p.info(&b)["state"], "waiting");
+    assert_eq!(p.info(&b)["position"], 1);
+    assert_eq!(p.info(&c)["position"], 2);
+    p.send(&b, "release");
+    p.wait_finished(&b, "done");
+    assert_eq!(p.info(&b)["state"], "cancelled", "{}", p.info(&b));
+    p.wait_for("c first in line", || p.info(&c)["position"] == 1);
+    p.send(&a, "release");
+    p.wait_state(&c, "held");
+    p.send(&c, "release");
+    p.wait_finished(&c, "done");
+    let res = p.status("resources/gpu.json");
+    assert!(res["holders"].as_array().unwrap().is_empty(), "{res}");
+    assert!(res["free_since"].as_str().unwrap().ends_with('Z'), "{res}");
+    p.stop();
+}
+
+/// AC: a waiting lease does not look every second: while the holder holds, its run turns
+/// only when woken or at its deadline, and the release wakes it at once.
+#[test]
+fn a_waiting_lease_sleeps_until_the_line_changes() {
+    let p = Project::with_rules("gpu 20s 1s 30m\n");
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    let b = p.ask_mode("x");
+    p.wait_state(&b, "waiting");
+    let turns = |id: &str| {
+        p.run_json(id)["events"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| e["to"] == "turn")
+            .count()
+    };
+    let before = turns(&b);
+    thread::sleep(Duration::from_secs(4));
+    assert_eq!(turns(&b), before, "it looked again while nothing changed");
+    let released = Instant::now();
+    p.send(&a, "release");
+    p.wait_state(&b, "held");
+    assert!(released.elapsed() < Duration::from_secs(3), "{:?}", released.elapsed());
+    // Its deadline was a minute away at most, and at least a second.
+    let deadline = fs::read_to_string(p.root().join(".decree/runs").join(&b).join("lease.deadline"))
+        .unwrap();
+    assert!(deadline.trim_end().ends_with('Z'), "{deadline}");
+    p.send(&b, "release");
+    p.wait_finished(&b, "done");
     p.stop();
 }
 
@@ -975,7 +1062,7 @@ fn http_recorder(status: u16) -> (String, Requests) {
     )
 }
 
-/// AC: a lease asked for with a callback POSTs its `lease.json` there once, when the hold
+/// AC: a lease asked for with a callback POSTs its status there once, when the hold
 /// starts, then is `held`; a renewal does not call again; the log names the host only.
 #[test]
 fn a_callback_is_told_once_when_the_hold_starts() {
@@ -1020,7 +1107,7 @@ fn a_callback_nobody_takes_gives_the_resource_back() {
     p.wait_finished(&a, "failed");
     assert_eq!(seen.lock().unwrap().len(), 3, "three tries");
     assert!(!p.ever_in(&a, "held"));
-    assert_eq!(p.info(&a)["state"], "released", "{}", p.info(&a));
+    assert_eq!(p.info(&a)["state"], "failed", "{}", p.info(&a));
     let log = p.log(&a);
     assert!(log.contains("lease: callback failed resource=gpu"), "{log}");
     assert!(!log.contains("t0ken"), "{log}");

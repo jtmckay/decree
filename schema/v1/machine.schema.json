@@ -417,7 +417,7 @@
       "not": { "required": ["timeout", "timeout_at"] },
       "examples": [
         { "question": "Tests still fail. What next?", "notify": "notify_person", "timeout": "2d" },
-        { "question": "Give it back, or keep it?", "notify": "tell", "timeout_at": "lease.json#/expires", "attention": false }
+        { "question": "Give it back, or keep it?", "notify": "tell", "timeout_at": "lease.deadline", "attention": false }
       ]
     },
     "machineInvoke": {
