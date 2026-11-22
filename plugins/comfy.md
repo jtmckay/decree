@@ -3428,7 +3428,7 @@ ComfyUI's API is fire and forget: `POST /prompt` queues a workflow and answers a
 
 ## How to use it
 
-A method is a workflow in `.decree/machines/comfy/scripts/`, by file stem, in ComfyUI's API format: `image_flux2_text_landscape` (an image from text), `image_flux2_text_image` (an image from text and a reference image) and `video_i2v_wan2.2_14B_long` (a video from a still image). A new method is a new workflow file there; keep it with `decree plugin export comfy`.
+A method is a workflow in `.decree/machines/comfy/scripts/`, by file stem, in ComfyUI's API format: `image_flux2_text_landscape` (an image from text), `image_flux2_text_image` (an image from text and a reference image) and `video_i2v_wan2.2_14B_long` (a video from a still image). A new method is a new workflow file there; keep it with `decree export comfy`.
 
 ```yaml
 ---

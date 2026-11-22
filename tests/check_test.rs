@@ -84,7 +84,7 @@ fn check_project(project: &str, edit: impl FnOnce(&Path)) -> (i32, String, Strin
     // command does, so `edit` changes the installed copy, as a person edits it.
     if tmp.path().join(".decree/plugins").is_dir() {
         common::decree_at(tmp.path())
-            .args(["plugin", "install"])
+            .args(["install"])
             .assert()
             .success();
     }
@@ -230,7 +230,7 @@ fn check_warns_until_the_graph_is_rewritten() {
     let tmp = TempDir::new().unwrap();
     copy_clone(&decree_dir(PROJECT), &tmp.path().join(".decree"));
     common::decree_at(tmp.path())
-        .args(["plugin", "install"])
+        .args(["install"])
         .assert()
         .success();
     fs::create_dir_all(tmp.path().join(".decree/machines")).unwrap();
@@ -253,7 +253,7 @@ fn check_warns_until_the_graph_is_rewritten() {
     };
     // Kept as a plugin, as git ignores machines/ in a project with plugins/.
     common::decree_at(tmp.path())
-        .args(["plugin", "export", "greet"])
+        .args(["export", "greet"])
         .assert()
         .success();
     let (code, stderr) = run("check");

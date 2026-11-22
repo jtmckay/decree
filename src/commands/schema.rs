@@ -39,16 +39,16 @@ const SCHEMAS: [(&str, &str); 17] = [
         include_str!("../../schema/v1/cli/emit.schema.json"),
     ),
     (
-        "v1/cli/event.schema.json",
-        include_str!("../../schema/v1/cli/event.schema.json"),
-    ),
-    (
         "v1/cli/graph.schema.json",
         include_str!("../../schema/v1/cli/graph.schema.json"),
     ),
     (
         "v1/cli/plugin.schema.json",
         include_str!("../../schema/v1/cli/plugin.schema.json"),
+    ),
+    (
+        "v1/cli/reply.schema.json",
+        include_str!("../../schema/v1/cli/reply.schema.json"),
     ),
     (
         "v1/cli/schema.schema.json",

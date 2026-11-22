@@ -49,7 +49,7 @@ impl Project {
             tmp: TempDir::new().unwrap(),
         };
         p.ok(&["init"]);
-        p.ok(&["plugin", "add", "order"]);
+        p.ok(&["install", "order"]);
         for m in ["alpha", "beta"] {
             common::write_file(&p.decree(&format!("machines/{m}/machine.yml")), machine(m));
             common::write_script(&p.decree(&format!("machines/{m}/scripts/work.sh")), WORK);

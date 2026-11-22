@@ -131,12 +131,12 @@ scripts:
     # project folder is committed (`-- .`), even if something else in a larger repository is
     # staged.
     # First it exports every plugin whose installed copy differs from its plugin file
-    # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
+    # (`decree export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
     # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
-    "${DECREE}" plugin export
+    "${DECREE}" export
     order=$(sed -n '2,/^---$/s/^order: //p' "${DECREE_MESSAGE}" | head -n 1)
     record=.decree/machines/order/scripts/record.sh
     if [ -n "${order}" ] && [ -x "${record}" ]; then
@@ -190,7 +190,7 @@ scripts:
     # as a missing tool, means they could not run, and ends the run without fix.
     # Replace the echo with your project's checks, such as one of the commented
     # lines, and uncomment the `command -v` line for its tool. Keep the edit with
-    # `decree plugin export develop`, or let the next run's `commit` export it.
+    # `decree export develop`, or let the next run's `commit` export it.
     set -euo pipefail
     log="${DECREE_ROOT_RUN_DIR}/gate.log"
 
@@ -205,7 +205,7 @@ scripts:
 
     # The checks, as one && chain: the first that fails names `fail`.
     checks() {
-      echo "gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with \`decree plugin export develop\`"
+      echo "gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with \`decree export develop\`"
       # cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
       # npm ci && npm run lint && npm test
       # gofmt -l . | (! grep .) && go vet ./... && go test ./...
@@ -268,11 +268,11 @@ scripts:
     # (`clean_tree` did not pass) leaves them alone and holds nothing.
     # Edits to an installed plugin (machines/, scripts/, which git ignores) count too: a failed
     # run exports nothing, so they stay in the installed copy, and the hold keeps the next run's
-    # `commit` from exporting them (`decree plugin export --dry-run` names them).
+    # `commit` from exporting them (`decree export --dry-run` names them).
     set -euo pipefail
     [ -f "${DECREE_RUN_DIR}/clean_tree" ] || exit 0
     changes=$(git status --porcelain -- .)
-    edited=$("${DECREE}" plugin export --dry-run | sed -n 's/^would write //p')
+    edited=$("${DECREE}" export --dry-run | sed -n 's/^would write //p')
     if [ -z "${changes}${edited}" ]; then
       echo "no changes to keep"
       exit 0
@@ -284,7 +284,7 @@ scripts:
       [ -z "${changes}" ] || echo "${changes}"
       [ -z "${edited}" ] || echo "${edited}" | sed 's/^/installed copy edited, not exported: /'
       echo "to continue the run on them: \`decree daemon --once --retry ${DECREE_MESSAGE_ID}\`"
-      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree plugin install <name>\` for an installed copy), then delete ${attention}"
+      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree install <name>\` for an installed copy), then delete ${attention}"
     } > "${DECREE_RUN_DIR}/hold"
     cat "${DECREE_RUN_DIR}/hold"
     echo "no other run starts until then (${attention})"
@@ -357,16 +357,16 @@ Implements a message, such as an order file describing a change, with an AI codi
 3. `implement`: the agent implements the message in small steps, logging each in the run's `progress.md`. If the message is ambiguous it writes `STOP` with its question instead of guessing, and the run ends in `failed`.
 4. `gate`: your project's checks, `.decree/machines/develop/scripts/gate.sh`. Passing goes to `verify`; failing goes to `fix`, where the agent fixes what `gate.log` reports, then to `final_gate`, whose failure ends the run.
 5. `verify`: the agent checks every acceptance criterion and ends its reply with `VERDICT: pass` or `VERDICT: fail`.
-6. `done`: `commit` exports every plugin a run edited (`decree plugin export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree daemon --once --retry <id>`, and holds the queue.
+6. `done`: `commit` exports every plugin a run edited (`decree export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree daemon --once --retry <id>`, and holds the queue.
 
 ## What it needs
 
 - git, and a project that is a git work tree with at least one commit.
 - An AI CLI on `PATH`: `claude`, `opencode` or `copilot`. `ai.sh` uses the run's `ai_cli` data, else `AI_CLI` (in `.decree/.env`), else the first of them it finds.
-- The `infra` plugin, which `decree plugin add develop` adds with it.
+- The `infra` plugin, which `decree install develop` adds with it.
 
 ## How to use it
 
-1. Put your project's checks in `.decree/machines/develop/scripts/gate.sh` (it prints `gate: no checks configured` until you do), for instance `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. The edit is kept in this file by `decree plugin export develop`, or by the next run's `commit`.
+1. Put your project's checks in `.decree/machines/develop/scripts/gate.sh` (it prints `gate: no checks configured` until you do), for instance `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. The edit is kept in this file by `decree export develop`, or by the next run's `commit`.
 2. Write an order file, `.decree/machines/develop/order/A01-<what>.md`, saying what to change and how to tell it is done.
 3. Run `decree daemon --once`, or keep `decree daemon` running: the official `order` plugin runs the file at start.

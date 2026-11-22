@@ -1,7 +1,7 @@
 ---
 name: lease
 machine:
-  description: One holder per resource at a time, for a limited time; the next holder is picked to keep mode swaps rare. Ask with params resource and mode; the lease is held while its run is in held; give it back with decree event <id> release.
+  description: One holder per resource at a time, for a limited time; the next holder is picked to keep mode swaps rare. Ask with params resource and mode; the lease is held while its run is in held; give it back with decree reply <id> release.
   data:
     resource:
       type: string
@@ -359,8 +359,8 @@ scripts:
     . .decree/machines/lease/scripts/lease.sh
     load
     case "${DECREE_STATE}" in
-      waiting) say "wait $(ids "$mode" "$me") ahead=$(( $(grep -c . "$dir/queue" || true) - 1 )) answer=\"decree event $me release\"" ;;
-      held) say "hold $(ids "$mode" "$me") answer=\"decree event $me release|renew\"" ;;
+      waiting) say "wait $(ids "$mode" "$me") ahead=$(( $(grep -c . "$dir/queue" || true) - 1 )) answer=\"decree reply $me release\"" ;;
+      held) say "hold $(ids "$mode" "$me") answer=\"decree reply $me release|renew\"" ;;
     esac
   turn.sh: |
     #!/usr/bin/env bash
@@ -468,7 +468,7 @@ A lease is a decree run of this machine, and its run id is the lease's id. Nothi
 ## Adding it
 
 ```bash
-decree plugin add lease
+decree install lease
 ```
 
 ## Setting the rules
@@ -513,8 +513,8 @@ Before that it is in `turn`, `waiting` or `swap`; after, in `done` or `failed`.
 ## Giving it back, or keeping it
 
 ```bash
-decree event "$id" release    # give it back, or leave the line if still waiting
-decree event "$id" renew      # hold it for its duration again, from now
+decree reply "$id" release    # give it back, or leave the line if still waiting
+decree reply "$id" renew      # hold it for its duration again, from now
 ```
 
 A renewal is refused while another lease waits for the resource: the expiry stays, and the run's log says why. A lease nobody releases ends at its expiry, and the next one goes. A holder past its expiry holds nothing, even if its run was interrupted, and two leases never hold one resource, even with several `decree` processes sharing the project.

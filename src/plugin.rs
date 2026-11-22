@@ -791,7 +791,7 @@ pub fn read_one(decree_dir: &Path, name: &str) -> Result<Found, DecreeError> {
 #[derive(Debug, Default)]
 pub struct Synced {
     /// Whether this is `status`: nothing was written, and `installed`, `removed` and `kept`
-    /// are what `decree plugin install` would do.
+    /// are what `decree install` would do.
     pub checked: bool,
     /// Plugins installed now.
     pub installed: Vec<String>,
@@ -811,7 +811,7 @@ pub struct Synced {
 /// Install every plugin in `plugins/` that is new or changed since it was installed, and
 /// remove the installed copy of each plugin whose file was deleted, never overwriting an
 /// installed copy that was edited (docs/reference/plugins.md, Installing): what
-/// `decree plugin install` with no name does. A project without `plugins/` and without
+/// `decree install` with no name does. A project without `plugins/` and without
 /// records is left as it is.
 pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
     reconcile(decree_dir, true)
@@ -919,20 +919,20 @@ fn record_only(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), De
 
 impl Synced {
     /// One line per conflict, invalid plugin, and plugin whose edited copy was kept, for
-    /// `process`, `daemon` and `decree plugin install` to print; for `status`, also one per
-    /// plugin `decree plugin install` would install or remove.
+    /// `process`, `daemon` and `decree install` to print; for `status`, also one per
+    /// plugin `decree install` would install or remove.
     pub fn notices(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.checked {
             for name in &self.installed {
                 out.push(format!(
-                    "{}: not installed, or changed since it was installed: run `decree plugin install`",
+                    "{}: not installed, or changed since it was installed: run `decree install`",
                     plugin_file(name)
                 ));
             }
             for name in &self.removed {
                 out.push(format!(
-                    "{}: deleted, but its installed copy is still there: run `decree plugin install` to remove it",
+                    "{}: deleted, but its installed copy is still there: run `decree install` to remove it",
                     plugin_file(name)
                 ));
             }
@@ -975,7 +975,7 @@ pub fn plugin_file(name: &str) -> String {
 /// What a conflict is and both ways out of it.
 pub fn conflict_message(name: &str) -> String {
     format!(
-        "plugin `{name}` changed, but its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export {name}` and merge with git; to take the plugin's version, run `decree plugin install {name}`",
+        "plugin `{name}` changed, but its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree export {name}` and merge with git; to take the plugin's version, run `decree install {name}`",
         machine_file(name),
         dir = layout::machine_dir_rel(name)
     )

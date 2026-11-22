@@ -137,12 +137,12 @@ scripts:
     # project folder is committed (`-- .`), even if something else in a larger repository is
     # staged.
     # First it exports every plugin whose installed copy differs from its plugin file
-    # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
+    # (`decree export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
     # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
-    "${DECREE}" plugin export
+    "${DECREE}" export
     order=$(sed -n '2,/^---$/s/^order: //p' "${DECREE_MESSAGE}" | head -n 1)
     record=.decree/machines/order/scripts/record.sh
     if [ -n "${order}" ] && [ -x "${record}" ]; then
@@ -185,11 +185,11 @@ scripts:
     # (`clean_tree` did not pass) leaves them alone and holds nothing.
     # Edits to an installed plugin (machines/, scripts/, which git ignores) count too: a failed
     # run exports nothing, so they stay in the installed copy, and the hold keeps the next run's
-    # `commit` from exporting them (`decree plugin export --dry-run` names them).
+    # `commit` from exporting them (`decree export --dry-run` names them).
     set -euo pipefail
     [ -f "${DECREE_RUN_DIR}/clean_tree" ] || exit 0
     changes=$(git status --porcelain -- .)
-    edited=$("${DECREE}" plugin export --dry-run | sed -n 's/^would write //p')
+    edited=$("${DECREE}" export --dry-run | sed -n 's/^would write //p')
     if [ -z "${changes}${edited}" ]; then
       echo "no changes to keep"
       exit 0
@@ -201,7 +201,7 @@ scripts:
       [ -z "${changes}" ] || echo "${changes}"
       [ -z "${edited}" ] || echo "${edited}" | sed 's/^/installed copy edited, not exported: /'
       echo "to continue the run on them: \`decree daemon --once --retry ${DECREE_MESSAGE_ID}\`"
-      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree plugin install <name>\` for an installed copy), then delete ${attention}"
+      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree install <name>\` for an installed copy), then delete ${attention}"
     } > "${DECREE_RUN_DIR}/hold"
     cat "${DECREE_RUN_DIR}/hold"
     echo "no other run starts until then (${attention})"
@@ -213,7 +213,7 @@ scripts:
     # The command that runs the chaos suite and exits non-zero if a test fails. qa does not
     # start until it is set. Once qa has found bugs, run it in develop's gate too, so a
     # fixed bug whose test is still marked expected to fail is caught. Keep an edit to this
-    # file with `decree plugin export qa`, or let the next run's `commit` export it.
+    # file with `decree export qa`, or let the next run's `commit` export it.
     QA_RUN=""
     # QA_RUN="python3 -m unittest discover -s ${QA_DIR} -t . -v"
     # QA_RUN="npx playwright test ${QA_DIR}"
@@ -223,7 +223,7 @@ scripts:
     # Fail unless QA_RUN is set and this is a git work tree (the guard needs git).
     qa_ready() {
       if [ -z "${QA_RUN}" ]; then
-        echo "qa: no chaos suite command; set QA_RUN in .decree/machines/qa/scripts/qa.sh, then keep it with \`decree plugin export qa\`" >&2
+        echo "qa: no chaos suite command; set QA_RUN in .decree/machines/qa/scripts/qa.sh, then keep it with \`decree export qa\`" >&2
         return 1
       fi
       git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
@@ -380,7 +380,7 @@ Attacks your project to make it misbehave, and hands each real bug to `develop` 
 
 ## What it needs
 
-- The `develop` plugin (and so `infra`), which `decree plugin add qa` adds with it.
+- The `develop` plugin (and so `infra`), which `decree install qa` adds with it.
 - git, and an AI CLI on `PATH` (`claude`, `opencode` or `copilot`; see `AI_CLI`).
 
 ## How to use it
@@ -389,4 +389,4 @@ Attacks your project to make it misbehave, and hands each real bug to `develop` 
 2. Write your project's invariants in `.decree/machines/qa/scripts/invariants.md`, and adjust `wrenches.md`.
 3. `echo "Attack the upload API" | decree emit --machine qa && decree daemon --once`.
 
-Edits are kept in this file by `decree plugin export qa`, or by the next run's `commit`.
+Edits are kept in this file by `decree export qa`, or by the next run's `commit`.

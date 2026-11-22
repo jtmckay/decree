@@ -9,6 +9,9 @@ Changes to the schemas in this folder. Within `v1` changes are additive only ([V
 - `machine.schema.json`: a `machine` invoke may name a `message` file in place of `name`; `state_files` (was `store`).
 - `cli/daemon.schema.json`: what `decree daemon --once --dry-run --format json` prints (was `cli/process.schema.json`).
 - `plugin.schema.json`: `state` and `order` (were `store` and `migrations`).
+- `cli/reply.schema.json`, what `decree reply --format json` prints (was `cli/event.schema.json`, with `decree event`).
+- `cli/plugin.schema.json`: `list` is `decree list`'s new shape (`plugins` with `official`, `differs` and `state`; `unplugged`; `available`).
+- `cli/plugin.schema.json`: also describes `decree install`; the named form's `action` is `install` (was `add`, whose `kept` status is `installed`), and the no-argument form's is `sync` (was `install`).
 - `message.schema.json`: a message other than a reply may leave out `machine`, as a cron file or order file does; `decree check` (M2) still requires it in `inbox/`.
 
 ### Removed

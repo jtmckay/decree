@@ -7,7 +7,7 @@
   "properties": {
     "id": {
       "type": "string",
-      "description": "Names the queued file, inbox/<id>.md, and the run folder, runs/<id>/. Written by decree only: `decree emit`, `decree event` and cron set it as they queue, and decree replaces it as a file written into inbox/ arrives: YYYYMMDDTHHMMSS.ffffffZ-xxxxxx, the UTC time to the microsecond plus 6 lowercase hex chars, so ids sort in the order messages arrived.",
+      "description": "Names the queued file, inbox/<id>.md, and the run folder, runs/<id>/. Written by decree only: `decree emit`, `decree reply` and cron set it as they queue, and decree replaces it as a file written into inbox/ arrives: YYYYMMDDTHHMMSS.ffffffZ-xxxxxx, the UTC time to the microsecond plus 6 lowercase hex chars, so ids sort in the order messages arrived.",
       "examples": ["20261001T143005.218734Z-3fa9c1"]
     },
     "machine": {
@@ -57,7 +57,7 @@
     },
     "to": {
       "type": "string",
-      "description": "Makes this message a reply, not a new run: the wait id (<run id>.w<seq>) of a run paused in a `reply` state, or the run id meaning its current wait. `decree event` writes replies.",
+      "description": "Makes this message a reply, not a new run: the wait id (<run id>.w<seq>) of a run paused in a `reply` state, or the run id meaning its current wait. `decree reply` writes replies.",
       "examples": ["20261001T143005Z-3fa9c1.w3"]
     },
     "event": {

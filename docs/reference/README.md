@@ -87,7 +87,7 @@ Each building block has its own directory in `.decree/`:
     .running                        # the script running now: pid, state, phase, script, started_at, log (scripts.md)
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
     hold                            # written by a script (keep): the run's attention file holds the queue (cli.md, Attention)
-  plugins/<machine name>.md         # committed: any of a machine, its scripts, cron files, state and order seeds as one file, installed by `decree plugin install` into machines/<name>/ (plugins.md)
+  plugins/<machine name>.md         # committed: any of a machine, its scripts, cron files, state and order seeds as one file, installed by `decree install` into machines/<name>/ (plugins.md)
   machines/<machine name>/          # one folder per machine, its domain
     machine.yml                     # the statechart (machines.md); installed from plugins/, so git ignores it
     scripts/<name>                  # its executables; optional extension: verify.sh (scripts.md)
@@ -114,7 +114,7 @@ A project is machines, scripts and messages; there is no configuration file for 
 
 | Setting | Instead |
 | --- | --- |
-| Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)), such as the official plugin `decree plugin add router` adds. |
+| Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)), such as the official plugin `decree install router` adds. |
 | Default machine | None: every message names its machine with `machine:`. `decree emit`, cron files and `decree init`'s examples always do. |
 | Retries | `attempts` in the script invoke, a number or a list of values; default 1 (no retry), as a Step Functions task without `Retry`. |
 | Emit depth | `max_depth`, 10 unless `DECREE_MAX_DEPTH` sets it, from the shell or `.decree/.env` ([Environment](cli.md#environment)). |
@@ -136,7 +136,7 @@ Every file decree reads or writes, and every document a command prints with `--f
 | `attention.schema.json` | The frontmatter of a file decree writes in `.decree/attention/`, for a run that needs a person. A `.md` file there that does not match it holds the queue. | [cli.md](cli.md#attention) |
 | `plugin.schema.json` | The frontmatter of a plugin, `plugins/<name>.md`. | [plugins.md](plugins.md) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
-| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `event`, `graph`, `schema`, `upgrade`, `plugin` and `daemon` (`--once --dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
+| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `reply`, `graph`, `schema`, `upgrade`, `install`, `list`, `export` and `daemon` (`--once --dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 
 The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
 

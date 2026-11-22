@@ -308,7 +308,7 @@ fn next_time() -> DateTime<Utc> {
 
 /// Queue `message` in `inbox/` (docs/reference/messages.md, Lifecycle step 1): give it a new `id` as its
 /// first key, and write `inbox/<id>.md` through `.<id>.md.tmp` and a rename, so no partial
-/// `*.md` is ever visible. The one writer for `decree emit`, `decree event` and cron.
+/// `*.md` is ever visible. The one writer for `decree emit`, `decree reply` and cron.
 /// Returns the id.
 pub fn queue(decree_dir: &Path, message: &mut Message) -> Result<String, MessageError> {
     let inbox = decree_dir.join(INBOX_DIR);

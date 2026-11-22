@@ -77,6 +77,6 @@ Deletes the folders of finished runs, `.decree/runs/<id>/`, that finished longer
 It never deletes a run that is not finished, a child run whose parent is not finished (the parent may still read it), or a run a process holds, and it never touches a machine's `state/`. Ship runs to a log store before they go if you keep history ([observability.md](https://github.com/jtmckay/decree/blob/main/docs/reference/observability.md)).
 
 - **Another age:** set `PRUNE_OLDER_THAN` in `.decree/.env` (`PRUNE_OLDER_THAN=7d`).
-- **Another day:** edit `.decree/machines/prune/cron/weekly.md`, then `decree plugin export prune`.
+- **Another day:** edit `.decree/machines/prune/cron/weekly.md`, then `decree export prune`.
 - **Now:** `echo "Prune." | decree emit --machine prune && decree daemon --once`; with `PRUNE_DRY_RUN=1` it lists what it would delete and deletes nothing.
 - **Needs:** `jq` and GNU `date` on `PATH`.

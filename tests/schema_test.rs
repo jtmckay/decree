@@ -243,7 +243,7 @@ fn every_official_plugin_validates() {
     assert!(found.is_empty(), "{found}");
 }
 
-/// AC (A10): every machine a fresh `init` (its default plugins) and `decree plugin add`
+/// AC (A10): every machine a fresh `init` (its default plugins) and `decree install`
 /// install validates, whichever backend `init` was given.
 #[test]
 fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
@@ -257,7 +257,7 @@ fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
                 .success();
         };
         decree(&["init", "--ai", ai]);
-        decree(&["plugin", "add", "develop", "qa", "router"]);
+        decree(&["install", "develop", "qa", "router"]);
         let paths: Vec<PathBuf> = ["develop", "infra", "qa", "router", "order", "prune"]
             .iter()
             .map(|m| {

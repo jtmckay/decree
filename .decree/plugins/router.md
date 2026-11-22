@@ -24,7 +24,7 @@ scripts:
     # else the first of claude, opencode and copilot found on PATH, as ai.sh picks it.
     # Exits non-zero (and so runs once more, attempts: 2) unless the reply names one of
     # the options. Replace this machine to use another model; decree validates the
-    # reply again either way. Keep an edit with `decree plugin export router`.
+    # reply again either way. Keep an edit with `decree export router`.
     set -euo pipefail
     req="$DECREE_REQUEST"
     prompt=$(jq -r '
@@ -51,7 +51,7 @@ scripts:
       opencode) reply=$(opencode run "$prompt") ;;
       copilot) reply=$(copilot -p "$prompt") ;;
       "") echo "no AI CLI: set AI_CLI (in .decree/.env) or put claude, opencode or copilot on PATH" >&2; exit 2 ;;
-      *) echo "router knows no AI CLI \`$cli\` (AI_CLI): use claude, opencode or copilot, or edit this script (and keep it with \`decree plugin export router\`)" >&2; exit 2 ;;
+      *) echo "router knows no AI CLI \`$cli\` (AI_CLI): use claude, opencode or copilot, or edit this script (and keep it with \`decree export router\`)" >&2; exit 2 ;;
     esac
     echo "$reply"
     # the last JSON object in the reply, fences and prose around it allowed: the last
@@ -90,4 +90,4 @@ Add it, then write a state that asks a question:
       not_ready: { target: fix, description: Something is missing or broken. }
 ```
 
-A reply that is not one of the options fails the script, which runs once more (`attempts: 2`). To use another model, edit `.decree/machines/router/scripts/ask.sh`, then keep the edit with `decree plugin export router`.
+A reply that is not one of the options fails the script, which runs once more (`attempts: 2`). To use another model, edit `.decree/machines/router/scripts/ask.sh`, then keep the edit with `decree export router`.

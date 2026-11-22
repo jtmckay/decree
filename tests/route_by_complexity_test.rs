@@ -48,9 +48,9 @@ echo tests >> "$(dirname "$0")/calls"
 exit "$(sed -n "${n}p" "$dir/test_results")"
 "#;
 
-/// `decree init` and `decree plugin add <plugins>` in `root`: the official plugins, installed.
+/// `decree init` and `decree install <plugins>` in `root`: the official plugins, installed.
 fn add_plugins(root: &Path, plugins: &[&str]) {
-    let mut add = vec!["plugin", "add"];
+    let mut add = vec!["install"];
     add.extend_from_slice(plugins);
     for args in [vec!["init"], add] {
         cargo_bin_cmd!("decree")

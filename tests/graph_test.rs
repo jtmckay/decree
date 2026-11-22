@@ -162,10 +162,10 @@ fn graph_rewrites_every_example_graph_unchanged() {
     assert!(projects.len() >= 2, "{projects:?}");
     for project_dir in projects {
         let tmp = project(&project_dir.join(".decree"));
-        // A project of plugins draws what `decree plugin install` installs.
+        // A project of plugins draws what `decree install` installs.
         if tmp.path().join(".decree/plugins").is_dir() {
             common::decree_at(tmp.path())
-                .args(["plugin", "install"])
+                .args(["install"])
                 .assert()
                 .success();
         }
@@ -237,7 +237,7 @@ fn graph_help_has_viewing_instructions() {
     assert_eq!(out.status.code(), Some(0));
     let help = String::from_utf8(out.stdout).unwrap();
     for needle in [
-        "Run `decree graph`, then open `.decree/graph/<machine>.md` (or `system.md`)",
+        "Run `decree graph`, then open `.decree/machines/<machine>/graph.md` (or `.decree/system.md`)",
         "Ctrl+Shift+V",
         "Cmd+Shift+V",
         "VS Code 1.121",

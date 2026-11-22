@@ -247,4 +247,4 @@ A script sources it from the project root, its working directory, and calls `ai`
 ai "Summarise the change." > summary.md
 ```
 
-`ai` calls `ai_<backend>`: the run's `ai_cli` data, else `AI_CLI` (in `.decree/.env`), else the first of `claude`, `opencode` and `copilot` on `PATH`. It waits out Claude's usage limit and logs every call in `.decree/ai-use.md` ([The AI helper](https://github.com/jtmckay/decree/blob/main/docs/reference/scripts.md#the-ai-helper)). A plugin that sources it lists `ai` in its `needs`, so `decree plugin add` brings it along. To add a backend, define `ai_<name>` in it and run `decree plugin export ai`.
+`ai` calls `ai_<backend>`: the run's `ai_cli` data, else `AI_CLI` (in `.decree/.env`), else the first of `claude`, `opencode` and `copilot` on `PATH`. It waits out Claude's usage limit and logs every call in `.decree/ai-use.md` ([The AI helper](https://github.com/jtmckay/decree/blob/main/docs/reference/scripts.md#the-ai-helper)). A plugin that sources it lists `ai` in its `needs`, so `decree install` brings it along. To add a backend, define `ai_<name>` in it and run `decree export ai`.

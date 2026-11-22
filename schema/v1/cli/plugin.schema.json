@@ -1,21 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/plugin.schema.json",
-  "title": "decree plugin --format json",
-  "description": "What `decree plugin list|add|export|import|install --format json` prints on stdout, one shape per `action`. On failure (an unknown official plugin, a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. Reference: docs/reference/plugins.md.",
+  "title": "decree install / list / export --format json",
+  "description": "What `decree install`, `decree list` and `decree export --format json` print on stdout, one shape per `action`. On failure (a name neither in plugins/ nor official, a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. Reference: docs/reference/plugins.md.",
   "oneOf": [
     {
       "type": "object",
       "required": [
         "action",
         "version",
-        "plugins"
+        "plugins",
+        "unplugged",
+        "available"
       ],
       "additionalProperties": false,
       "properties": {
         "action": {
           "const": "list",
-          "description": "`decree plugin list`: every official plugin built into this decree."
+          "description": "`decree list`: the project's plugins, the machines no plugin installed, and the official plugins it does not have."
         },
         "version": {
           "type": "string",
@@ -23,22 +25,71 @@
         },
         "plugins": {
           "type": "array",
-          "description": "Every official plugin, by name.",
+          "description": "Each plugin in .decree/plugins/, by name.",
           "items": {
             "type": "object",
             "required": [
               "name",
               "description",
-              "needs",
-              "added",
-              "differs"
+              "official",
+              "differs",
+              "state"
             ],
             "additionalProperties": false,
             "properties": {
               "name": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9_]*$",
-                "description": "The plugin's name: `decree plugin add <name>` adds it."
+                "description": "The plugin's name."
+              },
+              "description": {
+                "type": "string",
+                "description": "Its machine's one-line `description`, or its body's first line for a library; empty when it fails its schema."
+              },
+              "official": {
+                "type": "boolean",
+                "description": "Whether decree ships an official plugin of this name."
+              },
+              "differs": {
+                "type": "boolean",
+                "description": "With `official`: whether the file differs from this decree's copy, byte for byte (edited, or from another decree version); `decree install --force <name>` takes this decree's copy. False otherwise."
+              },
+              "state": {
+                "enum": [
+                  "installed",
+                  "not installed",
+                  "edited",
+                  "conflict",
+                  "invalid"
+                ],
+                "description": "`installed`: installed as its file says; `not installed`: new or changed since it was installed, so `decree install` would install it; `edited`: its installed copy was edited in place and not exported; `conflict`: it changed while its installed copy was edited (P3); `invalid`: it fails its schema (P1)."
+              }
+            }
+          }
+        },
+        "unplugged": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "The machines in .decree/machines/ that no plugin installed, by name; `decree export <name>` writes a plugin for one."
+        },
+        "available": {
+          "type": "array",
+          "description": "Each official plugin not in .decree/plugins/, by name: `decree install <name>` adds it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "description",
+              "needs"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
               },
               "description": {
                 "type": "string",
@@ -50,15 +101,7 @@
                   "type": "string",
                   "pattern": "^[a-z][a-z0-9_]*$"
                 },
-                "description": "The official plugins it needs, which `decree plugin add` adds with it."
-              },
-              "added": {
-                "type": "boolean",
-                "description": "Whether the project's .decree/plugins/ has a plugin of this name."
-              },
-              "differs": {
-                "type": "boolean",
-                "description": "Whether the project's copy differs from this decree's, byte for byte: edited (exported edits), or from another decree version. `decree plugin add --force <name>` takes this decree's copy."
+                "description": "The official plugins it needs, which `decree install` adds with it."
               }
             }
           }
@@ -74,8 +117,8 @@
       "additionalProperties": false,
       "properties": {
         "action": {
-          "const": "add",
-          "description": "`decree plugin add <name>...`: official plugins copied into plugins/ and installed."
+          "const": "install",
+          "description": "`decree install <name>...`: the named plugins installed, each from its file in plugins/ or seeded there from decree's official copy."
         },
         "plugins": {
           "type": "array",
@@ -103,12 +146,12 @@
               },
               "status": {
                 "enum": [
+                  "installed",
                   "added",
                   "needed",
-                  "kept",
                   "replaced"
                 ],
-                "description": "`added`: named and added; `needed`: added because a plugin needs it; `kept`: named, but already in plugins/, so left as it is; `replaced`: named with --force, and replaced with this decree's copy."
+                "description": "`installed`: named, and installed from its file in plugins/; `added`: named, not in plugins/, so seeded from the official copy and installed; `needed`: seeded and installed because a plugin needs it; `replaced`: named with --force, its file replaced with this decree's copy and installed."
               },
               "needed_by": {
                 "type": "array",
@@ -174,7 +217,7 @@
       "properties": {
         "action": {
           "const": "export",
-          "description": "`decree plugin export <name>`: the plugin file written from the installed copy."
+          "description": "`decree export <name>`: the plugin file written from the installed copy."
         },
         "plugin": {
           "type": "string",
@@ -230,7 +273,7 @@
       "properties": {
         "action": {
           "const": "export",
-          "description": "`decree plugin export` with no name: every plugin whose installed copy differed from its file, exported."
+          "description": "`decree export` with no name: every plugin whose installed copy differed from its file, exported."
         },
         "exported": {
           "type": "array",
@@ -270,7 +313,7 @@
       "properties": {
         "action": {
           "const": "import",
-          "description": "`decree plugin import <file|->`: the plugin copied into plugins/ and installed."
+          "description": "`decree install <file|->`, or a plugin piped on stdin: the plugin copied into plugins/ and installed."
         },
         "plugin": {
           "type": "string",
@@ -359,8 +402,8 @@
       "additionalProperties": false,
       "properties": {
         "action": {
-          "const": "install",
-          "description": "`decree plugin install [<name>...]`: with no name, every plugin that is new or changed installed, every deleted plugin's copy removed and every edited copy kept; with names, those plugins installed, replacing any edited installed copy."
+          "const": "sync",
+          "description": "`decree install` with no argument and nothing piped: every plugin that is new or changed installed, every deleted plugin's copy removed and every edited copy kept."
         },
         "installed": {
           "type": "array",
@@ -376,7 +419,7 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
-          "description": "With no name: the plugins whose file was deleted, whose installed copy was removed. Empty with names."
+          "description": "The plugins whose file was deleted, whose installed copy was removed."
         },
         "conflicts": {
           "type": "array",
@@ -384,7 +427,7 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
-          "description": "With no name: the plugins that changed while their installed copy was edited, not installed (P3); the exit code is then 1. Empty with names."
+          "description": "The plugins that changed while their installed copy was edited, not installed (P3); the exit code is then 1."
         }
       }
     }

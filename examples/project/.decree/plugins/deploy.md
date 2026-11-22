@@ -47,7 +47,7 @@ scripts:
     echo
     for event in $DECREE_EVENTS; do
       [ "$event" = error ] && continue
-      echo "  decree event $DECREE_WAIT_ID $event -m \"<note>\""
+      echo "  decree reply $DECREE_WAIT_ID $event -m \"<note>\""
     done
   build.sh: |
     #!/usr/bin/env bash

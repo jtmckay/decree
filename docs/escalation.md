@@ -16,11 +16,11 @@ It is more machinery than the simplest machine, which is where a project should 
 - `rounds_left` is a `check` on `visits`: `fill_gaps` runs `max_gap_rounds` times. A `decree daemon --once --retry` counts visits again from the retry, so a retried run gets every round again ([Visits](reference/runs.md#step-loop)).
 - Each round is a child run of the `gaps` machine: fill, gate, fix, final gate, verify. Its steps are `develop`'s own scripts, through symlinks. They keep their files (`progress.md`, `gaps.md`, `gate.log`, `plan.md`, `STOP`) in the root run's folder, `$DECREE_ROOT_RUN_DIR`, so every round reads and adds to the same notes as `develop`.
 - `gaps`' data entry `ai_cli` picks the backend: `ai.sh`'s `ai` calls the one it names ([The AI helper](reference/scripts.md#the-ai-helper)). `fill_gaps` uses the default; `claude_round` passes `params: { ai_cli: claude }`. Every call is a line in `.decree/ai-use.md`, so you can see what each round cost.
-- `ask_human` is a `reply` state that asks a person: the run waits for `decree event <wait id> accept|retry|fail`. After 30 days with no answer its event is `error`, which, like a round that ends in `failed`, goes to `failed`.
+- `ask_human` is a `reply` state that asks a person: the run waits for `decree reply <wait id> accept|retry|fail`. After 30 days with no answer its event is `error`, which, like a round that ends in `failed`, goes to `failed`.
 
 ## The files
 
-Start from a project with `develop` added (`decree init`, then `decree plugin add develop`). Replace the installed `.decree/machines/develop/machine.yml` with this one, and keep the edit with `decree plugin export develop` (or let the next run's `commit` export it); it is the official machine with `data`, and the states from `final_gate` on changed or added.
+Start from a project with `develop` added (`decree init`, then `decree install develop`). Replace the installed `.decree/machines/develop/machine.yml` with this one, and keep the edit with `decree export develop` (or let the next run's `commit` export it); it is the official machine with `data`, and the states from `final_gate` on changed or added.
 
 `.decree/machines/develop/machine.yml`:
 
@@ -194,11 +194,11 @@ cat "${dir}/gaps.md" 2>/dev/null || echo "(none written)"
 echo "Answer with one of:"
 for event in ${DECREE_EVENTS}; do
   [ "${event}" = error ] && continue
-  echo "  decree event ${DECREE_WAIT_ID} ${event}"
+  echo "  decree reply ${DECREE_WAIT_ID} ${event}"
 done
 ```
 
-Then `chmod +x .decree/machines/gaps/scripts/fill.sh .decree/machines/develop/scripts/gate_gaps.sh .decree/machines/develop/scripts/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree plugin export gaps` and `decree plugin export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
+Then `chmod +x .decree/machines/gaps/scripts/fill.sh .decree/machines/develop/scripts/gate_gaps.sh .decree/machines/develop/scripts/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree export gaps` and `decree export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
 
 ## Tuning it
 

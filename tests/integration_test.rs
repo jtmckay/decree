@@ -111,7 +111,7 @@ fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 
 /// AC (A10): `init` in an empty directory exits 0 without reading stdin; `plugins/`,
 /// `machines/` and `scripts/` hold no plugin files; it lists every official plugin and the
-/// `decree plugin add` line; and `decree check` passes.
+/// `decree install` line; and `decree check` passes.
 #[test]
 fn test_init_stdin_closed_asks_nothing() {
     let dir = TempDir::new().unwrap();
@@ -132,7 +132,8 @@ fn test_init_stdin_closed_asks_nothing() {
     let decree = dir.path().join(".decree");
     assert_eq!(fs::read_dir(decree.join("plugins")).unwrap().count(), 4);
     assert!(!decree.join("scripts").exists());
-    // Every official plugin, one line each with its description, then the line that adds one.
+    // Every official plugin init did not add, one line each with its description, then the
+    // line that adds one.
     let listed: Vec<&str> = stdout
         .lines()
         .skip_while(|l| !l.starts_with("Official plugins"))
@@ -140,13 +141,17 @@ fn test_init_stdin_closed_asks_nothing() {
         .take_while(|l| l.starts_with("  "))
         .map(|l| l.split_whitespace().next().unwrap())
         .collect();
-    assert_eq!(listed, OFFICIAL, "{stdout}");
+    let others: Vec<&str> = OFFICIAL
+        .into_iter()
+        .filter(|n| !["ai", "order", "prune", "skill"].contains(n))
+        .collect();
+    assert_eq!(listed, others, "{stdout}");
     assert!(
         stdout
             .lines()
             .last()
             .unwrap()
-            .contains("`decree plugin add develop`"),
+            .contains("`decree install develop`"),
         "{stdout}"
     );
     // Without --ai and with nothing on PATH, AI_CLI is left for the plugins to detect.
@@ -244,7 +249,7 @@ fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
         .assert()
         .success();
     decree_cmd(&dir)
-        .args(["plugin", "add", "router"])
+        .args(["install", "router"])
         .assert()
         .success();
     let bin = dir.path().join("bin");
@@ -337,7 +342,7 @@ fn test_default_router_through_decree_takes_a_bare_json_reply() {
         .assert()
         .success();
     decree_cmd(&dir)
-        .args(["plugin", "add", "router"])
+        .args(["install", "router"])
         .assert()
         .success();
     common::write_file(

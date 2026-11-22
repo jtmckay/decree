@@ -1,6 +1,7 @@
-//! `decree upgrade`: print how to upgrade decree, as `rustup self update` and `uv self update`
-//! are reached from the binary itself, but only print: the person runs the line. No network
-//! call, no other program, no project needed (docs/reference/cli.md, Upgrading decree).
+//! `decree upgrade`: print how to upgrade decree, then offer to run the README's install line,
+//! as `rustup self update` and `uv self update` are reached from the binary itself. It runs the
+//! line only on a `y` (or `--yes`); otherwise no network call and no other program. No project
+//! needed (docs/reference/cli.md, Upgrading decree).
 
 use crate::cli::Format;
 use crate::commands::print_json;
@@ -22,20 +23,20 @@ const TWO_COPIES: &str = "If `which -a decree` lists two copies, the one first o
                           so remove the other (`cargo uninstall decree`).";
 
 /// What to run in each project afterwards: the command, and when it is needed.
-/// The official plugins are built into decree, so a new version may change them: `plugin list`
-/// marks each one the project's copy differs from, and `plugin add --force` takes the new copy.
+/// The official plugins are built into decree, so a new version may change them: `list`
+/// marks each one the project's copy differs from, and `decree install --force` takes the new copy.
 const AFTER: [(&str, Option<&str>); 4] = [
     (
-        "decree plugin add --force skill",
+        "decree install --force skill",
         Some("the project has the skill plugin: the next daemon start writes the new skill"),
     ),
     ("decree schema", Some("the project has .decree/schema/")),
     (
-        "decree plugin list",
+        "decree list",
         Some("the project has .decree/plugins/: it marks `differs` each plugin the new version changed"),
     ),
     (
-        "decree plugin add --force <name>",
+        "decree install --force <name>",
         Some("you want the new version's copy of a plugin marked `differs`: it prints the edits it drops"),
     ),
 ];
@@ -53,12 +54,30 @@ fn cargo() -> String {
     format!("cargo install --git {REPOSITORY} --tag {TAG} --force")
 }
 
-pub fn run(format: Format) -> Result<(), DecreeError> {
+pub fn run(yes: bool, format: Format) -> Result<(), DecreeError> {
     match format {
         Format::Text => {
             print!("{}", text());
-            Ok(())
+            println!();
+            if !yes {
+                use std::io::Write;
+                print!("Run the install line now ({INSTALL})? [y/N] ");
+                std::io::stdout().flush()?;
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+                    if answer.is_empty() {
+                        println!();
+                    }
+                    println!("Nothing was installed.");
+                    return Ok(());
+                }
+            }
+            install()
         }
+        Format::Json if yes => Err(DecreeError::Other(
+            "--yes runs the install line, whose output is not JSON; run `decree upgrade --yes` without --format json".into(),
+        )),
         Format::Json => print_json(&serde_json::json!({
             "version": version(),
             "install": INSTALL,
@@ -99,4 +118,21 @@ fn text() -> String {
         }
     }
     out
+}
+
+/// Run the install line with `sh`, its output going straight through.
+fn install() -> Result<(), DecreeError> {
+    println!("Running: {INSTALL}");
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(INSTALL)
+        .status()
+        .map_err(|e| DecreeError::Other(format!("cannot run sh: {e}")))?;
+    if !status.success() {
+        return Err(DecreeError::Other(format!(
+            "the install line failed ({status}); nothing in the projects changed"
+        )));
+    }
+    println!("Installed. Run `decree --version` to see the new version, then the steps above in each project.");
+    Ok(())
 }

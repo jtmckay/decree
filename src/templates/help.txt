@@ -27,24 +27,27 @@ Commands:
   decree schema               Write .decree/schema/v1/, a local copy of the
                               JSON Schemas for machines, messages, events,
                               router files and --format json output
-  decree plugin list          The official plugins built into decree, marked
-                              added and differs
-  decree plugin add NAME... [--force]
-                              Copy official plugins, and those they need,
-                              into .decree/plugins/ and install them
-  decree plugin export [NAME] [--dry-run]
-                              Share a machine as one file: write
-                              .decree/plugins/NAME.md from machines/NAME.yml
-                              and scripts/NAME/; no NAME: every plugin whose
-                              installed copy was edited
-  decree plugin import FILE|- [--force]
+  decree install              Install every plugin in .decree/plugins/ as its
+                              file says (after a clone or a pull), keeping
+                              edited copies. Nothing else installs plugins
+  decree install NAME... [--force]
+                              Install these plugins over any edit; an
+                              official one not in .decree/plugins/ is copied
+                              there first, with those it needs. --force takes
+                              decree's official copy
+  decree install FILE|- [--force]
                               Check a plugin, copy it to .decree/plugins/
-                              and install it (curl -fsSL URL | decree plugin
-                              import -)
-  decree plugin install [NAME...]
-                              Install new and changed plugins, keeping
-                              edited copies; with NAMEs, install those over
-                              any edit. Nothing else installs plugins
+                              and install it; a plugin piped on stdin needs
+                              no argument (curl -fsSL URL | decree install)
+  decree list                 The plugins in .decree/plugins/ (official or
+                              own, differs, not installed, edited), machines
+                              no plugin installed, and the official plugins
+                              not yet in .decree/plugins/
+  decree export [NAME] [--dry-run]
+                              Share a machine as one file: write
+                              .decree/plugins/NAME.md from machines/NAME/;
+                              no NAME: every plugin whose installed copy
+                              was edited
   decree daemon --once [--dry-run] [--quiet]
                               Start (firing @reboot cron files, so the order
                               plugin runs each machine's order/), deliver
@@ -70,7 +73,7 @@ Commands:
                               Queue a message from stdin: a body for M, or a
                               whole message (decree emit < FILE runs it
                               again). Prints its id
-  decree event ID EVENT [-m NOTE]
+  decree reply ID EVENT [-m NOTE]
                               Reply to a run waiting for a reply
   decree status [ID] [--all]  What needs attention, runs by status and queued
                               messages (--all lists every one), and active
@@ -78,16 +81,17 @@ Commands:
   decree status --cron        Cron files and when each fires next
   decree tail [ID]            Follow the live output of each run as it comes,
                               or of run ID until it stops
-  decree upgrade              Print how to upgrade decree (install line, pinned
+  decree upgrade [--yes]      Print how to upgrade decree (install line, pinned
                               and cargo install forms) and what to run in
-                              each project after; runs nothing
+                              each project after, then ask y/N before running
+                              the install line (--yes: without asking)
   decree help                 This help text
   decree                      A short synopsis of the quick start; runs
                               nothing (run the queue with decree daemon --once)
   decree --version            Print the version
 
-  --format json on check, status, emit, event, stop, graph, schema, upgrade,
-  plugin and daemon --once --dry-run prints one JSON document instead of text, described by
+  --format json on check, status, emit, reply, stop, graph, schema, upgrade,
+  install, list, export and daemon --once --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json; exit codes stay the same.
 
 Files (.decree/):
@@ -157,7 +161,7 @@ Machines:
                                               a script
     check: { visits: S, less_than: 3 }        a condition: true or false
     model: { question: ..., output: <state> } a router machine asks a model
-    reply: { question: ..., notify: <script> } someone replies: `decree event`
+    reply: { question: ..., notify: <script> } someone replies: `decree reply`
     machine: <name>                           a child run of another machine
   Other keys: onentry and onexit (scripts run on entering or leaving a state,
   or the whole run at the root), data, emits, compound states (initial plus
@@ -188,7 +192,7 @@ No configuration file; conventions, fixed limits and variables instead:
                                   # and child runs (shell or .decree/.env)
   script logs                     # each capped at 2 MiB
   Share a machine across projects as a plugin, .decree/plugins/NAME.md:
-  decree plugin export NAME, then decree plugin import FILE elsewhere.
+  decree export NAME, then decree install FILE elsewhere.
 
 Cron (.decree/machines/<machine>/cron/<name>.md, run by `decree daemon`):
   ---
@@ -200,7 +204,7 @@ Cron (.decree/machines/<machine>/cron/<name>.md, run by `decree daemon`):
 
 Getting started:
   1. decree init                  Set up the project
-     decree plugin add develop    Add an official plugin (decree plugin list)
+     decree install develop       Add an official plugin (decree list)
   2. Write .decree/machines/<name>/order/01-<what>.md (the order plugin runs it)
   3. decree check                 Validate machines and queued messages
   4. decree daemon --once         Run it; `decree status` shows what happened

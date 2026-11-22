@@ -601,7 +601,7 @@ fn process_streams_each_run_and_a_line_as_it_stops() {
 }
 
 /// AC: a run that reaches a `reply` state. `decree process` prints the wait id,
-/// the options and a `decree event` command per option, and exits 0; after `decree event`
+/// the options and a `decree reply` command per option, and exits 0; after `decree reply`
 /// and another `decree process`, the run is `done`.
 #[test]
 fn reply_prints_the_wait_and_a_reply_finishes_the_run() {
@@ -620,7 +620,7 @@ fn reply_prints_the_wait_and_a_reply_finishes_the_run() {
         format!(
             "Waiting: run {id} in `approval`: Ship the build?\n  \
              wait id {wait_id}, options: approve, reject\n  \
-             decree event {wait_id} approve\n  decree event {wait_id} reject\n"
+             decree reply {wait_id} approve\n  decree reply {wait_id} reject\n"
         )
     );
     let status = p.stdout(&["status"], 0);
@@ -635,7 +635,7 @@ fn reply_prints_the_wait_and_a_reply_finishes_the_run() {
         .assert()
         .code(1);
 
-    p.decree(&["event", &wait_id, "approve", "-m", "Go."])
+    p.decree(&["reply", &wait_id, "approve", "-m", "Go."])
         .assert()
         .success();
     p.stdout(&["daemon", "--once"], 0);
@@ -1169,7 +1169,7 @@ fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     let p = Project::init();
     assert!(!p.decree_dir().join("lib").exists());
     p.decree(&["check"]).assert().success().stderr("");
-    p.decree(&["plugin", "add", "infra"]).assert().success();
+    p.decree(&["install", "infra"]).assert().success();
     assert!(!p.decree_dir().join("lib").exists());
     p.decree(&["check"]).assert().success().stderr("");
     let out = std::process::Command::new(".decree/machines/infra/scripts/run.sh")
@@ -1231,7 +1231,7 @@ fn scripts_get_no_decree_lib() {
 #[test]
 fn check_ignores_the_files_beside_a_machines_scripts() {
     let p = Project::init();
-    p.decree(&["plugin", "add", "develop"]).assert().success();
+    p.decree(&["install", "develop"]).assert().success();
     let develop = p.decree_dir().join("machines/develop/scripts");
     assert!(develop.join("commit.sh").is_file());
     fs::write(develop.join("conventions.md"), "# Conventions\n").unwrap();

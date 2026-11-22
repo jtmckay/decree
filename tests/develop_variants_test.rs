@@ -57,7 +57,7 @@ fn ok(dir: &Path, args: &[&str]) -> String {
 fn project(plugins: &[&str]) -> TempDir {
     let tmp = TempDir::new().unwrap();
     ok(tmp.path(), &["init", "--ai", "claude"]);
-    let mut args = vec!["plugin", "add"];
+    let mut args = vec!["install"];
     args.extend(plugins);
     ok(tmp.path(), &args);
     tmp
@@ -171,7 +171,7 @@ fn mermaid(graph: &str) -> String {
         .unwrap_or_else(|| panic!("no mermaid block:\n{graph}"))
 }
 
-/// AC: after a fresh `init` (which adds `order` and `prune`), `decree plugin add develop_rust
+/// AC: after a fresh `init` (which adds `order` and `prune`), `decree install develop_rust
 /// develop_react` adds both with `infra`, which they need; `decree check` passes, and `decree graph` draws both machines with
 /// `develop`'s states and transitions.
 #[test]
@@ -224,13 +224,13 @@ fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
 }
 
 /// Each variant is `develop`'s machine but for its description, which names its ecosystem,
-/// needs `infra` as `develop` does, and `decree plugin list` shows it with that description.
+/// needs `infra` as `develop` does, and `decree list` shows it with that description.
 #[test]
 fn each_variant_is_develops_machine_and_list_names_its_ecosystem() {
     let develop = frontmatter("develop");
     let tmp = TempDir::new().unwrap();
     ok(tmp.path(), &["init", "--ai", "claude"]);
-    let list = ok(tmp.path(), &["plugin", "list"]);
+    let list = ok(tmp.path(), &["list"]);
     for (variant, ecosystem) in VARIANTS.iter().zip(["Rust", "Node", "React"]) {
         let ours = frontmatter(variant);
         assert_eq!(ours["needs"], develop["needs"], "{variant}");

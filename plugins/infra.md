@@ -104,12 +104,12 @@ scripts:
     # project folder is committed (`-- .`), even if something else in a larger repository is
     # staged.
     # First it exports every plugin whose installed copy differs from its plugin file
-    # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
+    # (`decree export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
     # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
-    "${DECREE}" plugin export
+    "${DECREE}" export
     order=$(sed -n '2,/^---$/s/^order: //p' "${DECREE_MESSAGE}" | head -n 1)
     record=.decree/machines/order/scripts/record.sh
     if [ -n "${order}" ] && [ -x "${record}" ]; then
@@ -179,11 +179,11 @@ scripts:
     # (`clean_tree` did not pass) leaves them alone and holds nothing.
     # Edits to an installed plugin (machines/, scripts/, which git ignores) count too: a failed
     # run exports nothing, so they stay in the installed copy, and the hold keeps the next run's
-    # `commit` from exporting them (`decree plugin export --dry-run` names them).
+    # `commit` from exporting them (`decree export --dry-run` names them).
     set -euo pipefail
     [ -f "${DECREE_RUN_DIR}/clean_tree" ] || exit 0
     changes=$(git status --porcelain -- .)
-    edited=$("${DECREE}" plugin export --dry-run | sed -n 's/^would write //p')
+    edited=$("${DECREE}" export --dry-run | sed -n 's/^would write //p')
     if [ -z "${changes}${edited}" ]; then
       echo "no changes to keep"
       exit 0
@@ -195,7 +195,7 @@ scripts:
       [ -z "${changes}" ] || echo "${changes}"
       [ -z "${edited}" ] || echo "${edited}" | sed 's/^/installed copy edited, not exported: /'
       echo "to continue the run on them: \`decree daemon --once --retry ${DECREE_MESSAGE_ID}\`"
-      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree plugin install <name>\` for an installed copy), then delete ${attention}"
+      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree install <name>\` for an installed copy), then delete ${attention}"
     } > "${DECREE_RUN_DIR}/hold"
     cat "${DECREE_RUN_DIR}/hold"
     echo "no other run starts until then (${attention})"
@@ -215,7 +215,7 @@ scripts:
     # `run.sh apply` installs what is missing and checks it again (the infra machine runs it,
     # and so can a fresh checkout or CI). Each kind is kinds/<kind>.sh. Another machine may
     # keep its own requirements beside its scripts; run.sh checks them after these. An edit
-    # here is kept by `decree plugin export infra`, or by the next run's `commit`.
+    # here is kept by `decree export infra`, or by the next run's `commit`.
     #
     # The AI CLI the official plugins' ai.sh picks (AI_CLI, else the first of claude, opencode
     # and copilot on PATH) belongs here too, such as `command   claude`.
@@ -295,4 +295,4 @@ Declares what your project's environment needs (commands on `PATH`, and any othe
 - Edit `.decree/machines/infra/scripts/requirements` by hand, one resource per line (`kind name version source`), or send a message: `echo "We need jq and node 22" | decree emit --machine infra && decree daemon --once`.
 - A kind is `.decree/machines/infra/scripts/kinds/<kind>.sh`, defining `check` and `install`; `command` is the one shipped.
 - `.decree/machines/infra/scripts/run.sh check` (or `apply`) works outside decree too, in CI or a fresh checkout.
-- Edits are kept in this file by `decree plugin export infra`, or by the next run's `commit`.
+- Edits are kept in this file by `decree export infra`, or by the next run's `commit`.

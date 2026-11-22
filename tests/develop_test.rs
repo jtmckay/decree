@@ -71,7 +71,7 @@ exit "$status"
 
 /// The line of the gate `init` writes that stands in for the project's checks.
 const UNCONFIGURED: &str =
-    "  echo \"gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with \\`decree plugin export develop\\`\"\n";
+    "  echo \"gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with \\`decree export develop\\`\"\n";
 
 /// The local time is always `STUB_NOW`.
 const STUB_DATE: &str = "#!/usr/bin/env bash\necho \"$STUB_NOW\"\n";
@@ -94,7 +94,7 @@ struct Project {
 }
 
 impl Project {
-    /// `decree init --ai claude` and `decree plugin add develop qa router`, plus a `bin/`
+    /// `decree init --ai claude` and `decree install develop qa router`, plus a `bin/`
     /// holding a stub `claude`, and the gate `develop` installed with its checks replaced by
     /// the stub `check`, exported.
     fn init() -> Project {
@@ -116,7 +116,7 @@ impl Project {
         fs::create_dir_all(&root).unwrap();
         let p = Project { tmp, root };
         p.decree(&["init", "--ai", "claude"]).assert().success();
-        p.decree(&["plugin", "add", "develop", "qa", "router"])
+        p.decree(&["install", "develop", "qa", "router"])
             .assert()
             .success();
         fs::create_dir(p.bin()).unwrap();
@@ -124,9 +124,7 @@ impl Project {
         p.stub("check", STUB_CHECK);
         p.edit_gate(UNCONFIGURED, "  check\n");
         // The project's own gate is kept in its plugin file, as a person keeps it.
-        p.decree(&["plugin", "export", "develop"])
-            .assert()
-            .success();
+        p.decree(&["export", "develop"]).assert().success();
         fs::write(p.root().join(".gitignore"), "bin/\n").unwrap();
         p.git(&["init", "-q", p.tmp.path().to_str().unwrap()]);
         p.commit_all("init");
@@ -341,7 +339,7 @@ fn files_under(dir: &Path) -> Vec<String> {
     out
 }
 
-/// AC (A10): `decree init` installs only its default plugins (D86); `decree plugin add develop qa router` adds
+/// AC (A10): `decree init` installs only its default plugins (D86); `decree install develop qa router` adds
 /// `develop`, `infra` (which `develop` needs), `qa` and `router`, each with its helpers, config
 /// and data beside its scripts (`ai.sh` for each that asks AI, the git scripts, infra's declared
 /// environment, qa's settings), and no `lib/`; no script but `ai.sh` defines `ai()`; everything
@@ -364,7 +362,7 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             "{ai}"
         );
         assert!(!decree.join("scripts").exists(), "{ai}");
-        p.decree(&["plugin", "add", "develop", "qa", "router"])
+        p.decree(&["install", "develop", "qa", "router"])
             .assert()
             .success();
         assert_eq!(
@@ -490,8 +488,8 @@ fn gate_alone(p: &Project) -> (Option<i32>, String, String, String, String) {
 fn the_default_gate_says_it_is_unconfigured_and_names_pass() {
     let p = Project::empty();
     p.decree(&["init", "--ai", "claude"]).assert().success();
-    p.decree(&["plugin", "add", "develop"]).assert().success();
-    let said = "gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with `decree plugin export develop`\n";
+    p.decree(&["install", "develop"]).assert().success();
+    let said = "gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with `decree export develop`\n";
     assert_eq!(
         gate_alone(&p),
         (
@@ -1344,9 +1342,7 @@ fn precheck_checks_every_machines_requirements() {
         "command   not_a_tool_xyz\n",
     )
     .unwrap();
-    p.decree(&["plugin", "export", "develop"])
-        .assert()
-        .success();
+    p.decree(&["export", "develop"]).assert().success();
     p.commit_all("develop's requirements");
     let id = p.run(&[]);
     assert_eq!(p.outcome(&id), "failed");
@@ -1479,7 +1475,7 @@ fn qa_needs_its_chaos_suite_command_first() {
     );
     assert_eq!(
         p.log(&id, "recon"),
-        "qa: no chaos suite command; set QA_RUN in .decree/machines/qa/scripts/qa.sh, then keep it with `decree plugin export qa`\n"
+        "qa: no chaos suite command; set QA_RUN in .decree/machines/qa/scripts/qa.sh, then keep it with `decree export qa`\n"
     );
     assert!(p.calls().is_empty());
 }
@@ -1753,7 +1749,7 @@ fn a_failed_run_exports_nothing_and_keeps_its_edit_installed() {
 #[test]
 fn an_order_files_commit_names_it_and_holds_its_record() {
     let p = Project::init();
-    p.decree(&["plugin", "add", "order"]).assert().success();
+    p.decree(&["install", "order"]).assert().success();
     let order = p.root().join(".decree/machines/develop/order");
     fs::create_dir_all(&order).unwrap();
     fs::write(order.join("01-greet.md"), MESSAGE).unwrap();

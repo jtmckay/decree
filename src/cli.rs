@@ -41,7 +41,7 @@ pub enum Command {
         format: CheckFormat,
     },
 
-    /// Write .decree/graph/: a Mermaid diagram in Markdown per machine, and system.md
+    /// Write a Mermaid diagram in Markdown per machine (.decree/machines/<name>/graph.md) and .decree/system.md
     #[command(after_help = GRAPH_VIEWING)]
     Graph {
         /// Output format
@@ -73,7 +73,7 @@ pub enum Command {
     },
 
     /// Reply to a run waiting in a `reply` state
-    Event {
+    Reply {
         /// Wait id (<run id>.w<seq>), or run id meaning its current wait
         target: String,
 
@@ -89,7 +89,7 @@ pub enum Command {
         format: Format,
     },
 
-    /// Run the process loop repeatedly, plus cron, until stopped; waits for replies instead of exiting
+    /// Work the queue and fire cron until stopped, waiting for replies; with --once, work until idle and exit
     Daemon {
         /// Start, fire the @reboot cron files, work until nothing can go on without a person
         /// or a program, print what waits or failed, and exit (for CI and cron)
@@ -182,40 +182,23 @@ pub enum Command {
         id: Option<String>,
     },
 
-    /// Print how to upgrade decree: the install line, pinned and `cargo install` forms, and what to run in each project after
+    /// Print how to upgrade decree (the install line, pinned and `cargo install` forms, and what to run in each project after), then offer to run the install line, asking y/N
     Upgrade {
+        /// Run the install line without asking
+        #[arg(long, short = 'y')]
+        yes: bool,
+
         /// Output format
         #[arg(long, value_enum, default_value_t)]
         format: Format,
     },
 
-    /// Share machines as plugins: one file per machine in .decree/plugins/, installed into machines/ and scripts/<name>/
-    Plugin {
-        #[command(subcommand)]
-        action: PluginAction,
-    },
+    /// Install plugins: every plugin in .decree/plugins/ as its file says (after a checkout), the named ones (an official one is seeded into .decree/plugins/ first), or a plugin file or stdin (`curl -fsSL <url> | decree install`)
+    Install {
+        /// Plugin names, or one plugin file, or - for stdin [default: stdin if a plugin is piped, else every plugin in .decree/plugins/]
+        sources: Vec<String>,
 
-    /// Verbose help
-    Help,
-}
-
-/// `decree plugin` (docs/reference/plugins.md).
-#[derive(Subcommand, Debug)]
-pub enum PluginAction {
-    /// List the official plugins built into decree, each marked added or differs
-    List {
-        /// Output format
-        #[arg(long, value_enum, default_value_t)]
-        format: Format,
-    },
-
-    /// Copy official plugins, and every official plugin they need, into .decree/plugins/ and install them
-    Add {
-        /// Official plugins to add (`decree plugin list` names them)
-        #[arg(required = true)]
-        names: Vec<String>,
-
-        /// Replace a plugin already in .decree/plugins/ with this decree's copy, printing what changes
+        /// Replace .decree/plugins/<name>.md with decree's official copy, or a plugin of the file's name, printing what changes
         #[arg(long)]
         force: bool,
 
@@ -224,7 +207,14 @@ pub enum PluginAction {
         format: Format,
     },
 
-    /// Write .decree/plugins/<name>.md from the installed machine, scripts/<name>/ and the flat scripts it runs
+    /// List the plugins in .decree/plugins/ (official or own, differs, install state), the machines no plugin installed, and the official plugins not yet installed
+    List {
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
+    /// Write .decree/plugins/<name>.md from the installed copy in .decree/machines/<name>/
     Export {
         /// Machine to export [default: every plugin whose installed copy differs from its file]
         name: Option<String>,
@@ -238,35 +228,14 @@ pub enum PluginAction {
         format: Format,
     },
 
-    /// Check a plugin file (- reads stdin), copy it to .decree/plugins/ and install it; decree fetches nothing
-    Import {
-        /// Plugin file, or - for stdin (`curl -fsSL <url> | decree plugin import -`)
-        file: String,
-
-        /// Replace a plugin or machine of the same name, printing what changes
-        #[arg(long)]
-        force: bool,
-
-        /// Output format
-        #[arg(long, value_enum, default_value_t)]
-        format: Format,
-    },
-
-    /// Install plugins now (all, or the named ones), replacing an installed copy edited in place
-    Install {
-        /// Plugins to install [default: every plugin in .decree/plugins/]
-        names: Vec<String>,
-
-        /// Output format
-        #[arg(long, value_enum, default_value_t)]
-        format: Format,
-    },
+    /// Verbose help
+    Help,
 }
 
 /// How to view `decree graph` output (docs/reference/graph.md, Viewing).
 const GRAPH_VIEWING: &str = "\
 Viewing:
-  1. Run `decree graph`, then open `.decree/graph/<machine>.md` (or `system.md`).
+  1. Run `decree graph`, then open `.decree/machines/<machine>/graph.md` (or `.decree/system.md`).
   2. In VS Code, press Ctrl+Shift+V (Cmd+Shift+V on macOS) for the preview;
      VS Code 1.121 and later render Mermaid in Markdown without an extension.
      GitHub, GitLab and Obsidian render the committed files as they are.

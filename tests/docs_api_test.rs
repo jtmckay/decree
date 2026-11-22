@@ -620,11 +620,11 @@ fn a_flag_decree_does_not_have_fails_naming_the_file_and_the_flag() {
     assert!(errors[1].contains("decree graph takes 0"), "{}", errors[1]);
     // Values, placeholders, quotes and what follows the command are not flags or arguments.
     for ok in [
-        "```bash\ndecree event 02-a.w15 retry -m \"a --note\"   # --nothing\n```\n",
+        "```bash\ndecree reply 02-a.w15 retry -m \"a --note\"   # --nothing\n```\n",
         "```bash\necho x | decree emit --machine m --param a=1 <<'EOF'\n--x\nEOF\n```\n",
         "```bash\ndecree daemon --once --retry 01-a --state implement > out.txt || true\n```\n",
         "`decree status <id> --format json`, `decree daemon --once --dry-run --format json`\n",
-        "`decree event ID EVENT [-m NOTE]`, `cd projects/decree`, `.decree/inbox/`\n",
+        "`decree reply ID EVENT [-m NOTE]`, `cd projects/decree`, `.decree/inbox/`\n",
     ] {
         let errors = command_errors(&cli, "docs/scratch.md", ok);
         assert!(errors.is_empty(), "{ok}: {errors:?}");

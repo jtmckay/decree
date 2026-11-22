@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/event.schema.json",
-  "title": "decree event --format json",
-  "description": "What `decree event --format json` prints on stdout: the id and path of a reply for a waiting run, queued in .decree/inbox/. On failure nothing is printed on stdout; the error goes to stderr and the exit code is 1. Reference: docs/reference/cli.md, Machine-readable output.",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/reply.schema.json",
+  "title": "decree reply --format json",
+  "description": "What `decree reply --format json` prints on stdout: the id and path of a reply for a waiting run, queued in .decree/inbox/. On failure nothing is printed on stdout; the error goes to stderr and the exit code is 1. Reference: docs/reference/cli.md, Machine-readable output.",
   "type": "object",
   "required": [
     "id",

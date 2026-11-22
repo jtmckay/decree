@@ -131,12 +131,12 @@ scripts:
     # project folder is committed (`-- .`), even if something else in a larger repository is
     # staged.
     # First it exports every plugin whose installed copy differs from its plugin file
-    # (`decree plugin export` with no name), so what the run changed in machines/ or scripts/
+    # (`decree export` with no name), so what the run changed in machines/ or scripts/
     # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
     # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
-    "${DECREE}" plugin export
+    "${DECREE}" export
     order=$(sed -n '2,/^---$/s/^order: //p' "${DECREE_MESSAGE}" | head -n 1)
     record=.decree/machines/order/scripts/record.sh
     if [ -n "${order}" ] && [ -x "${record}" ]; then
@@ -212,7 +212,7 @@ scripts:
     # `build`. It names `pass` if they all pass and `fail` if one fails or there is no
     # `build`; a non-zero exit, such as a missing tool, means they could not run, and ends
     # the run without fix. Add your project's own checks to `checks`; keep the edit with
-    # `decree plugin export develop_react`, or let the next run's `commit` export it.
+    # `decree export develop_react`, or let the next run's `commit` export it.
     set -euo pipefail
     log="${DECREE_ROOT_RUN_DIR}/gate.log"
 
@@ -369,11 +369,11 @@ scripts:
     # (`clean_tree` did not pass) leaves them alone and holds nothing.
     # Edits to an installed plugin (machines/, scripts/, which git ignores) count too: a failed
     # run exports nothing, so they stay in the installed copy, and the hold keeps the next run's
-    # `commit` from exporting them (`decree plugin export --dry-run` names them).
+    # `commit` from exporting them (`decree export --dry-run` names them).
     set -euo pipefail
     [ -f "${DECREE_RUN_DIR}/clean_tree" ] || exit 0
     changes=$(git status --porcelain -- .)
-    edited=$("${DECREE}" plugin export --dry-run | sed -n 's/^would write //p')
+    edited=$("${DECREE}" export --dry-run | sed -n 's/^would write //p')
     if [ -z "${changes}${edited}" ]; then
       echo "no changes to keep"
       exit 0
@@ -385,7 +385,7 @@ scripts:
       [ -z "${changes}" ] || echo "${changes}"
       [ -z "${edited}" ] || echo "${edited}" | sed 's/^/installed copy edited, not exported: /'
       echo "to continue the run on them: \`decree daemon --once --retry ${DECREE_MESSAGE_ID}\`"
-      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree plugin install <name>\` for an installed copy), then delete ${attention}"
+      echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree install <name>\` for an installed copy), then delete ${attention}"
     } > "${DECREE_RUN_DIR}/hold"
     cat "${DECREE_RUN_DIR}/hold"
     echo "no other run starts until then (${attention})"
@@ -473,10 +473,10 @@ As `develop` does (`clean_tree`, `precheck`, `implement`, `gate`, `fix`, `final_
 - git, and a project that is a git work tree with at least one commit.
 - An AI CLI on `PATH`: `claude`, `opencode` or `copilot`, picked as `develop` picks it.
 - `node` and `npm`, which `.decree/machines/develop_react/scripts/requirements` declares, so `precheck` fails fast without them. A project using pnpm or yarn adds that line (`command   pnpm`).
-- The `infra` plugin, which `decree plugin add develop_react` adds with it.
+- The `infra` plugin, which `decree install develop_react` adds with it.
 
 ## How to use it
 
-1. `decree plugin add develop_react`. Add the project's own checks to `.decree/machines/develop_react/scripts/gate.sh`, and its own rules to `conventions.md` beside it, if it has any; `decree plugin export develop_react`, or the next run's `commit`, keeps the edit in this file. A project with a React front end and a Rust or Node back end adds both variants and names one in each message.
+1. `decree install develop_react`. Add the project's own checks to `.decree/machines/develop_react/scripts/gate.sh`, and its own rules to `conventions.md` beside it, if it has any; `decree export develop_react`, or the next run's `commit`, keeps the edit in this file. A project with a React front end and a Rust or Node back end adds both variants and names one in each message.
 2. Write an order file, `.decree/machines/develop_react/order/A01-<what>.md`, saying what to change and how to tell it is done.
 3. Run `decree daemon --once`, or keep `decree daemon` running: the official `order` plugin runs the file at start.

@@ -218,7 +218,7 @@ pub fn std_decree_at(root: impl AsRef<Path>) -> std::process::Command {
 #[allow(dead_code)]
 /// Drop the official plugins `decree init` adds (`ai`, `order`, `prune`, `skill`) from the
 /// project at `root`
-/// the documented way: delete their files, `decree plugin install`, `decree graph`. For a test
+/// the documented way: delete their files, `decree install`, `decree graph`. For a test
 /// whose runs and machines are its own.
 pub fn drop_default_plugins(root: &Path) {
     for name in ["ai", "order", "prune", "skill"] {
@@ -227,7 +227,7 @@ pub fn drop_default_plugins(root: &Path) {
             std::fs::remove_file(&file).unwrap();
         }
     }
-    for args in [&["plugin", "install"][..], &["graph"][..]] {
+    for args in [&["install"][..], &["graph"][..]] {
         let out = std_decree_at(root).args(args).output().unwrap();
         assert!(out.status.success(), "{args:?}: {out:?}");
     }

@@ -35,8 +35,8 @@ pub const CLI_CHECK_SCHEMA: &str = include_str!("../../schema/v1/cli/check.schem
 /// The schema of `decree emit --format json`.
 pub const CLI_EMIT_SCHEMA: &str = include_str!("../../schema/v1/cli/emit.schema.json");
 
-/// The schema of `decree event --format json`.
-pub const CLI_EVENT_SCHEMA: &str = include_str!("../../schema/v1/cli/event.schema.json");
+/// The schema of `decree reply --format json`.
+pub const CLI_REPLY_SCHEMA: &str = include_str!("../../schema/v1/cli/reply.schema.json");
 
 /// The schema of `decree graph --format json`.
 pub const CLI_GRAPH_SCHEMA: &str = include_str!("../../schema/v1/cli/graph.schema.json");
@@ -44,7 +44,7 @@ pub const CLI_GRAPH_SCHEMA: &str = include_str!("../../schema/v1/cli/graph.schem
 /// The plugin frontmatter schema, `plugins/<name>.md`.
 pub const PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/plugin.schema.json");
 
-/// The schema of `decree plugin export|import|install --format json`.
+/// The schema of `decree export|import|install --format json`.
 pub const CLI_PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/cli/plugin.schema.json");
 
 /// The schema of `decree daemon --once --dry-run --format json`.
@@ -69,9 +69,9 @@ pub const ALL: [(&str, &str); 17] = [
     ("cli/check", CLI_CHECK_SCHEMA),
     ("cli/daemon", CLI_DAEMON_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
-    ("cli/event", CLI_EVENT_SCHEMA),
     ("cli/graph", CLI_GRAPH_SCHEMA),
     ("cli/plugin", CLI_PLUGIN_SCHEMA),
+    ("cli/reply", CLI_REPLY_SCHEMA),
     ("cli/schema", CLI_SCHEMA_SCHEMA),
     ("cli/status", CLI_STATUS_SCHEMA),
     ("cli/stop", CLI_STOP_SCHEMA),

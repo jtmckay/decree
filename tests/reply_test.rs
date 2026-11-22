@@ -1,5 +1,5 @@
 //! Replies to waiting runs (docs/reference/messages.md, Replies): delivery and rejection when `process`
-//! claims a reply, `timeout` deadlines, and `decree event`. Each test builds its own
+//! claims a reply, `timeout` deadlines, and `decree reply`. Each test builds its own
 //! `.decree/` in a temp directory.
 
 use assert_cmd::Command;
@@ -120,7 +120,7 @@ impl Project {
 
     fn event(&self, args: &[&str]) -> Command {
         let mut cmd = self.decree_cmd();
-        cmd.arg("event").args(args);
+        cmd.arg("reply").args(args);
         cmd
     }
 
@@ -132,7 +132,7 @@ impl Project {
         let wait_id = last["wait_id"].as_str().unwrap().to_string();
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
         assert!(
-            stdout.contains(&format!("decree event {wait_id} approve")),
+            stdout.contains(&format!("decree reply {wait_id} approve")),
             "{stdout}"
         );
         wait_id
@@ -315,7 +315,7 @@ fn reply_never_replaces_an_earlier_reply_of_the_same_name() {
     fs::create_dir_all(&received).unwrap();
     fs::write(received.join(name), "earlier\n").unwrap();
     let before = p.events(RUN);
-    // Queued as `decree event` writes it, so it keeps its name.
+    // Queued as `decree reply` writes it, so it keeps its name.
     p.write(
         &format!("inbox/{name}"),
         &format!(
@@ -335,7 +335,7 @@ fn reply_never_replaces_an_earlier_reply_of_the_same_name() {
 }
 
 /// Replies are ordered as other messages: one written by hand as `01-reply.md` after
-/// `decree event` queued one runs after it, though its name sorts first.
+/// `decree reply` queued one runs after it, though its name sorts first.
 #[test]
 fn a_reply_written_after_a_queued_one_is_delivered_after_it() {
     let p = Project::new("1h");
@@ -390,7 +390,7 @@ fn no_timeout_before_the_deadline() {
 }
 
 // ---------------------------------------------------------------
-// decree event (docs/reference/cli.md)
+// decree reply (docs/reference/cli.md)
 // ---------------------------------------------------------------
 
 #[test]
@@ -499,7 +499,7 @@ impl Project {
         fs::write(&path, format!("{head}\n{last}\n")).unwrap();
     }
 
-    /// Queue a reply as `decree event` does: `inbox/<id>.md`, with frontmatter `id`.
+    /// Queue a reply as `decree reply` does: `inbox/<id>.md`, with frontmatter `id`.
     fn queue_reply(&self, id: &str, to: &str, event: &str) {
         self.write(
             &format!("inbox/{id}.md"),
@@ -724,7 +724,7 @@ fn rejected_replies_never_hold_the_queue() {
     );
 }
 
-/// AC: `decree event` before a 1s deadline, and a daemon whose first pass starts after it:
+/// AC: `decree reply` before a 1s deadline, and a daemon whose first pass starts after it:
 /// the reply is taken, and nothing holds the daemon.
 #[test]
 fn daemon_takes_a_reply_sent_before_the_deadline() {

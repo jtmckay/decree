@@ -1,5 +1,5 @@
 //! The official `newsletter` plugin (`plugins/newsletter.md`) run through the binary, with no
-//! network and no model. A temp project runs `decree init` and `decree plugin add newsletter`,
+//! network and no model. A temp project runs `decree init` and `decree install newsletter`,
 //! with the `.env` the plugin's file names, and its `feeds.txt` lists local `file://` fixtures (`tests/fixtures/newsletter/`: one RSS 2.0, one Atom, one broken),
 //! and a stub `curl` first on `PATH` stands in for Ollama's `/api/chat` and for ntfy. Covers:
 //! a first run writes `newsletter/<today>.md` with the stub's picks and records the five links
@@ -90,7 +90,7 @@ impl Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
-        for args in [&["init"][..], &["plugin", "add", "newsletter"]] {
+        for args in [&["init"][..], &["install", "newsletter"]] {
             cargo_bin_cmd!("decree")
                 .current_dir(p.root())
                 .args(args)

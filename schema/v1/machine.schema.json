@@ -377,7 +377,7 @@
     },
     "replyInvoke": {
       "type": "object",
-      "description": "SCXML type decree:reply (BPMN receive task; the AWS Step Functions callback pattern, with the wait id as the task token). The `notify` script tells someone or something (a person, a UI, a program) that a reply is wanted; the run pauses until a reply (`decree event <wait id> <option>`) picks one of this state's transitions (its options: every transition except `unsure` and `error`, each with a `description`). Events: the chosen option; `error` on timeout.",
+      "description": "SCXML type decree:reply (BPMN receive task; the AWS Step Functions callback pattern, with the wait id as the task token). The `notify` script tells someone or something (a person, a UI, a program) that a reply is wanted; the run pauses until a reply (`decree reply <wait id> <option>`) picks one of this state's transitions (its options: every transition except `unsure` and `error`, each with a `description`). Events: the chosen option; `error` on timeout.",
       "required": ["question", "notify"],
       "additionalProperties": false,
       "properties": {

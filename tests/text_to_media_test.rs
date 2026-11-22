@@ -1,6 +1,6 @@
 //! The official `comfy` plugin (`plugins/comfy.md`, the machine of `examples/text-to-media/`)
 //! run through the binary against a stub ComfyUI. A temp project runs `decree init` and
-//! `decree plugin add comfy`, which installs its workflows in `machines/comfy/scripts/`, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
+//! `decree install comfy`, which installs its workflows in `machines/comfy/scripts/`, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
 //! `/prompt`, `/history/<id>` and `/view` from files under `stub/`, and logs each request. No
 //! ComfyUI, no network.
 
@@ -50,9 +50,9 @@ esac
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nstub image";
 
-/// `decree init` and `decree plugin add <plugins>` in `root`: the official plugins, installed.
+/// `decree init` and `decree install <plugins>` in `root`: the official plugins, installed.
 fn add_plugins(root: &Path, plugins: &[&str]) {
-    let mut add = vec!["plugin", "add"];
+    let mut add = vec!["install"];
     add.extend_from_slice(plugins);
     common::decree_at(root).arg("init").assert().success();
     common::drop_default_plugins(root);

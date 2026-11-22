@@ -21,7 +21,7 @@ pub(crate) mod runtime;
 pub(crate) mod trace;
 
 use clap::Parser;
-use cli::{Cli, Command, PluginAction};
+use cli::{Cli, Command};
 use colored::Colorize;
 use error::{DecreeError, EXIT_SUCCESS};
 
@@ -54,7 +54,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
     match command {
         Command::Init { ai, permissions } => commands::init::run(ai, permissions),
         Command::Help => commands::help(),
-        Command::Upgrade { format } => commands::upgrade::run(format),
+        Command::Upgrade { yes, format } => commands::upgrade::run(yes, format),
         Command::Check { format } => commands::check::run(&root()?, format),
         Command::Graph { format } => commands::graph::run(&root()?, format),
         Command::Schema { format } => commands::schema::run(&root()?, format),
@@ -63,12 +63,12 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             params,
             format,
         } => commands::emit::run(&root()?, machine.as_deref(), &params, format),
-        Command::Event {
+        Command::Reply {
             target,
             event,
             note,
             format,
-        } => commands::event::run(&root()?, &target, &event, note.as_deref(), format),
+        } => commands::reply::run(&root()?, &target, &event, note.as_deref(), format),
         Command::Daemon {
             once,
             dry_run,
@@ -88,30 +88,20 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
                 commands::daemon::run(&root()?, interval, retry, quiet, &select)
             }
         }
-        Command::Plugin { action } => match action {
-            PluginAction::List { format } => commands::plugin::list(&root()?, format),
-            PluginAction::Add {
-                names,
-                force,
-                format,
-            } => commands::plugin::add(&root()?, &names, force, format),
-            PluginAction::Export {
-                name,
-                dry_run,
-                format,
-            } => match name {
-                Some(name) => commands::plugin::export(&root()?, &name, format),
-                None => commands::plugin::export_edited(&root()?, dry_run, format),
-            },
-            PluginAction::Import {
-                file,
-                force,
-                format,
-            } => commands::plugin::import(&root()?, &file, force, format),
-            PluginAction::Install { names, format } => {
-                commands::plugin::install(&root()?, &names, format)
-            }
+        Command::List { format } => commands::plugin::list(&root()?, format),
+        Command::Export {
+            name,
+            dry_run,
+            format,
+        } => match name {
+            Some(name) => commands::plugin::export(&root()?, &name, format),
+            None => commands::plugin::export_edited(&root()?, dry_run, format),
         },
+        Command::Install {
+            sources,
+            force,
+            format,
+        } => commands::plugin::install(&root()?, &sources, force, format),
         Command::Stop { note, format } => commands::stop::run(&root()?, note.as_deref(), format),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
         Command::Status {

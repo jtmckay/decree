@@ -169,13 +169,13 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
     );
     let events: Vec<&str> = text
         .lines()
-        .filter(|l| l.trim_start().starts_with("decree event"))
+        .filter(|l| l.trim_start().starts_with("decree reply"))
         .collect();
     assert_eq!(
         events,
         [
-            format!("    decree event {wait_id} approve"),
-            format!("    decree event {wait_id} reject"),
+            format!("    decree reply {wait_id} approve"),
+            format!("    decree reply {wait_id} reject"),
         ]
     );
     // It holds nothing: other runs go on.
@@ -199,7 +199,7 @@ fn a_run_waiting_for_a_person_has_a_file_until_the_reply_is_delivered() {
     );
 
     // Once the reply is delivered, the file is gone.
-    p.cmd(&["event", &wait_id, "approve"]).assert().success();
+    p.cmd(&["reply", &wait_id, "approve"]).assert().success();
     assert!(path.exists(), "a queued reply is not delivered yet");
     let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");

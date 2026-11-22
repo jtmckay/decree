@@ -328,7 +328,7 @@ The machine remembers one thing between runs, declared under `state_files:`: `se
 
 ## How to use it
 
-1. Edit `.decree/machines/newsletter/scripts/feeds.txt` (one feed URL per line) and `taste.md`, the whole prompt about you: write it as you would to a friend picking links for you. Keep the edits with `decree plugin export newsletter`.
+1. Edit `.decree/machines/newsletter/scripts/feeds.txt` (one feed URL per line) and `taste.md`, the whole prompt about you: write it as you would to a friend picking links for you. Keep the edits with `decree export newsletter`.
 2. One issue now: `echo "This week" | decree emit --machine newsletter && decree daemon --once`.
 3. Every Monday at 07:00, from the cron file: `decree daemon`.
 

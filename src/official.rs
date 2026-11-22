@@ -1,6 +1,6 @@
 //! The official plugins (docs/reference/plugins.md, Official plugins): the repository's
 //! `plugins/<name>.md`, built into the binary, so adding one needs no network and its version
-//! is this decree's. A project takes one with `decree plugin add <name>`; `decree init` adds none.
+//! is this decree's. A project takes one with `decree install <name>`; `decree init` seeds `DEFAULTS`.
 
 use crate::plugin::Plugin;
 

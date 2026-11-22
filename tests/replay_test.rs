@@ -160,7 +160,7 @@ impl Replay {
         // `process` keeps.
         if decree.join("plugins").is_dir() {
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_decree"))
-                .args(["plugin", "install"])
+                .args(["install"])
                 .current_dir(tmp.path())
                 .output()
                 .unwrap();
@@ -280,7 +280,7 @@ impl Replay {
             .unwrap()
     }
 
-    /// Deliver the reply the recorded run received, through `decree event`, with its body as
+    /// Deliver the reply the recorded run received, through `decree reply`, with its body as
     /// the note.
     fn deliver_reply(&self) {
         let received = files(&self.recorded_run(&self.run).join("received"));
@@ -300,7 +300,7 @@ impl Replay {
         let note = body.trim_end_matches('\n');
         // The reply names the run by its id in the replay.
         let to = key("to").replace(&self.run, &self.id());
-        self.cmd(&["event", &to, &key("event"), "-m", note])
+        self.cmd(&["reply", &to, &key("event"), "-m", note])
             .assert()
             .code(0);
     }
@@ -319,7 +319,7 @@ impl Replay {
             "{tree:?} vs {recorded_tree:?}"
         );
         let mut ids: BTreeMap<String, String> = tree.iter().cloned().zip(recorded_tree).collect();
-        // The reply's filename is the id `decree event` generated.
+        // The reply's filename is the id `decree reply` generated.
         let names = |dir: &Path| -> Vec<String> {
             let received = dir.join("received");
             if !received.exists() {
@@ -491,7 +491,7 @@ fn project_deploy_run_waits_for_a_person_as_recorded() {
         .file_name();
     let run = run.to_str().unwrap();
     assert!(
-        stdout.contains(&format!("decree event {run}.w3 approve")),
+        stdout.contains(&format!("decree reply {run}.w3 approve")),
         "{stdout}"
     );
 }
@@ -527,7 +527,7 @@ fn feature_quota_run_waits_for_a_person_as_recorded() {
     r.assert_matches_recorded();
     let stdout = String::from_utf8_lossy(&process.code(0).get_output().stdout).into_owned();
     assert!(
-        stdout.contains(&format!("decree event {}.w15 retry", r.id())),
+        stdout.contains(&format!("decree reply {}.w15 retry", r.id())),
         "{stdout}"
     );
 }

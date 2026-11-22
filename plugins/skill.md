@@ -99,15 +99,15 @@ scripts:
     ## Starting a project
 
     ```bash
-    decree init                  # .decree/ with no machines; it lists the official plugins
-    decree plugin list           # the official plugins built into decree, marked added and differs
-    decree plugin add develop    # develop, and infra, which it needs, into .decree/plugins/, installed
+    decree init                  # .decree/ with the plugins ai, order, prune and skill
+    decree list                  # this project's plugins, then the official ones it can add
+    decree install develop       # develop, and infra, which it needs, into .decree/plugins/, installed
     ```
 
     `init` never prompts and installs no plugin. Add only what the project needs; each plugin's
     file (`.decree/plugins/<name>.md`) says what it does, what it needs and how to use it.
     For a Rust, Node or React project, add the `develop` variant that fits instead of `develop`:
-    `decree plugin add develop_rust` (or `develop_node`, `develop_react`). Each is `develop`'s
+    `decree install develop_rust` (or `develop_node`, `develop_react`). Each is `develop`'s
     machine under its own name, with a gate that already runs the ecosystem's standard checks,
     conventions its prompts follow, and its tools in `machines/<variant>/scripts/requirements`; a project
     with two parts (a Rust API, a React front end) adds two and names one in each message. A
@@ -228,7 +228,7 @@ scripts:
       queue, a model unloading), not an `onentry` script, which has none. Keep `onentry` for quick
       steps.
     - **What needs a person is in `.decree/attention/`.** Read it first when a run is failed,
-      waiting or stuck, and do what each file says: `decree event <wait id> <option>` for a wait,
+      waiting or stuck, and do what each file says: `decree reply <wait id> <option>` for a wait,
       `decree daemon --once --retry <id>` for a failed or interrupted run. Never edit an attention file
       to answer; never write one from a machine's script. A step whose failure must stop every
       run writes `$DECREE_RUN_DIR/hold` (what `keep` does), and decree turns it into a holding
@@ -239,21 +239,21 @@ scripts:
     - **Plugins are the source.** Each `.decree/plugins/<name>.md` holds one machine folder,
       `.decree/machines/<name>/`: its `machine.yml` (or none: a library of scripts), `scripts/`,
       `cron/`, and seeds for its `state/` and `order/`; `x-` keys are for other tools. decree
-      installs plugins only when asked: `decree plugin install` (after a clone or a pull; `check`
+      installs plugins only when asked: `decree install` (after a clone or a pull; `check`
       and `daemon` say when one is due), `add` or `import`. Edit the installed copy
       (`machine.yml`, `scripts/`, `cron/`), run it, then keep the edit with
-      `decree plugin export <name>`, or let the next run's `commit` export it, and commit the
+      `decree export <name>`, or let the next run's `commit` export it, and commit the
       plugin file. A machine written by hand in `machines/<name>/` is not committed until it is exported
       (`decree check` warns about it). A project's settings for a plugin (`gate.sh`,
       `requirements`, `QA_RUN`) are such edits: they live in its plugin file. If `decree check` reports a P3
       conflict (the plugin changed while the copy was edited), export to keep the edit and merge
-      with git, or `decree plugin install <name>` to take the plugin's version. Never edit
+      with git, or `decree install <name>` to take the plugin's version. Never edit
       `.decree/cache/plugins/`.
     - **Never delete run folders to clean up**; they are the record. The official `prune` plugin
       deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.
     - Commit `.decree/plugins/`, `.decree/system.md` and each `machines/<name>/graph.md` and
-      `order/`; git ignores the rest of `.decree/machines/`, which `decree plugin install` installs
-      from `plugins/`, except any `*.git.txt` file in a machine's `state/`. Do not commit
+      `order/`; git ignores the rest of `.decree/machines/`, which `decree install` installs
+      from `plugins/`, except any `*.git.txt` file (`order.git.txt`) in a machine's `state/`. Do not commit
       `.decree/inbox/`, `.decree/runs/` or `.decree/cache/`.
 
     ## Commands
@@ -261,20 +261,22 @@ scripts:
     | Command | Use |
     | --- | --- |
     | `decree check [--format json\|sarif]` | Validate every machine, script name, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
-    | `decree plugin list` / `decree plugin add <name>... [--force]` | List the official plugins (`added`, `differs`); add them, and those they need, to `.decree/plugins/` and install them. `--force` takes this decree's copy and prints the edits it drops. |
-    | `decree plugin export [<name>]` | Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. `decree plugin import <file\|->` checks one and installs it; `decree plugin install [<name>]` replaces an edited installed copy. |
+    | `decree install` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone or a pull. Keeps an edited installed copy, naming a conflict. |
+    | `decree install <name>... [--force]` | Install these plugins, replacing an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--force` takes this decree's copy and prints the edits it drops. |
+    | `decree install <file\|->`, or `curl -fsSL <url> \| decree install` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
+    | `decree list` / `decree export [<name>]` | List the project's plugins (`official` or `own`, `differs`, `not installed`, `edited`), the machines no plugin installed, and the official plugins it can add. Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. |
     | `decree graph` | Write `.decree/machines/<machine>/graph.md` (Mermaid) for every machine, plus `.decree/system.md`. |
     | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
-    | `decree plugin add --force skill` | After upgrading decree: take its `skill` plugin; the next daemon start rewrites this skill, keeping other files in the skill folder. |
+    | `decree install --force skill` | After upgrading decree: take its `skill` plugin; the next daemon start rewrites this skill, keeping other files in the skill folder. |
     | `decree` | Print a synopsis of the quick start and run nothing; run the queue with `decree daemon --once`. |
-    | `decree upgrade [--format json]` | Print how to upgrade decree (the install line, pinned with `\| sh -s -- <tag>`, and `cargo install --git … --force` for a cargo copy) and what to run in each project after. It runs nothing: a person runs the line. |
+    | `decree upgrade [--yes] [--format json]` | Print how to upgrade decree (the install line, pinned with `\| sh -s -- <tag>`, and `cargo install --git … --force` for a cargo copy) and what to run in each project after, then ask y/N before running the install line; `--yes` runs it without asking. An agent never answers `y` for a person. |
     | `decree emit [--machine <m>] [--param k=v]...` | Queue a message from stdin: a body for machine `m`, or a whole message whose frontmatter the flags override (`decree emit < <file>` runs a message again). Prints the new id. |
     | `decree daemon --once [--dry-run] [--quiet] [--machine <m> \| --exclude-machine <m>]` | Start (firing `@reboot` cron files, so `order` runs the order files), run everything queued: replies, pending runs, the inbox (FIFO), printing each run's output, then exit. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
     | `decree daemon --once --retry <id> [--state <s>]` | Continue a failed or interrupted run first. The failure message prints the exact command. |
     | `decree daemon [--interval <duration>] [--retry <id>] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with scheduled cron, every `2s` by default; `--machine` and `--exclude-machine` as for `--once`. |
     | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then runs by status (`--all`: every run), and active runs in projects below; one run's events; `--cron`: cron files and when each fires next (`daemon start` for `@reboot`). |
     | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
-    | `decree event <wait id> <event> [-m <note>]` | Answer a run waiting in a `reply` state; a run id means its current wait. |
+    | `decree reply <wait id> <event> [-m <note>]` | Answer a run waiting in a `reply` state; a run id means its current wait. |
     | `decree stop [-m <note>]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted (no restart needed). Ctrl-C interrupts the run instead. |
 
     `daemon --once` exits once nothing more can run, leaving `reply` waits for the next start;
@@ -285,7 +287,7 @@ scripts:
 
     ## The official plugins
 
-    A project may have added official plugins (`decree plugin list` marks them `added`): `develop`
+    A project may have added official plugins (`decree list` marks them `official`): `develop`
     (or its variants `develop_rust`, `develop_node` and `develop_react`, which work as it does),
     `infra` and `qa` below, `router` (the default router), and `newsletter`, `comfy`,
     `develop_by_size`, `gliner_router`, `llm_router`, `lease` and `plugin_install` (installs the
@@ -316,7 +318,7 @@ scripts:
     `plan.md`): a person answers a `STOP` in `plan.md`, deletes `STOP` and
     retries. `precheck` runs
     `machines/infra/scripts/run.sh check`, which checks every `.decree/machines/*/scripts/requirements`. The project fills in `machines/develop/scripts/gate.sh` with its own checks, kept by
-    `decree plugin export develop` (or the next `commit`); until then it runs nothing, says so and
+    `decree export develop` (or the next `commit`); until then it runs nothing, says so and
     names `pass`. The gate names `pass` (to `verify`) or `fail` (to `fix`,
     then `final_gate`, whose `fail` ends the run); a non-zero exit means the checks could not run,
     such as a missing tool, and goes to `failed` without `fix`. `ai.sh` runs the agent with
@@ -336,7 +338,7 @@ scripts:
     expected-failure marker and writes one report per root cause (the broken invariant and the
     expected behaviour, no fix), and `report` emits each as a `develop` message. A guard (`machines/qa/scripts/qa.sh`) fails any step whose AI changed a file outside
     `QA_DIR`. It does not start until `QA_RUN` in `machines/qa/scripts/qa.sh` names the suite's command (kept
-    by `decree plugin export qa`); once
+    by `decree export qa`); once
     qa finds bugs, the gate should run it too.
 
     ## Worked example
@@ -754,7 +756,7 @@ scripts:
     | `trigger` | decree only | `cron`, `emit`, `inbox` or `invoke` (a child run, as an order file's run is). |
     | `arrived_as` | decree only | The name a file written into `inbox/` had before it got its id. |
     | `traceparent`, `tracestate` | decree, `decree emit`, any tool | W3C Trace Context: the run joins this trace, under this span. An invalid `traceparent` is ignored and the run starts a new trace. |
-    | `to`, `event` | `decree event`, any tool | Only in a reply to a waiting run (below). |
+    | `to`, `event` | `decree reply`, any tool | Only in a reply to a waiting run (below). |
 
     Any other key is kept as written and ignored.
 
@@ -940,7 +942,7 @@ scripts:
     `DECREE_RECEIVED`.
 
     ```bash
-    decree event 20261001T145120.000000Z-9c2e57.w15 retry -m "plans.toml lives in config/."
+    decree reply 20261001T145120.000000Z-9c2e57.w15 retry -m "plans.toml lives in config/."
     ```
 
     writes:
@@ -960,9 +962,9 @@ scripts:
 
     With a `timeout`, a reply queued at or before the deadline wins over the timeout, even when
     `daemon` gets to it after the deadline. The time that counts is the reply's `id`,
-    when it reached the queue: when `decree event` or `decree emit` queued it, or, for a file
+    when it reached the queue: when `decree reply` or `decree emit` queued it, or, for a file
     written straight into `inbox/`, when decree gave it an id on arrival. A tool that answers near
-    a deadline should queue its reply with `decree event`; a reply queued after the deadline loses,
+    a deadline should queue its reply with `decree reply`; a reply queued after the deadline loses,
     and the run takes `error` with `timed_out: true`.
   skill/reference/runs.md: |
     # Runs
@@ -1008,7 +1010,7 @@ scripts:
     | --- | --- | --- |
     | `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; for `failed`, what its file in `.decree/attention/` says, `decree daemon --once --retry <id>`; or that to run it again from a state. |
     | `active` | A live process holds its lock. | `decree tail` to watch it. |
-    | `waiting` | Paused for a person, or for a child run. | `decree event <wait id> <event>`; the run's file in `.decree/attention/` and `decree daemon --once` give the commands. |
+    | `waiting` | Paused for a person, or for a child run. | `decree reply <wait id> <event>`; the run's file in `.decree/attention/` and `decree daemon --once` give the commands. |
     | `pending` | A reply arrived, or a `retry` transition was written. | `decree daemon --once` continues it. |
     | `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree daemon --once --retry <id>`, as its file in `.decree/attention/` says. decree never continues it on its own. |
 
@@ -1021,13 +1023,13 @@ scripts:
     `.decree/attention/<id>.md` is decree's list of what needs a person: a file per run that is
     `failed`, `interrupted` or `waiting` in a `reply` state. Frontmatter `kind: run`, `run`, `machine`, `message`,
     `status`, `state`, `since`, `holds` (`.decree/schema/v1/attention.schema.json`), then what
-    happened, the exact command (`decree daemon --once --retry <id>`, or one `decree event <wait id>
+    happened, the exact command (`decree daemon --once --retry <id>`, or one `decree reply <wait id>
     <option>` per option), the run's `hold` text, its `leftovers` and its `STOP` question. decree
     writes and deletes the files as each run's status changes; a file a person deleted stays deleted
     until it changes again. `decree daemon --once` ends with `<n> run(s) need attention: .decree/attention/`, and
     `decree status` starts with `Attention:` (`attention` in `--format json`).
 
-    - Read-only: answer with `decree event` or a reply, continue with `decree daemon --once --retry`;
+    - Read-only: answer with `decree reply` or a reply, continue with `decree daemon --once --retry`;
       editing a file answers nothing, and no script writes one.
     - While a file has `holds: true` (its run wrote `hold`), or a `.md` file there cannot be read
       as one (no frontmatter, invalid frontmatter), `daemon` starts and continues no
@@ -1055,7 +1057,7 @@ scripts:
 
     Machines name scripts, never paths. Script `X` used by machine `M` resolves in one folder only,
     `.decree/machines/M/scripts/`. There is no other search path: a script another machine ships is
-    reached by path from a script, never by name. To share a machine and its scripts across projects, make it a plugin: `decree plugin export M` writes `.decree/plugins/M.md`.
+    reached by path from a script, never by name. To share a machine and its scripts across projects, make it a plugin: `decree export M` writes `.decree/plugins/M.md`.
 
     A match is a file named `X` or `X.<ext>` (`verify.sh`), executable, and the only match in its
     directory. Script names match `^[a-z][a-z0-9_]*$`. Code several machines share is a library: a
@@ -1236,7 +1238,7 @@ scripts:
     cat "$DECREE_CHOICES"
     for event in $DECREE_EVENTS; do
       [ "$event" = error ] && continue
-      echo "  decree event $DECREE_WAIT_ID $event -m \"<note>\""
+      echo "  decree reply $DECREE_WAIT_ID $event -m \"<note>\""
     done
     ```
 
@@ -1257,6 +1259,6 @@ cron:
 
 The decree skill, for an AI CLI that reads skills: `SKILL.md` and `reference/*.md`, which tell an agent how to write messages, machines and scripts and how to run decree. `decree init` adds this plugin and writes the skill for its AI backend; then, each time `decree daemon` starts (its cron file is `@reboot`), `install` copies each file that differs into each skill folder the project has, `.claude/skills/decree/` (Claude Code) and `.github/skills/decree/` (GitHub Copilot). Other files in those folders are the project's and stay.
 
-- **After upgrading decree:** `decree plugin add --force skill`, then `decree daemon --once` (or the next daemon start) writes the new skill.
-- **Your own edits:** edit `.decree/machines/skill/scripts/skill/`, then `decree plugin export skill`; a file edited only in `.claude/skills/decree/` is written over at the next start.
-- **No skill:** delete `.decree/plugins/skill.md`, then `decree plugin install`.
+- **After upgrading decree:** `decree install --force skill`, then `decree daemon --once` (or the next daemon start) writes the new skill.
+- **Your own edits:** edit `.decree/machines/skill/scripts/skill/`, then `decree export skill`; a file edited only in `.claude/skills/decree/` is written over at the next start.
+- **No skill:** delete `.decree/plugins/skill.md`, then `decree install`.

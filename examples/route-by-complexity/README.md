@@ -13,7 +13,7 @@ Use [`gliner_router`](../../plugins/gliner_router.md) when the answer shows in t
 
 ## The machine
 
-The machine and the two routers are official plugins, built into decree: [`develop_by_size`](../../plugins/develop_by_size.md), [`gliner_router`](../../plugins/gliner_router.md) and [`llm_router`](../../plugins/llm_router.md). `decree plugin add develop_by_size` adds the first with `gliner_router`, which it needs; `decree graph` draws it:
+The machine and the two routers are official plugins, built into decree: [`develop_by_size`](../../plugins/develop_by_size.md), [`gliner_router`](../../plugins/gliner_router.md) and [`llm_router`](../../plugins/llm_router.md). `decree install develop_by_size` adds the first with `gliner_router`, which it needs; `decree graph` draws it:
 
 ```mermaid
 stateDiagram-v2
@@ -57,7 +57,7 @@ From a clone of decree, in a new project beside `examples/`, add the plugins and
 ```bash
 mkdir -p sized && cd sized
 decree init
-decree plugin add develop_by_size llm_router
+decree install develop_by_size llm_router
 mkdir -p .decree/machines/develop_by_size/order
 cp ../examples/route-by-complexity/messages/01-raise-upload-limit.md .decree/machines/develop_by_size/order/
 decree check

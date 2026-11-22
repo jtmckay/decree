@@ -40,7 +40,7 @@ fn clean(cmd: &mut std::process::Command) {
 }
 
 impl Project {
-    /// `decree init`, `decree plugin add lease`, the test rules and the stub swap script.
+    /// `decree init`, `decree install lease`, the test rules and the stub swap script.
     fn new() -> Project {
         Project::with_rules(RULES)
     }
@@ -53,7 +53,7 @@ impl Project {
             daemon: RefCell::new(None),
         };
         p.decree(&["init"]).assert().success();
-        p.decree(&["plugin", "add", "lease"]).assert().success();
+        p.decree(&["install", "lease"]).assert().success();
         fs::write(p.lease_dir().join("resources"), rules).unwrap();
         let stub = p.lease_dir().join("swap/gpu.sh");
         fs::write(&stub, STUB).unwrap();
@@ -197,30 +197,30 @@ impl Project {
         }
     }
 
-    /// `decree event <id> <event>`. A lease looks every second, and for that instant it is
-    /// not waiting, so `decree event` refuses; send again, as a client would.
+    /// `decree reply <id> <event>`. A lease looks every second, and for that instant it is
+    /// not waiting, so `decree reply` refuses; send again, as a client would.
     fn send(&self, id: &str, event: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let out = self.decree(&["event", id, event]).output().unwrap();
+            let out = self.decree(&["reply", id, event]).output().unwrap();
             if out.status.success() {
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "decree event {id} {event}: {}",
+                "decree reply {id} {event}: {}",
                 String::from_utf8_lossy(&out.stderr)
             );
             thread::sleep(Duration::from_millis(50));
         }
     }
 
-    /// `decree event <id> release` if the run still waits; nothing if it has finished.
+    /// `decree reply <id> release` if the run still waits; nothing if it has finished.
     fn release_if_live(&self, id: &str) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while self.state(id).0 != "finished" {
             if self
-                .decree(&["event", id, "release"])
+                .decree(&["reply", id, "release"])
                 .output()
                 .unwrap()
                 .status
@@ -228,7 +228,7 @@ impl Project {
             {
                 return;
             }
-            assert!(Instant::now() < deadline, "decree event {id} release");
+            assert!(Instant::now() < deadline, "decree reply {id} release");
             thread::sleep(Duration::from_millis(50));
         }
     }
@@ -718,13 +718,13 @@ fn lease_is_listed_and_adds_cleanly() {
             .clone()
     };
     run(&["init"]);
-    let list = String::from_utf8(run(&["plugin", "list"])).unwrap();
+    let list = String::from_utf8(run(&["list"])).unwrap();
     let line = list
         .lines()
         .find(|l| l.trim_start().starts_with("lease "))
         .unwrap_or_else(|| panic!("{list}"));
     assert!(line.contains("One holder per resource"), "{line}");
-    run(&["plugin", "add", "lease"]);
+    run(&["install", "lease"]);
     run(&["check"]);
     let req = tmp
         .path()

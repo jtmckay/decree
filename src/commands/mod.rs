@@ -1,11 +1,11 @@
 pub mod check;
 pub mod daemon;
 pub mod emit;
-pub mod event;
 pub mod graph;
 pub mod init;
 pub mod plugin;
 pub mod process;
+pub mod reply;
 pub(crate) mod report;
 pub mod schema;
 pub mod status;

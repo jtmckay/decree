@@ -145,8 +145,8 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
 
     println!("Decree initialized successfully.");
     println!();
-    plugin::print_official(decree_dir)?;
-    println!("Add one with `decree plugin add <name>`, such as `decree plugin add develop`.");
+    plugin::print_available(decree_dir)?;
+    println!("Edit or delete any file in .decree/plugins/, then run `decree install`; add an official plugin with `decree install <name>`, such as `decree install develop`.");
     Ok(())
 }
 

@@ -7,8 +7,8 @@ Install or update:
 
 1. Set up a project, then see the official plugins and add one:
        decree init
-       decree plugin list
-       decree plugin add develop
+       decree list
+       decree install develop
 
 2. Write a script (chmod +x it):
        `.decree/machines/hello/scripts/greet.sh`

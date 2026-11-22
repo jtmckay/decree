@@ -1,7 +1,7 @@
 //! `decree check`: validate machines (V1–V21), queued messages and cron files (M2, M3) and the `.env`
 //! files (E1) before anything runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
-//! without failing, when `.decree/graph/` differs from what `decree graph` would write, or
+//! without failing, when a graph (`machines/<name>/graph.md`, `system.md`) differs from what `decree graph` would write, or
 //! `.decree/schema/`, when it exists, from what `decree schema` would write, when a machine's
 //! `state/` holds what its `state_files:` does not declare, when an `.env` file uses a variable
 //! that is not set, when a machine's `env_file` is missing, and when `.decree/.gitignore` does
@@ -179,7 +179,7 @@ fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
                 line: None,
                 state: None,
                 message: format!(
-                    "`needs` names {list}, not in `{}/`: import it with `decree plugin import`",
+                    "`needs` names {list}, not in `{}/`: install it with `decree install <name>` or `decree install <file>`",
                     plugin::PLUGINS_DIR
                 ),
             },
@@ -202,7 +202,7 @@ fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
 }
 
 /// Each machine no plugin installed, in a project with `plugins/`.
-/// A warning for each plugin `decree plugin install` would install, remove, or leave as a
+/// A warning for each plugin `decree install` would install, remove, or leave as a
 /// machine no plugin installed: `check` installs nothing (docs/reference/plugins.md,
 /// Installing).
 fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
@@ -210,21 +210,22 @@ fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
     for name in &synced.installed {
         out.push(CheckWarning {
             file: plugin::plugin_file(name),
-            message:
-                "not installed, or changed since it was installed: run `decree plugin install`"
-                    .to_string(),
+            message: "not installed, or changed since it was installed: run `decree install`"
+                .to_string(),
         });
     }
     for name in &synced.removed {
         out.push(CheckWarning {
             file: plugin::plugin_file(name),
-            message: "deleted, but its installed copy is still there: run `decree plugin install` to remove it".to_string(),
+            message:
+                "deleted, but its installed copy is still there: run `decree install` to remove it"
+                    .to_string(),
         });
     }
     for name in &synced.kept {
         out.push(CheckWarning {
             file: plugin::plugin_file(name),
-            message: "deleted, but its installed copy was edited: `decree plugin install` keeps it as files no plugin installed".to_string(),
+            message: "deleted, but its installed copy was edited: `decree install` keeps it as files no plugin installed".to_string(),
         });
     }
     out
@@ -237,9 +238,9 @@ fn plugin_warnings(project: &Project) -> Result<Vec<CheckWarning>, DecreeError> 
             .map(|id| CheckWarning {
                 file: layout::machine_file_rel(&id),
                 message: format!(
-                "no plugin installed this machine; run `decree plugin export {id}` to write `{}`",
-                plugin::plugin_file(&id)
-            ),
+                    "no plugin installed this machine; run `decree export {id}` to write `{}`",
+                    plugin::plugin_file(&id)
+                ),
             })
             .collect(),
     )

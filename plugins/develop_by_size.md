@@ -151,7 +151,7 @@ Sends each change to the cheapest model that can do it. A local classifier (thro
 
 ## What it needs
 
-- The `gliner_router` plugin and its classifier server, which `decree plugin add develop_by_size` adds with it.
+- The `gliner_router` plugin and its classifier server, which `decree install develop_by_size` adds with it.
 - Ollama with a coding model (`OLLAMA_MODEL`, `qwen3-coder:30b` by default: `ollama pull qwen3-coder:30b`), and OpenCode configured with Ollama as a provider in the project's `opencode.json`.
 - Claude Code (`claude`) on `PATH`.
 

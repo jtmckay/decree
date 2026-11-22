@@ -7,7 +7,7 @@ machine:
   initial: settle
   states:
     settle:
-      description: The next file starts only once everything before it has been processed, its follow-ups included, as the inbox being empty shows.
+      description: The next file starts only once everything before it has been processed, its follow-ups included, as an empty inbox and no shows.
       invoke: idle
       transitions:
         idle: next

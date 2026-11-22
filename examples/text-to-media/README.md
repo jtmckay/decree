@@ -8,7 +8,7 @@ No model is involved: the scripts call ComfyUI directly, with `curl` and `jq`.
 
 ## The machine
 
-The machine is the official plugin [`comfy`](../../plugins/comfy.md), built into decree: `decree plugin add comfy` adds it to a project. Its file says what each state does and what it needs. In short:
+The machine is the official plugin [`comfy`](../../plugins/comfy.md), built into decree: `decree install comfy` adds it to a project. Its file says what each state does and what it needs. In short:
 
 1. The root `onentry`, `precheck`, fails fast if `curl` or `jq` is missing.
 2. `build` patches `.decree/machines/comfy/scripts/<method>.json` with the message: the body is the prompt, and `width`, `height` and `seed` replace the workflow's own values when set. It patches every workflow the same way, by node type, so a new method is a new workflow file.
@@ -20,7 +20,7 @@ The scripts find ComfyUI at `COMFY_URL`, `http://127.0.0.1:8188` by default.
 
 ## Methods and messages
 
-A method is a workflow in `.decree/machines/comfy/scripts/`, by file stem: data that comfy's scripts read, so it sits beside them; decree runs only the scripts its states name ([Resolution](../../docs/reference/scripts.md#resolution)). A new workflow there is a new method; `decree plugin export comfy` keeps it in the plugin file. One message per method:
+A method is a workflow in `.decree/machines/comfy/scripts/`, by file stem: data that comfy's scripts read, so it sits beside them; decree runs only the scripts its states name ([Resolution](../../docs/reference/scripts.md#resolution)). A new workflow there is a new method; `decree export comfy` keeps it in the plugin file. One message per method:
 
 ### `image_flux2_text_landscape`: an image from text (FLUX2)
 
@@ -72,7 +72,7 @@ You need a running ComfyUI with the FLUX2 and WAN2.2 models the workflows load, 
 ```bash
 mkdir -p renders && cd renders
 decree init
-decree plugin add comfy
+decree install comfy
 mkdir -p .decree/machines/comfy/order
 cp ../examples/text-to-media/messages/*.md .decree/machines/comfy/order/
 decree check

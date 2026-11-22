@@ -4,7 +4,7 @@
 //! when the run becomes `active` or `pending`, finishes in another state, or is pruned. It does so as the
 //! status changes, never by rescanning, so a file a person deleted stays deleted.
 //!
-//! The files are read-only for people: answers go through `decree event` or a reply, and a
+//! The files are read-only for people: answers go through `decree reply` or a reply, and a
 //! run continues with `decree daemon --once --retry`. A file with `holds: true` (its run has a
 //! `hold` file), or any `.md` file decree cannot read as one of its own, holds the queue:
 //! `daemon` starts and continues no runs until it is gone. decree never rewrites
@@ -600,7 +600,7 @@ fn machine_of(ctx: &Context, events: &[Event], message: Option<&Message>) -> Opt
 }
 
 /// The part of the file for a run waiting in a `reply` state: the question, each option
-/// with its description, and a `decree event` line per option.
+/// with its description, and a `decree reply` line per option.
 fn reply(ctx: &Context, id: &str, events: &[Event], state: &str, since: &str) -> String {
     let Some(last) = events.last() else {
         return String::new();
@@ -633,7 +633,7 @@ fn reply(ctx: &Context, id: &str, events: &[Event], state: &str, since: &str) ->
     }
     out.push_str("\nAnswer with one of:\n\n");
     for option in &options {
-        out.push_str(&format!("    decree event {wait_id} {option}\n"));
+        out.push_str(&format!("    decree reply {wait_id} {option}\n"));
     }
     out.push('\n');
     out

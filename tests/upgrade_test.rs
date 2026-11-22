@@ -1,7 +1,7 @@
 //! `decree upgrade` (docs/reference/cli.md, Upgrading decree): prints the running version,
 //! the README's install line, its pinned form, the `cargo install --git … --force` line with
 //! the `which -a decree` note, and what to run in each project; exit 0 with or without a
-//! `.decree/`. It only prints: no network call, no other program.
+//! `.decree/`; then it asks before running the install line, and runs it only on `y` or `--yes`.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
@@ -70,7 +70,7 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         install.clone(),
         format!("{install} -s -- <tag>"),
         "cargo install --git https://github.com/jtmckay/decree --tag <tag> --force".into(),
-        "decree plugin add --force skill  (if the project has the skill plugin: the next daemon \
+        "decree install --force skill  (if the project has the skill plugin: the next daemon \
          start writes the new skill)"
             .into(),
     ] {
@@ -80,10 +80,10 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         );
     }
     assert!(stdout.contains("`which -a decree`"), "{stdout}");
-    // AC (A10): the after-steps say `plugin list` shows which plugins the new version changed,
-    // and `plugin add --force <name>` takes the new copy.
+    // AC (A10): the after-steps say `list` shows which plugins the new version changed,
+    // and `decree install --force <name>` takes the new copy.
     assert!(
-        lines.iter().any(|l| l.starts_with("decree plugin list")
+        lines.iter().any(|l| l.starts_with("decree list")
             && l.contains("`differs`")
             && l.contains("new version changed")),
         "{stdout}"
@@ -91,7 +91,7 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("decree plugin add --force <name>")
+            .any(|l| l.starts_with("decree install --force <name>")
                 && l.contains("new version's copy")),
         "{stdout}"
     );
@@ -152,11 +152,73 @@ fn json_output_matches_its_schema() {
         assert_eq!(
             after,
             [
-                "decree plugin add --force skill",
+                "decree install --force skill",
                 "decree schema",
-                "decree plugin list",
-                "decree plugin add --force <name>"
+                "decree list",
+                "decree install --force <name>"
             ]
         );
     }
+}
+
+/// `decree upgrade <args>` in `dir`, with `stdin`, and a `PATH` whose `curl` is a stub that
+/// prints a script saying it ran: (exit code, stdout, stderr).
+fn upgrade_with(dir: &Path, args: &[&str], stdin: &str) -> (i32, String, String) {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let curl = bin.join("curl");
+    std::fs::write(&curl, "#!/bin/sh\necho 'echo stub install ran'\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = cargo_bin_cmd!("decree")
+        .current_dir(dir)
+        .env("NO_COLOR", "1")
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .args(["upgrade"])
+        .args(args)
+        .write_stdin(stdin)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+/// It asks before running the install line: no answer, or anything but `y`, runs nothing.
+#[test]
+fn asks_and_runs_nothing_without_a_yes() {
+    for answer in ["", "n\n", "maybe\n"] {
+        let tmp = dir(false);
+        let (code, stdout, stderr) = upgrade_with(tmp.path(), &[], answer);
+        assert_eq!(code, 0, "{stderr}");
+        let install = readme_install_line();
+        assert!(
+            stdout.contains(&format!("Run the install line now ({install})? [y/N] ")),
+            "{stdout}"
+        );
+        assert!(stdout.ends_with("Nothing was installed.\n"), "{stdout}");
+        assert!(!stdout.contains("stub install ran"), "{stdout}");
+    }
+}
+
+/// `y` at the prompt, or `--yes`, runs the README's install line with `sh`.
+#[test]
+fn runs_the_install_line_on_y_or_yes() {
+    for (args, answer) in [(&[][..], "y\n"), (&["--yes"][..], "")] {
+        let tmp = dir(false);
+        let (code, stdout, stderr) = upgrade_with(tmp.path(), args, answer);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stdout.contains(&format!("Running: {}\n", readme_install_line())),
+            "{stdout}"
+        );
+        assert!(stdout.contains("stub install ran\n"), "{stdout}");
+        assert!(stdout.contains("Installed."), "{stdout}");
+    }
+    let tmp = dir(false);
+    let (code, stdout, stderr) = upgrade_with(tmp.path(), &["--yes", "--format", "json"], "");
+    assert_eq!((code, stdout.as_str()), (1, ""), "{stderr}");
+    assert!(stderr.contains("--yes runs the install line"), "{stderr}");
 }

@@ -98,7 +98,7 @@ impl Project {
         }
         // Kept as plugins, as git ignores machines/ and scripts/.
         for name in ["flaky", "deploy", "slow"] {
-            run(p.root(), &["plugin", "export", name], "");
+            run(p.root(), &["export", name], "");
         }
         run(p.root(), &["graph"], "");
         run(p.root(), &["schema"], "");
@@ -297,18 +297,18 @@ fn emit_event_retry_status_and_daemon_once() {
 
     // event: the reply's id and path; a run that is not waiting prints nothing.
     let (code, doc) = p.json(
-        &["event", &deploy, "approve"],
+        &["reply", &deploy, "approve"],
         "",
-        schema::CLI_EVENT_SCHEMA,
+        schema::CLI_REPLY_SCHEMA,
         false,
     );
     assert_eq!(code, 0);
     let reply = doc["id"].as_str().unwrap().to_string();
     assert_eq!(doc["path"], format!(".decree/inbox/{reply}.md"));
     let (code, _) = p.json(
-        &["event", &flaky, "approve"],
+        &["reply", &flaky, "approve"],
         "",
-        schema::CLI_EVENT_SCHEMA,
+        schema::CLI_REPLY_SCHEMA,
         true,
     );
     assert_eq!(code, 1);

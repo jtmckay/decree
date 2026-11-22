@@ -1715,7 +1715,7 @@ machines/m/cron/b.md: line 3: unknown machine `nope` (M3)
             "---\nname: m\nneeds: [r]\nmachine:\n  description: Base machine.\n  initial: work\n  states:\n    work:\n      invoke: work\n      transitions: { done: done }\n    done: { final: true }\n    failed: { final: true }\nscripts:\n  work: \"#!/bin/sh\\n\"\n---\n",
         )],
         scripts: &[],
-        expected: "plugins/m.md: `needs` names `r`, not in `plugins/`: import it with `decree plugin import` (P2)\n",
+        expected: "plugins/m.md: `needs` names `r`, not in `plugins/`: install it with `decree install <name>` or `decree install <file>` (P2)\n",
     },
     // P3
     Case {
@@ -1738,7 +1738,7 @@ machines/m/cron/b.md: line 3: unknown machine `nope` (M3)
             ("plugins/m.md", PLUGIN_CHANGED),
         ],
         scripts: &[],
-        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m/machine.yml, or a file in machines/m/scripts/ or machines/m/cron/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree plugin export m` and merge with git; to take the plugin's version, run `decree plugin install m` (P3)\n",
+        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m/machine.yml, or a file in machines/m/scripts/ or machines/m/cron/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree export m` and merge with git; to take the plugin's version, run `decree install m` (P3)\n",
     },
 ];
 

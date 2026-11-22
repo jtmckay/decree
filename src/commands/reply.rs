@@ -1,4 +1,4 @@
-//! `decree event <wait id | run id> <event> [-m <note>]` (docs/reference/cli.md): queue a reply
+//! `decree reply <wait id | run id> <event> [-m <note>]` (docs/reference/cli.md): queue a reply
 //! for a run waiting in a `reply` state (docs/reference/messages.md, Replies), through the same
 //! writer as `decree emit`. The next `process` pass delivers it.
 
@@ -15,7 +15,7 @@ use crate::layout::{DECREE_DIR, INBOX_DIR};
 use crate::message::{self, Message};
 use crate::reply;
 
-/// Run `decree event`: check that the run is waiting, accepts `event` and has no reply
+/// Run `decree reply`: check that the run is waiting, accepts `event` and has no reply
 /// queued already, so mistakes fail at once, then queue the reply with the note as its
 /// body. Prints the reply's id.
 pub fn run(

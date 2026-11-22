@@ -140,11 +140,7 @@ fn synopsis_steps_run_as_written() {
     // 1. Set up a project, list the official plugins and add one.
     assert_eq!(
         steps[&1],
-        [
-            "decree init",
-            "decree plugin list",
-            "decree plugin add develop"
-        ]
+        ["decree init", "decree list", "decree install develop"]
     );
     for line in &steps[&1] {
         decree(line);

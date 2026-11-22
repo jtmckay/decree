@@ -17,7 +17,7 @@ Running a model server is outside decree: these routers only talk to one (see [`
 
 ## The contract
 
-A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, such as the official plugin `decree plugin add router` adds (`decree check` fails V16 if a `model` names no router and there is no `machines/router/machine.yml`):
+A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, such as the official plugin `decree install router` adds (`decree check` fails V16 if a `model` names no router and there is no `machines/router/machine.yml`):
 
 ```yaml
 # the machine of the official develop_by_size plugin (plugins/develop_by_size.md)
@@ -241,7 +241,7 @@ OpenAI's Decisions API would be a typed router: it takes context and questions w
 
 ### Claude, OpenCode and Copilot (the official `router` plugin)
 
-The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree plugin add router` installs [`plugins/router.md`](../plugins/router.md): `machines/router/machine.yml` and its script `machines/router/scripts/ask.sh`:
+The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree install router` installs [`plugins/router.md`](../plugins/router.md): `machines/router/machine.yml` and its script `machines/router/scripts/ask.sh`:
 
 ```yaml
 name: router

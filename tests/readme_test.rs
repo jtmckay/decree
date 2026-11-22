@@ -24,7 +24,7 @@ const OLD_TERMS: &[&str] = &[
     "`decree skill`",
 ];
 
-/// The 13 commands of docs/reference/cli.md, `daemon --once` and its `--retry`, and
+/// The commands of docs/reference/cli.md, `daemon --once` and its `--retry`, and
 /// `--version`.
 const COMMANDS: &[&str] = &[
     "decree init",
@@ -37,10 +37,12 @@ const COMMANDS: &[&str] = &[
     "decree status",
     "decree tail",
     "decree daemon --once --retry",
-    "decree event",
+    "decree reply",
     "decree stop",
     "decree upgrade",
-    "decree plugin",
+    "decree install",
+    "decree list",
+    "decree export",
     "decree help",
     "decree --version",
 ];
@@ -192,7 +194,7 @@ fn test_every_readme_command_runs_as_written() {
     assert!(decree.join("machines/hello/graph.md").is_file());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains(&format!("decree event {id}.w3 approve")),
+        stdout.contains(&format!("decree reply {id}.w3 approve")),
         "{stdout}"
     );
     assert!(

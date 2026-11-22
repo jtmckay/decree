@@ -68,7 +68,7 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
 
 ## The default router
 
-The official `router` plugin ([plugins.md](plugins.md#official-plugins)), which `decree plugin add router` adds, installs `machines/router/machine.yml` and its script, `machines/router/scripts/ask.sh`. It is a normal machine: edit it (and keep the edit with `decree plugin export router`), replace it, or write another and point a `model` invoke's `router:` at it. Its machine:
+The official `router` plugin ([plugins.md](plugins.md#official-plugins)), which `decree install router` adds, installs `machines/router/machine.yml` and its script, `machines/router/scripts/ask.sh`. It is a normal machine: edit it (and keep the edit with `decree export router`), replace it, or write another and point a `model` invoke's `router:` at it. Its machine:
 
 ```yaml
 name: router
@@ -122,7 +122,7 @@ An `invoke: { machine: <name> }` state, and every `model` invoke, runs a **child
 
 ## Reply
 
-See [Replies](messages.md#replies). The options and their descriptions are written to a JSON file whose path the `notify` script gets as `DECREE_CHOICES`, with the wait id as `DECREE_WAIT_ID`. When the reply is delivered, decree appends a `decision` event (who replied is not known to decree; the reply file is) and takes the transition. While the run waits, its file in `.decree/attention/` holds the question, the options and a `decree event` line for each ([Attention](cli.md#attention)); there is no hook beside the `notify` script, which already tells someone or something.
+See [Replies](messages.md#replies). The options and their descriptions are written to a JSON file whose path the `notify` script gets as `DECREE_CHOICES`, with the wait id as `DECREE_WAIT_ID`. When the reply is delivered, decree appends a `decision` event (who replied is not known to decree; the reply file is) and takes the transition. While the run waits, its file in `.decree/attention/` holds the question, the options and a `decree reply` line for each ([Attention](cli.md#attention)); there is no hook beside the `notify` script, which already tells someone or something.
 
 ## events.jsonl
 
@@ -163,7 +163,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `invalid_event` | string | [Events from an invoke](scripts.md#events-from-an-invoke), step 4 | The undeclared event the invoke named. |
 | `exit_failures` | list of strings | An `onexit` script failed | Names of the failed scripts. |
 | `file` | string | A claim from the inbox | Original inbox filename: for a file written into `inbox/` under another name, the name it arrived with (`arrived_as`, [Lifecycle](messages.md#lifecycle) step 1). Absent for a child run, which has none. |
-| `error` | string | `invalid_message`, or a `machine` invoke that could not start | Validation message, or why the child did not start. |
+| `error` | string | `invalid_message`, a `machine` invoke that could not start | Validation message, why the child did not start. |
 | `run_attempt` | integer | `retry` | The run attempt this retry starts: 2 for the first retry ([Step loop](#step-loop), Run attempts). |
 | `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree daemon --once --retry` starts a new run span, linked to the previous one. |
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |

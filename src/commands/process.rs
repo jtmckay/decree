@@ -187,7 +187,7 @@ pub(crate) struct Pipeline {
     pub(crate) plugin_notes: BTreeSet<String>,
 }
 
-/// Print, once each, every plugin `decree plugin install` would install or remove and every
+/// Print, once each, every plugin `decree install` would install or remove and every
 /// problem that would stop one (a conflict, a plugin that fails its schema): `daemon`
 /// installs nothing (docs/reference/plugins.md, Installing). `printed` holds the
 /// lines already printed, and keeps those still there.
@@ -810,7 +810,7 @@ fn retry_run(
         RunStatus::Interrupted | RunStatus::Finished => {}
         RunStatus::Waiting => {
             return Err(DecreeError::Other(format!(
-                "run {id} is waiting for a reply, not interrupted; answer it with `decree event`"
+                "run {id} is waiting for a reply, not interrupted; answer it with `decree reply`"
             )))
         }
         RunStatus::Pending | RunStatus::Active => return Err(refuse_retry(id, status)),
@@ -878,7 +878,7 @@ fn refuse_retry(id: &str, status: RunStatus) -> DecreeError {
 }
 
 /// Print every waiting run of the machines `filter` runs: its question (the state's
-/// `description`), its wait id and options, and a `decree event` command for each option
+/// `description`), its wait id and options, and a `decree reply` command for each option
 /// (docs/reference/messages.md, Replies).
 fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeError> {
     for id in message::run_ids(&ctx.runs_dir())? {
@@ -905,7 +905,7 @@ fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeErro
         println!("Waiting: run {id} in `{state}`: {question}");
         println!("  wait id {wait_id}, options: {}", options.join(", "));
         for option in options {
-            println!("  decree event {wait_id} {option}");
+            println!("  decree reply {wait_id} {option}");
         }
     }
     Ok(())

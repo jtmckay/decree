@@ -1,5 +1,5 @@
 //! The official plugins built into decree (docs/reference/plugins.md, Official plugins):
-//! `decree plugin list` and `decree plugin add` in a fresh `init`, with their JSON output
+//! `decree list` and `decree install` in a fresh `init`, with their JSON output
 //! validated against `cli/plugin.schema.json`, and each official plugin, added alone with its
 //! `needs` to an empty project, passing `decree check`.
 
@@ -78,12 +78,12 @@ fn built_in(name: &str) -> String {
         .unwrap()
 }
 
-/// AC: after a fresh `init`, `plugin add develop` puts `develop` and every plugin it needs in
+/// AC: after a fresh `init`, `decree install develop` puts `develop` and every plugin it needs in
 /// `plugins/`, names those it added as needed, and `decree check` passes.
 #[test]
 fn add_develop_adds_what_it_needs_and_names_it() {
     let p = init();
-    let out = ok(p.path(), &["plugin", "add", "develop"]);
+    let out = ok(p.path(), &["install", "develop"]);
     assert!(out.contains("added .decree/plugins/develop.md\n"), "{out}");
     assert!(
         out.contains("added .decree/plugins/infra.md, needed by develop\n"),
@@ -113,18 +113,18 @@ fn add_develop_adds_what_it_needs_and_names_it() {
     assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
 
     // qa needs develop, which is there: only qa is added, and `needed_by` is empty.
-    let doc = json(p.path(), &["plugin", "add", "qa"]);
+    let doc = json(p.path(), &["install", "qa"]);
     assert_eq!(doc["plugins"].as_array().unwrap().len(), 1, "{doc}");
     assert_eq!(doc["plugins"][0]["status"], "added");
 }
 
-/// AC: in a project that added `develop`, edited its gate and exported it, `plugin list`
-/// marks `develop` added and differs; `plugin add develop` without `--force` changes nothing
-/// and says so; `--force` shows the gate edit dropped and makes the file the built-in copy.
+/// AC: in a project that added `develop`, edited its gate and exported it, `list`
+/// marks `develop` added and differs; `decree install develop` without `--force` installs the
+/// project's file; `--force` shows the gate edit dropped and makes the file the built-in copy.
 #[test]
-fn an_edited_plugin_is_marked_kept_and_replaced_only_with_force() {
+fn an_edited_plugin_is_installed_from_its_file_and_replaced_only_with_force() {
     let p = init();
-    ok(p.path(), &["plugin", "add", "develop"]);
+    ok(p.path(), &["install", "develop"]);
     let gate = p.path().join(".decree/machines/develop/scripts/gate.sh");
     let text = fs::read_to_string(&gate).unwrap();
     let edited = text.replacen(
@@ -134,49 +134,50 @@ fn an_edited_plugin_is_marked_kept_and_replaced_only_with_force() {
     );
     assert_ne!(text, edited);
     fs::write(&gate, edited).unwrap();
-    ok(p.path(), &["plugin", "export", "develop"]);
+    ok(p.path(), &["export", "develop"]);
     let plugin = p.path().join(".decree/plugins/develop.md");
     let exported = fs::read_to_string(&plugin).unwrap();
     assert!(exported.contains("cargo test --workspace"));
 
-    let list = ok(p.path(), &["plugin", "list"]);
+    let list = ok(p.path(), &["list"]);
     let line = list
         .lines()
         .find(|l| l.trim_start().starts_with("develop "))
         .unwrap();
-    assert!(line.ends_with("[added, differs]"), "{list}");
+    assert!(line.ends_with("[official, differs]"), "{list}");
     let infra = list
         .lines()
         .find(|l| l.trim_start().starts_with("infra "))
         .unwrap();
-    assert!(infra.ends_with("[added]"), "{list}");
-    let doc = json(p.path(), &["plugin", "list"]);
-    let names: Vec<&str> = doc["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["name"].as_str().unwrap())
+    assert!(infra.ends_with("[official]"), "{list}");
+    let doc = json(p.path(), &["list"]);
+    let names = |key: &str| -> Vec<String> {
+        doc[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(names("plugins"), ["ai", "develop", "infra"]);
+    let others: Vec<&str> = OFFICIAL
+        .into_iter()
+        .filter(|n| !["ai", "develop", "infra"].contains(n))
         .collect();
-    assert_eq!(names, OFFICIAL);
-    let develop = &doc["plugins"][2];
+    assert_eq!(names("available"), others);
+    let develop = &doc["plugins"][1];
     assert_eq!(
-        (develop["added"].clone(), develop["differs"].clone()),
-        (true.into(), true.into())
+        (&develop["official"], &develop["differs"], &develop["state"]),
+        (&true.into(), &true.into(), &"installed".into())
     );
-    assert_eq!(doc["plugins"][1]["added"], false); // comfy
 
     let before = fs::read_to_string(&gate).unwrap();
-    let out = ok(p.path(), &["plugin", "add", "develop"]);
-    assert!(
-        out.contains(
-            "kept .decree/plugins/develop.md: already in .decree/plugins/, so nothing changed"
-        ),
-        "{out}"
-    );
+    let out = ok(p.path(), &["install", "develop"]);
+    assert_eq!(out, "installed develop\n");
     assert_eq!(fs::read_to_string(&plugin).unwrap(), exported);
     assert_eq!(fs::read_to_string(&gate).unwrap(), before);
 
-    let out = ok(p.path(), &["plugin", "add", "--force", "develop"]);
+    let out = ok(p.path(), &["install", "--force", "develop"]);
     assert!(out.contains("replaced .decree/plugins/develop.md"), "{out}");
     assert!(
         out.contains("  changed .decree/machines/develop/scripts/gate.sh\n"),
@@ -187,20 +188,69 @@ fn an_edited_plugin_is_marked_kept_and_replaced_only_with_force() {
     assert!(!fs::read_to_string(&gate)
         .unwrap()
         .contains("cargo test --workspace"));
-    let list = ok(p.path(), &["plugin", "list"]);
+    let list = ok(p.path(), &["list"]);
     assert!(
-        list.contains("[added]") && !list.contains("differs]"),
+        list.contains("[official]") && !list.contains("differs"),
         "{list}"
     );
 }
 
-/// AC: `plugin add nope` exits 1, lists the official names and writes nothing.
+/// AC: `decree list` marks a plugin decree does not ship `own`, a file changed since it was
+/// installed `not installed`, an installed copy edited in place `edited`, and names a machine
+/// no plugin installed.
+#[test]
+fn list_marks_own_plugins_install_state_and_unplugged_machines() {
+    let p = init();
+    ok(p.path(), &["install", "develop"]);
+    let plugins = p.path().join(".decree/plugins");
+    let own = built_in("router").replace("name: router", "name: mine");
+    fs::write(plugins.join("mine.md"), own).unwrap();
+    let infra = plugins.join("infra.md");
+    let text = fs::read_to_string(&infra).unwrap();
+    fs::write(&infra, text.replacen("# infra", "# infra, changed", 1)).unwrap();
+    let gate = p.path().join(".decree/machines/develop/scripts/gate.sh");
+    fs::write(&gate, "#!/usr/bin/env bash\necho edited\n").unwrap();
+    let extra = p.path().join(".decree/machines/extra");
+    fs::create_dir_all(&extra).unwrap();
+    fs::write(
+        extra.join("machine.yml"),
+        "initial: done\nstates:\n  done:\n    final: true\n",
+    )
+    .unwrap();
+
+    let list = ok(p.path(), &["list"]);
+    let line = |name: &str| {
+        list.lines()
+            .find(|l| l.trim_start().starts_with(&format!("{name} ")))
+            .unwrap_or_else(|| panic!("{name}: {list}"))
+            .to_string()
+    };
+    assert!(line("mine").ends_with("[own, not installed]"), "{list}");
+    assert!(
+        line("infra").ends_with("[official, differs, not installed]"),
+        "{list}"
+    );
+    assert!(line("develop").ends_with("[official, edited]"), "{list}");
+    assert!(
+        list.contains(
+            "Machines no plugin installed (`decree export <name>` writes one):\n  extra\n"
+        ),
+        "{list}"
+    );
+    let doc = json(p.path(), &["list"]);
+    assert_eq!(doc["unplugged"], serde_json::json!(["extra"]));
+}
+
+/// AC: `decree install nope` exits 1, lists the official names and writes nothing.
 #[test]
 fn an_unknown_name_exits_1_and_lists_the_official_plugins() {
     let p = init();
-    let (code, stdout, stderr) = decree(p.path(), &["plugin", "add", "develop", "nope"]);
+    let (code, stdout, stderr) = decree(p.path(), &["install", "develop", "nope"]);
     assert_eq!(code, 1, "{stdout}{stderr}");
-    assert!(stderr.contains("no official plugin `nope`"), "{stderr}");
+    assert!(
+        stderr.contains("no plugin `nope`: not in .decree/plugins/ and not an official plugin"),
+        "{stderr}"
+    );
     assert!(stderr.contains(&OFFICIAL.join(", ")), "{stderr}");
     assert_eq!(
         fs::read_dir(p.path().join(".decree/plugins"))
@@ -217,7 +267,7 @@ fn each_official_plugin_alone_passes_check() {
     for name in OFFICIAL {
         let tmp = TempDir::new().unwrap();
         fs::create_dir(tmp.path().join(".decree")).unwrap();
-        ok(tmp.path(), &["plugin", "add", name]);
+        ok(tmp.path(), &["install", name]);
         let (code, stdout, stderr) = decree(tmp.path(), &["check"]);
         assert_eq!(
             (code, stdout.as_str(), stderr.as_str()),
@@ -227,31 +277,31 @@ fn each_official_plugin_alone_passes_check() {
     }
 }
 
-/// `decree plugin export` with no name exports only the plugins whose installed copy
+/// `decree export` with no name exports only the plugins whose installed copy
 /// differs; `--dry-run` names them and writes nothing.
 #[test]
 fn export_with_no_name_takes_only_edited_plugins() {
     let p = init();
-    ok(p.path(), &["plugin", "add", "develop"]);
-    let out = ok(p.path(), &["plugin", "export"]);
+    ok(p.path(), &["install", "develop"]);
+    let out = ok(p.path(), &["export"]);
     assert!(out.contains("nothing to export"), "{out}");
     let req = p.path().join(".decree/machines/infra/scripts/requirements");
     let mut text = fs::read_to_string(&req).unwrap();
     text.push_str("command   jq\n");
     fs::write(&req, text).unwrap();
-    let doc = json(p.path(), &["plugin", "export", "--dry-run"]);
+    let doc = json(p.path(), &["export", "--dry-run"]);
     assert_eq!(doc["exported"], serde_json::json!(["infra"]));
     assert_eq!(doc["dry_run"], true);
     assert_eq!(
         fs::read_to_string(p.path().join(".decree/plugins/infra.md")).unwrap(),
         built_in("infra")
     );
-    let out = ok(p.path(), &["plugin", "export"]);
+    let out = ok(p.path(), &["export"]);
     assert_eq!(out, "wrote .decree/plugins/infra.md\n");
     let infra = fs::read_to_string(p.path().join(".decree/plugins/infra.md")).unwrap();
     assert!(infra.contains("\n    command   jq\n"), "{infra}");
     // develop keeps its `needs` (infra), which its machine does not show.
-    ok(p.path(), &["plugin", "export", "develop"]);
+    ok(p.path(), &["export", "develop"]);
     let develop = fs::read_to_string(p.path().join(".decree/plugins/develop.md")).unwrap();
     assert_eq!(develop, built_in("develop"));
 }

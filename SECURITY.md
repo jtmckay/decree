@@ -12,7 +12,7 @@ Report it privately through GitHub: **Report a vulnerability** under this reposi
 
 decree is a local automation tool, and it trusts its project directory.
 
-- **Plugins are code.** A plugin file (`.decree/plugins/<name>.md`) holds scripts that decree installs and runs; `decree plugin import` prints what a plugin runs before it installs it. The official plugins are built into the decree binary, so `decree plugin add` reads nothing from the network.
+- **Plugins are code.** A plugin file (`.decree/plugins/<name>.md`) holds scripts that decree installs and runs; `decree install` prints what a plugin runs before it installs it. The official plugins are built into the decree binary, so `decree install` reads nothing from the network.
 - **Scripts run as you.** decree runs every script directly, as the user who runs decree, with that user's environment and permissions. There is no sandbox and no isolation between runs ([Execution](docs/reference/scripts.md#execution)).
 - **Messages are instructions.** A message's body becomes the prompt of the official plugins' AI calls (`develop`, `infra`, `qa`, `develop_by_size`).
 - **The official plugins let Claude act.** They call Claude with `--permission-mode auto` by default (`CLAUDE_PERMISSION_MODE` changes it), so a message can lead to file edits and commands.
