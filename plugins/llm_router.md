@@ -2,6 +2,7 @@
 name: llm_router
 machine:
   description: Ask a local language model, held to the request's reply_schema, to pick one of the options in the request.
+  concurrency: 4
   initial: ask
   states:
     ask:

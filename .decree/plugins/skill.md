@@ -467,6 +467,8 @@ scripts:
     | Root | `description` | Required. Shown in prompts, `decree status` and graphs. |
     | Root | `data` | `name: { type: string\|int\|number\|bool, default: ..., enum?: [...] }`. `number` is an int or a float; `enum` (string only) lists the allowed values, which the default and `params` must be one of (V14). Read-only; a message's `params` override defaults. Scripts see `DECREE_DATA_<NAME>`. |
     | Root | `state_files` | `name: description`: what the machine keeps between runs in `.decree/machines/<machine>/state/` (`$DECREE_STATE_DIR`). A name is a file or folder directly in that folder, `^[A-Za-z0-9][A-Za-z0-9._-]*$`; a description says what it is and which states read or write it (V14). `decree check` warns about undeclared files there. |
+    | Root | `concurrency` | How many runs of this machine may execute at once, across processes (default 1). Machines run beside each other; a waiting run holds no slot (V14). |
+    | Root | `concurrency_group` | Machines naming one group share its slots, such as those editing one work tree (`worktree`: `develop`, `qa`, `infra`); none may invoke a machine in its own group (V14, V20). |
     | Root | `env_file` | `.env.<name>`: a gitignored dotenv file in `.decree/` whose variables this machine's scripts get, over `.decree/.env` and the process environment; no other machine's scripts see them (V14). |
     | Root | `onentry`, `onexit` | Scripts run once when the run starts, and once after a root final state is entered. |
     | Root | `initial`, `states` | Required. `initial` is a direct child. |

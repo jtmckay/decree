@@ -2,6 +2,7 @@
 name: gliner_router
 machine:
   description: Ask the local GLiNER2.5-Decide classifier to pick one of the options in the request.
+  concurrency: 4
   initial: ask
   states:
     ask:

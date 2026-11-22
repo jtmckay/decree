@@ -7,6 +7,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only ([V
 ### Added
 
 - `machine.schema.json`: a `machine` invoke may name a `message` file in place of `name`; `state_files` (was `store`).
+- `machine.schema.json`: root `concurrency` (default 1) and `concurrency_group`; `cli/status.schema.json`: `executing`, each machine's runs executing now and its limit.
 - `machine.schema.json`: a `reply` invoke may take `timeout_at`, in place of `timeout`: `<file>` or `<file>#<JSON Pointer>` in the run's folder, the instant the wait ends.
 - `cli/daemon.schema.json`: what `decree daemon --once --dry-run --format json` prints (was `cli/process.schema.json`).
 - `plugin.schema.json`: `state` and `order` (were `store` and `migrations`).

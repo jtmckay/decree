@@ -5,6 +5,7 @@ needs:
 - infra
 machine:
   description: Implement a message with the AI in small, logged steps, run the project's gate, have the AI fix failures only if the gate fails, then have the AI check the acceptance criteria.
+  concurrency_group: worktree
   onentry:
   - clean_tree
   initial: precheck

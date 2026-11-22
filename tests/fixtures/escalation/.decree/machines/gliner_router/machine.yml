@@ -5,6 +5,7 @@
 # service (examples/route-by-complexity/gliner/); this machine only talks to it.
 name: gliner_router
 description: Ask the local GLiNER2.5-Decide classifier to pick one of the options in the request.
+concurrency: 4
 initial: ask
 states:
   ask:                             # posts the question, options and input; writes $DECREE_REPLY

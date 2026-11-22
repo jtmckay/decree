@@ -18,6 +18,7 @@ pub(crate) mod official;
 pub(crate) mod plugin;
 pub(crate) mod reply;
 pub(crate) mod runtime;
+pub(crate) mod slots;
 pub(crate) mod trace;
 
 use clap::Parser;

@@ -7,7 +7,7 @@ machine:
   initial: settle
   states:
     settle:
-      description: The next file starts only once everything before it has been processed, its follow-ups included, as an empty inbox and no shows.
+      description: The next file starts only once everything before it has been processed, its follow-ups included, as an empty inbox and no other run executing or pending show.
       invoke: idle
       transitions:
         idle: next
@@ -93,10 +93,11 @@ scripts:
     EMIT_IF_CHANGED_SUFFIX=.git.txt exec "$(dirname "${BASH_SOURCE[0]}")/emit_if_changed.sh" "$@"
   idle.sh: |
     #!/usr/bin/env bash
-    # order's idle: `idle` when inbox/ is empty, so the next file starts only once everything
-    # before it has been processed, its follow-ups included; `busy`
-    # otherwise. One order run works at a time: if another is still going (active, waiting or
-    # pending), this one ends with `other`.
+    # order's idle: `idle` when inbox/ is empty and no other run is executing or about to
+    # (active or pending: machines run at once), so the next file starts only once
+    # everything before it has been processed, its follow-ups included; `busy` otherwise. A
+    # run waiting for a reply or a timer does not count. One order run works at a time: if
+    # another is still going (active, waiting or pending), this one ends with `other`.
     set -euo pipefail
     lock="${DECREE_STATE_DIR}/running"
     if [ -s "${lock}" ] && [ "$(cat "${lock}")" != "${DECREE_MESSAGE_ID}" ]; then
@@ -112,6 +113,13 @@ scripts:
     fi
     echo "${DECREE_MESSAGE_ID}" > "${lock}"
     if find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | grep -q .; then
+      echo busy > "${DECREE_EVENT_FILE}"
+      exit 0
+    fi
+    others=$("${DECREE:-decree}" status --format json |
+      jq -r --arg me "${DECREE_MESSAGE_ID}" '[.runs.active[], .runs.pending[]] | map(select(.id != $me)) | length')
+    if [ "${others}" != 0 ]; then
+      echo "${others} other run(s) executing or about to"
       echo busy > "${DECREE_EVENT_FILE}"
     else
       echo idle > "${DECREE_EVENT_FILE}"
@@ -213,7 +221,7 @@ Ordered work for every machine, run when the daemon starts. A machine's `order/`
 
 Each time `decree daemon` starts (and `decree daemon --once`, which CI and a system crontab run), its cron file `boot.md` (`@reboot`) starts this machine, which:
 
-1. waits until `.decree/inbox/` is empty, so a file starts only once everything before it has been processed, its follow-ups included;
+1. waits until `.decree/inbox/` is empty and no other run is executing or pending (machines run at once; a run waiting for a reply or a timer does not count), so a file starts only once everything before it has been processed, its follow-ups included;
 2. finds the first file, across every machine's `order/`, by file name (the machine's name breaks a tie), that has not run, or changed since it ran;
 3. runs it as a child run (`machine: { message: next.md }`): its `machine` is the folder's unless it names another, and it gets `order: <machine>/<file>` so its scripts know which file it is;
 4. records `<file> <sha256>` in that machine's `state/order.git.txt` and goes back to 1.

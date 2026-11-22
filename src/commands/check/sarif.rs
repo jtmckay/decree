@@ -76,7 +76,7 @@ pub(crate) const RULES: [(&str, &str); 27] = [
     ),
     (
         "V14",
-        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `state_files` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the state folder, and has a non-empty description. An `env_file` matches `^\\.env\\.[A-Za-z0-9][A-Za-z0-9._-]*$` and is not `.env.example`: a file directly in `.decree/` that `.gitignore`'s `.env*` keeps out of git.",
+        "Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `state_files` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the state folder, and has a non-empty description. An `env_file` matches `^\\.env\\.[A-Za-z0-9][A-Za-z0-9._-]*$` and is not `.env.example`: a file directly in `.decree/` that `.gitignore`'s `.env*` keeps out of git. `concurrency` is a whole number of at least 1, and `concurrency_group` matches `^[a-z][a-z0-9_]*$`.",
     ),
     (
         "V15",
@@ -100,7 +100,7 @@ pub(crate) const RULES: [(&str, &str); 27] = [
     ),
     (
         "V20",
-        "No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others.",
+        "No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others. No machine invokes, directly or through others, a machine in its own `concurrency_group`.",
     ),
     (
         "V21",

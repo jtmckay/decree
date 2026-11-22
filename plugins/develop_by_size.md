@@ -5,6 +5,7 @@ needs:
 - gliner_router
 machine:
   description: Size up a change with a local classifier, then implement and test it, locally first or with Claude only, moving to Claude when local attempts fail the tests.
+  concurrency_group: worktree
   initial: describe
   states:
     describe:

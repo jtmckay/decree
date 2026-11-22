@@ -438,11 +438,6 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
         "inbox/20260101T000000.000000Z-000000.md",
         "---\nid: 20260101T000000.000000Z-000000\nmachine: stopper\n---\n",
     );
-    p.write(
-        "inbox/20260101T000000.000001Z-000001.md",
-        "---\nid: 20260101T000000.000001Z-000001\nmachine: hello\n---\n",
-    );
-
     let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(
@@ -450,6 +445,14 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
         "done",
         "the run is not interrupted"
     );
+    // A message queued after the stop does not start. (One already queued for another
+    // machine would have started beside the stopper, before the stop: machines run at once.)
+    p.write(
+        "inbox/20260101T000000.000001Z-000001.md",
+        "---\nid: 20260101T000000.000001Z-000001\nmachine: hello\n---\n",
+    );
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
+    assert_eq!(code, Some(1), "{stderr}");
     assert!(
         p.path("inbox/20260101T000000.000001Z-000001.md").exists(),
         "no new run starts"

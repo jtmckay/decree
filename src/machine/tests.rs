@@ -1236,3 +1236,47 @@ fn reply_timeout_at_shapes() {
         assert!(err.contains(error), "{reply}: {err}");
     }
 }
+
+/// V14: `concurrency` is at least 1 and `concurrency_group` a name; V20: no machine invokes,
+/// directly or through others, one in its own group.
+#[test]
+fn concurrency_and_its_group() {
+    let body =
+        "initial: a\nstates:\n  a: { invoke: { machine: b }, transitions: { done: done } }\n  \
+                done: { final: true }\n  failed: { final: true }\n";
+    let leaf = |group: &str| {
+        format!(
+            "name: c\ndescription: d\nconcurrency_group: {group}\ninitial: a\nstates:\n  \
+             a: {{ invoke: x, transitions: {{ done: done }} }}\n  done: {{ final: true }}\n  \
+             failed: {{ final: true }}\n"
+        )
+    };
+    let middle = "name: b\ndescription: d\ninitial: a\nstates:\n  \
+                  a: { invoke: { machine: c }, transitions: { done: done } }\n  \
+                  done: { final: true }\n  failed: { final: true }\n";
+    let m = |head: &str| format!("name: m\ndescription: d\n{head}{body}");
+    let m_text = m("concurrency: 2\nconcurrency_group: tree\n");
+    let loaded = load("m", &m_text);
+    assert_eq!(loaded.concurrency(), 2);
+    assert_eq!(loaded.slot_key(), "group/tree");
+    assert_eq!(load("b", middle).slot_key(), "machine/b");
+    assert_eq!(load("b", middle).concurrency(), 1);
+    // `m` reaches `c` through `b`: in its group, a problem; in another, none.
+    assert_eq!(
+        problems_with(&m_text, &[("b", middle), ("c", &leaf("tree"))]),
+        ["m: machine `m` invokes `c`, which is in its concurrency_group `tree`: the child would wait for a slot its parent holds (V20)"]
+    );
+    assert!(problems_with(&m_text, &[("b", middle), ("c", &leaf("other"))]).is_empty());
+    let bad = m("concurrency: 0\nconcurrency_group: Tree\n");
+    let found = problems_with(&bad, &[("b", middle), ("c", &leaf("other"))]);
+    assert!(
+        found
+            .iter()
+            .any(|p| p.ends_with("concurrency 0 is not a whole number of at least 1 (V14)")),
+        "{found:?}"
+    );
+    assert!(
+        found.iter().any(|p| p.ends_with("concurrency_group `Tree` does not match ^[a-z][a-z0-9_]*$ (V14)")),
+        "{found:?}"
+    );
+}

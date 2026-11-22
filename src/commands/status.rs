@@ -222,6 +222,18 @@ fn overview(
             .map(|(_, row)| row)
             .collect()
     };
+    // How many runs of each machine execute now, against its `concurrency`
+    // (docs/reference/machines.md, Concurrency): one slot per active run.
+    let mut executing: BTreeMap<&str, usize> = BTreeMap::new();
+    for row in of(RunStatus::Active) {
+        *executing.entry(row.machine.as_str()).or_default() += 1;
+    }
+    let limit = |machine: &str| {
+        project
+            .machines
+            .get(machine)
+            .map_or(1, crate::machine::LoadedMachine::concurrency)
+    };
     if format == Format::Json {
         let mut counts = json!({ "total": ids.len() });
         let mut runs = json!({});
@@ -241,6 +253,10 @@ fn overview(
             "counts": counts,
             "runs": runs,
             "queued": { "inbox": inbox },
+            "executing": executing
+                .iter()
+                .map(|(m, n)| (m.to_string(), json!({ "running": n, "limit": limit(m) })))
+                .collect::<serde_json::Map<String, Value>>(),
         });
         let nested: Vec<Value> = nested_projects(&ctx.project_root)?
             .into_iter()
@@ -274,6 +290,13 @@ fn overview(
         if !rows.is_empty() {
             println!("  {}: {}", status.as_str(), rows.len());
             print_rows(&shown(&rows, all, "    "), "    ");
+        }
+        if status == RunStatus::Active && !executing.is_empty() {
+            let each: Vec<String> = executing
+                .iter()
+                .map(|(m, n)| format!("{m} {n}/{}", limit(m)))
+                .collect();
+            println!("    by machine: {}", each.join(", "));
         }
     }
     let total: usize = finished.values().map(Vec::len).sum();

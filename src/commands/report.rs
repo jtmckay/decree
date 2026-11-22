@@ -7,10 +7,10 @@
 //! land after the output of the run they are about. All of it but the status line also goes
 //! to `.decree/process.log`, with `--quiet` too.
 
-use std::cell::Cell;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::commands::tail::{machine_and_state, Follower, POLL};
@@ -72,7 +72,15 @@ fn send(note: Note) -> Result<(), Note> {
 pub(crate) struct Reporter {
     tx: Sender<Note>,
     /// Runs started this pass.
-    started: Cell<usize>,
+    started: Arc<AtomicUsize>,
+}
+
+/// What a worker thread tells the reporting thread about its run: a clone of the
+/// pipeline's end, which can move to another thread.
+#[derive(Clone)]
+pub(crate) struct RunNotes {
+    tx: Sender<Note>,
+    started: Arc<AtomicUsize>,
 }
 
 impl Reporter {
@@ -83,16 +91,25 @@ impl Reporter {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx.clone());
         let reporter = Reporter {
             tx,
-            started: Cell::new(0),
+            started: Arc::new(AtomicUsize::new(0)),
         };
         (reporter, rx)
     }
 
+    /// A handle for a worker thread.
+    pub(crate) fn notes(&self) -> RunNotes {
+        RunNotes {
+            tx: self.tx.clone(),
+            started: Arc::clone(&self.started),
+        }
+    }
+}
+
+impl RunNotes {
     /// Run `id`, in `run_dir`, starts or continues, with `queued` messages
     /// left after it.
     pub(crate) fn start(&self, id: &str, run_dir: &Path, queued: usize) {
-        let position = self.started.get() + 1;
-        self.started.set(position);
+        let position = self.started.fetch_add(1, Ordering::Relaxed) + 1;
         let first_log = crate::runtime::next_log_number(run_dir).unwrap_or(1);
         self.send(Note::Start {
             id: id.to_string(),
@@ -134,6 +151,69 @@ struct Current {
     total: usize,
     /// Whether its header is printed: once its machine is known.
     header: bool,
+    /// Its output after the last newline, held while other runs print beside it.
+    partial: Vec<u8>,
+    /// Whether it has printed beside another run: from then on, to its end, each of its
+    /// lines is behind its prefix.
+    prefixed: bool,
+}
+
+/// Where a run's output goes while other runs execute beside it: each whole line, behind
+/// `[<the run id's last six characters>] `, so the lines of runs that execute at once
+/// (docs/reference/machines.md, Concurrency) can be told apart.
+struct Prefixed<'a> {
+    console: &'a mut Console,
+    prefix: String,
+    partial: &'a mut Vec<u8>,
+}
+
+impl std::io::Write for Prefixed<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.partial.extend_from_slice(buf);
+        while let Some(end) = self.partial.iter().position(|&b| b == b'\n') {
+            let mut line = self.prefix.clone().into_bytes();
+            line.extend(self.partial.drain(..=end));
+            self.console.write_out(&line)?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if !self.partial.is_empty() {
+            self.partial.push(b'\n');
+            self.write(&[])?;
+        }
+        Ok(())
+    }
+}
+
+/// `[<last six characters of id>] `.
+fn prefix(id: &str) -> String {
+    format!("[{}] ", &id[id.len().saturating_sub(6)..])
+}
+
+impl Current {
+    /// Print what the run wrote since the last call: straight to `console` while it runs
+    /// alone, else line by line behind its prefix.
+    fn step(&mut self, ctx: &Context, console: &mut Console, alone: bool) {
+        self.prefixed |= !alone;
+        if !self.prefixed {
+            let mut held = Prefixed {
+                prefix: prefix(self.follower.root()),
+                console: &mut *console,
+                partial: &mut self.partial,
+            };
+            let _ = std::io::Write::flush(&mut held);
+            let _ = self.follower.step(ctx, console);
+        } else {
+            let mut out = Prefixed {
+                prefix: prefix(self.follower.root()),
+                console,
+                partial: &mut self.partial,
+            };
+            let _ = self.follower.step(ctx, &mut out);
+        }
+    }
 }
 
 /// The thread: print what `rx` announces until the pipeline drops its end. Output errors
@@ -153,14 +233,16 @@ pub(crate) fn observe(ctx: &Context, rx: Receiver<Note>, quiet: bool) {
         .open(&log_path)
         .ok();
     let mut console = Console::logged(log, quiet);
-    let mut current: Option<Current> = None;
+    // The runs executing now, in the order they started.
+    let mut runs: Vec<Current> = Vec::new();
     loop {
         let note = match rx.recv_timeout(POLL) {
             Ok(note) => Some(note),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => {
-                if let Some(run) = current.take() {
-                    finish(ctx, &mut console, run, None);
+                let alone = runs.len() == 1;
+                for run in runs.drain(..) {
+                    finish(ctx, &mut console, run, None, alone);
                 }
                 return;
             }
@@ -172,21 +254,26 @@ pub(crate) fn observe(ctx: &Context, rx: Receiver<Note>, quiet: bool) {
                 position,
                 total,
             }) => {
-                if let Some(run) = current.take() {
-                    finish(ctx, &mut console, run, None);
+                // The same run started again (another process let it go): follow it anew.
+                if let Some(i) = runs.iter().position(|r| r.follower.root() == id) {
+                    let alone = runs.len() == 1;
+                    finish(ctx, &mut console, runs.remove(i), None, alone);
                 }
-                current = Some(Current {
+                runs.push(Current {
                     label: id.clone(),
                     follower: Follower::from_log(&id, first_log),
                     started: Instant::now(),
                     position,
                     total,
                     header: false,
+                    partial: Vec::new(),
+                    prefixed: false,
                 });
             }
             Some(Note::End { id, outcome }) => {
-                if let Some(run) = current.take_if(|run| run.follower.root() == id) {
-                    finish(ctx, &mut console, run, outcome.as_ref());
+                if let Some(i) = runs.iter().position(|r| r.follower.root() == id) {
+                    let alone = runs.len() == 1;
+                    finish(ctx, &mut console, runs.remove(i), outcome.as_ref(), alone);
                     trim();
                 }
             }
@@ -198,13 +285,19 @@ pub(crate) fn observe(ctx: &Context, rx: Receiver<Note>, quiet: bool) {
             }
             None => {}
         }
-        if let Some(run) = &mut current {
+        let alone = runs.len() == 1;
+        for run in &mut runs {
             print_header(ctx, &mut console, run, false);
             if run.header {
-                let _ = run.follower.step(ctx, &mut console);
+                run.step(ctx, &mut console, alone);
             }
-            let _ = console.set_status(Some(status_line(ctx, run)));
         }
+        let status = match runs.as_slice() {
+            [] => None,
+            [run] => Some(status_line(ctx, run)),
+            many => Some(status_lines(ctx, many)),
+        };
+        let _ = console.set_status(status);
     }
 }
 
@@ -242,10 +335,52 @@ fn status_line(ctx: &Context, run: &Current) -> String {
     )
 }
 
-/// Print the rest of the run's output, clear the status line, and print how it stopped.
-fn finish(ctx: &Context, console: &mut Console, mut run: Current, outcome: Option<&Outcome>) {
+/// `▶ <n> running · <machine> <state> <elapsed> · …`: each run executing, its innermost
+/// machine and state.
+fn status_lines(ctx: &Context, runs: &[Current]) -> String {
+    let each: Vec<String> = runs
+        .iter()
+        .map(|run| {
+            let (machine, state) =
+                machine_and_state(ctx, run.follower.current()).unwrap_or_default();
+            format!(
+                "{} {} {}",
+                machine.as_deref().unwrap_or("?"),
+                state.as_deref().unwrap_or("starting"),
+                console::duration(run.started.elapsed())
+            )
+        })
+        .collect();
+    format!("▶ {} running · {}", runs.len(), each.join(" · "))
+}
+
+/// Print the rest of the run's output (behind its prefix unless it ran `alone`), clear the
+/// status line, and print how it stopped.
+fn finish(
+    ctx: &Context,
+    console: &mut Console,
+    mut run: Current,
+    outcome: Option<&Outcome>,
+    alone: bool,
+) {
     print_header(ctx, console, &mut run, true);
-    let _ = run.follower.finish(ctx, console);
+    if alone && !run.prefixed {
+        let mut out = Prefixed {
+            prefix: prefix(run.follower.root()),
+            console: &mut *console,
+            partial: &mut run.partial,
+        };
+        let _ = std::io::Write::flush(&mut out);
+        let _ = run.follower.finish(ctx, console);
+    } else {
+        let mut out = Prefixed {
+            prefix: prefix(run.follower.root()),
+            console: &mut *console,
+            partial: &mut run.partial,
+        };
+        let _ = run.follower.finish(ctx, &mut out);
+        let _ = std::io::Write::flush(&mut out);
+    }
     let _ = console.set_status(None);
     let id = &run.label;
     let took = console::duration(run.started.elapsed());

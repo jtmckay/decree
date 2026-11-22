@@ -115,6 +115,8 @@ impl RunInput {
 
 /// Everything stepping a run needs beyond the run itself: the project's machines, and the
 /// settings each run's executor and its child runs use (docs/reference/runs.md, Sub-machines).
+/// Each worker thread steps its run in its own clone.
+#[derive(Clone)]
 pub struct Context {
     /// The directory containing `.decree/`.
     pub project_root: PathBuf,
@@ -125,6 +127,8 @@ pub struct Context {
     /// The variables scripts get from the `.env` files (docs/reference/scripts.md,
     /// Environment).
     pub env: crate::dotenv::ProjectEnv,
+    /// Each machine's `concurrency` slots: a run executes holding one of its machine's.
+    pub slots: crate::slots::Slots,
 }
 
 /// How a call to the step loop ended.

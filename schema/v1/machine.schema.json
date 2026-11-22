@@ -29,6 +29,19 @@
       "not": { "const": ".env.example" },
       "examples": [".env.comfy"]
     },
+    "concurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "How many runs of this machine may execute at once, across every decree process sharing the project (V14). A run executes from when it is claimed or continued until it finishes, waits (for a reply, a timer or a child run) or is interrupted; a waiting run holds no slot. A machine at its limit keeps its messages in inbox/, in order, while other machines go on. A child run takes a slot of its own machine. As AWS Step Functions' Map `MaxConcurrency` and GitHub Actions' `concurrency`. Default: 1.",
+      "examples": [1, 4]
+    },
+    "concurrency_group": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Machines that name the same group share its slots: at most `concurrency` runs of all of them execute at once (V14), as GitHub Actions' `concurrency.group`. For machines that must not run beside each other, such as those editing one git work tree. No machine may invoke, directly or through others, a machine in its own group: the child would wait for a slot its parent holds (V20). Default: none, each machine its own slots.",
+      "examples": ["worktree"]
+    },
     "state_files": {
       "type": "object",
       "description": "Extension: what the machine keeps between runs, in .decree/machines/<machine>/state/ (DECREE_STATE_DIR). A map of names to descriptions: each name is a file or folder directly in the state folder, matching ^[A-Za-z0-9][A-Za-z0-9._-]*$ (no `/`), and each description says what it is and which states read or write it (V14). `decree check` warns about anything in the state folder that is not declared. A file named `*.git.txt` is committed; any other is not. Outputs for people go wherever the user wants, not here.",

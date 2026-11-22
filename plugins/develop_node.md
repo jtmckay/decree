@@ -5,6 +5,7 @@ needs:
 - infra
 machine:
   description: develop for a Node project. Implement a message with the AI in small, logged steps, gate it with the package manager the lockfile names (npm, pnpm or yarn) running lint, typecheck and test where package.json defines them, have the AI fix failures only if the gate fails, then have the AI check the acceptance criteria.
+  concurrency_group: worktree
   onentry:
   - clean_tree
   initial: precheck

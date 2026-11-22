@@ -4,6 +4,7 @@ needs:
 - ai
 machine:
   description: Add to the environment the project needs, the first time and every time after; the AI declares each resource in machines/infra/scripts/requirements, then apply installs what is missing and checks every line.
+  concurrency_group: worktree
   onentry:
   - clean_tree
   initial: declare

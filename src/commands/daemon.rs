@@ -18,7 +18,6 @@ use crate::runtime;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 /// Run the daemon polling loop, after `retry` if given. Unless `quiet`, each run's output is
@@ -74,12 +73,12 @@ fn poll(
     );
     loop {
         if result.is_ok() {
-            pipeline.refresh();
             result = pass(project_root, pipeline, &mut cron_tracker);
         }
         match result {
             Err(Stop::Interrupted) => {
                 line("decree daemon: shutting down (signal received)".to_string());
+                pipeline.wait_all();
                 return Ok(());
             }
             Err(Stop::Held(message)) => {
@@ -89,13 +88,17 @@ fn poll(
                 }
                 result = Ok(());
             }
-            Err(stop) => return Err(stop.into_error()),
+            Err(stop) => {
+                pipeline.wait_all();
+                return Err(stop.into_error());
+            }
             Ok(()) => held = None,
         }
         // The pipeline printed each failed run as it ended; the daemon keeps no list of them.
         pipeline.take_failed();
-        // Sleep, checking for a signal every 100 ms. An interval past what `Instant` holds
-        // sleeps until a signal.
+        // Sleep, checking for a signal every 100 ms, until the interval passes or a run
+        // stops, which frees a slot. An interval past what `Instant` holds sleeps until a
+        // signal or a run stops.
         let wake = Instant::now().checked_add(interval);
         while !shutdown.load(Ordering::Relaxed) {
             let left = wake.map_or(Duration::MAX, |w| {
@@ -104,7 +107,14 @@ fn poll(
             if left.is_zero() {
                 break;
             }
-            thread::sleep(left.min(Duration::from_millis(100)));
+            match pipeline.sleep(left.min(Duration::from_millis(100))) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(stop) => {
+                    result = Err(stop);
+                    break;
+                }
+            }
         }
         if shutdown.load(Ordering::Relaxed) {
             result = Err(Stop::Interrupted);
@@ -118,12 +128,11 @@ fn pass(
     pipeline: &mut Pipeline,
     cron_tracker: &mut CronTracker,
 ) -> Result<(), Stop> {
-    pipeline.deliver_timeouts()?;
-    for id in pipeline.pending()? {
-        pipeline.continue_one(&id)?;
-    }
+    pipeline.step()?;
     fire_due_cron_jobs(project_root, cron_tracker, pipeline.filter());
-    while pipeline.next_inbox()? {}
+    // What cron queued starts in this pass; a run that stops is collected as the daemon
+    // sleeps, and what it freed starts in the next.
+    pipeline.step()?;
     Ok(())
 }
 

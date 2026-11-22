@@ -34,6 +34,10 @@ struct Machine {
     #[serde(default)]
     pub state_files: BTreeMap<String, String>,
     pub env_file: Option<String>,
+    /// How many runs of this machine may execute at once (default 1); V14 checks it.
+    pub concurrency: Option<u32>,
+    /// Machines that share their slots, such as those editing one work tree; V14, V20.
+    pub concurrency_group: Option<String>,
     #[serde(default)]
     pub onentry: Vec<String>,
     #[serde(default)]
@@ -507,6 +511,12 @@ pub struct LoadedMachine {
     /// A dotenv file in `.decree/` whose variables this machine's scripts get, over decree's
     /// own environment (docs/reference/scripts.md, Environment). V14 checks the name.
     pub env_file: Option<String>,
+    /// `concurrency`, as written: how many runs of this machine may execute at once, across
+    /// every decree process (docs/reference/machines.md, Concurrency). `None` is 1.
+    pub concurrency: Option<u32>,
+    /// `concurrency_group`: the machines that name the same group share its slots, so
+    /// at most `concurrency` runs of all of them execute at once.
+    pub concurrency_group: Option<String>,
     pub nodes: Vec<Node>,
 }
 
@@ -517,6 +527,21 @@ impl LoadedMachine {
 
     pub fn description(&self) -> &str {
         self.root().description.as_deref().unwrap_or_default()
+    }
+
+    /// How many runs of this machine may execute at once: `concurrency`, 1 by default. A
+    /// run waiting for a reply, a timer or a child is not executing.
+    pub fn concurrency(&self) -> usize {
+        self.concurrency.map_or(1, |n| n.max(1) as usize)
+    }
+
+    /// Whose slots a run of this machine takes: its `concurrency_group`'s, `group/<name>`,
+    /// shared with every machine in the group, else its own, `machine/<id>`.
+    pub fn slot_key(&self) -> String {
+        match &self.concurrency_group {
+            Some(group) => format!("group/{group}"),
+            None => format!("machine/{}", self.id),
+        }
     }
 
     /// Index of the state with this id. The root is not a state and is never returned.
@@ -564,6 +589,8 @@ fn flatten(id: &str, machine: Machine) -> LoadedMachine {
         data: machine.data,
         state_files: machine.state_files,
         env_file: machine.env_file,
+        concurrency: machine.concurrency,
+        concurrency_group: machine.concurrency_group,
         nodes,
     }
 }

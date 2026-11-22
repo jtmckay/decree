@@ -229,6 +229,8 @@ A duration is a whole number of at most 9 digits followed by one unit: `s` (seco
 | Root | `description` | string | extension | Required. Used in prompts, `decree status` and graphs. |
 | Root | `data` | map of name to `{type, default, enum?}` | `<datamodel><data id>` | Optional. `type` is `string`, `int`, `number` (a JSON number: an int or a float, as in JSON Schema) or `bool`. `default` is required and must match `type`. `enum`, on `string` data only, is a non-empty list of distinct strings, as in JSON Schema: the `default` and every `params` value must be one of them. A message's `params` override the defaults; nothing else changes them. |
 | Root | `state_files` | map of name to description | extension | Optional. What the machine keeps between runs in `.decree/machines/<machine>/state/` ([State](#state)). Each name is a file or folder directly in that folder, `^[A-Za-z0-9][A-Za-z0-9._-]*$` (no `/`); each description is a non-empty string (V14). |
+| Root | `concurrency` | integer, at least 1 | extension (Step Functions Map's `MaxConcurrency`) | Optional, default 1. How many runs of this machine may execute at once, across every process ([Concurrency](#concurrency), V14). |
+| Root | `concurrency_group` | name | extension (GitHub Actions' `concurrency.group`) | Optional. Machines naming the same group share its slots ([Concurrency](#concurrency), V14, V20). |
 | Root | `env_file` | string | extension (Docker Compose's `env_file`) | Optional. A dotenv file in `.decree/`, `.env.<name>` (V14), whose variables this machine's scripts get, over `.decree/.env` and the process environment; no other machine's scripts get them ([`.env` files](scripts.md#env-files)). |
 | Root | `onentry`, `onexit` | list of script names | extension (`<scxml>` has neither; they act like a top-level compound state around all others) | Optional. Root `onentry` runs once when the run starts (and again when `decree daemon --once --retry` continues it); root `onexit` runs once after a root final state is entered. |
 | Root | `initial` | state id | `<scxml initial>` | Required. Must be a direct child in `states`. |
@@ -255,6 +257,20 @@ Each name is a file or folder directly in the state folder; its description says
 What goes in the state folder is what the machine itself reads back in a later run: what it has seen, sent or counted. What does not: a run's own files (`$DECREE_RUN_DIR`), a machine's helpers, config and data, which sit beside its scripts in `scripts/` ([A machine's files](scripts.md#a-machines-files)), and outputs for people, such as an issue, a report or a video, which go wherever the user wants them.
 
 The state folder survives runs, installs and the `prune` plugin. It is not committed, but a file whose name ends in `.git.txt` is ([D86](../decisions.md#d86-machines-own-their-folders-order-replaces-migrations)): what the project should share, such as the `order` plugin's `order.git.txt`, is committed with the work it records. `decree check` warns, without failing, about a file or folder in `state/` that `state_files:` does not declare. Nothing else is enforced: a script that writes outside its state folder is not detectable.
+
+## Concurrency
+
+Runs of different machines execute at once, and a machine says how many of its own may: `concurrency: <n>`, 1 by default ([D89](../decisions.md#d89-machines-run-at-once-each-saying-how-many-of-itself)). A run *executes* from when it is claimed or continued until it finishes, waits (for a reply, a timer or a child run) or is interrupted; a waiting run holds nothing, so a hundred leases waiting in line cost no slot. A machine at its limit keeps its messages in `inbox/`, unclaimed and in order, and its `pending` runs pending, while every other machine goes on.
+
+```yaml
+concurrency: 4          # at the machine's root: four of its runs at once
+```
+
+Machines that must not run beside each other, such as those editing one git work tree, name one `concurrency_group`: they share its slots, so at most `concurrency` runs of all of them execute at once. The official `develop` (and its variants), `qa` and `infra` are in group `worktree`.
+
+A child run takes a slot of its own machine (or group), waiting for one while its parent keeps its own. A finished child gives its slot back before its parent continues. So a wait for a slot always runs from parent to child, and V20 forbids invoke cycles and a child in its parent's group: no two runs ever wait for each other's slot.
+
+The limit holds across every `decree` process sharing the project: each slot is a lock file, `.decree/cache/slots/machine/<machine>/<k>.lock` (or `group/<group>/`), held with `flock` while a run executes, and freed when its process ends, even by a crash. `decree status` shows, under `active`, how many runs of each machine execute and its limit.
 
 ## SCXML subset
 
@@ -343,13 +359,13 @@ The schema never accepts a machine that `decree check` rejects for its shape. It
 | V11 | Every state is reachable from root `initial`, and every non-final state can reach a root-level final state. |
 | V12 | Every script name (`script`, `notify`, `onentry`, `onexit`, root `onentry`, `onexit`) resolves to exactly one executable file ([Resolution](scripts.md#resolution)); a `reply` has a `notify` script. |
 | V13 | Every `emits` entry is an existing machine name. |
-| V14 | Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `state_files` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the state folder, and has a non-empty description. An `env_file` matches `^\.env\.[A-Za-z0-9][A-Za-z0-9._-]*$` and is not `.env.example`: a file directly in `.decree/` that `.gitignore`'s `.env*` keeps out of git. |
+| V14 | Every `data` default matches its `type`. `enum` appears only on `string` data, is a non-empty list of distinct strings, and holds the `default`. Every `state_files` name matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`, a file or folder directly in the state folder, and has a non-empty description. An `env_file` matches `^\.env\.[A-Za-z0-9][A-Za-z0-9._-]*$` and is not `.env.example`: a file directly in `.decree/` that `.gitignore`'s `.env*` keeps out of git. `concurrency` is a whole number of at least 1, and `concurrency_group` matches `^[a-z][a-z0-9_]*$`. |
 | V15 | Every compound state with a final child handles `done.state.<id>`, itself or through an ancestor, so the run cannot stall. |
 | V16 | Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); a `reply` has at most one of `timeout` and `timeout_at`, whose file is a plain path in the run's folder and whose part after `#`, if any, is a JSON Pointer; `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `reply`), which the parser enforces with V19. |
 | V17 | `type: internal` appears only on a compound state's transition whose target is one of its descendants. |
 | V18 | Event names follow the Rules (a boolean key in `transitions` is the event `true` or `false`); no reserved name is a script-named event or a `model` or `reply` option. |
 | V19 | Nothing outside the SCXML subset: unknown keys fail with the name of the SCXML feature, when there is one, and the decree alternative. Each shape this format replaced fails with the one to write instead: `choose` (`model:` or `reply:`), `person:` (`reply:`, and its `ask:` is `notify:`), `input` (`output`), a bare `matches` (`{ output: <state>, matches: … }`), `max_attempts` anywhere (`attempts: <n>` or `attempts: [<value>, …]`, inside `invoke: { script: … }`), `timeout_s` on a state (inside `invoke: { script: … }`), `timeout_s` in an invoke (`timeout: <n>s\|m\|h\|d`) and `{ machine: x, params: … }` (`{ machine: { name: x, params: … } }`). |
-| V20 | No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others. |
+| V20 | No cycle of `machine` and `router` invokes: a machine never invokes itself, directly or through others. No machine invokes, directly or through others, a machine in its own `concurrency_group`. |
 | V21 | Within one state, no transition's event equals another's followed by `.` and more (`done` and `done.state.work`), so at most one of a state's transitions matches any event. |
 | M2 | Every `inbox/*.md` parses, names a known machine in `machine:` (or is a reply, with `to:`), and has valid `params` for that machine's `data`. |
 | M3 | Every cron file, `machines/<name>/cron/*.md`, passes the same checks, with `machine` defaulting to `<name>`, and its `cron:` expression parses or is `@reboot`. |

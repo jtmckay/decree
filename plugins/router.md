@@ -2,6 +2,7 @@
 name: router
 machine:
   description: Ask an AI CLI (claude, opencode or copilot) to pick one of the options in the request.
+  concurrency: 4
   initial: ask
   states:
     ask:

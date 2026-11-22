@@ -123,6 +123,7 @@ impl Project {
             machines: Arc::clone(&self.machines),
             shutdown: Arc::clone(&self.shutdown),
             env: Default::default(),
+            slots: crate::slots::Slots::new(&self.root()),
         }
     }
 

@@ -128,6 +128,7 @@ impl LoadedMachine {
         v.v14_data();
         v.v14_state_files();
         v.v14_env_file();
+        v.v14_concurrency();
         v.v15_done_state();
         v.v16_invokes();
         v.v17_internal();
@@ -789,6 +790,24 @@ impl Validator<'_> {
         }
     }
 
+    /// V14 for `concurrency` (at least 1) and `concurrency_group` (a name).
+    fn v14_concurrency(&mut self) {
+        if self.m.concurrency == Some(0) {
+            self.push(
+                self.root_line("concurrency"),
+                "concurrency 0 is not a whole number of at least 1 (V14)".to_string(),
+            );
+        }
+        if let Some(group) = &self.m.concurrency_group {
+            if !is_ident(group) {
+                self.push(
+                    self.root_line("concurrency_group"),
+                    format!("concurrency_group `{group}` does not match ^[a-z][a-z0-9_]*$ (V14)"),
+                );
+            }
+        }
+    }
+
     fn v15_done_state(&mut self) {
         for i in self.states() {
             let node = &self.m.nodes[i];
@@ -927,6 +946,7 @@ impl Validator<'_> {
     }
 
     fn v20_cycles(&mut self) {
+        self.v20_group();
         let me = self.m.id.as_str();
         for (i, child) in self.m.invoked_machines() {
             if let Some(path) = self.invoke_path(child, me) {
@@ -962,6 +982,45 @@ impl Validator<'_> {
                     }
                 }
             }
+        }
+    }
+
+    /// V20 for `concurrency_group`: no machine this one invokes, directly or through others,
+    /// is in its group, since the child would wait for a slot its parent holds.
+    fn v20_group(&mut self) {
+        let Some(group) = self.m.concurrency_group.clone() else {
+            return;
+        };
+        let me = self.m.id.as_str();
+        let mut queue: Vec<&str> = self
+            .m
+            .invoked_machines()
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect();
+        let mut seen: BTreeSet<&str> = queue.iter().copied().collect();
+        let mut found = Vec::new();
+        while let Some(id) = queue.pop() {
+            let Some(m) = self.env.machines.get(id) else {
+                continue;
+            };
+            if m.concurrency_group.as_deref() == Some(group.as_str()) {
+                found.push(id.to_string());
+            }
+            for (_, child) in m.invoked_machines() {
+                if seen.insert(child) {
+                    queue.push(child);
+                }
+            }
+        }
+        found.sort();
+        for child in found {
+            self.push(
+                me.to_string(),
+                format!(
+                    "machine `{me}` invokes `{child}`, which is in its concurrency_group `{group}`: the child would wait for a slot its parent holds (V20)"
+                ),
+            );
         }
     }
 

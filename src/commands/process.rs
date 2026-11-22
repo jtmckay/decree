@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
 use serde_json::json;
@@ -29,13 +30,13 @@ use crate::attention;
 use crate::cli::Format;
 use crate::commands::check::{self, md_files, Project};
 use crate::commands::print_json;
-use crate::commands::report::{self, Reporter};
+use crate::commands::report::{self, Reporter, RunNotes};
 use crate::error::DecreeError;
 use crate::events::{
     current_state, first_text, is_transition, is_type, run_attempt, strings, text, Event, EventLog,
 };
 use crate::filter::{self, MachineFilter, Select};
-use crate::interpreter::child::continue_run;
+use crate::interpreter::child::continue_holding;
 use crate::interpreter::recover::{self, mirror_state, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
 use crate::layout::MESSAGE_FILE;
@@ -44,6 +45,7 @@ use crate::machine::FAILED;
 use crate::message::{self, is_valid_id, Claim, Message, RunLock, ARRIVED_AS};
 use crate::reply::{self, Delivery};
 use crate::runtime::{self};
+use crate::slots::SlotGuard;
 
 /// What `--retry` continues: run `id`.
 pub struct Retry {
@@ -169,7 +171,7 @@ impl<E: Into<DecreeError>> From<E> for Stop {
 /// step runs to the end of one run before it returns.
 pub(crate) struct Pipeline {
     ctx: Context,
-    project: Project,
+    project: Arc<Project>,
     /// Inbox files another process claimed first, or is claiming now.
     lost: HashSet<String>,
     /// The machines this process runs (`--machine`, `--exclude-machine`).
@@ -185,6 +187,13 @@ pub(crate) struct Pipeline {
     env_error: Option<String>,
     /// The plugin problems last printed (`plugin_notices`), so each is printed once.
     pub(crate) plugin_notes: BTreeSet<String>,
+    /// The runs executing in a worker thread now, each holding a slot of its machine.
+    in_flight: HashSet<String>,
+    workers: Vec<std::thread::JoinHandle<()>>,
+    done_tx: Sender<Done>,
+    done_rx: Receiver<Done>,
+    /// A fault a worker hit, returned by the next pass.
+    fault: Option<Stop>,
 }
 
 /// Print, once each, every plugin `decree install` would install or remove and every
@@ -224,9 +233,10 @@ impl Pipeline {
         let mut ctx = context(project_root, &project, shutdown);
         ctx.env = check::load_env(&project)?;
         let filter = select.filter(&ctx.env.decree, |m| project.machine_ids.contains(m))?;
+        let (done_tx, done_rx) = mpsc::channel();
         Ok(Pipeline {
             ctx,
-            project,
+            project: Arc::new(project),
             lost: HashSet::new(),
             filter,
             prefix,
@@ -235,6 +245,11 @@ impl Pipeline {
             machine_error: None,
             env_error: None,
             plugin_notes: BTreeSet::new(),
+            in_flight: HashSet::new(),
+            workers: Vec::new(),
+            done_tx,
+            done_rx,
+            fault: None,
         })
     }
 
@@ -328,7 +343,7 @@ impl Pipeline {
         let changed: Vec<String> = changed.into_iter().cloned().collect();
         if !changed.is_empty() {
             self.ctx.machines = Arc::clone(&project.machines);
-            self.project = project;
+            self.project = Arc::new(project);
         }
         Ok(changed)
     }
@@ -381,8 +396,9 @@ impl Pipeline {
         std::mem::take(&mut self.failed)
     }
 
-    /// At start: mark runs a crash left behind `interrupted` (never continued), then
-    /// continue `pending` runs in `id` order (docs/reference/messages.md, Run status).
+    /// At start: mark runs a crash left behind `interrupted` (never continued). The
+    /// `pending` runs it leaves are dispatched by the next pass (docs/reference/messages.md,
+    /// Run status).
     pub(crate) fn recover(&mut self) -> Result<(), Stop> {
         let recovery = recover::recover(&self.ctx, |id| self.owns(id))?;
         for (id, state) in &recovery.crashed {
@@ -391,20 +407,30 @@ impl Pipeline {
                  continue it with `decree daemon --once --retry {id}`"
             );
         }
-        self.continue_runs(&recovery.pending)
+        Ok(())
     }
 
-    /// Repeat until nothing is left: deliver timeouts, continue `pending` runs (`--retry` may
-    /// have made more), and claim the next inbox message. A failed run is reported and the
-    /// loop goes on.
+    /// Repeat until nothing is left and no run is executing: deliver timeouts and replies,
+    /// start every `pending` run and inbox message whose machine has a free slot, and wait
+    /// for a run to stop. A failed run is reported and the loop goes on. On a stop (a signal,
+    /// a held queue, a fault), every executing run is waited for first.
     pub(crate) fn drain(&mut self) -> Result<(), Stop> {
+        let result = self.drain_until_idle();
+        if result.is_err() {
+            self.wait_all();
+        }
+        result
+    }
+
+    fn drain_until_idle(&mut self) -> Result<(), Stop> {
         loop {
-            self.refresh();
-            self.deliver_timeouts()?;
-            let pending = self.pending()?;
-            self.continue_runs(&pending)?;
-            if !self.next_inbox()? {
-                return Ok(());
+            self.reap(None)?;
+            let progressed = self.dispatch()?;
+            if !progressed {
+                if self.in_flight.is_empty() {
+                    return Ok(());
+                }
+                self.reap(Some(WAKE))?;
             }
         }
     }
@@ -429,17 +455,28 @@ impl Pipeline {
         }
     }
 
-    /// Continue `ids` in order.
-    fn continue_runs(&mut self, ids: &[String]) -> Result<(), Stop> {
-        for id in ids {
-            self.continue_one(id)?;
-        }
-        Ok(())
+    /// One pass of the daemon: what can start starts, and the runs that stopped are
+    /// collected; it never waits for a run. Returns whether anything moved.
+    pub(crate) fn step(&mut self) -> Result<bool, Stop> {
+        self.reap(None)?;
+        self.dispatch()
     }
 
-    /// Every `pending` run this process runs, in `id` order: after `--retry`,
-    /// or a delivery another process made. A run another process holds is `active`, not
-    /// `pending`.
+    /// Wait up to `wait` for a run to stop (the daemon's sleep between passes), collecting
+    /// each that did. Returns whether one did.
+    pub(crate) fn sleep(&mut self, wait: std::time::Duration) -> Result<bool, Stop> {
+        if self.in_flight.is_empty() {
+            std::thread::sleep(wait);
+            return Ok(false);
+        }
+        let before = self.in_flight.len();
+        self.reap(Some(wait))?;
+        Ok(self.in_flight.len() < before)
+    }
+
+    /// Every `pending` run this process runs, in `id` order: after `--retry`, a delivered
+    /// reply or timeout, a finished child, or a delivery another process made. A run another
+    /// process holds is `active`, not `pending`.
     pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
         let mut pending = Vec::new();
         for id in message::run_ids(&self.ctx.runs_dir())? {
@@ -453,46 +490,206 @@ impl Pipeline {
         Ok(pending)
     }
 
-    /// Continue `pending` run `id`. A run another process holds now is skipped; one that ends
-    /// in `failed` is reported and the pass goes on.
-    pub(crate) fn continue_one(&mut self, id: &str) -> Result<(), Stop> {
+    /// Start what can start (docs/reference/machines.md, Concurrency): deliver passed
+    /// deadlines (a reply queued before one wins), then each `pending` run, then each inbox
+    /// file in filename order, a reply delivered and a message claimed, each run in a worker
+    /// thread holding a slot of its machine. A machine with no free slot keeps its messages
+    /// queued, in order, and its runs pending; the others go on. Returns whether anything
+    /// moved.
+    fn dispatch(&mut self) -> Result<bool, Stop> {
         self.may_run()?;
-        let outcome = match reported(self.report.as_ref(), &self.ctx, id, || {
-            continue_run(&self.ctx, id)
-        }) {
-            Ok(outcome) => outcome,
-            Err(InterpreterError::Active(_)) => return Ok(()),
-            Err(e) => return Err(e.into()),
-        };
-        match outcome {
-            Outcome::Finished(state) if state == FAILED => {
-                self.fail(id, None);
-                Ok(())
-            }
-            ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
-            _ => Ok(()),
+        if let Some(fault) = self.fault.take() {
+            return Err(fault);
         }
+        self.refresh();
+        let mut progressed = false;
+        // Deadlines: replies queued before them first, then the timeouts. Both only append
+        // an event; the runs they make pending start below.
+        let now = chrono::Utc::now();
+        progressed |= self.deliver_early_replies(now)?;
+        progressed |= !reply::deliver_timeouts(&self.ctx, now, |id| self.owns(id))?.is_empty();
+        progressed |= self.start_pending()?;
+        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
+        let inbox = decree_dir.join(INBOX_DIR);
+        message::arrive(&decree_dir)?;
+        // A machine found full keeps the rest of its messages queued, in order.
+        let mut full: HashSet<String> = HashSet::new();
+        // A run executing, or answered in this pass, gets its next reply once it has stopped
+        // again: replies to one run go in the order they were queued, each to the wait the
+        // run is in by then, as when one run went at a time.
+        let mut answered: HashSet<String> = HashSet::new();
+        for file in md_files(&inbox)? {
+            self.may_run()?;
+            if self.lost.contains(&file) || !message::is_queued(&decree_dir, &file) {
+                continue;
+            }
+            let machine = inbox_machine(&self.ctx.runs_dir(), &inbox, &file);
+            if !self.filter.is_all() && !self.filter.runs(machine.as_deref()) {
+                continue;
+            }
+            let Ok(message) = Message::read(&inbox.join(&file)) else {
+                progressed |= self.claim_inline(file, None)?;
+                continue;
+            };
+            if message.frontmatter.contains_key("to") {
+                let run = message
+                    .text("to")
+                    .and_then(|to| reply::target_run(&self.ctx.runs_dir(), to));
+                if let Some(run) = run {
+                    if self.executing_here(&run) || !answered.insert(run) {
+                        continue;
+                    }
+                }
+                progressed |= self.take_reply(file, &message)?;
+                continue;
+            }
+            let Some(name) = message
+                .machine()
+                .filter(|m| self.ctx.machines.contains_key(*m))
+                .map(String::from)
+            else {
+                // No machine to run it: claimed and failed with `invalid_message` at once.
+                progressed |= self.claim_inline(file, None)?;
+                continue;
+            };
+            if full.contains(&name) {
+                continue;
+            }
+            let Some(slot) = self.try_slot(&name)? else {
+                full.insert(name);
+                continue;
+            };
+            let Some(claim) = message::claim(&decree_dir, &file)? else {
+                self.lost.insert(file);
+                continue;
+            };
+            let arrived = message.text(ARRIVED_AS).map(String::from).unwrap_or(file);
+            self.spawn(
+                claim.id.clone(),
+                Some(arrived),
+                slot,
+                Job::Claim(Box::new(claim)),
+            );
+            progressed = true;
+        }
+        Ok(progressed)
     }
 
-    /// Deliver every `timeout` deadline of a run this process runs that has passed, and
-    /// continue those runs. A reply to that wait queued at or before its deadline wins
-    /// (docs/reference/messages.md, Replies, step 5): it is delivered first, and then the
-    /// run is no longer waiting, so it gets no timeout.
-    pub(crate) fn deliver_timeouts(&mut self) -> Result<(), Stop> {
-        self.may_run()?;
-        let now = chrono::Utc::now();
-        self.deliver_early_replies(now)?;
-        let timed_out = reply::deliver_timeouts(&self.ctx, now, |id| self.owns(id))?;
-        self.continue_runs(&timed_out)
+    /// Start each `pending` run not executing here whose machine has a free slot.
+    fn start_pending(&mut self) -> Result<bool, Stop> {
+        let mut progressed = false;
+        for id in self.pending()? {
+            if self.in_flight.contains(&id) {
+                continue;
+            }
+            let Some(machine) = run_machine(&self.ctx, &id) else {
+                continue;
+            };
+            if let Some(slot) = self.try_slot(&machine)? {
+                self.spawn(id, None, slot, Job::Continue);
+                progressed = true;
+            }
+        }
+        Ok(progressed)
+    }
+
+    /// Whether run `id` executes in this process now: dispatched here, or a child run a
+    /// worker here steps (its lock holds this process's id).
+    fn executing_here(&self, id: &str) -> bool {
+        self.in_flight.contains(id)
+            || matches!(
+                message::lock_state(&self.ctx.runs_dir().join(id)),
+                Ok(message::LockState::Live(pid)) if pid == std::process::id()
+            )
+    }
+
+    /// A free slot of machine `name`.
+    fn try_slot(&self, name: &str) -> Result<Option<SlotGuard>, Stop> {
+        let (key, n) = crate::interpreter::child::slot_of(&self.ctx, name);
+        let dir = self.ctx.project_root.join(DECREE_DIR);
+        self.ctx
+            .slots
+            .try_take(&key, n)
+            .map_err(|e| Stop::Error(DecreeError::Other(format!("{}: {e}", dir.display()))))
+    }
+
+    /// Run `job`, run `id`, in a worker thread holding `slot`; it reports back when the
+    /// run stops.
+    fn spawn(&mut self, id: String, file: Option<String>, slot: SlotGuard, job: Job) {
+        self.in_flight.insert(id.clone());
+        let ctx = self.ctx.clone();
+        let project = Arc::clone(&self.project);
+        let notes = self.report.as_ref().map(Reporter::notes);
+        let tx = self.done_tx.clone();
+        let handle = std::thread::spawn(move || {
+            let notes = notes.as_ref();
+            let result = match job {
+                Job::Continue => {
+                    match reported(notes, &ctx, &id, || continue_holding(&ctx, &id, Some(slot))) {
+                        Ok(outcome) => Ok(Some(outcome)),
+                        // Another process holds it now.
+                        Err(InterpreterError::Active(_)) => Ok(None),
+                        Err(e) => Err(Stop::from(e)),
+                    }
+                }
+                Job::Claim(claim) => {
+                    let _slot = slot;
+                    reported(notes, &ctx, &id, || run_claim(&ctx, &project, *claim, None))
+                        .map(Some)
+                        .map_err(Stop::from)
+                }
+            };
+            let _ = tx.send(Done { id, file, result });
+        });
+        self.workers.push(handle);
+    }
+
+    /// Collect the runs that stopped: each one ready now, or, with `wait`, the first to stop
+    /// within it and those ready after it. A run that ended in `failed` is reported; a fault
+    /// in one is returned by the next pass, once the others have been collected.
+    fn reap(&mut self, wait: Option<std::time::Duration>) -> Result<(), Stop> {
+        let first = match wait {
+            Some(wait) if !self.in_flight.is_empty() => self.done_rx.recv_timeout(wait).ok(),
+            _ => None,
+        };
+        let mut done: Vec<Done> = first.into_iter().collect();
+        done.extend(self.done_rx.try_iter());
+        for Done { id, file, result } in done {
+            self.in_flight.remove(&id);
+            match result {
+                Ok(Some(Outcome::Finished(state))) if state == FAILED => {
+                    self.fail(&id, file.as_deref());
+                }
+                Ok(_) | Err(Stop::Interrupted) => {}
+                Err(stop) => {
+                    self.fault.get_or_insert(stop);
+                }
+            }
+        }
+        self.workers.retain(|h| !h.is_finished());
+        Ok(())
+    }
+
+    /// Wait for every executing run to stop, collecting each: on a signal, each running
+    /// script is stopped and its run `interrupted`.
+    pub(crate) fn wait_all(&mut self) {
+        while !self.in_flight.is_empty() {
+            if self.reap(Some(WAKE)).is_err() {
+                break;
+            }
+        }
+        for handle in self.workers.drain(..) {
+            let _ = handle.join();
+        }
     }
 
     /// For each run waiting past its deadline at `now`, take the queued replies to its wait
     /// that were queued at or before the deadline, in filename order (the order they were
     /// queued), until one is delivered. One that fails a check is rejected as any reply is.
-    fn deliver_early_replies(&mut self, now: chrono::DateTime<chrono::Utc>) -> Result<(), Stop> {
+    fn deliver_early_replies(&mut self, now: chrono::DateTime<chrono::Utc>) -> Result<bool, Stop> {
         let overdue = reply::overdue(&self.ctx, now, |id| self.owns(id))?;
         if overdue.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let inbox = decree_dir.join(INBOX_DIR);
@@ -501,6 +698,7 @@ impl Pipeline {
         // One scan for every wait; a reply that arrives later is delivered on the next pass.
         let replies = reply::queued(&inbox)
             .map_err(|e| DecreeError::Other(format!("{}: {e}", inbox.display())))?;
+        let mut progressed = false;
         for wait in &overdue {
             let answers = replies.iter().filter(|(file, to)| {
                 file.strip_suffix(".md")
@@ -512,88 +710,86 @@ impl Pipeline {
                 if self.lost.contains(file) || !message::is_queued(&decree_dir, file) {
                     continue;
                 }
-                if self.take_inbox(file.clone())? == Taken::Delivered {
+                let Ok(message) = Message::read(&inbox.join(file)) else {
+                    continue;
+                };
+                progressed = true;
+                if self.take_reply(file.clone(), &message)? {
                     break;
                 }
             }
         }
-        Ok(())
+        Ok(progressed)
     }
 
-    /// Give each new `inbox/` file an id (`message::arrive`), then take the next queued file
-    /// in filename order that is for a machine this process runs: deliver a reply and continue its run, or claim a message and run it
-    /// (docs/reference/messages.md, Lifecycle). Returns `false` when there is none.
-    pub(crate) fn next_inbox(&mut self) -> Result<bool, Stop> {
-        self.may_run()?;
-        self.refresh();
-        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
-        let inbox = decree_dir.join(INBOX_DIR);
-        message::arrive(&decree_dir)?;
-        let next = md_files(&inbox)?.into_iter().find(|f| {
-            !self.lost.contains(f)
-                && message::is_queued(&decree_dir, f)
-                && (self.filter.is_all()
-                    || self
-                        .filter
-                        .runs(inbox_machine(&self.ctx.runs_dir(), &inbox, f).as_deref()))
-        });
-        let Some(file) = next else {
-            return Ok(false);
-        };
-        self.take_inbox(file)?;
-        Ok(true)
-    }
-
-    /// Take queued `inbox/<file>`: deliver it if it is a reply and continue its run, or claim
-    /// it and run it; a reply that fails a check becomes a failed `invalid_message` run.
-    fn take_inbox(&mut self, file: String) -> Result<Taken, Stop> {
+    /// Deliver queued reply `inbox/<file>` to its waiting run, which is then `pending` and
+    /// starts like any other; one that fails a check becomes a failed `invalid_message` run.
+    /// Returns whether it was delivered.
+    fn take_reply(&mut self, file: String, message: &Message) -> Result<bool, Stop> {
         let inbox = self.ctx.project_root.join(DECREE_DIR).join(INBOX_DIR);
-        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
-        let mut problem = None;
-        let mut arrived_as = None;
-        if let Ok(m) = Message::read(&inbox.join(&file)) {
-            arrived_as = m.text(ARRIVED_AS).map(String::from);
-            if m.frontmatter.contains_key("to") {
-                let (to, event) = (m.text("to"), m.text("event"));
-                match reply::deliver(&self.ctx, &inbox, &file, to, event)? {
-                    Delivery::Delivered(run_id) => {
-                        self.continue_one(&run_id)?;
-                        return Ok(Taken::Delivered);
-                    }
-                    Delivery::Lost => {
-                        self.lost.insert(file);
-                        return Ok(Taken::Other);
-                    }
-                    Delivery::Rejected(reason) => problem = Some(reason),
-                }
+        let (to, event) = (message.text("to"), message.text("event"));
+        match reply::deliver(&self.ctx, &inbox, &file, to, event)? {
+            Delivery::Delivered(_) => Ok(true),
+            Delivery::Lost => {
+                self.lost.insert(file);
+                Ok(false)
+            }
+            Delivery::Rejected(reason) => {
+                self.claim_inline(file, Some(reason))?;
+                Ok(false)
             }
         }
+    }
+
+    /// Claim `inbox/<file>` and fail it here, with no worker: a message that does not parse
+    /// or names no machine, or a reply that failed a check (`reply_problem`). Nothing of a
+    /// machine runs. Returns whether it was claimed.
+    fn claim_inline(&mut self, file: String, reply_problem: Option<String>) -> Result<bool, Stop> {
+        let decree_dir = self.ctx.project_root.join(DECREE_DIR);
+        let arrived_as = Message::read(&decree_dir.join(INBOX_DIR).join(&file))
+            .ok()
+            .and_then(|m| m.text(ARRIVED_AS).map(String::from));
         let Some(claim) = message::claim(&decree_dir, &file)? else {
             self.lost.insert(file);
-            return Ok(Taken::Other);
+            return Ok(false);
         };
         let id = claim.id.clone();
-        let report = self.report.as_ref();
-        match reported(report, &self.ctx, &id, || {
-            run_claim(&self.ctx, &self.project, claim, problem)
-        })? {
-            Outcome::Finished(state) if state == FAILED => {
-                self.fail(&id, Some(arrived_as.as_deref().unwrap_or(&file)));
-                Ok(Taken::Other)
-            }
-            ref outcome if interrupted(outcome) => Err(Stop::Interrupted),
-            _ => Ok(Taken::Other),
+        let notes = self.report.as_ref().map(Reporter::notes);
+        let outcome = reported(notes.as_ref(), &self.ctx, &id, || {
+            run_claim(&self.ctx, &self.project, claim, reply_problem)
+        })?;
+        if matches!(&outcome, Outcome::Finished(state) if state == FAILED) {
+            self.fail(&id, Some(arrived_as.as_deref().unwrap_or(&file)));
         }
+        Ok(true)
     }
 }
 
-/// What taking an inbox file did.
-#[derive(Debug, PartialEq, Eq)]
-enum Taken {
-    /// It was a reply, delivered to its run.
-    Delivered,
-    /// It was claimed as a run of its own, rejected, or another process took it.
-    Other,
+/// How long the dispatcher waits for a run to stop before it looks at the queue again.
+const WAKE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// What a worker thread does with its run.
+enum Job {
+    /// Continue the `pending` run.
+    Continue,
+    /// Run the claimed inbox message.
+    Claim(Box<Claim>),
+}
+
+/// A worker's report: run `id` (claimed from `file`, if it was) stopped with `result`;
+/// `Ok(None)` when another process held it.
+struct Done {
+    id: String,
+    file: Option<String>,
+    result: Result<Option<Outcome>, Stop>,
+}
+
+/// The machine run `id` runs, from its `message.md`.
+fn run_machine(ctx: &Context, id: &str) -> Option<String> {
+    Message::read(&ctx.runs_dir().join(id).join(MESSAGE_FILE))
+        .ok()?
+        .machine()
+        .map(String::from)
 }
 
 /// Whether a process that runs `filter` runs run `id`: its root run's machine is one it runs.
@@ -614,7 +810,7 @@ fn inbox_machine(runs_dir: &Path, inbox: &Path, file: &str) -> Option<String> {
 
 /// Run `run`, the steps of run `id`, telling `report` when it starts and stops.
 fn reported<E>(
-    report: Option<&Reporter>,
+    report: Option<&RunNotes>,
     ctx: &Context,
     id: &str,
     run: impl FnOnce() -> Result<Outcome, E>,
@@ -644,6 +840,7 @@ pub(crate) fn context(
         machines: Arc::clone(&project.machines),
         shutdown,
         env: Default::default(),
+        slots: crate::slots::Slots::new(project_root),
     }
 }
 
@@ -762,15 +959,6 @@ fn reject(
     attention::record(ctx, id)?;
     report::notice(format!("{file}: invalid message: {reason}"));
     Ok(Outcome::Finished(FAILED.to_string()))
-}
-
-/// Whether a signal stopped the run, or the child run it waits for, child after child.
-fn interrupted(outcome: &Outcome) -> bool {
-    match outcome {
-        Outcome::Interrupted(_) => true,
-        Outcome::Child { outcome, .. } => interrupted(outcome),
-        _ => false,
-    }
 }
 
 /// `--retry` (docs/reference/cli.md): make an `interrupted` or finished run `pending` again,

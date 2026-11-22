@@ -65,7 +65,8 @@
       },
       "queued": {
         "inbox": []
-      }
+      },
+      "executing": {}
     },
     {
       "cron": [
@@ -231,6 +232,30 @@
                 "type": "string"
               },
               "description": "Filenames in inbox/, in filename order."
+            }
+          }
+        },
+        "executing": {
+          "type": "object",
+          "description": "Each machine with a run executing now (an `active` run, in any process): how many, and its `concurrency`, the most that may execute at once. A run waiting for a reply, a timer or a child is not executing. Reference: docs/reference/machines.md, Concurrency.",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "running",
+              "limit"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "running": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "How many of the machine's runs execute now."
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "The machine's `concurrency`: the most that may execute at once."
+              }
             }
           }
         }

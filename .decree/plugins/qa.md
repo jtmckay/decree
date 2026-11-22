@@ -5,6 +5,7 @@ needs:
 - develop
 machine:
   description: Attack the project to make it misbehave, and hand each real bug to develop as a failing test; the AI writes tests only and never fixes code.
+  concurrency_group: worktree
   onentry:
   - clean_tree
   initial: recon

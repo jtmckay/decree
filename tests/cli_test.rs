@@ -535,9 +535,12 @@ fn process_streams_each_run_and_a_line_as_it_stops() {
     p.script("say", "#!/usr/bin/env bash\necho said\necho warned >&2\n");
     p.machine("deploy", DEPLOY);
     p.script("ask_person", "#!/usr/bin/env bash\necho asking\n");
+    // One run per pass, so the two print one after the other: queued together they would
+    // run at once, each line behind its run's prefix (tests/concurrency_test.rs).
     let first = p.emit("quick", "Say it.\n");
+    let mut out = p.stdout(&["daemon", "--once"], 0);
     let second = p.emit("deploy", "Ship v1.\n");
-    let out = p.stdout(&["daemon", "--once"], 0);
+    out.push_str(&p.stdout(&["daemon", "--once"], 0));
     let (head, waiting) = out.split_once("Waiting: ").unwrap();
     let lines: Vec<&str> = head.lines().collect();
     assert_eq!(lines.len(), 9, "{out}");
@@ -1359,7 +1362,6 @@ fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
     p.script("stop_queue", "#!/bin/sh\n\"${DECREE}\" stop\n");
     fs::write(p.root().join("ok.flag"), "").unwrap();
     let first = p.emit("stopper", "Stop.\n");
-    let second = p.emit("flaky", "Works.\n");
     let stop = p.decree_dir().join("attention/manual-stop.md");
 
     let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
@@ -1371,6 +1373,9 @@ fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(stop.exists());
+    // Queued after the stop (one queued before, for another machine, would have started
+    // beside the stopper: machines run at once).
+    let second = p.emit("flaky", "Works.\n");
     thread::sleep(Duration::from_millis(1500));
     assert!(!p.run_dir(&second).exists(), "claimed while held");
     fs::remove_file(&stop).unwrap();
@@ -1487,6 +1492,12 @@ fn status_lists_active_runs_in_nested_projects() {
             .clone();
         String::from_utf8(out.stdout).unwrap()
     };
+    // The `@reboot` runs of `order` and `skill` execute beside `tick` at first (machines run
+    // at once); wait until only `tick`, which runs until the flag goes, is left.
+    while !status(outer.path()).contains("apps/web/: active: 1\n") {
+        assert!(Instant::now() < deadline, "{}", status(outer.path()));
+        thread::sleep(Duration::from_millis(20));
+    }
     let above = status(outer.path());
     assert!(
         above.starts_with(&format!(

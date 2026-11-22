@@ -8,13 +8,16 @@ use serde_json::json;
 
 use super::decide::REQUEST_FILE;
 use super::{
-    write_replace, Context, Decision, Interpreter, InterpreterError, Invoked, Outcome, RunInput,
+    io_err, write_replace, Context, Decision, Interpreter, InterpreterError, Invoked, Outcome,
+    RunInput,
 };
 use crate::events::{claim_event, is_type, text, waiting_child};
 use crate::layout::DECREE_DIR;
 use crate::layout::MESSAGE_FILE;
 use crate::machine::{MachineInvoke, FAILED};
 use crate::message::{create_run_dir, Message};
+use crate::runtime::RuntimeError;
+use crate::slots::SlotGuard;
 use crate::trace::{self, TraceParent, TRACEPARENT_KEY, TRACESTATE_KEY};
 
 /// A child run this run started, and how stepping it ended.
@@ -29,7 +32,21 @@ pub(super) struct Child {
 /// `received`, or `waiting` for a child run that has finished. A child run that finishes
 /// continues its parent, if the parent waits for it, and so on up: the result is that of
 /// the last run continued.
+#[cfg(test)]
 pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterError> {
+    continue_holding(ctx, run_id, None)
+}
+
+/// `continue_run`, for a caller holding `slot`, a slot of the run's machine
+/// (docs/reference/machines.md, Concurrency). A finished child gives its slot back before
+/// it takes one of its parent's machine, waiting for it, and the parent continues holding
+/// that: a wait for a slot never runs from child to parent, so two machines can never each
+/// hold the slot the other waits for.
+pub fn continue_holding(
+    ctx: &Context,
+    run_id: &str,
+    slot: Option<SlotGuard>,
+) -> Result<Outcome, InterpreterError> {
     let message_path = ctx.runs_dir().join(run_id).join(MESSAGE_FILE);
     let message = Message::read(&message_path)?;
     let name = message.machine().ok_or_else(|| InterpreterError::Message {
@@ -57,11 +74,46 @@ pub fn continue_run(ctx: &Context, run_id: &str) -> Result<Outcome, InterpreterE
     if !matches!(outcome, Outcome::Finished(_)) {
         return Ok(outcome);
     }
-    if waiting_child(&ctx.events(parent)?) == Some(run_id) {
-        continue_run(ctx, parent)
-    } else {
-        Ok(outcome)
+    if waiting_child(&ctx.events(parent)?) != Some(run_id) {
+        return Ok(outcome);
     }
+    drop(slot);
+    // A signal while waiting leaves the parent `pending`, continued at the next start.
+    let Some(slot) = take_slot(ctx, &run_machine(ctx, parent)?)? else {
+        return Ok(outcome);
+    };
+    continue_holding(ctx, parent, Some(slot))
+}
+
+/// The machine run `id` runs, from its `message.md`.
+fn run_machine(ctx: &Context, id: &str) -> Result<String, InterpreterError> {
+    let path = ctx.runs_dir().join(id).join(MESSAGE_FILE);
+    let message = Message::read(&path)?;
+    message
+        .machine()
+        .map(String::from)
+        .ok_or_else(|| InterpreterError::Message {
+            path,
+            message: "frontmatter names no `machine`".to_string(),
+        })
+}
+
+/// A slot of machine `name` (its group's, if it has one), waiting until one is free; `None`
+/// once a signal came.
+fn take_slot(ctx: &Context, name: &str) -> Result<Option<SlotGuard>, InterpreterError> {
+    let (key, n) = slot_of(ctx, name);
+    let dir = ctx.project_root.join(DECREE_DIR);
+    ctx.slots
+        .take_blocking(&key, n, &ctx.shutdown)
+        .map_err(io_err(&dir))
+}
+
+/// Whose slots machine `name`'s runs take, and how many there are.
+pub(crate) fn slot_of(ctx: &Context, name: &str) -> (String, usize) {
+    ctx.machines.get(name).map_or_else(
+        || (format!("machine/{name}"), 1),
+        |m| (m.slot_key(), m.concurrency()),
+    )
 }
 
 impl Interpreter<'_> {
@@ -175,6 +227,13 @@ impl Interpreter<'_> {
         if depth > ctx.env.max_depth {
             return Ok(Err(format!("max_depth {} reached", ctx.env.max_depth)));
         }
+        // The child executes holding a slot of its own machine, waiting for one; this run
+        // keeps its own meanwhile (docs/reference/machines.md, Concurrency).
+        let Some(_slot) = take_slot(ctx, name)? else {
+            return Err(InterpreterError::Runtime(RuntimeError::Interrupted {
+                script: format!("waiting for a slot of `{name}`"),
+            }));
+        };
         let (id, run_dir) = create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
         let parent = self.executor.info().run_id.clone();
         let body = from.map_or_else(|| self.message_body.clone(), |m| m.body.clone());

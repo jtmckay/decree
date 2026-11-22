@@ -162,8 +162,11 @@ fn flags_repeat_and_take_lists() {
     p.queue("20260101T000000.000000Z-000000", "a", "");
     p.queue("20260101T000000.000001Z-000001", "b", "");
     p.process(&["--machine", "a,b"]).assert().success();
+    // `a` and `b` run at once, so in either order.
+    let mut order = p.order();
+    order.sort();
     assert_eq!(
-        p.order(),
+        order,
         [
             "a 20260101T000000.000000Z-000000",
             "b 20260101T000000.000001Z-000001"
