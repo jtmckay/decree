@@ -38,7 +38,7 @@ The `url` resolves on `main`, where SchemaStore checks it. `docs_test.rs` holds 
 
 Offline, map the local copy instead: `"./.decree/schema/v1/machine.schema.json"`. The copy is generated, and `.decree/.gitignore` lists `schema/`; `decree init` and `decree install` write it, so it is there after a clone (`decree install`) and current after an upgrade (`decree install` again; `decree check` warns while the copy is out of date). `decree schema` writes it alone. Other editors that run the YAML language server take the same mapping in their own settings.
 
-**Any editor.** The YAML language server also reads a comment at the top of the file. Put it above the machine's `# Graph:` line, after `decree schema` has written the local copy it points at:
+**Any editor.** The YAML language server also reads a comment at the top of the file. Put it above the machine's `# Graph:` line, after `decree install` has written the local copy it points at:
 
 ```yaml
 # yaml-language-server: $schema=../schema/v1/machine.schema.json

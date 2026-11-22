@@ -269,7 +269,7 @@ fn an_unknown_machine_is_an_error_naming_it() {
         "{stderr}"
     );
     p.write(".env", "DECREE_EXCLUDE_MACHINES=zz\n");
-    let out = p.process(&["--dry-run"]).assert().code(1);
+    let out = p.process(&[]).assert().code(1);
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
     assert!(
         stderr.contains("DECREE_EXCLUDE_MACHINES in .decree/.env names `zz`"),
@@ -281,25 +281,6 @@ fn an_unknown_machine_is_an_error_naming_it() {
         .assert()
         .success();
     assert_eq!(p.order(), ["a 20260101T000000.000000Z-000000"]);
-}
-
-/// `--dry-run` lists only what this process would run.
-#[test]
-fn dry_run_honours_the_filter() {
-    let p = Project::new();
-    p.queue("20260101T000000.000000Z-000000", "a", "");
-    p.queue("20260101T000000.000001Z-000001", "b", "");
-    let out = stdout(&mut p.process(&["--dry-run", "--machine", "a"]));
-    assert!(out.contains("20260101T000000.000000Z-000000.md"), "{out}");
-    assert!(!out.contains("20260101T000000.000001Z-000001.md"), "{out}");
-    let json = stdout(&mut p.process(&["--dry-run", "--format", "json", "--exclude-machine", "a"]));
-    let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(
-        doc["inbox"][0]["file"], "20260101T000000.000001Z-000001.md",
-        "{doc}"
-    );
-    assert_eq!(doc["inbox"].as_array().unwrap().len(), 1, "{doc}");
-    assert!(p.runs().is_empty());
 }
 
 /// A run `decree retry` made pending is continued only by a process that runs its machine.

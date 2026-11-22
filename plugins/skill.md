@@ -155,8 +155,8 @@ scripts:
         (what must hold or not change), `## Acceptance Criteria` (Given / When / Then,
         observable). `reference/messages.md` shows a step rewritten as an outcome.
     - **Always set `machine:`** in a message. Pick from `.decree/machines/` (`ls .decree/machines`).
-    - **Before writing a machine, run `decree schema` and read
-      `.decree/schema/v1/machine.schema.json`**, the JSON Schema of every machine key, and write
+    - **Before writing a machine, read
+      `.decree/schema/v1/machine.schema.json`** (`decree install` writes it), the JSON Schema of every machine key, and write
       against it. Read `events.schema.json`, `request.schema.json` and `reply.schema.json` in the
       same folder before writing a router or anything that reads a run.
     - **Scripts choose how, machines choose what runs next.** A script may decide *how* to do its
@@ -183,8 +183,8 @@ scripts:
       `.decree/system.md`.
     - **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,
       `decree status [<id>] --format json`, and `--format json` on `emit`, `reply`, `retry`,
-      `cancel`, `pause`, `resume`, `graph`, `schema`, `upgrade` and `daemon --once --dry-run`
-      print one JSON document, described by
+      `cancel`, `pause`, `resume`, `graph`, `upgrade`, `install`, `list` and `export` print one
+      JSON document, described by
       `.decree/schema/v1/cli/<command>.schema.json`. Exit codes are the same as in text.
       `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
       `message`.
@@ -266,12 +266,11 @@ scripts:
     | `decree install <file\|->`, or `curl -fsSL <url> \| decree install -` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
     | `decree list` / `decree export [<name>]` | List the project's plugins (`official` or `own`, `differs`, `not installed`, `edited`), the machines no plugin installed, and the official plugins it can add. Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. |
     | `decree graph` | Write `.decree/machines/<machine>/graph.md` (Mermaid) for every machine, plus `.decree/system.md`. |
-    | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |
     | `decree install --force skill` | After upgrading decree: take its `skill` plugin; the next daemon start rewrites this skill, keeping other files in the skill folder. |
     | `decree` | Print a synopsis of the quick start and run nothing; run the queue with `decree daemon --once`. |
     | `decree upgrade [--yes] [--format json]` | Print how to upgrade decree (the install line, pinned with `\| sh -s -- <tag>`, and `cargo install --git … --force` for a cargo copy) and what to run in each project after, then ask y/N before running the install line, and then before running `decree install` in this project; `--yes` runs both without asking. After an upgrade, run `decree install` in each project: it writes the new schemas and installs the plugins. An agent never answers `y` for a person. |
     | `decree emit [--machine <m>] [--param k=v]...` | Queue a message from stdin: a body for machine `m`, or a whole message whose frontmatter the flags override (`decree emit < <file>` runs a message again). Prints the new id. |
-    | `decree daemon --once [--dry-run] [--quiet] [--machine <m> \| --exclude-machine <m>]` | Start (firing `@reboot` cron files, so `order` runs the order files), run everything queued: replies, pending runs, the inbox (FIFO), printing each run's output, then exit. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
+    | `decree daemon --once [--quiet] [--machine <m> \| --exclude-machine <m>]` | Start (firing `@reboot` cron files, so `order` runs the order files), run everything queued: replies, pending runs, the inbox (FIFO), printing each run's output, then exit. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
     | `decree retry <id> [--state <s>]` | Make a failed or interrupted run pending again; a running `decree daemon`, or the next `decree daemon --once`, continues it. The failure message prints the exact command. |
     | `decree daemon [--interval <duration>] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with scheduled cron, every `2s` by default; `--machine` and `--exclude-machine` as for `--once`. |
     | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then runs by status (`--all`: every run), and active runs in projects below; one run's events; `--cron`: cron files and when each fires next (`daemon start` for `@reboot`). |
@@ -455,8 +454,8 @@ scripts:
     # Graph: graph.md
     ```
 
-    **Before writing a machine, run `decree schema` and read `.decree/schema/v1/machine.schema.json`**
-    (generated, ignored by git): the precise contract for every key below, with a description and
+    **Before writing a machine, read `.decree/schema/v1/machine.schema.json`**
+    (written by `decree install`, ignored by git): the precise contract for every key below, with a description and
     examples for each. Write against it, then run `decree check`, which also checks what a schema
     cannot: that names resolve, targets exist and every state is reachable. Editors apply the same
     schema by path; machines carry no schema line.
@@ -533,8 +532,7 @@ scripts:
 
     A `model` state never calls a model itself. decree writes `request.json` (question,
     options, the `output` state's output as `input`, message body, the run's history, and
-    `reply_schema`, a JSON Schema for the reply; `.decree/schema/v1/request.schema.json` after
-    `decree schema`) and runs a
+    `reply_schema`, a JSON Schema for the reply; `.decree/schema/v1/request.schema.json`) and runs a
     **router**: an ordinary machine (`router:` on the invoke, else the machine named `router`, which
     the official `router` plugin provides).
     Its script reads `$DECREE_REQUEST`, asks a model, and writes
@@ -727,7 +725,7 @@ scripts:
     inbox message and cron file parses and names a machine with valid `params`)
     and E1 (`.decree/.env` and each `env_file` are valid dotenv files without reserved keys). Errors look like `machines/feature/machine.yml: work.verify: <message>`. It also warns when
     a machine's `graph.md` or `.decree/system.md` is out of date, or `.decree/schema/` when it exists: run `decree graph` or
-    `decree schema`.
+    `decree install`.
   skill/reference/messages.md: |
     # Messages
 
@@ -992,7 +990,7 @@ scripts:
     carries `v`, `seq`, `ts`, `type`, `run_id`, `machine`, `trigger` and `trace_id`; `script`,
     `decision` and `received` events, the claim and a `retry` carry the `span_id` of their span in
     `traces.jsonl`. Every field of every type,
-    with its meaning, is in `.decree/schema/v1/events.schema.json`: run `decree schema`, then read it.
+    with its meaning, is in `.decree/schema/v1/events.schema.json`: read it.
     Types:
 
     | `type` | Meaning |

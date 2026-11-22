@@ -20,9 +20,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
 use crate::attention;
-use crate::cli::Format;
 use crate::commands::check::{self, md_files, Project};
-use crate::commands::print_json;
 use crate::commands::report::{self, Reporter, RunNotes};
 use crate::error::DecreeError;
 use crate::events::{is_type, strings, text, EventLog};
@@ -31,39 +29,21 @@ use crate::interpreter::child::continue_holding;
 use crate::interpreter::recover::{self, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
 use crate::layout::MESSAGE_FILE;
-use crate::layout::{self, ATTENTION_DIR, DECREE_DIR, INBOX_DIR};
+use crate::layout::{ATTENTION_DIR, DECREE_DIR, INBOX_DIR};
 use crate::machine::FAILED;
 use crate::message::{self, Claim, Message, RunLock, ARRIVED_AS};
 use crate::reply::{self, Delivery};
 use crate::runtime::{self};
 use crate::slots::SlotGuard;
 
-/// Run `decree daemon --once [--dry-run] [--quiet]
+/// Run `decree daemon --once [--quiet]
 /// [--machine <m> | --exclude-machine <m>]`: a daemon start, which fires the `@reboot` cron
 /// files, then works until only a person or a program can move a run on. Unless `quiet`,
 /// each run's output is printed as it goes (`commands::report`).
-pub fn run(
-    project_root: &Path,
-    dry_run: bool,
-    format: Format,
-    quiet: bool,
-    select: &Select,
-) -> Result<(), DecreeError> {
+pub fn run(project_root: &Path, quiet: bool, select: &Select) -> Result<(), DecreeError> {
     let mut plugin_notes = BTreeSet::new();
     plugin_notices(project_root, &mut plugin_notes, "");
     let project = Project::load(project_root)?;
-    if dry_run {
-        // The machine filter's variables are read only when no flag beats them; `load_env`
-        // also refuses a bad `DECREE_MAX_DEPTH`, which no flag beats.
-        let dotenv = if select.is_given() {
-            check::max_depth(&project)?;
-            Vec::new()
-        } else {
-            check::load_env(&project)?.decree
-        };
-        let filter = select.filter(&dotenv, |m| project.machine_ids.contains(m))?;
-        return run_dry(&project, format, &filter);
-    }
     let shutdown = Arc::new(AtomicBool::new(false));
     runtime::register_signals(&shutdown)?;
     let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
@@ -1035,79 +1015,4 @@ fn print_waiting(ctx: &Context, filter: &MachineFilter) -> Result<(), DecreeErro
         }
     }
     Ok(())
-}
-
-/// `decree daemon --once --dry-run`: list the queued inbox messages and run nothing; invalid
-/// ones with their errors. With a machine filter, only those for its machines.
-fn run_dry(project: &Project, format: Format, filter: &MachineFilter) -> Result<(), DecreeError> {
-    let mut problems = project.problems.clone();
-    let mut document = serde_json::Map::new();
-    let inbox_dir = project.decree_dir.join(INBOX_DIR);
-    let runs_dir = project.decree_dir.join(layout::RUNS_DIR);
-    let mut inbox = md_files(&inbox_dir)?;
-    if !filter.is_all() {
-        inbox.retain(|f| filter.runs(inbox_machine(&runs_dir, &inbox_dir, f).as_deref()));
-    }
-    let (dir, files) = (INBOX_DIR, inbox);
-    let text = format == Format::Text;
-    if text && files.is_empty() {
-        println!("{dir}/: nothing queued");
-    } else if text {
-        println!("{dir}/:");
-    }
-    {
-        let mut items = Vec::new();
-        for file in files {
-            let path = project.decree_dir.join(dir).join(&file);
-            let target = Message::read(&path)
-                .map_err(|e| vec![(0, e.to_string())])
-                .and_then(|m| {
-                    if m.frontmatter.contains_key("to") {
-                        return Ok(Target::Reply(m.text("to").unwrap_or_default().to_string()));
-                    }
-                    message::validate(&m, &project.machines, &project.machine_ids)
-                        .map(Target::Machine)
-                });
-            let item = match &target {
-                Ok(Target::Machine(machine)) => {
-                    serde_json::json!({ "file": file, "valid": true, "machine": machine })
-                }
-                Ok(Target::Reply(to)) => {
-                    serde_json::json!({ "file": file, "valid": true, "to": to })
-                }
-                Err(_) => serde_json::json!({ "file": file, "valid": false }),
-            };
-            match target {
-                Ok(Target::Machine(machine)) if text => println!("  {file:<24} → {machine}"),
-                Ok(Target::Reply(to)) if text => println!("  {file:<24} → reply to {to}"),
-                Ok(_) => {}
-                Err(_) => {
-                    if text {
-                        println!("  {file:<24} → invalid");
-                    }
-                    project.check_file(dir, &file, "M2", None, &mut problems)?;
-                }
-            }
-            items.push(item);
-        }
-        document.insert(dir.to_string(), items.into());
-    }
-    if format == Format::Json {
-        print_json(&document.into())?;
-    }
-    for problem in &problems {
-        eprintln!("{problem}");
-    }
-    match problems.len() {
-        0 => Ok(()),
-        n => Err(DecreeError::Other(format!(
-            "{n} error(s); nothing would run"
-        ))),
-    }
-}
-
-/// What a queued message would do: start a run of a machine, or reply to a waiting run.
-enum Target {
-    Machine(String),
-    Reply(String),
 }

@@ -50,11 +50,6 @@ impl Select {
         filter.check(known, &source)?;
         Ok(filter)
     }
-
-    /// Whether a flag was given, so the variables are not read.
-    pub fn is_given(&self) -> bool {
-        !self.machines.is_empty() || !self.exclude.is_empty()
-    }
 }
 
 /// Looks up a variable: decree's own environment, or `.decree/.env`.

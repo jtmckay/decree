@@ -11,7 +11,6 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 - `machine.schema.json`: a `machine` invoke may name a `message` file in place of `name`; `state_files` (was `store`).
 - `machine.schema.json`: root `concurrency` (default 1) and `concurrency_group`; `cli/status.schema.json`: `executing`, each machine's runs executing now and its limit.
 - `machine.schema.json`: a `reply` invoke may take `timeout_at`, in place of `timeout`: `<file>` or `<file>#<JSON Pointer>` in the run's folder, the instant the wait ends.
-- `cli/daemon.schema.json`: what `decree daemon --once --dry-run --format json` prints (was `cli/process.schema.json`).
 - `cli/reply.schema.json`, what `decree reply --format json` prints (was `cli/event.schema.json`, with `decree event`).
 - `cli/plugin.schema.json`: `list` is `decree list`'s shape (`plugins` with `official`, `differs` and `state`; `unplugged`; `available`).
 - `cli/plugin.schema.json`: also describes `decree install`; the named form's `action` is `install` (was `add`, whose `kept` status is `installed`), and the no-argument form's is `sync` (was `install`).
@@ -24,6 +23,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 
 ### Removed
 
+- `cli/schema.schema.json`, with `decree schema`, and `cli/process.schema.json`, with `decree process --dry-run`.
 - `cli/stop.schema.json`, with `decree stop`: `cli/pause.schema.json` describes `decree pause` and `decree resume`. `attention.schema.json`'s `manual-stop` kind is `pause` (`.decree/attention/pause.md`), and so in `cli/status.schema.json`.
 - `cli/prune.schema.json`, with `decree prune`, and `cli/skill.schema.json`, with `decree skill`.
 - `message.schema.json`: the `migration` key and the `migration` trigger; `cli/status.schema.json` and `cli/check.schema.json`: their migration fields (`status`'s `blocked` and `queued.migrations`, `check`'s rule `M1`); `attention.schema.json`'s `message` is always `inbox`.

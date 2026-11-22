@@ -38,7 +38,7 @@ examples/project/.decree/
   system.md                 written by `decree graph`: how the machines connect
   inbox/                    MESSAGES: FIFO queue; here, a person's reply
   runs/<id>/                one folder per run: message copy, events.jsonl, traces.jsonl, numbered logs
-  schema/                   written by `decree schema`: the JSON Schemas of every file
+  schema/                   written by `decree install`: the JSON Schemas of every file
 ```
 
 [`develop`](.decree/plugins/develop.md) is the end of the decree skill's growth path: a straight line, with an attempt list where runs showed the need. Installed, its machine is:

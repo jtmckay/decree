@@ -11,10 +11,10 @@
 use jsonschema::Validator;
 use serde_json::Value as Json;
 
-/// The machine schema, as `decree schema` writes it.
+/// The machine schema, as `decree install` writes it.
 pub const MACHINE_SCHEMA: &str = include_str!("../../schema/v1/machine.schema.json");
 
-/// The message frontmatter schema, as `decree schema` writes it.
+/// The message frontmatter schema, as `decree install` writes it.
 pub const MESSAGE_SCHEMA: &str = include_str!("../../schema/v1/message.schema.json");
 
 /// The frontmatter of a file in `.decree/attention/`.
@@ -47,12 +47,6 @@ pub const PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/plugin.schema.json
 /// The schema of `decree export|import|install --format json`.
 pub const CLI_PLUGIN_SCHEMA: &str = include_str!("../../schema/v1/cli/plugin.schema.json");
 
-/// The schema of `decree daemon --once --dry-run --format json`.
-pub const CLI_DAEMON_SCHEMA: &str = include_str!("../../schema/v1/cli/daemon.schema.json");
-
-/// The schema of `decree schema --format json`.
-pub const CLI_SCHEMA_SCHEMA: &str = include_str!("../../schema/v1/cli/schema.schema.json");
-
 /// The schema of `decree status --format json`.
 pub const CLI_STATUS_SCHEMA: &str = include_str!("../../schema/v1/cli/status.schema.json");
 
@@ -68,20 +62,18 @@ pub const CLI_RETRY_SCHEMA: &str = include_str!("../../schema/v1/cli/retry.schem
 /// The schema of `decree upgrade --format json`.
 pub const CLI_UPGRADE_SCHEMA: &str = include_str!("../../schema/v1/cli/upgrade.schema.json");
 
-/// Every schema `decree schema` writes, by its path under `.decree/schema/v1/` without
+/// Every schema `decree install` writes, by its path under `.decree/schema/v1/` without
 /// `.schema.json`.
-pub const ALL: [(&str, &str); 19] = [
+pub const ALL: [(&str, &str); 17] = [
     ("attention", ATTENTION_SCHEMA),
     ("cli/cancel", CLI_CANCEL_SCHEMA),
     ("cli/check", CLI_CHECK_SCHEMA),
-    ("cli/daemon", CLI_DAEMON_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
     ("cli/graph", CLI_GRAPH_SCHEMA),
     ("cli/pause", CLI_PAUSE_SCHEMA),
     ("cli/plugin", CLI_PLUGIN_SCHEMA),
     ("cli/reply", CLI_REPLY_SCHEMA),
     ("cli/retry", CLI_RETRY_SCHEMA),
-    ("cli/schema", CLI_SCHEMA_SCHEMA),
     ("cli/status", CLI_STATUS_SCHEMA),
     ("cli/upgrade", CLI_UPGRADE_SCHEMA),
     ("events", EVENTS_SCHEMA),

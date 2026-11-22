@@ -58,7 +58,6 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         Command::Upgrade { yes, format } => commands::upgrade::run(yes, format),
         Command::Check { format } => commands::check::run(&root()?, format),
         Command::Graph { format } => commands::graph::run(&root()?, format),
-        Command::Schema { format } => commands::schema::run(&root()?, format),
         Command::Emit {
             machine,
             params,
@@ -72,8 +71,6 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         } => commands::reply::run(&root()?, &target, &event, note.as_deref(), format),
         Command::Daemon {
             once,
-            dry_run,
-            format,
             interval,
             quiet,
             machines,
@@ -81,7 +78,7 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         } => {
             let select = filter::Select::new(machines, exclude_machines);
             if once {
-                commands::process::run(&root()?, dry_run, format, quiet, &select)
+                commands::process::run(&root()?, quiet, &select)
             } else {
                 commands::daemon::run(&root()?, interval, quiet, &select)
             }

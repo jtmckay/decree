@@ -818,3 +818,11 @@ Left out, and why: existential's flows, `project:` tags, `endpoints:`, `handlers
 
 **Consequences.** The pair reads as what it does, and nobody needs the file's name to go on. Ctrl-C keeps its meaning: interrupt now, and the daemon exits.
 
+## D94: No `decree schema`, no `daemon --once --dry-run`
+
+**Context.** Since [D90](#d90-decree-install-writes-the-schemas-and-ends-an-upgrade), `decree init` and every `decree install` write `.decree/schema/`, so `decree schema` only did again what the step after a clone, a pull or an upgrade already does. `decree daemon --once --dry-run` listed the queued inbox messages and checked them, which `decree status` (the queued messages) and `decree check` (M2 for each one) already do. The project's owner asked for fewer commands, each one expected.
+
+**Decision.** `decree schema` and `daemon --once --dry-run` (with `daemon --once --format`) are removed, with `cli/schema.schema.json` and `cli/daemon.schema.json`. `decree check` says `run `decree install`` for a stale local schema copy. `daemon` takes no `--format`: it produces a stream.
+
+**Consequences.** One command writes the schemas, the one a project runs anyway. A script that read `daemon --once --dry-run --format json` reads `decree status --format json` (`queued.inbox`) and `decree check --format json` instead.
+

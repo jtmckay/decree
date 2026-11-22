@@ -101,7 +101,7 @@ impl Project {
             run(p.root(), &["export", name], "");
         }
         run(p.root(), &["graph"], "");
-        run(p.root(), &["schema"], "");
+        run(p.root(), &["install"], "");
         p
     }
 
@@ -170,7 +170,7 @@ fn strings(v: &Value) -> Vec<&str> {
 }
 
 #[test]
-fn check_graph_and_schema() {
+fn check_graph_and_install() {
     let p = Project::new();
     let (code, doc) = p.json(&["check"], "", schema::CLI_CHECK_SCHEMA, false);
     assert_eq!(code, 0);
@@ -179,7 +179,7 @@ fn check_graph_and_schema() {
         serde_json::json!({ "valid": true, "errors": [], "warnings": [] })
     );
 
-    // A stale graph and an unknown schema file: warnings, removed by graph and schema.
+    // A stale graph and an unknown schema file: warnings, removed by graph and install.
     let decree = p.root().join(".decree");
     common::write_file(&decree.join("machines/old/graph.md"), "old\n");
     fs::write(decree.join("schema/v1/old.schema.json"), "{}\n").unwrap();
@@ -190,7 +190,7 @@ fn check_graph_and_schema() {
         doc["warnings"],
         serde_json::json!([
             { "file": "machines/old/graph.md", "message": "no machine draws it; run `decree graph`" },
-            { "file": "schema/v1/old.schema.json", "message": "not one decree writes; run `decree schema`" },
+            { "file": "schema/v1/old.schema.json", "message": "not one decree writes; run `decree install`" },
         ])
     );
 
@@ -199,17 +199,11 @@ fn check_graph_and_schema() {
     assert!(strings(&doc["written"]).contains(&".decree/system.md"));
     assert_eq!(strings(&doc["removed"]), [".decree/machines/old/graph.md"]);
 
-    let (code, doc) = p.json(&["schema"], "", schema::CLI_SCHEMA_SCHEMA, false);
+    let (code, _, _) = run(p.root(), &["install"], "");
     assert_eq!(code, 0);
-    let expected: Vec<String> = schema::ALL
-        .iter()
-        .map(|(name, _)| format!(".decree/schema/v1/{name}.schema.json"))
-        .collect();
-    assert_eq!(strings(&doc["written"]), expected);
-    assert_eq!(
-        strings(&doc["removed"]),
-        [".decree/schema/v1/old.schema.json"]
-    );
+    assert!(!decree.join("schema/v1/old.schema.json").exists());
+    let (code, doc) = p.json(&["check"], "", schema::CLI_CHECK_SCHEMA, false);
+    assert_eq!((code, &doc["warnings"]), (0, &serde_json::json!([])));
 
     // Errors: check reports them in the document; graph fails before it writes anything.
     fs::write(decree.join("inbox/a.md"), "---\nmachine: nope\n---\n").unwrap();
@@ -247,17 +241,6 @@ fn emit_event_retry_status_and_daemon_once() {
         true,
     );
     assert_eq!(code, 1);
-
-    // daemon --once --dry-run: what would run, with machines.
-    let dry = ["daemon", "--once", "--dry-run"];
-    let (code, doc) = p.json(&dry, "", schema::CLI_DAEMON_SCHEMA, false);
-    assert_eq!(code, 0);
-    assert_eq!(
-        doc,
-        serde_json::json!({
-            "inbox": [{ "file": format!("{flaky}.md"), "valid": true, "machine": "flaky" }],
-        })
-    );
 
     // flaky fails and stops process; then deploy waits for a reply.
     assert_eq!(run(p.root(), &["daemon", "--once"], "").0, 1);
@@ -312,11 +295,7 @@ fn emit_event_retry_status_and_daemon_once() {
         true,
     );
     assert_eq!(code, 1);
-    let (_, doc) = p.json(&dry, "", schema::CLI_DAEMON_SCHEMA, false);
-    assert_eq!(
-        doc["inbox"],
-        serde_json::json!([{ "file": format!("{reply}.md"), "valid": true, "to": deploy }])
-    );
+    assert!(p.root().join(format!(".decree/inbox/{reply}.md")).is_file());
 
     // retry: a waiting run cannot be retried (1, nothing on stdout); a failed one is
     // pending in its state, and says so.
@@ -325,29 +304,6 @@ fn emit_event_retry_status_and_daemon_once() {
     p.touch("ok.flag");
     let (_, doc) = p.json(&["retry", &flaky], "", schema::CLI_RETRY_SCHEMA, false);
     assert_eq!(doc, serde_json::json!({ "id": flaky, "state": "work" }));
-}
-
-/// An invalid queued message: process --dry-run lists it as invalid, reports its error on
-/// stderr and exits 1, as text.
-#[test]
-fn process_dry_run_with_an_invalid_message() {
-    let p = Project::new();
-    fs::write(
-        p.root().join(".decree/inbox/a.md"),
-        "---\nmachine: nope\n---\n",
-    )
-    .unwrap();
-    let (code, doc) = p.json(
-        &["daemon", "--once", "--dry-run"],
-        "",
-        schema::CLI_DAEMON_SCHEMA,
-        false,
-    );
-    assert_eq!(code, 1);
-    assert_eq!(
-        doc,
-        serde_json::json!({ "inbox": [{ "file": "a.md", "valid": false }] })
-    );
 }
 
 /// An active run: `status` names the script it is running now.
@@ -391,8 +347,8 @@ fn status_of_an_active_run_names_its_running_script() {
         .starts_with(&format!(".decree/runs/{id}/0001-work-wait_flag")));
 }
 
-/// `--format` where it does not apply is a usage error, exit 2: `daemon --once` without
-/// `--dry-run` prints text only; `daemon`, `tail`, `init` and `help` take no `--format`.
+/// `--format` where it does not apply is a usage error, exit 2: `daemon`, `tail`, `init` and
+/// `help` take no `--format`; `schema` and `--dry-run` are gone.
 #[test]
 fn format_where_it_does_not_apply_exits_2() {
     let p = Project::new();
@@ -403,6 +359,8 @@ fn format_where_it_does_not_apply_exits_2() {
         &["help", "--format", "json"],
         &["init", "--format", "json"],
         &["graph", "--format", "sarif"],
+        &["schema"],
+        &["daemon", "--once", "--dry-run"],
     ] {
         let (code, stdout, _) = run(p.root(), args, "");
         assert_eq!((code, stdout.as_str()), (2, ""), "{args:?}");

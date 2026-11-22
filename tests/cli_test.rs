@@ -498,21 +498,6 @@ fn retry_of_no_run_and_its_usage_errors() {
     }
 }
 
-/// AC: pending messages; `decree process --dry-run` lists them and nothing runs.
-#[test]
-fn dry_run_lists_pending_messages_and_runs_nothing() {
-    let p = Project::init();
-    p.machine("flaky", FLAKY);
-    p.script("work", FLAKY_WORK);
-    let id = p.emit("flaky", "Do the work.\n");
-
-    let out = p.stdout(&["daemon", "--once", "--dry-run"], 0);
-    assert!(out.contains(&format!("inbox/:\n  {id}.md")), "{out}");
-    assert!(out.contains("→ flaky"), "{out}");
-    assert!(p.runs().is_empty());
-    assert!(p.decree_dir().join(format!("inbox/{id}.md")).is_file());
-}
-
 /// AC: `decree process` prints each run's output as `decree tail` does, behind its run
 /// header, and a line as each run stops; `--quiet` prints none of it. Off a terminal there
 /// is no status line.

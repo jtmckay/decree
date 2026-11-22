@@ -1,6 +1,6 @@
-//! `decree schema`: write the JSON Schemas (draft 2020-12) of every file decree reads or
-//! writes, and of every document a command prints with `--format json` (in `cli/`), into
-//! `.decree/schema/v1/` (docs/reference/README.md, Schemas), each through a temp
+//! The local copy of the JSON Schemas (draft 2020-12) of every file decree reads or writes,
+//! and of every document a command prints with `--format json` (in `cli/`), that `decree
+//! init` and `decree install` write into `.decree/schema/v1/` (docs/reference/README.md, Schemas), each through a temp
 //! file and a rename, and remove anything else in `.decree/schema/`. The local copy is
 //! optional (editors read the hosted copy in `schema/`, docs/editors.md); when it exists,
 //! `decree check` uses `stale_files` to warn when one is missing, out of date, or joined by
@@ -8,20 +8,18 @@
 
 use std::path::Path;
 
-use crate::cli::Format;
-use crate::commands::print_json;
 use crate::error::DecreeError;
 use crate::layout::DECREE_DIR;
 use crate::message::write_replace;
 
-/// Directory under `.decree/` that `decree schema` writes.
+/// Directory under `.decree/` that `decree init` and `decree install` write.
 pub const SCHEMA_DIR: &str = "schema";
 
-/// Every schema `decree schema` writes: its path under `.decree/schema/` and its content,
+/// Every schema `decree install` writes: its path under `.decree/schema/` and its content,
 /// compiled into the binary from `schema/` at the repository root, their single source and the published copy. The first
 /// path segment is the contract version (docs/reference/README.md, Versioning); `cli/` holds
 /// the documents commands print with `--format json` (docs/reference/cli.md).
-const SCHEMAS: [(&str, &str); 19] = [
+const SCHEMAS: [(&str, &str); 17] = [
     (
         "v1/attention.schema.json",
         include_str!("../../schema/v1/attention.schema.json"),
@@ -33,10 +31,6 @@ const SCHEMAS: [(&str, &str); 19] = [
     (
         "v1/cli/check.schema.json",
         include_str!("../../schema/v1/cli/check.schema.json"),
-    ),
-    (
-        "v1/cli/daemon.schema.json",
-        include_str!("../../schema/v1/cli/daemon.schema.json"),
     ),
     (
         "v1/cli/emit.schema.json",
@@ -61,10 +55,6 @@ const SCHEMAS: [(&str, &str); 19] = [
     (
         "v1/cli/retry.schema.json",
         include_str!("../../schema/v1/cli/retry.schema.json"),
-    ),
-    (
-        "v1/cli/schema.schema.json",
-        include_str!("../../schema/v1/cli/schema.schema.json"),
     ),
     (
         "v1/cli/status.schema.json",
@@ -100,24 +90,6 @@ const SCHEMAS: [(&str, &str); 19] = [
     ),
 ];
 
-pub fn run(project_root: &Path, format: Format) -> Result<(), DecreeError> {
-    let removed = others(&project_root.join(DECREE_DIR).join(SCHEMA_DIR))?;
-    let written = write(project_root)?;
-    let path = |name: &String| format!("{DECREE_DIR}/{SCHEMA_DIR}/{name}");
-    match format {
-        Format::Text => {
-            for name in &written {
-                println!("{}", path(name));
-            }
-            Ok(())
-        }
-        Format::Json => print_json(&serde_json::json!({
-            "written": written.iter().map(path).collect::<Vec<_>>(),
-            "removed": removed.iter().map(path).collect::<Vec<_>>(),
-        })),
-    }
-}
-
 /// Write every schema into `.decree/schema/`, each through `.<name>.tmp` and a rename, and
 /// remove every other file there, and the directories left empty. Returns the paths written,
 /// relative to `.decree/schema/`, in order.
@@ -139,7 +111,7 @@ pub fn write(project_root: &Path) -> Result<Vec<String>, DecreeError> {
     Ok(SCHEMAS.iter().map(|(name, _)| name.to_string()).collect())
 }
 
-/// How `.decree/schema/` differs from what `decree schema` would write, one line per file,
+/// How `.decree/schema/` differs from what `decree install` would write, one line per file,
 /// each naming the file relative to `.decree/`, as `decree check` warns. Empty when it is
 /// up to date.
 #[cfg(test)]
@@ -150,7 +122,7 @@ fn stale(project_root: &Path) -> Result<Vec<String>, DecreeError> {
         .collect())
 }
 
-/// How `.decree/schema/` differs from what `decree schema` would write, one (file relative
+/// How `.decree/schema/` differs from what `decree install` would write, one (file relative
 /// to `.decree/`, what is wrong) pair per file. Empty when it is up to date, and when there
 /// is no `.decree/schema/`: the local copy is optional, editors read the hosted schemas.
 pub fn stale_files(project_root: &Path) -> Result<Vec<(String, String)>, DecreeError> {

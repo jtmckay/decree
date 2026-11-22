@@ -203,8 +203,7 @@ fn import(
 /// file, or `-` for stdin, imported alone.
 ///
 /// An install that succeeds, or one with no argument that installed what it could, also
-/// writes `.decree/schema/`, as `decree schema` does, quietly
-/// (it is generated, like a graph), so the step after a clone, a pull or an upgrade leaves the
+/// writes `.decree/schema/`, quietly (it is generated, like a graph), so the step after a clone, a pull or an upgrade leaves the
 /// project's schemas this decree's.
 pub fn install(
     project_root: &Path,

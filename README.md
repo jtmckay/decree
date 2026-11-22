@@ -230,7 +230,7 @@ Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, 
 
 ### Schema
 
-decree has a JSON Schema for every file it reads or writes: machines, message frontmatter, `events.jsonl` lines, and a router's `request.json` and `reply.json`. They live in [`schema/v1/`](schema/v1/), published at `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/`, and are versioned: within `v1` changes are additive only ([Versioning](docs/reference/README.md#versioning), [changelog](CHANGELOG.md)). Editors apply the machine schema to `.decree/machines/*.yml` through SchemaStore, or a setting until then, with no line in the file, so VS Code with Red Hat's YAML extension, JetBrains IDEs, or any editor running the YAML language server completes keys, shows what each one means and underlines mistakes as you type ([editors](docs/editors.md)). `decree schema` writes a local copy to `.decree/schema/v1/`, ignored by git, for agents and offline use: a model reads it as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
+decree has a JSON Schema for every file it reads or writes: machines, message frontmatter, `events.jsonl` lines, and a router's `request.json` and `reply.json`. They live in [`schema/v1/`](schema/v1/), published at `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/`, and are versioned: within `v1` changes are additive only ([Versioning](docs/reference/README.md#versioning), [changelog](CHANGELOG.md)). Editors apply the machine schema to `.decree/machines/*.yml` through SchemaStore, or a setting until then, with no line in the file, so VS Code with Red Hat's YAML extension, JetBrains IDEs, or any editor running the YAML language server completes keys, shows what each one means and underlines mistakes as you type ([editors](docs/editors.md)). `decree init` and `decree install` write a local copy to `.decree/schema/v1/`, ignored by git, for agents and offline use: a model reads it as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
 
 ### Routers
 
@@ -258,8 +258,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree export [NAME]` | Write `.decree/plugins/<name>.md` from an installed copy; with no name, every plugin edited in place |
 | `decree check [--format text\|json\|sarif]` | Validate machines and pending messages; `sarif` for code scanning |
 | `decree graph` | Write a Mermaid diagram per machine, `.decree/machines/<name>/graph.md`, and `.decree/system.md` |
-| `decree schema` | Write a local copy of the JSON Schemas for machines, messages, events, router files and `--format json` output to `.decree/schema/v1/` |
-| `decree daemon --once [--dry-run] [--machine M \| --exclude-machine M]` | Start, fire `@reboot` cron files (so `order` runs the order files), deliver replies, continue pending runs and drain `inbox/`, then exit; `--machine` runs only those machines, `--exclude-machine` all but those, so several processes can share one folder |
+| `decree daemon --once [--machine M \| --exclude-machine M]` | Start, fire `@reboot` cron files (so `order` runs the order files), deliver replies, continue pending runs and drain `inbox/`, then exit; `--machine` runs only those machines, `--exclude-machine` all but those, so several processes can share one folder |
 | `decree daemon [--interval D] [--machine M \| --exclude-machine M]` | The same, plus scheduled cron, every `D` (default `2s`), until stopped: what unattended work runs under, since `--once` exits while a run waits for a person |
 | `decree emit [--machine M] [--param K=V]...` | Queue a message from stdin, a body for `M` or a whole message; prints its id |
 | `decree reply ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
@@ -275,7 +274,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree` | Print a synopsis of the quick start; it runs nothing (`decree daemon --once` runs the queue) |
 | `decree --version` | Print the version |
 
-`--format json` on `check`, `status`, `emit`, `reply`, `retry`, `cancel`, `pause`, `resume`, `graph`, `schema`, `upgrade` and `daemon --once --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
+`--format json` on `check`, `status`, `emit`, `reply`, `retry`, `cancel`, `pause`, `resume`, `graph`, `upgrade`, `install`, `list` and `export` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
 decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree retry <id>`, because a kill may be deliberate; a running daemon then continues it, or the next `decree daemon --once` does. `decree daemon --once` prints the exact command that continues it.
 
@@ -297,7 +296,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
   inbox/                          # queued messages
   runs/<id>/                      # one folder per run: message.md, events.jsonl, traces.jsonl, logs
   attention/<id>.md               # what needs a person, with the command that continues it
-  schema/v1/                      # written by init and decree install (and decree schema); not committed
+  schema/v1/                      # written by init and decree install; not committed
 ```
 
 There is no configuration file. Each setting is a convention, a fixed limit or a variable:

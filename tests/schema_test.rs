@@ -4,7 +4,7 @@
 //! for each `--ai` validates against `machine.schema.json`; every message in those projects
 //! against `message.schema.json`; every `events.jsonl` line, `request.json` and `reply.json`
 //! in their recorded runs and in a run made here against `events.schema.json`, `request.schema.json`
-//! and `reply.schema.json`; `decree schema` writes them all to `.decree/schema/v1/` and
+//! and `reply.schema.json`; `decree install` writes them all to `.decree/schema/v1/` and
 //! removes anything else, and `decree check` warns until it has when `.decree/schema/` exists;
 //! `decree init` writes no such folder. Whether the schemas reject
 //! what `decree check` rejects is tested case by case in `validation_test.rs`; every line
@@ -613,14 +613,10 @@ fn decree(dir: &Path, cmd: &str) -> (i32, String, String) {
 }
 
 #[test]
-fn decree_schema_writes_every_schema_in_v1() {
+fn decree_install_writes_every_schema_in_v1() {
     let tmp = project();
-    let (code, stdout, _) = decree(tmp.path(), "schema");
-    let expected: String = schema::ALL
-        .iter()
-        .map(|(name, _)| format!(".decree/schema/v1/{name}.schema.json\n"))
-        .collect();
-    assert_eq!((code, stdout.as_str()), (0, expected.as_str()));
+    let (code, _, stderr) = decree(tmp.path(), "install");
+    assert_eq!(code, 0, "{stderr}");
     let dir = tmp.path().join(".decree/schema/v1");
     for (name, text) in schema::ALL {
         assert_eq!(
@@ -645,7 +641,7 @@ fn decree_schema_writes_every_schema_in_v1() {
 }
 
 #[test]
-fn check_warns_when_the_schema_is_missing_or_stale_until_decree_schema_runs() {
+fn check_warns_when_the_schema_is_missing_or_stale_until_decree_install_runs() {
     let tmp = project();
     decree(tmp.path(), "graph");
     // No `.decree/schema/`: the local copy is optional, so no warning.
@@ -661,22 +657,22 @@ fn check_warns_when_the_schema_is_missing_or_stale_until_decree_schema_runs() {
     let missing: String = schema::ALL
         .iter()
         .map(|(name, _)| {
-            format!("warning: schema/v1/{name}.schema.json: missing; run `decree schema`\n")
+            format!("warning: schema/v1/{name}.schema.json: missing; run `decree install`\n")
         })
         .collect();
     assert_eq!(stderr, missing);
 
-    decree(tmp.path(), "schema");
+    decree(tmp.path(), "install");
     let dir = tmp.path().join(".decree/schema/v1");
     fs::write(dir.join("machine.schema.json"), "{}\n").unwrap();
     let (code, stdout, stderr) = decree(tmp.path(), "check");
     assert_eq!((code, stdout.as_str()), (0, ""));
     assert_eq!(
         stderr,
-        "warning: schema/v1/machine.schema.json: out of date; run `decree schema`\n"
+        "warning: schema/v1/machine.schema.json: out of date; run `decree install`\n"
     );
 
-    decree(tmp.path(), "schema");
+    decree(tmp.path(), "install");
     assert_eq!(
         decree(tmp.path(), "check"),
         (0, String::new(), String::new())
@@ -684,7 +680,7 @@ fn check_warns_when_the_schema_is_missing_or_stale_until_decree_schema_runs() {
 }
 
 /// A machine that keeps the per-file `$schema` line docs/editors.md gives as the fallback
-/// still checks, and the line points at a file `decree schema` writes.
+/// still checks, and the line points at a file `decree install` writes.
 #[test]
 fn a_machine_with_the_schema_line_still_checks() {
     let editors = fs::read_to_string(repo().join("docs/editors.md")).unwrap();
@@ -698,7 +694,7 @@ fn a_machine_with_the_schema_line_still_checks() {
     let text = fs::read_to_string(&path).unwrap();
     fs::write(&path, format!("{line}\n{text}")).unwrap();
     decree(tmp.path(), "graph");
-    decree(tmp.path(), "schema");
+    decree(tmp.path(), "install");
     assert!(tmp.path().join(".decree/machines").join(target).is_file());
     assert_eq!(
         decree(tmp.path(), "check"),
@@ -707,12 +703,12 @@ fn a_machine_with_the_schema_line_still_checks() {
 }
 
 /// A project from before the schemas were versioned: `decree check` warns about the
-/// unversioned files, and `decree schema` leaves only `.decree/schema/v1/`.
+/// unversioned files, and `decree install` leaves only `.decree/schema/v1/`.
 #[test]
 fn unversioned_schemas_are_reported_then_removed() {
     let tmp = project();
     decree(tmp.path(), "graph");
-    decree(tmp.path(), "schema");
+    decree(tmp.path(), "install");
     let dir = tmp.path().join(".decree/schema");
     for name in ["machine.schema.json", "message.schema.json"] {
         fs::write(dir.join(name), "{}\n").unwrap();
@@ -721,11 +717,11 @@ fn unversioned_schemas_are_reported_then_removed() {
     assert_eq!((code, stdout.as_str()), (0, ""));
     assert_eq!(
         stderr,
-        "warning: schema/machine.schema.json: not one decree writes; run `decree schema`\n\
-         warning: schema/message.schema.json: not one decree writes; run `decree schema`\n"
+        "warning: schema/machine.schema.json: not one decree writes; run `decree install`\n\
+         warning: schema/message.schema.json: not one decree writes; run `decree install`\n"
     );
 
-    decree(tmp.path(), "schema");
+    decree(tmp.path(), "install");
     let names: Vec<String> = fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

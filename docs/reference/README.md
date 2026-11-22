@@ -97,7 +97,7 @@ Each building block has its own directory in `.decree/`:
     order/*.md                      # messages run in order at each daemon start by the official `order` plugin; committed (messages.md, Order files)
     graph.md                        # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
   system.md                         # written by `decree graph`: how machines emit to and invoke each other; committed
-  schema/v1/*.schema.json           # written by `init` and `decree install` (and `decree schema`), for agents and offline editors; ignored by git (Schemas, below)
+  schema/v1/*.schema.json           # written by `init` and `decree install`, for agents and offline editors; ignored by git (Schemas, below)
   .env                              # optional, never committed: KEY=value variables every script gets, secrets included (scripts.md, .env files)
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
@@ -125,7 +125,7 @@ The daemon poll interval is the `decree daemon --interval` flag.
 
 ## Schemas
 
-Every file decree reads or writes, and every document a command prints with `--format json`, has a JSON Schema (draft 2020-12). Their single source is [`schema/v1/`](../../schema/v1/) at the root of the decree repository, compiled into decree, so the published files and the binary's are the same bytes. Each schema's `$id` is its raw URL there, `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/<path>` (such as `…/schema/v1/cli/check.schema.json`), which resolves once 0.5 is on `main`; editors find the machine schema through SchemaStore ([editors.md](../editors.md)). `decree schema` writes a local copy into `.decree/schema/v1/`, for agents and offline use, and removes anything else in `.decree/schema/`; `decree init` and `decree install` write it too, and `init`'s `.gitignore` lists `schema/`. When `.decree/schema/` exists, `decree check` warns when a file there is missing, out of date, or one decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds); with no folder it says nothing. Every property has a description taken from this reference.
+Every file decree reads or writes, and every document a command prints with `--format json`, has a JSON Schema (draft 2020-12). Their single source is [`schema/v1/`](../../schema/v1/) at the root of the decree repository, compiled into decree, so the published files and the binary's are the same bytes. Each schema's `$id` is its raw URL there, `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/<path>` (such as `…/schema/v1/cli/check.schema.json`), which resolves once 0.5 is on `main`; editors find the machine schema through SchemaStore ([editors.md](../editors.md)). `decree init` and every `decree install` that succeeds write a local copy into `.decree/schema/v1/`, for agents and offline use, and remove anything else in `.decree/schema/`; `init`'s `.gitignore` lists `schema/`. When `.decree/schema/` exists, `decree check` warns when a file there is missing, out of date, or one decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds); with no folder it says nothing. Every property has a description taken from this reference.
 
 | Schema | Covers | Documented in |
 | --- | --- | --- |
@@ -136,7 +136,7 @@ Every file decree reads or writes, and every document a command prints with `--f
 | `attention.schema.json` | The frontmatter of a file decree writes in `.decree/attention/`, for a run that needs a person. A `.md` file there that does not match it holds the queue. | [cli.md](cli.md#attention) |
 | `plugin.schema.json` | The frontmatter of a plugin, `plugins/<name>.md`. | [plugins.md](plugins.md) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
-| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `reply`, `graph`, `schema`, `upgrade`, `install`, `list`, `export` and `daemon` (`--once --dry-run`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
+| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `reply`, `retry`, `cancel`, `pause` and `resume` (one file, `pause`), `graph`, `upgrade`, `install`, `list` and `export`. `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 
 The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
 

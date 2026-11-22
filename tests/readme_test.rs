@@ -23,6 +23,8 @@ const OLD_TERMS: &[&str] = &[
     "decree prune",
     "`decree skill`",
     "--retry",
+    "daemon --once --dry-run",
+    "decree schema",
     "decree stop",
     "manual-stop",
 ];
@@ -35,7 +37,6 @@ const COMMANDS: &[&str] = &[
     "decree daemon",
     "decree check",
     "decree graph",
-    "decree schema",
     "decree emit",
     "decree status",
     "decree tail",

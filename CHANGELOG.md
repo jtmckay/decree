@@ -45,6 +45,7 @@ All notable changes to decree are listed here. The format follows [Keep a Change
 
 ### Removed
 
+- `decree schema` and `decree daemon --once --dry-run` ([D94](docs/decisions.md#d94-no-decree-schema-no-daemon---once---dry-run)): `decree init` and `decree install` write `.decree/schema/`, and `decree check` says to run `decree install` when it is stale; `decree status` lists the queued messages and `decree check` validates them. `cli/schema.schema.json` and `cli/daemon.schema.json` are gone.
 - Migrations ([D86](docs/decisions.md#d86-machines-own-their-folders-order-replaces-migrations)): `.decree/migrations/`, `processed.md`, the `migration` trigger and frontmatter key, `decree check`'s M1 and its warning about an inserted name, and naming a run by a migration's file. Move each file into the `order/` of the machine it names and write that machine's `state/order.git.txt` from `processed.md`, one `<file> <sha256>` line each (`sha256sum`), so none runs again.
 - `decree process`: run `decree daemon --once`; to continue a run, `decree retry <id>` first.
 - `decree prune`: the official `prune` plugin deletes old runs (`echo "Prune." | decree emit --machine prune` now; `PRUNE_OLDER_THAN` for the age).

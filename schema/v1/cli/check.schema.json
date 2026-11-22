@@ -27,7 +27,7 @@
       "items": {
         "$ref": "#/$defs/warning"
       },
-      "description": "Files in .decree/graph/ or .decree/schema/ that differ from what `decree graph` or `decree schema` would write. Text prints them on stderr."
+      "description": "Files in a machine's graph.md, .decree/system.md or .decree/schema/ that differ from what `decree graph` or `decree install` would write. Text prints them on stderr."
     }
   },
   "examples": [

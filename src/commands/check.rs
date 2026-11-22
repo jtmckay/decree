@@ -2,7 +2,7 @@
 //! files (E1) before anything runs (docs/reference/machines.md, Validation). Prints one line per error:
 //! `<path relative to .decree/>: <state path or line>: <message>`. Warns, on stderr and
 //! without failing, when a graph (`machines/<name>/graph.md`, `system.md`) differs from what `decree graph` would write, or
-//! `.decree/schema/`, when it exists, from what `decree schema` would write, when a machine's
+//! `.decree/schema/`, when it exists, from what `decree install` would write, when a machine's
 //! `state/` holds what its `state_files:` does not declare, when an `.env` file uses a variable
 //! that is not set, when a machine's `env_file` is missing, and when `.decree/.gitignore` does
 //! not list `.env*`.
@@ -131,7 +131,7 @@ fn split_rule(message: &str) -> (String, Option<String>) {
 }
 
 /// A graph file or a file in `.decree/schema/` that differs from what `decree graph` or
-/// `decree schema` would write, one in a machine's `state/` that it does not declare, or a
+/// `decree install` would write, one in a machine's `state/` that it does not declare, or a
 /// problem with an `.env` file that does not stop it being read. `decree check` warns about it without failing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckWarning {
@@ -261,7 +261,7 @@ fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>,
             .into_iter()
             .map(|(file, message)| CheckWarning {
                 file,
-                message: format!("{message}; run `decree schema`"),
+                message: format!("{message}; run `decree install`"),
             }),
     );
     out.extend(state_warnings(&project_root.join(DECREE_DIR))?);

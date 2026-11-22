@@ -24,9 +24,6 @@ Commands:
                               (--format sarif: a SARIF 2.1.0 log for code
                               scanning)
   decree graph                Write each machines/<name>/graph.md and system.md: Mermaid diagrams in Markdown
-  decree schema               Write .decree/schema/v1/, a local copy of the
-                              JSON Schemas for machines, messages, events,
-                              router files and --format json output
   decree install              Install every plugin in .decree/plugins/ as its
                               file says (after a clone or a pull), keeping
                               edited copies. Nothing else installs plugins
@@ -48,7 +45,7 @@ Commands:
                               .decree/plugins/NAME.md from machines/NAME/;
                               no NAME: every plugin whose installed copy
                               was edited
-  decree daemon --once [--dry-run] [--quiet]
+  decree daemon --once [--quiet]
                               Start (firing @reboot cron files, so the order
                               plugin runs each machine's order/), deliver
                               replies, continue pending runs and drain inbox/,
@@ -98,10 +95,11 @@ Commands:
                               nothing (run the queue with decree daemon --once)
   decree --version            Print the version
 
-  --format json on check, status, emit, reply, retry, cancel, pause, resume, graph, schema, upgrade,
-  install, list, export and daemon --once --dry-run prints one JSON document instead of text, described by
-  .decree/schema/v1/cli/<command>.schema.json (install, list and export:
-  cli/plugin.schema.json); exit codes stay the same.
+  --format json on check, status, emit, reply, retry, cancel, pause,
+  resume, graph, upgrade, install, list and export prints one JSON document
+  instead of text, described by .decree/schema/v1/cli/<command>.schema.json
+  (install, list and export: cli/plugin.schema.json; pause and resume:
+  cli/pause.schema.json); exit codes stay the same.
 
 Files (.decree/):
   plugins/<name>.md           A machine's folder as one file: machine, scripts,

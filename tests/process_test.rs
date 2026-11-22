@@ -645,26 +645,7 @@ fn process_retry_state_resumes_at_the_named_state() {
     );
 }
 
-#[test]
-fn dry_run_lists_and_runs_nothing() {
-    let p = Project::new();
-    p.write("inbox/a.md", "---\nmachine: flow\n---\n");
-    let out = p
-        .process()
-        .arg("--dry-run")
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("→ flow"), "{stdout}");
-    assert!(stdout.contains("a.md"), "{stdout}");
-    assert!(p.runs().is_empty());
-    assert!(p.order().is_empty());
-}
-
-/// An inbox message without `machine:`: `decree check` fails M2 for it, and
-/// `decree daemon --once --dry-run` runs nothing.
+/// An inbox message without `machine:`: `decree check` fails M2 for it.
 #[test]
 fn a_message_without_machine_fails_m2() {
     let p = Project::new();
@@ -681,13 +662,5 @@ fn a_message_without_machine_fails_m2() {
         "inbox/task.md: line 1: no `machine` key (M2)\n"
     );
 
-    let out = p.process().arg("--dry-run").output().unwrap();
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("no `machine` key"),
-        "{}",
-        stderr(&out)
-    );
     assert!(p.decree().join("inbox/task.md").is_file());
-    assert!(p.runs().is_empty());
 }

@@ -49,14 +49,6 @@ pub enum Command {
         format: Format,
     },
 
-    /// Write .decree/schema/v1/: the JSON Schemas of machines, messages, events and router files
-    #[command(after_help = SCHEMA_EDITORS)]
-    Schema {
-        /// Output format
-        #[arg(long, value_enum, default_value_t)]
-        format: Format,
-    },
-
     /// Queue a message in inbox/ from stdin: a body, or a whole message with frontmatter. Prints its id
     Emit {
         /// Machine the message names; may be left out when stdin's frontmatter names one
@@ -95,14 +87,6 @@ pub enum Command {
         /// or a program, print what waits or failed, and exit (for CI and cron)
         #[arg(long, conflicts_with = "interval")]
         once: bool,
-
-        /// With --once: show what would run, without running it
-        #[arg(long, requires = "once", conflicts_with = "quiet")]
-        dry_run: bool,
-
-        /// Output format of --dry-run
-        #[arg(long, value_enum, default_value_t, requires = "dry_run")]
-        format: Format,
 
         /// Polling interval: a whole number and s, m, h or d (2s, 1m)
         #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]
@@ -260,15 +244,6 @@ Viewing:
      VS Code 1.121 and later render Mermaid in Markdown without an extension.
      GitHub, GitLab and Obsidian render the committed files as they are.
   3. Without any of those, copy the lines inside the `mermaid` fence into https://mermaid.live.";
-
-/// How editors use `decree schema` output (docs/reference/machines.md, Schema).
-const SCHEMA_EDITORS: &str = "\
-Editors:
-  Editors that read SchemaStore (VS Code's YAML extension by Red Hat, JetBrains IDEs, and
-  others) apply the hosted machine schema to .decree/machines/*.yml and complete keys and
-  underline mistakes as you type; this local copy is for agents and offline editors, and git
-  ignores it (docs/editors.md). `decree check` remains the authority:
-  the schema checks shape, `decree check` also checks names, targets and reachability.";
 
 /// How a command prints its report (docs/reference/cli.md, Machine-readable output).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
