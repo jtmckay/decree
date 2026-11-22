@@ -62,6 +62,11 @@ fn state(root: &Path) -> PathBuf {
 
 /// An address that answers every request with HTTP 404 (an answer: up), for the test's life.
 fn http_server() -> String {
+    http_server_answering("404 Not Found")
+}
+
+/// An address that answers every request with `status`, for the test's life.
+fn http_server_answering(status: &'static str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
@@ -70,7 +75,8 @@ fn http_server() -> String {
             let mut buf = [0u8; 1024];
             let _ = s.read(&mut buf);
             let _ = s.write_all(
-                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
             );
         }
     });
@@ -183,19 +189,24 @@ fn check_records_health_and_lookups_put_live_addresses_first() {
         format!("{down}\n{up}\n")
     );
     decree(&root, &["daemon", "--once"]).assert().success();
-    let health = fs::read_to_string(state(&root).join("health")).unwrap();
+    let health: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(state(&root).join("health.json")).unwrap())
+            .unwrap();
     let words: Vec<(&str, &str)> = health
-        .lines()
-        .map(|l| {
-            let w: Vec<&str> = l.split(' ').collect();
-            (w[0], w[2])
-        })
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["server"].as_str().unwrap(), e["state"].as_str().unwrap()))
         .collect();
     assert_eq!(
         words,
         [("a", "down"), ("b", "up"), ("c", "down")],
         "{health}"
     );
+    // A 404 is an answer: up, with its code; no answer has none.
+    assert_eq!(health[1]["http"], 404, "{health}");
+    assert!(health[0].get("http").is_none(), "{health}");
+    assert!(health[1]["checked"].as_str().unwrap().ends_with('Z'), "{health}");
     assert_eq!(
         registry(&root, &["url", "comfy"]).1,
         format!("{up}\n{down}\n")
@@ -203,7 +214,7 @@ fn check_records_health_and_lookups_put_live_addresses_first() {
     let list = registry(&root, &["list"]).1;
     assert!(
         list.lines()
-            .any(|l| l.starts_with("b ") && l.ends_with(" up")),
+            .any(|l| l.starts_with("b ") && l.ends_with(" up http=404")),
         "{list}"
     );
 }
@@ -229,4 +240,66 @@ fn a_malformed_table_fails_check_naming_the_line() {
         "{err}"
     );
     assert!(!err.contains(":1:"), "{err}");
+}
+
+/// AC: a 5xx answer is down, with its code; `list --json` gives the table with each line's
+/// health as one array.
+#[test]
+fn a_server_error_is_down_and_list_json_says_so() {
+    if !has("curl") || !has("jq") {
+        eprintln!("no curl or jq: skipping");
+        return;
+    }
+    let broken = http_server_answering("503 Service Unavailable");
+    let up = http_server();
+    let (_tmp, root) = project(&format!("a comfy {broken}\nb comfy {up}\nc comfy http://127.0.0.1:9 box1\n"));
+    decree(&root, &["daemon", "--once"]).assert().success();
+    let (code, out, err) = registry(&root, &["list", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let list: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(list[0]["state"], "down", "{list}");
+    assert_eq!(list[0]["http"], 503, "{list}");
+    assert_eq!(list[1]["state"], "up", "{list}");
+    assert_eq!(list[2]["lease"], "box1", "{list}");
+    assert_eq!(
+        registry(&root, &["url", "comfy"]).1.lines().next(),
+        Some(up.as_str())
+    );
+}
+
+/// AC: among places alike in health, `resolve` puts first the one whose local lease has the
+/// fewest holders and leases in line, as the lease plugin's resource status says; `list`
+/// shows each local lease's holders and line.
+#[test]
+fn resolve_prefers_the_least_loaded_local_lease() {
+    if !has("jq") {
+        eprintln!("no jq: skipping");
+        return;
+    }
+    let (_tmp, root) = project(
+        "box1 render http://10.0.0.5:8188 box1\n\
+         box2 render http://10.0.0.9:8188 box2\n",
+    );
+    let status = root.join(".decree/machines/lease/state/status/resources");
+    fs::create_dir_all(&status).unwrap();
+    fs::write(
+        status.join("box1.json"),
+        r#"{"resource":"box1","holders":[{"lease":"a"}],"queue":[{"lease":"b"}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        status.join("box2.json"),
+        r#"{"resource":"box2","holders":[],"queue":[]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        registry(&root, &["resolve", "render"]).1,
+        "box2 http://10.0.0.9:8188 box2\nbox1 http://10.0.0.5:8188 box1\n"
+    );
+    let list = registry(&root, &["list"]).1;
+    assert!(
+        list.lines()
+            .any(|l| l.starts_with("box1 ") && l.ends_with("unchecked holders=1 waiting=1")),
+        "{list}"
+    );
 }
