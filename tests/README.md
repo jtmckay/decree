@@ -6,6 +6,7 @@
 | --- | --- |
 | `ci_test.rs` | `.github/workflows/ci.yml` parses as YAML, its `test` job runs exactly the gate script's three commands, and its `decree-check` job checks every project with `--format sarif` and uploads the results. |
 | `check_test.rs` | `decree check` on copies of `examples/project/`, `fixtures/feature/` and the escalation ladder in `fixtures/escalation/`: passes without a warning, graph warnings, state warnings (an undeclared file, a folder with no machine, a file in `store/`) with exit 0, and machines broken to hit a rule. |
+| `cancel_test.rs` | `decree cancel`: a waiting, pending or interrupted run and its child runs end in `failed` with no script run, queued replies and attention files go, a cancelled child is its parent's `error`, `retry` continues it, and an unknown, finished or active run is refused. |
 | `cli_test.rs` | The CLI end to end: `init`, `emit`, `daemon --once`, `retry`, `status`, `tail`, `reply` and `daemon`, and one duration format for a machine's `timeout` and `daemon --interval`. |
 | `develop_test.rs` | The official `develop`, `infra`, `qa` and `router` plugins `decree install` installs, and their `ai.sh` (which picks the first AI CLI on `PATH` without `AI_CLI`), a run's edits exported by `commit` and none by a failed run: the default gate, `verify`'s verdict, its outcomes, `fix`, `STOP`, sessions and usage limits. |
 | `docs_test.rs` | The docs hold together: links resolve, the machine examples are the `examples/project/` files, and `CHANGELOG.md` has its 0.5.0 entry and links the versioning rule. |

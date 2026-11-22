@@ -169,7 +169,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
 | `decree_version` | string | The claim (`claim` or `invalid_message`), and `retry` | The version of the decree that started or retried the run, for example `0.5.0-beta.11`. Runs recorded before decree wrote it have none. `decree status <id>` shows it on these rows. |
 
-`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes (`reply` also with `error` when a `timeout_at` has no instant to read, so the run does not wait); `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline that passed; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.
+`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes (`reply` also with `error` when a `timeout_at` has no instant to read, so the run does not wait); `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline that passed; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`; `cancel` is written by `decree cancel`: `event: "cancel"` to `failed`, with `note` when `-m` gave one, and no script ran ([Cancel](cli.md#cancel)).
 
 **`script`**: one script execution finished. Written after the script exits, before any `transition` it causes.
 
@@ -229,11 +229,12 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `timed_out` | bool | A timeout | Always `true` when present; `event` is `error`. |
 | `span_id` | string | Always | The wait's span, from the `waiting` event to this one. For a child that finished, the parent of its run span. |
 
-**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree retry` continues it.
+**`run_finished`**: the run reached a root-level final state and root `onexit` has run, or `decree cancel` ended it. Always the run's last event, unless `decree retry` continues it.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `state` | string | The final state (`done`, `failed`, …). |
+| `cancelled` | bool | `true` when `decree cancel` ended the run, in `failed`; absent otherwise. |
 | `duration_ms` | int | From the claim event to now; `0` for a message rejected at claim. |
 
 **`interrupted`**: the run stopped before a final state.

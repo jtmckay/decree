@@ -802,3 +802,11 @@ Left out, and why: existential's flows, `project:` tags, `endpoints:`, `handlers
 
 **Consequences.** One way to continue a run, whether a daemon runs or not, and no restart. A person who uses `daemon --once` runs two commands, `decree retry <id>` then `decree daemon --once`, which `retry` says. A filtered process never refuses a retry: the run waits `pending` for a process that runs its machine.
 
+## D92: `decree cancel` ends a run
+
+**Context.** Nothing could end a run nobody would continue. A `waiting` run stayed waiting until a reply nobody would send, an `interrupted` one stayed listed until `prune` took its folder, and deleting an attention file only hid a run. Every job system has a cancel: GitHub Actions' "Cancel workflow", Temporal's workflow cancellation, Sidekiq's and Celery's revoke. The project's owner asked for the commands one would expect.
+
+**Decision.** `decree cancel <id> [-m <note>] [--format <text|json>]` ends a `waiting`, `pending` or `interrupted` run, and every unfinished child run below it, in `failed`, under all their locks, deepest first: a `transition` with `event: cancel` and `source: cancel` (the note as `note`), then `run_finished` with `cancelled: true`. It runs no script, `onexit` included, as on a signal, since a script left to run could fail or hang, and a slot or a hold would then decide when a cancel takes effect. It deletes each run's `hold`, attention file and the replies still queued for it. A run's `failed` is kept, since every machine has that final state and a run that was cancelled did not reach its goal; `decree status` counts cancelled runs apart, as `cancelled`, and lists none. A parent waiting for a cancelled child takes `error`, as for a child that failed. An `active` or finished run is refused.
+
+**Consequences.** A person can always end a run, and see that they did: the event names `cancel` and its note. A cancelled run is finished, so `decree retry` continues it, and a cancel is undone the same way a failure is. A plugin whose runs hold something outside decree (the `lease` plugin) must treat a finished run as gone, which `lease` already does for a crashed or interrupted holder; until its next check, its status file still shows the lease.
+

@@ -264,6 +264,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree emit [--machine M] [--param K=V]...` | Queue a message from stdin, a body for `M` or a whole message; prints its id |
 | `decree reply ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
 | `decree retry ID [--state S]` | Make a failed or interrupted run pending again; the daemon, or the next `decree daemon --once`, continues it |
+| `decree cancel ID [-m NOTE]` | End a waiting, pending or interrupted run, and the child runs below it, in `failed`; no script runs |
 | `decree stop [-m NOTE]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the run instead |
 | `decree status [ID]` | What needs attention, runs by status and queued messages; one run's events |
 | `decree status --cron` | Cron files and when each fires next |

@@ -6,6 +6,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 
 ### Added
 
+- `cli/cancel.schema.json`: what `decree cancel --format json` prints, `{ "cancelled": [id] }`. `events.schema.json`: the `cancel` source of a `transition` (with its `note`), and `run_finished`'s `cancelled`. `cli/status.schema.json`: cancelled runs are under `finished.cancelled`.
 - `cli/retry.schema.json`: what `decree retry --format json` prints, `{ "id", "state" }`.
 - `machine.schema.json`: a `machine` invoke may name a `message` file in place of `name`; `state_files` (was `store`).
 - `machine.schema.json`: root `concurrency` (default 1) and `concurrency_group`; `cli/status.schema.json`: `executing`, each machine's runs executing now and its limit.

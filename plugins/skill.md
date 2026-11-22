@@ -277,6 +277,7 @@ scripts:
     | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then runs by status (`--all`: every run), and active runs in projects below; one run's events; `--cron`: cron files and when each fires next (`daemon start` for `@reboot`). |
     | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
     | `decree reply <wait id> <event> [-m <note>]` | Answer a run waiting in a `reply` state; a run id means its current wait. |
+    | `decree cancel <id> [-m <note>]` | End a waiting, pending or interrupted run, and the child runs below it, in `failed`; no script runs, and no attention file stays. `decree retry` continues it. |
     | `decree stop [-m <note>]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted (no restart needed). Ctrl-C interrupts the run instead. |
 
     `daemon --once` exits once nothing more can run, leaving `reply` waits for the next start;
@@ -1012,9 +1013,9 @@ scripts:
     | --- | --- | --- |
     | `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; for `failed`, what its file in `.decree/attention/` says, `decree retry <id>`; or that to run it again from a state. |
     | `active` | A live process holds its lock. | `decree tail` to watch it. |
-    | `waiting` | Paused for a person, or for a child run. | `decree reply <wait id> <event>`; the run's file in `.decree/attention/` and `decree daemon --once` give the commands. |
+    | `waiting` | Paused for a person, or for a child run. | `decree reply <wait id> <event>`; the run's file in `.decree/attention/` and `decree daemon --once` give the commands. `decree cancel <id>` if nobody will answer. |
     | `pending` | A reply arrived, or a `retry` transition was written. | `decree daemon --once` continues it. |
-    | `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree retry <id>`, as its file in `.decree/attention/` says. decree never continues it on its own. |
+    | `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree retry <id>`, as its file in `.decree/attention/` says, or `decree cancel <id>` to drop it. decree never continues it on its own. |
 
     A failed order file stops the order files after it: the `order` run fails, and the next start
     runs that file again. `decree daemon --once` exits 1 when a run failed in its pass, naming

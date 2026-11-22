@@ -1,3 +1,4 @@
+pub mod cancel;
 pub mod check;
 pub mod daemon;
 pub mod emit;

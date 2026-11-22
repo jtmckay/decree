@@ -55,7 +55,8 @@ pub fn run(
         RunStatus::Interrupted | RunStatus::Finished => {}
         RunStatus::Waiting => {
             return Err(DecreeError::Other(format!(
-                "run {id} is waiting for a reply, not interrupted; answer it with `decree reply`"
+                "run {id} is waiting for a reply, not interrupted; answer it with `decree reply`, \
+                 or end it with `decree cancel {id}`"
             )))
         }
         RunStatus::Pending | RunStatus::Active => return Err(refuse(id, status)),

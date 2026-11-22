@@ -214,7 +214,7 @@
                   "$ref": "#/$defs/row"
                 }
               },
-              "description": "Finished runs by the final state they ended in, such as `done` and `failed`."
+              "description": "Finished runs by the final state they ended in, such as `done` and `failed`; the runs `decree cancel` ended, in `failed`, are under `cancelled`."
             }
           }
         },

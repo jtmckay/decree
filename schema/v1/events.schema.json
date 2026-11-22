@@ -93,8 +93,8 @@
           "description": "Atomic state entered."
         },
         "source": {
-          "enum": ["claim", "exit_code", "script", "attempt", "check", "model", "reply", "machine", "timeout", "internal", "invalid_message", "retry"],
-          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `reply`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `reply` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree retry`."
+          "enum": ["claim", "exit_code", "script", "attempt", "check", "model", "reply", "machine", "timeout", "internal", "invalid_message", "retry", "cancel"],
+          "description": "Where the event came from. `claim`: the claim event. `exit_code`: `done`/`error` from the exit code (or a pass-through `done`). `script`: an event the script named in $DECREE_EVENT_FILE. `attempt`: a failed attempt that will be re-run, with `from` and `to` equal. `check`, `model`, `reply`: decision invokes. `machine`: the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start. `timeout`: a `reply` deadline. `internal`: a `done.state.<id>` event decree raised. `invalid_message`: a message rejected at claim. `retry`: written by `decree retry`. `cancel`: written by `decree cancel`, `event: cancel` to `failed`; no script ran."
         },
         "exit_code": {
           "type": ["integer", "null"],
@@ -132,6 +132,10 @@
         "parent_span_id": {
           "$ref": "#/$defs/spanId",
           "description": "On the claim, when the message's `traceparent` names a parent: the run span's parent span (an invoking state's span for a child run, a script's span for an emitted message)."
+        },
+        "note": {
+          "type": "string",
+          "description": "On a `cancel` event: the note `decree cancel -m` gave."
         },
         "decree_version": {
           "type": "string",
@@ -178,6 +182,11 @@
         {
           "if": { "properties": { "source": { "enum": ["invalid_message", "machine"] } } },
           "else": { "not": { "required": ["error"] } }
+        },
+        {
+          "if": { "properties": { "source": { "const": "cancel" } } },
+          "then": { "properties": { "event": { "const": "cancel" }, "to": { "const": "failed" } } },
+          "else": { "not": { "required": ["note"] } }
         },
         {
           "if": { "required": ["invalid_event"] },
@@ -479,6 +488,10 @@
           "type": "integer",
           "minimum": 0,
           "description": "From the claim event to now, in milliseconds; 0 for a message rejected at claim."
+        },
+        "cancelled": {
+          "const": true,
+          "description": "`decree cancel` ended the run (`state` is `failed`); absent otherwise."
         }
       }
     },

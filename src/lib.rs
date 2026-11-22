@@ -103,6 +103,9 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         Command::Retry { id, state, format } => {
             commands::retry::run(&root()?, &id, state.as_deref(), format)
         }
+        Command::Cancel { id, note, format } => {
+            commands::cancel::run(&root()?, &id, note.as_deref(), format)
+        }
         Command::Stop { note, format } => commands::stop::run(&root()?, note.as_deref(), format),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
         Command::Status {

@@ -99,6 +99,9 @@ fn no_run(id: &str) -> DecreeError {
     DecreeError::Other(format!("no run {id} in {DECREE_DIR}/{RUNS_DIR}/"))
 }
 
+/// The group `decree status` counts the runs `decree cancel` ended in.
+const CANCELLED: &str = "cancelled";
+
 /// One run, as the overview lists it.
 struct Row {
     id: String,
@@ -174,13 +177,20 @@ fn overview(
         // A finished run: its last line, `run_finished`, names its machine and final state.
         if let Some(last) = ctx.run_finished(id)? {
             let state = field(Some(&last), "state").to_string();
+            // A run `decree cancel` ended is in `failed`, but counted apart: nobody needs to
+            // look at it.
+            let group = if crate::events::cancelled(&last) {
+                CANCELLED.to_string()
+            } else {
+                state.clone()
+            };
             let row = Row {
                 id: id.clone(),
                 machine: field(Some(&last), "machine").to_string(),
-                detail: (state == FAILED).then(|| retry(id)),
+                detail: (group == FAILED).then(|| retry(id)),
                 state,
             };
-            finished.entry(row.state.clone()).or_default().push(row);
+            finished.entry(group).or_default().push(row);
             continue;
         }
         let (status, events) = ctx.status_of(id)?;

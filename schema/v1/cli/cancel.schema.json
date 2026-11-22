@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/cancel.schema.json",
+  "title": "decree cancel --format json",
+  "description": "What `decree cancel --format json` prints on stdout: the runs it ended in `failed`, the one named and each unfinished child run below it, deepest first. On failure nothing is printed on stdout; the error goes to stderr and the exit code is 1. Reference: docs/reference/cli.md, Machine-readable output.",
+  "type": "object",
+  "required": [
+    "cancelled"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "cancelled": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "Run ids, deepest child first, the run named last."
+    }
+  },
+  "examples": [
+    {
+      "cancelled": [
+        "20260101T000000.000001Z-000001",
+        "20260101T000000.000000Z-000000"
+      ]
+    }
+  ]
+}

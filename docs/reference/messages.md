@@ -81,7 +81,9 @@ The time is ISO 8601 basic format with a decimal fraction of the second. Ids sor
 3. **Validate.** If the frontmatter does not parse, `machine` is unknown, or a param is unknown or the wrong type, the run starts in `failed`: decree writes one `transition` event with `to: "failed"`, `source: "invalid_message"` and the reason, mirrors `state: failed` (unless the frontmatter itself did not parse, then `message.md` is left unchanged), appends `run_finished` with `state: "failed"` and `duration_ms: 0`, and runs nothing.
 4. **Run.** The interpreter steps the machine ([runs.md](runs.md)). A run in a `reply` state pauses until a reply arrives ([Replies](#replies)).
 5. **Finish.** The run ends when it enters a root-level final state. The run folder is kept until the official [`prune`](plugins.md#official-plugins) plugin removes it, weekly, once it is older than `PRUNE_OLDER_THAN`; decree itself removes none.
-6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only a person continues an interrupted run, with `decree retry` ([Retry](cli.md#retry)).
+6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only a person continues an interrupted run, with `decree retry` ([Retry](cli.md#retry)), or ends it, with `decree cancel` ([Cancel](cli.md#cancel)).
+
+7. **Cancel.** `decree cancel <id>` ends a run that is `waiting`, `pending` or `interrupted`, and every unfinished child run below it, in `failed`, running no script ([Cancel](cli.md#cancel)).
 
 A run that ends in `failed`, is interrupted or waits for a person has a file in `.decree/attention/` saying what happened and the command that continues it, until its status changes ([Attention](cli.md#attention)).
 
@@ -99,7 +101,7 @@ A run that ends in `failed`, is interrupted or waits for a person has a file in 
 | `pending` | The last event is `received`, or a `transition` with `source: "retry"`. `daemon` continues it. |
 | `interrupted` | Anything else. Includes a run whose last event is `interrupted`, and a run left mid-step by a crash. |
 
-A run that reaches a root final state appends `run_finished` last ([runs.md](runs.md#step-loop), step 8), and only `decree retry` appends after it. So a run whose last event is `run_finished` is finished, and when `daemon`, `decree status` or `decree tail` look over every run, decree reads only that last line of its `events.jsonl`: a finished run costs one small read, however long its log. `decree status <id>` and stepping a run still read the whole log.
+A run that reaches a root final state appends `run_finished` last ([runs.md](runs.md#step-loop), step 8), as does a run `decree cancel` ends, and only `decree retry` appends after it. So a run whose last event is `run_finished` is finished, and when `daemon`, `decree status` or `decree tail` look over every run, decree reads only that last line of its `events.jsonl`: a finished run costs one small read, however long its log. `decree status <id>` and stepping a run still read the whole log.
 
 When `daemon` starts, it appends an `interrupted` event with `cause: "crash"` to every run that is interrupted but whose last event is not already `interrupted`, so the stop is visible in the log. It continues `pending` runs, in `id` order, before reading `inbox/`.
 

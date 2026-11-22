@@ -436,6 +436,8 @@ fn record_one(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
     let held = run_dir.join(HOLD_FILE).is_file();
     let need = match status {
         // A child run's failure is its parent's event, unless it holds the queue.
+        // A run `decree cancel` ended needs no one.
+        RunStatus::Finished if events.last().is_some_and(crate::events::cancelled) => None,
         RunStatus::Finished if current_state(&events) == Some(FAILED) && (!has_parent || held) => {
             Some(Need::Failed)
         }

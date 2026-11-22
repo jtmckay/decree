@@ -146,6 +146,20 @@ pub enum Command {
         format: Format,
     },
 
+    /// End a waiting, pending or interrupted run, and the child runs below it, in `failed`
+    Cancel {
+        /// Run id
+        id: String,
+
+        /// Note, recorded in the run's `cancel` event
+        #[arg(short = 'm', value_name = "NOTE")]
+        note: Option<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
     /// Hold the queue: runs going now finish, no new run starts until
     /// .decree/attention/manual-stop.md is deleted
     Stop {

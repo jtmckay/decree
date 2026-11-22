@@ -38,6 +38,7 @@ const COMMANDS: &[&str] = &[
     "decree status",
     "decree tail",
     "decree retry",
+    "decree cancel",
     "decree reply",
     "decree stop",
     "decree upgrade",

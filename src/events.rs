@@ -154,6 +154,8 @@ struct RunTrace {
     run_span: Option<(String, String)>,
     /// The run span before a `retry`, which the new one links to.
     previous_run_span: Option<String>,
+    /// The run span an `interrupted` event ended, until a `retry` starts the next.
+    closed_run_span: Option<String>,
     /// The last `waiting` event, which a `received` event or a router's `decision` ends.
     waiting: Option<Event>,
 }
@@ -203,10 +205,18 @@ impl RunTrace {
             self.parent = text(event, "parent_span_id").map(String::from);
             self.run_span = span().map(|id| (id, ts()));
         } else if is_transition(event) && text(event, "source") == Some("retry") {
-            self.previous_run_span = self.run_span.take().map(|(id, _)| id);
+            self.previous_run_span = self
+                .run_span
+                .take()
+                .map(|(id, _)| id)
+                .or(self.closed_run_span.take());
             self.run_span = span().map(|id| (id, ts()));
         } else if is_type(event, "waiting") {
             self.waiting = Some(event.clone());
+        } else if is_type(event, "interrupted") {
+            // The run span ended here: nothing after it ends it again (a `run_finished` that
+            // `decree cancel` appends), and a `retry` links to it.
+            self.closed_run_span = self.run_span.take().map(|(id, _)| id);
         }
     }
 
@@ -458,6 +468,11 @@ pub fn waiting_child(events: &[Event]) -> Option<&str> {
         .last()
         .filter(|e| is_type(e, "waiting"))
         .and_then(|e| text(e, "child"))
+}
+
+/// Whether `event`, a run's `run_finished`, says `decree cancel` ended the run.
+pub fn cancelled(event: &Event) -> bool {
+    is_type(event, "run_finished") && event.get("cancelled") == Some(&Value::Bool(true))
 }
 
 /// The claim event: the first `transition`, with `source: "claim"`.
