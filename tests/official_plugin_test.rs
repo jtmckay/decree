@@ -13,7 +13,7 @@ mod common;
 #[path = "common/schema.rs"]
 mod schema;
 
-const OFFICIAL: [&str; 18] = [
+const OFFICIAL: [&str; 19] = [
     "ai",
     "comfy",
     "develop",
@@ -30,6 +30,7 @@ const OFFICIAL: [&str; 18] = [
     "plugin_install",
     "prune",
     "qa",
+    "registry",
     "router",
     "skill",
 ];

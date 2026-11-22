@@ -9,8 +9,11 @@ use assert_cmd::Command;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -26,6 +29,8 @@ struct Project {
     tmp: TempDir,
     leases: RefCell<Vec<String>>,
     daemon: RefCell<Option<Child>>,
+    /// How many leases may hold gpu at once: its rules' `holders`.
+    holders: std::cell::Cell<usize>,
 }
 
 /// decree's own `DECREE_*` variables, when the tests run inside a decree run, would point
@@ -51,11 +56,13 @@ impl Project {
             tmp: TempDir::new().unwrap(),
             leases: RefCell::new(Vec::new()),
             daemon: RefCell::new(None),
+            holders: std::cell::Cell::new(1),
         };
         p.decree(&["init"]).assert().success();
         p.decree(&["install", "lease"]).assert().success();
-        fs::write(p.lease_dir().join("resources"), rules).unwrap();
-        let stub = p.lease_dir().join("swap/gpu.sh");
+        fs::write(p.lease_dir().join("resources.git.txt"), rules).unwrap();
+        let stub = p.lease_dir().join("swap/gpu.git.sh");
+        fs::create_dir_all(stub.parent().unwrap()).unwrap();
         fs::write(&stub, STUB).unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
@@ -67,7 +74,7 @@ impl Project {
     }
 
     fn lease_dir(&self) -> PathBuf {
-        self.root().join(".decree/machines/lease/scripts")
+        self.root().join(".decree/machines/lease/state")
     }
 
     fn decree(&self, args: &[&str]) -> Command {
@@ -151,11 +158,45 @@ impl Project {
         self.state(id).1 == "held"
     }
 
-    /// No two leases are ever held at once.
+    /// No more leases are ever held at once than gpu's `holders` (one, but where a test
+    /// says more), and those held are all in one mode.
     fn check_one_holder(&self) {
         let ids = self.leases.borrow().clone();
         let held: Vec<&String> = ids.iter().filter(|id| self.held(id)).collect();
-        assert!(held.len() <= 1, "two holders at once: {held:?}");
+        assert!(
+            held.len() <= self.holders.get(),
+            "more holders than allowed: {held:?}"
+        );
+        let mut modes: Vec<String> = held
+            .iter()
+            .filter_map(|id| self.info(id)["mode"].as_str().map(str::to_string))
+            .collect();
+        modes.dedup();
+        assert!(modes.len() <= 1, "holders in two modes: {held:?} {modes:?}");
+    }
+
+    /// The run's `lease.json`, or Null before its hold starts.
+    fn info(&self, id: &str) -> Value {
+        fs::read_to_string(self.root().join(".decree/runs").join(id).join("lease.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null)
+    }
+
+    /// How many times the run entered `held`: once per hold and once per renewal, never
+    /// to look again while it holds.
+    fn entered_held(&self, id: &str) -> usize {
+        let events = self
+            .root()
+            .join(".decree/runs")
+            .join(id)
+            .join("events.jsonl");
+        fs::read_to_string(events)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|e| e["type"] == "transition" && e["to"] == "held")
+            .count()
     }
 
     /// Polls until `done` (checking one holder at a time throughout); panics after 20s.
@@ -435,7 +476,9 @@ fn a_mode_past_its_slice_gives_way_to_another_mode() {
 /// swap, the next grant goes to B.
 #[test]
 fn a_mode_just_swapped_in_serves_its_own_leases_until_its_slice_is_used() {
-    let p = Project::new();
+    // A slice of 8s, and leases that outlast it: a loaded machine takes about a second for
+    // each grant and release below, which a 4s slice would not leave room for.
+    let p = Project::with_rules("gpu 10s 1s 8s\n");
     p.start();
     let a = p.ask_mode("x");
     p.wait_state(&a, "held");
@@ -452,7 +495,7 @@ fn a_mode_just_swapped_in_serves_its_own_leases_until_its_slice_is_used() {
     p.send(&c1, "release");
     p.wait_state(&c2, "held");
     assert!(
-        swapped.elapsed() < Duration::from_secs(4),
+        swapped.elapsed() < Duration::from_secs(7),
         "C2 was held {:?} after the swap, past the slice",
         swapped.elapsed()
     );
@@ -460,7 +503,7 @@ fn a_mode_just_swapped_in_serves_its_own_leases_until_its_slice_is_used() {
     assert_eq!(p.swaps(), vec!["\"\" -> x"]);
     let c3 = p.ask_mode("x");
     p.wait_state(&c3, "waiting");
-    thread::sleep(Duration::from_millis(4300).saturating_sub(swapped.elapsed()));
+    thread::sleep(Duration::from_millis(8300).saturating_sub(swapped.elapsed()));
     p.send(&c2, "release");
     p.wait_state(&b, "held");
     assert!(p.in_line(&c3), "{:?}", p.state(&c3));
@@ -528,6 +571,9 @@ fn a_lease_nobody_releases_ends_at_its_expiry() {
     assert!(p
         .log(&a)
         .contains(&format!("lease: expire resource=gpu mode=x lease={a}")));
+    // It waited once, until its expiry, without looking in between.
+    assert_eq!(p.entered_held(&a), 1);
+    assert_eq!(p.info(&a)["state"], "expired", "{}", p.info(&a));
     p.stop();
 }
 
@@ -566,10 +612,13 @@ fn a_renewal_is_refused_while_another_lease_waits() {
     let held_at = Instant::now();
     let b = p.ask_mode("x");
     p.wait_state(&b, "waiting");
+    let expires = p.info(&a)["expires"].clone();
     p.send(&a, "renew");
     p.wait_for("the refusal", || {
         p.log(&a).contains("lease: renew refused ")
     });
+    // A refused renewal leaves the expiry, and so the deadline.
+    assert_eq!(p.info(&a)["expires"], expires);
     p.wait_finished(&a, "done");
     assert!(
         held_at.elapsed() < Duration::from_millis(5000),
@@ -597,10 +646,14 @@ fn a_renewal_with_nothing_waiting_extends_the_lease() {
     p.wait_state(&a, "held");
     let held_at = Instant::now();
     thread::sleep(Duration::from_millis(1500));
+    let expires = p.info(&a)["expires"].as_str().unwrap().to_string();
     p.send(&a, "renew");
     p.wait_for("the renewal", || {
         p.log(&a).contains("lease: renew resource=")
     });
+    // The new expiry is later, and the held wait's deadline with it.
+    let renewed = p.info(&a)["expires"].as_str().unwrap().to_string();
+    assert!(renewed > expires, "{expires} -> {renewed}");
     // The original expiry was 3s after the hold began.
     let past = Duration::from_millis(3800).saturating_sub(held_at.elapsed());
     thread::sleep(past);
@@ -677,15 +730,17 @@ fn a_failed_swap_fails_the_lease_and_leaves_the_mode_unknown() {
 }
 
 /// AC: a lease for tpu, not in the rules, fails at once naming tpu and listing gpu; a
-/// lease with no mode fails naming the mode.
+/// lease with no mode fails naming the mode, one with no resource names the resources,
+/// and with gpu's modes listed, a lease for another mode fails naming them.
 #[test]
 fn a_bad_request_fails_at_once() {
-    let p = Project::new();
+    let p = Project::with_rules("gpu 3s 1s 4s x,y\n");
     let t = p.ask(&["resource=tpu", "mode=x"]);
     let m = p.ask(&["resource=gpu"]);
+    let w = p.ask(&["resource=gpu", "mode=w"]);
     let n = p.ask(&["mode=x"]);
     let _ = p.decree(&["daemon", "--once"]).output().unwrap();
-    for id in [&t, &m, &n] {
+    for id in [&t, &m, &w, &n] {
         assert_eq!(p.state(id), ("finished".into(), "failed".into()), "{id}");
     }
     let log = p.log(&t);
@@ -696,9 +751,55 @@ fn a_bad_request_fails_at_once() {
         "{}",
         p.log(&m)
     );
-    assert!(p.log(&n).contains("no resource"), "{}", p.log(&n));
-    assert!(p.log(&n).contains("gpu"), "{}", p.log(&n));
+    assert!(
+        p.log(&w)
+            .contains("resource `gpu` has no mode `w`: its modes are x,y"),
+        "{}",
+        p.log(&w)
+    );
+    assert!(
+        p.log(&n)
+            .contains("no resource: ask with the params resource and mode. The resources are: gpu"),
+        "{}",
+        p.log(&n)
+    );
     assert!(p.swaps().is_empty());
+}
+
+/// AC: a held lease's `lease.json` says which run it is, what it holds, in which mode, and
+/// until when; the `held` wait's deadline is that `expires`; after a release it says
+/// `released` and keeps the rest.
+#[test]
+fn a_held_lease_writes_what_it_holds() {
+    let p = Project::new();
+    p.start();
+    let a = p.ask(&["resource=gpu", "mode=y"]);
+    p.wait_state(&a, "held");
+    let info = p.info(&a);
+    assert_eq!(info["run"], a.as_str(), "{info}");
+    assert_eq!(info["resource"], "gpu", "{info}");
+    assert_eq!(info["mode"], "y", "{info}");
+    assert_eq!(info["state"], "held", "{info}");
+    let expires = info["expires"].as_str().unwrap();
+    assert!(expires.ends_with('Z'), "{info}");
+    // The state is mirrored before the wait starts, so look until the wait is there.
+    let events = p.root().join(".decree/runs").join(&a).join("events.jsonl");
+    let held_wait = || {
+        fs::read_to_string(&events)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .rfind(|e| e["type"] == "waiting")
+            .filter(|e| e["state"] == "held")
+    };
+    p.wait_for("the held wait", || held_wait().is_some());
+    assert_eq!(held_wait().unwrap()["timeout_at"], expires);
+    p.send(&a, "release");
+    p.wait_finished(&a, "done");
+    let after = p.info(&a);
+    assert_eq!(after["state"], "released", "{after}");
+    assert_eq!(after["expires"], expires, "{after}");
+    p.stop();
 }
 
 /// AC: a fresh init lists lease with its description; after adding it, check passes.
@@ -723,7 +824,7 @@ fn lease_is_listed_and_adds_cleanly() {
         .lines()
         .find(|l| l.trim_start().starts_with("lease "))
         .unwrap_or_else(|| panic!("{list}"));
-    assert!(line.contains("One holder per resource"), "{line}");
+    assert!(line.contains("One mode per resource at a time"), "{line}");
     run(&["install", "lease"]);
     run(&["check"]);
     let req = tmp
@@ -732,8 +833,205 @@ fn lease_is_listed_and_adds_cleanly() {
     for tool in ["flock", "jq"] {
         assert!(path_has(&req, &format!("command   {tool}")), "{tool}");
     }
+    // The seeded rules name no resource, and no file of the plugin names one.
+    let state = tmp.path().join(".decree/machines/lease/state");
     assert!(path_has(
-        &tmp.path().join(".decree/machines/lease/scripts/resources"),
-        "\ngpu 15m 5s 30m\n"
+        &state.join("resources.git.txt"),
+        "# box1  15m  5s  30m"
     ));
+    assert!(!state.join("swap").exists());
+    let plugin = fs::read_to_string(tmp.path().join(".decree/plugins/lease.md")).unwrap();
+    assert!(!plugin.to_lowercase().contains("gpu"), "lease names a GPU");
+}
+
+/// AC: with `holders` 2, two x leases hold gpu together after one swap; a third x waits for
+/// room and then joins without a swap; a y lease waits until every x lease is done, then
+/// swaps once.
+#[test]
+fn holders_share_the_resource_in_one_mode() {
+    let p = Project::with_rules("gpu 20s 1s 30s * 2\n");
+    p.holders.set(2);
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    let b = p.ask_mode("x");
+    p.wait_state(&b, "held");
+    assert!(p.held(&a), "a stopped holding when b joined");
+    assert_eq!(p.swaps(), vec!["\"\" -> x"]);
+    assert!(p.log(&a).contains("holders=1/2"), "{}", p.log(&a));
+    assert!(p.log(&b).contains("holders=2/2"), "{}", p.log(&b));
+    let c = p.ask_mode("x");
+    let d = p.ask_mode("y");
+    p.wait_for("c and d in line", || p.in_line(&c) && p.in_line(&d));
+    p.never_held_for(&c, Duration::from_secs(2));
+    p.send(&a, "release");
+    p.wait_state(&c, "held");
+    assert!(!p.held(&d));
+    assert_eq!(p.swaps(), vec!["\"\" -> x"]);
+    p.send(&b, "release");
+    p.never_held_for(&d, Duration::from_secs(1));
+    p.send(&c, "release");
+    p.wait_state(&d, "held");
+    assert_eq!(p.swaps(), vec!["\"\" -> x", "\"x\" -> y"]);
+    p.send(&d, "release");
+    p.wait_finished(&d, "done");
+    p.stop();
+}
+
+/// AC: with room for more holders, once x has used its slice and a y lease waits, a new x
+/// lease does not join: the x holders drain, and y goes next.
+#[test]
+fn holders_stop_joining_once_another_mode_waits_past_the_slice() {
+    let p = Project::with_rules("gpu 20s 1s 2s * 3\n");
+    p.holders.set(3);
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    thread::sleep(Duration::from_millis(2500));
+    let d = p.ask_mode("y");
+    p.wait_for("d in line", || p.in_line(&d));
+    let e = p.ask_mode("x");
+    p.wait_for("e in line", || p.in_line(&e));
+    p.never_held_for(&e, Duration::from_secs(2));
+    p.send(&a, "release");
+    p.wait_state(&d, "held");
+    assert!(!p.held(&e));
+    p.send(&d, "release");
+    p.wait_state(&e, "held");
+    p.send(&e, "release");
+    p.wait_finished(&e, "done");
+    p.stop();
+}
+
+/// AC: a `holders` that is not a whole number from 1 fails the lease, naming it.
+#[test]
+fn a_bad_holders_fails_naming_it() {
+    let p = Project::with_rules("gpu 3s 1s 4s * 0\n");
+    let a = p.ask_mode("x");
+    let _ = p.decree(&["daemon", "--once"]).output().unwrap();
+    assert_eq!(p.state(&a), ("finished".into(), "failed".into()));
+    assert!(
+        p.log(&a)
+            .contains("holders `0` for `gpu` is not a whole number from 1"),
+        "{}",
+        p.log(&a)
+    );
+}
+
+/// Each request an `http_recorder` got: its first line and its body.
+type Requests = Arc<Mutex<Vec<(String, String)>>>;
+
+/// An address that records each request's first line and body and answers `status`, for
+/// the test's life.
+fn http_recorder(status: u16) -> (String, Requests) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { continue };
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            // Headers, then as many body bytes as Content-Length says.
+            let (head, body) = loop {
+                let Ok(n) = s.read(&mut chunk) else {
+                    break (String::new(), String::new());
+                };
+                if n == 0 {
+                    break (String::new(), String::new());
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf).to_string();
+                let Some(end) = text.find("\r\n\r\n") else {
+                    continue;
+                };
+                let length = text[..end]
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() >= end + 4 + length {
+                    break (
+                        text[..end].to_string(),
+                        text[end + 4..end + 4 + length].to_string(),
+                    );
+                }
+            };
+            let first = head.lines().next().unwrap_or_default().to_string();
+            record.lock().unwrap().push((first, body));
+            let _ = s.write_all(
+                format!("HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            );
+        }
+    });
+    (
+        format!("http://127.0.0.1:{port}/leases/ready?token=t0ken"),
+        seen,
+    )
+}
+
+/// AC: a lease asked for with a callback POSTs its `lease.json` there once, when the hold
+/// starts, then is `held`; a renewal does not call again; the log names the host only.
+#[test]
+fn a_callback_is_told_once_when_the_hold_starts() {
+    let (url, seen) = http_recorder(204);
+    let p = Project::new();
+    p.start();
+    let a = p.ask(&["resource=gpu", "mode=x", &format!("callback={url}")]);
+    p.wait_state(&a, "held");
+    let calls = seen.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0].0, "POST /leases/ready?token=t0ken HTTP/1.1");
+    let body: Value = serde_json::from_str(&calls[0].1).unwrap();
+    assert_eq!(body["run"], a.as_str(), "{body}");
+    assert_eq!(body["resource"], "gpu");
+    assert_eq!(body["mode"], "x");
+    assert_eq!(body["state"], "held");
+    assert_eq!(body["expires"], p.info(&a)["expires"]);
+    p.send(&a, "renew");
+    p.wait_for("the renewal", || {
+        p.log(&a).contains("lease: renew resource=")
+    });
+    p.send(&a, "release");
+    p.wait_finished(&a, "done");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    let log = p.log(&a);
+    assert!(log.contains("lease: callback resource=gpu mode=x"), "{log}");
+    assert!(!log.contains("t0ken"), "{log}");
+    p.stop();
+}
+
+/// AC: a callback nobody answers with a 2xx fails the lease and gives the resource back, so
+/// the next lease is held; a callback that is not an http address fails at once.
+#[test]
+fn a_callback_nobody_takes_gives_the_resource_back() {
+    let (url, seen) = http_recorder(500);
+    let p = Project::new();
+    p.start();
+    let a = p.ask(&["resource=gpu", "mode=x", &format!("callback={url}")]);
+    // Leases run at once: asked together, either may be granted first.
+    p.wait_for("a granted", || p.ever_in(&a, "swap"));
+    let b = p.ask_mode("x");
+    p.wait_finished(&a, "failed");
+    assert_eq!(seen.lock().unwrap().len(), 3, "three tries");
+    assert!(!p.ever_in(&a, "held"));
+    assert_eq!(p.info(&a)["state"], "released", "{}", p.info(&a));
+    let log = p.log(&a);
+    assert!(log.contains("lease: callback failed resource=gpu"), "{log}");
+    assert!(!log.contains("t0ken"), "{log}");
+    p.wait_state(&b, "held");
+    let c = p.ask(&["resource=gpu", "mode=x", "callback=ftp://example"]);
+    p.wait_finished(&c, "failed");
+    assert!(
+        p.log(&c)
+            .contains("callback `ftp://example` is not an http:// or https:// address"),
+        "{}",
+        p.log(&c)
+    );
+    p.stop();
 }

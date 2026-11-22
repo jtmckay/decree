@@ -38,7 +38,7 @@ fn clone_files() -> Option<Vec<String>> {
 }
 
 /// AC (A10, D86): of any `.decree/machines/` outside `tests/fixtures/`, git holds only what a
-/// project commits (each `graph.md`, `order/` and `*.git.txt` file), never an installed copy;
+/// project commits (each `graph.md`, `order/` and `*.git.*` file), never an installed copy;
 /// and every machine `examples/` held is an official plugin in `plugins/`.
 #[test]
 fn no_installed_copy_is_tracked_and_the_examples_machines_are_official_plugins() {
@@ -50,7 +50,7 @@ fn no_installed_copy_is_tracked_and_the_examples_machines_are_official_plugins()
         .iter()
         .filter(|f| !f.starts_with("tests/fixtures/"))
         .filter(|f| f.contains(".decree/machines/") || f.contains(".decree/scripts/"))
-        .filter(|f| !(f.ends_with("/graph.md") || f.contains("/order/") || f.ends_with(".git.txt")))
+        .filter(|f| !(f.ends_with("/graph.md") || f.contains("/order/") || f.contains(".git.")))
         .collect();
     assert!(tracked.is_empty(), "installed copies in git: {tracked:?}");
     for name in [

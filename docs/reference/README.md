@@ -76,7 +76,7 @@ Each building block has its own directory in `.decree/`:
 
 ```text
 .decree/
-  .gitignore                        # contains: inbox/, runs/, schema/, the .env* files but .env.example, attention/, process.log, cache/, ai-use.md, and machines/** but each machine's order/, graph.md and *.git.txt files
+  .gitignore                        # contains: inbox/, runs/, schema/, the .env* files but .env.example, attention/, process.log, cache/, ai-use.md, and machines/** but each machine's order/, graph.md and *.git.* files
   inbox/                            # queued messages: *.md; files starting with "." are ignored
   runs/<message id>/                # one folder per run, created when the message is claimed
     message.md                      # the claimed message; decree mirrors frontmatter `state`
@@ -93,7 +93,7 @@ Each building block has its own directory in `.decree/`:
     scripts/<name>                  # its executables; optional extension: verify.sh (scripts.md)
     scripts/*                       # also its helpers, config and data, which decree never runs (scripts.md, A machine's files)
     cron/*.md                       # cron templates; `machine:` defaults to this machine (messages.md, Cron files)
-    state/                          # what the machine keeps between runs: $DECREE_STATE_DIR, declared under `state_files:`; never deleted by decree; *.git.txt files committed (scripts.md, State)
+    state/                          # what the machine keeps between runs: $DECREE_STATE_DIR, declared under `state_files:`; never deleted by decree; *.git.* files committed (scripts.md, State)
     order/*.md                      # messages run in order at each daemon start by the official `order` plugin; committed (messages.md, Order files)
     graph.md                        # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
   system.md                         # written by `decree graph`: how machines emit to and invoke each other; committed
@@ -106,7 +106,7 @@ Each building block has its own directory in `.decree/`:
   attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops every run (cli.md, Attention)
 ```
 
-`plugins/`, `system.md` and each machine's `order/`, `graph.md` and `state/*.git.txt` are committed to git; `inbox/`, `runs/`, the rest of `machines/`, `cache/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
+`plugins/`, `system.md` and each machine's `order/`, `graph.md` and `state/**/*.git.*` are committed to git; `inbox/`, `runs/`, the rest of `machines/`, `cache/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
 
 ### No configuration file
 

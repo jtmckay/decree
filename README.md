@@ -68,7 +68,7 @@ decree install develop
 
 `qa` (`decree install qa`) tries to break the project and hands what breaks to `develop`. The AI lists the attack surface, writes chaos tests in `tests/chaos/` against the invariants in `.decree/machines/qa/scripts/invariants.md`, using the wrenches in `scripts/qa/wrenches.md` (bad input, repetition, interruption, full disks, corrupt state, …), and runs them. Triage marks each real bug's tests expected to fail and writes one report per root cause, stating the broken invariant and the expected behaviour and proposing no fix, and each report becomes a `develop` message. QA never fixes code: a script fails the step if the AI changed anything outside the chaos tests. Set `QA_RUN` in `.decree/machines/qa/scripts/qa.sh` to the command that runs the chaos suite first (and keep it with `decree export qa`), and add it to the gate once qa finds bugs, so a fixed bug whose test is still marked fails the gate ([D62](docs/decisions.md#d62-qa-finds-bugs-and-never-fixes-them)).
 
-The other official plugins are `router` (the default router a `model` state asks), `newsletter`, `comfy` (renders on ComfyUI), `develop_by_size` with its routers `gliner_router` and `llm_router`, and `lease` (one holder at a time for a GPU or another shared resource, batched by mode), and `plugin_install` (runs `decree install` each time the daemon starts); each plugin's file says what it needs and how to use it.
+The other official plugins are `router` (the default router a `model` state asks), `newsletter`, `comfy` (renders on ComfyUI), `develop_by_size` with its routers `gliner_router` and `llm_router`, `lease` (one holder at a time for a GPU or another shared resource, batched by mode), `registry` (where each service is, and which lease to get before using it), and `plugin_install` (runs `decree install` each time the daemon starts); each plugin's file says what it needs and how to use it.
 
 **3. Write a script.** A script does one thing. Exit 0 is the event `done`, anything else is `error`. A machine's scripts live in its own folder, `.decree/machines/<name>/scripts/`.
 
@@ -288,7 +288,7 @@ decree never continues a run that was stopped by a signal or a crash: the run is
     machine.yml                   # the machine
     scripts/                      # its scripts, and its helpers, config and data; decree runs only what a state names
     cron/                         # message templates queued on a schedule
-    state/                        # what it keeps between runs ($DECREE_STATE_DIR); *.git.txt committed, the rest not
+    state/                        # what it keeps between runs ($DECREE_STATE_DIR); *.git.* committed, the rest not
     order/                        # its order files, run in order at each daemon start; committed
     graph.md                      # written by decree graph; committed
   system.md                       # written by decree graph; committed

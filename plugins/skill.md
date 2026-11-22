@@ -253,7 +253,7 @@ scripts:
       deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.
     - Commit `.decree/plugins/`, `.decree/system.md` and each `machines/<name>/graph.md` and
       `order/`; git ignores the rest of `.decree/machines/`, which `decree install` installs
-      from `plugins/`, except any `*.git.txt` file (`order.git.txt`) in a machine's `state/`. Do not commit
+      from `plugins/`, except any `*.git.*` file (`order.git.txt`) in a machine's `state/`. Do not commit
       `.decree/inbox/`, `.decree/runs/` or `.decree/cache/`.
 
     ## Commands

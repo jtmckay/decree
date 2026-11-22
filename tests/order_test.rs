@@ -152,7 +152,7 @@ fn order_max_runs_that_many_files_per_start() {
     assert_eq!(start(&p), "");
 }
 
-/// git keeps each `order/` file, `graph.md` and `*.git.txt` state file, and none of what is
+/// git keeps each `order/` file, `graph.md` and `*.git.*` state file, and none of what is
 /// installed.
 #[test]
 fn git_keeps_order_graph_and_git_txt_files() {
@@ -184,6 +184,8 @@ fn git_keeps_order_graph_and_git_txt_files() {
         assert!(Path::new(&p.decree(rel)).exists(), "{rel}");
         assert!(!ignored(rel), "{rel} is ignored");
     }
+    // Any `*.git.*` file in a machine's folder, such as a script the owner keeps in state/.
+    assert!(!ignored("machines/lease/state/swap/box1.git.sh"));
     for rel in [
         "machines/alpha/machine.yml",
         "machines/alpha/scripts/work.sh",

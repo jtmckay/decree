@@ -69,7 +69,7 @@ fn test_init_creates_directory_structure() {
 }
 
 /// The official plugins `init` lists: every one, by name.
-const OFFICIAL: [&str; 18] = [
+const OFFICIAL: [&str; 19] = [
     "ai",
     "comfy",
     "develop",
@@ -86,6 +86,7 @@ const OFFICIAL: [&str; 18] = [
     "plugin_install",
     "prune",
     "qa",
+    "registry",
     "router",
     "skill",
 ];
@@ -452,7 +453,7 @@ fn test_init_permissions_keeps_existing_settings() {
 }
 
 /// AC (A10, D86): the `.gitignore` `init` writes keeps installed machine folders out of git,
-/// but each machine's `order/`, `graph.md` and `*.git.txt` state files.
+/// but each machine's `order/`, `graph.md` and `*.git.*` state files.
 #[test]
 fn test_init_gitignore_content() {
     let dir = TempDir::new().unwrap();
@@ -474,7 +475,7 @@ fn test_init_gitignore_content() {
         "!machines/**/",
         "!machines/*/order/**",
         "!machines/*/graph.md",
-        "!machines/**/*.git.txt",
+        "!machines/**/*.git.*",
     ] {
         assert!(gitignore.lines().any(|l| l == line), "{line}:\n{gitignore}");
     }

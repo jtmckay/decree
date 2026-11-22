@@ -102,7 +102,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Seeds for .decree/machines/<name>/state/ ($DECREE_STATE_DIR), by path there, to its text. Each file is written only when absent and is never overwritten or removed: the state is the project's data. A file named `*.git.txt` is committed; any other is not.",
+      "description": "Seeds for .decree/machines/<name>/state/ ($DECREE_STATE_DIR), by path there, to its text. Each file is written only when absent and is never overwritten or removed: the state is the project's data. A file named `*.git.*` (`order.git.txt`, `swap/box1.git.sh`) is committed; any other is not.",
       "examples": [
         {
           "feeds.txt": "https://example.com/rss\n"

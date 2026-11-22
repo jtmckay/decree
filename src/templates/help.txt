@@ -103,7 +103,7 @@ Files (.decree/):
                               never run by decree
     cron/                     Message templates queued on a schedule
     state/                    What it keeps between runs ($DECREE_STATE_DIR),
-                              declared under its `state_files:`; *.git.txt
+                              declared under its `state_files:`; *.git.*
                               committed, the rest not
     order/                    Messages run in order at each daemon start; commit
     graph.md                  Written by `decree graph`; commit it

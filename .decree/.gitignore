@@ -7,9 +7,9 @@ attention/
 process.log
 cache/
 ai-use.md
-# Installed from plugins/; a machine's order/ and graph.md, and any *.git.txt, are committed.
+# Installed from plugins/; a machine's order/ and graph.md, and any *.git.* file (such as order.git.txt), are committed.
 machines/**
 !machines/**/
 !machines/*/order/**
 !machines/*/graph.md
-!machines/**/*.git.txt
+!machines/**/*.git.*

@@ -14,7 +14,7 @@ pub const SCRIPTS_DIR: &str = "scripts";
 /// The machine's cron files, `machines/<name>/cron/*.md` (docs/reference/messages.md).
 pub const CRON_DIR: &str = "cron";
 /// What the machine keeps between runs, `machines/<name>/state/` (docs/reference/scripts.md,
-/// State): a file named `*.git.txt` there is committed, any other is not.
+/// State): a file named `*.git.*` there (`order.git.txt`, `swap/box1.git.sh`) is committed, any other is not.
 pub const STATE_DIR: &str = "state";
 /// The machine's ordered work, `machines/<name>/order/*.md`, which the `order` plugin runs.
 pub const ORDER_DIR: &str = "order";
