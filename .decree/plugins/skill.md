@@ -299,7 +299,7 @@ scripts:
     ends with `commit` (`done`'s `onentry`: the run's work as one commit, titled with the message's
     first heading, and the order file for an order file's run, recorded in the same commit), or, in `failed`, with `keep` (the
     run's changes stay in the work tree, and `keep` writes the run's `hold`, so its attention file
-    in `.decree/attention/` holds every run until the run is retried). All three touch only the
+    in `.decree/attention/` holds every run of their `worktree` group until the run is retried; other machines go on). All three touch only the
     project folder. Before queuing work for them, commit or stash any changes. To continue: answer
     any `STOP` in `plan.md`, delete `STOP`, `decree retry <id>`, which builds on the
     kept changes and removes the hold. To drop the run: stash its changes and delete its
@@ -1033,9 +1033,10 @@ scripts:
 
     - Read-only: answer with `decree reply` or a reply, continue with `decree retry`;
       editing a file answers nothing, and no script writes one.
-    - While a file has `holds: true` (its run wrote `hold`), or a `.md` file there cannot be read
-      as one (no frontmatter, invalid frontmatter), `daemon` starts and continues no
-      runs; `daemon --once` exits 1 naming it. `decree retry <id>` removes the run's `hold`
+    - A file with `holds: true` (its run wrote `hold`) holds the runs of its machine's
+      `concurrency_group` (or of the machine alone): they neither start nor continue, and the
+      other machines go on. `pause.md`, or a `.md` file there that cannot be read as one (no
+      frontmatter, invalid frontmatter), holds every run. `daemon --once` exits 1 naming it. `decree retry <id>` removes the run's `hold`
       and its file; deleting the file drops the run (stash its changes first), and decree then
       deletes the `hold`. Other files and subfolders there are ignored.
 
@@ -1170,10 +1171,10 @@ scripts:
     - `plan.md`: a plan for later steps, and a person's answer to a `STOP`. develop's AI steps read it.
     - `gaps.md`: what `verify` found missing on `fail`; a retry's `implement` closes each first.
       `verify` keeps the last one if an attempt dies.
-    - `hold`, in the run's own `$DECREE_RUN_DIR`: written by a step whose failure must stop every
-      run (the official plugins' `keep`, in `failed`). decree puts its text in the run's file in
-      `.decree/attention/` with `holds: true`, and nothing runs until `decree retry <id>`
-      removes both or a person deletes the attention file.
+    - `hold`, in the run's own `$DECREE_RUN_DIR`: written by a step whose failure must stop the
+      runs that share its machine's group (the official plugins' `keep`, in `failed`). decree puts
+      its text in the run's file in `.decree/attention/` with `holds: true`, and no run of that
+      group runs until `decree retry <id>` removes both or a person deletes the attention file.
     - `leftovers`, in the run's own `$DECREE_RUN_DIR`: written by the official plugins' `clean_tree` when it
       finds uncommitted changes. It names each run that passed `clean_tree` and is now
       `interrupted` or `failed` (from `"${DECREE}" status --all --format json`, read with `jq`),

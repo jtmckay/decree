@@ -25,7 +25,7 @@ use crate::commands::report::{self, Reporter, RunNotes};
 use crate::error::DecreeError;
 use crate::events::{is_type, strings, text, EventLog};
 use crate::filter::{self, MachineFilter, Select};
-use crate::interpreter::child::continue_holding;
+use crate::interpreter::child::{self, continue_holding};
 use crate::interpreter::recover::{self, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
 use crate::layout::MESSAGE_FILE;
@@ -65,8 +65,13 @@ pub fn run(project_root: &Path, quiet: bool, select: &Select) -> Result<(), Decr
     print_failed(&failed);
     print_attention(project_root)?;
     result.map_err(Stop::into_error)?;
+    let held = pipeline.held_note().map(|_| {
+        DecreeError::Other(format!(
+            "runs wait while a file in {DECREE_DIR}/{ATTENTION_DIR}/ holds them (above)"
+        ))
+    });
     match (failed.len(), errored.len()) {
-        (0, 0) => Ok(()),
+        (0, 0) => held.map_or(Ok(()), Err),
         (n, 0) => Err(DecreeError::Other(format!(
             "{n} run(s) ended in `{FAILED}`"
         ))),
@@ -152,6 +157,10 @@ pub(crate) struct Pipeline {
     pub(crate) plugin_notes: BTreeSet<String>,
     /// The runs executing in a worker thread now, each holding a slot of its machine.
     in_flight: HashSet<String>,
+    /// The slot keys whose runs a file in `.decree/attention/` holds, as of the last pass.
+    held: HashSet<String>,
+    /// What the last pass printed about those files, so it is printed once, until it changes.
+    held_note: Option<String>,
     workers: Vec<std::thread::JoinHandle<()>>,
     done_tx: Sender<Done>,
     done_rx: Receiver<Done>,
@@ -208,6 +217,8 @@ impl Pipeline {
             env_error: None,
             plugin_notes: BTreeSet::new(),
             in_flight: HashSet::new(),
+            held: HashSet::new(),
+            held_note: None,
             workers: Vec::new(),
             done_tx,
             done_rx,
@@ -222,6 +233,39 @@ impl Pipeline {
     /// Whether this process runs run `id`: its root run's machine is one it runs.
     fn owns(&self, id: &str) -> bool {
         owns(&self.ctx, &self.filter, id)
+    }
+
+    /// Whether this process may step run `id` now: it runs it, and no file in
+    /// `.decree/attention/` holds its machine's slot key.
+    fn may_step(&self, id: &str) -> bool {
+        self.owns(id)
+            && run_machine(&self.ctx, id)
+                .is_none_or(|m| !self.held.contains(&child::slot_of(&self.ctx, &m).0))
+    }
+
+    /// Whether a run of machine `name` may start now: no file holds its slot key.
+    fn held_machine(&self, name: &str) -> bool {
+        self.held.contains(&child::slot_of(&self.ctx, name).0)
+    }
+
+    /// Read what `.decree/attention/` holds: the slot keys whose runs wait, and a notice, once
+    /// until it changes, of the files that hold them.
+    fn read_holds(&mut self) -> Result<(), Stop> {
+        let holds = attention::holds(&self.ctx, true)?;
+        self.held = holds.keys.keys().cloned().collect();
+        let note = holds.keys_message(&self.ctx);
+        if note != self.held_note {
+            if let Some(note) = &note {
+                report::notice(format!("{}{note}", self.prefix));
+            }
+            self.held_note = note;
+        }
+        Ok(())
+    }
+
+    /// What files hold the runs of some machines now, for `daemon --once` to end with.
+    pub(crate) fn held_note(&self) -> Option<String> {
+        self.held_note.clone()
     }
 
     /// Read the machines and the `.env` files again, so edits apply to the next run without
@@ -317,13 +361,14 @@ impl Pipeline {
         self.ctx.shutdown.load(Ordering::Relaxed)
     }
 
-    /// Stop for a signal, or for a file in `.decree/attention/` that holds the queue, before
-    /// a run starts or continues.
+    /// Stop for a signal, or for a file in `.decree/attention/` that holds every run, before
+    /// a run starts or continues. A file that holds the runs of one machine or group is
+    /// `read_holds`'s, and holds only those.
     fn may_run(&self) -> Result<(), Stop> {
         if self.shutdown() {
             return Err(Stop::Interrupted);
         }
-        match attention::held(&self.ctx)? {
+        match attention::holds(&self.ctx, false)?.all_message(&self.ctx) {
             Some(message) => Err(Stop::Held(message)),
             None => Ok(()),
         }
@@ -414,7 +459,7 @@ impl Pipeline {
     pub(crate) fn drain_with_timers(&mut self) -> Result<(), Stop> {
         loop {
             self.drain()?;
-            let Some(at) = reply::next_timer(&self.ctx, |id| self.owns(id))? else {
+            let Some(at) = reply::next_timer(&self.ctx, |id| self.may_step(id))? else {
                 return Ok(());
             };
             // A file arriving in inbox/ meanwhile (a reply, a message) ends the sleep, so the
@@ -462,7 +507,7 @@ impl Pipeline {
         for id in message::run_ids(&self.ctx.runs_dir())? {
             if self.ctx.run_finished(&id)?.is_none()
                 && self.ctx.status_of(&id)?.0 == RunStatus::Pending
-                && self.owns(&id)
+                && self.may_step(&id)
             {
                 pending.push(id);
             }
@@ -479,12 +524,13 @@ impl Pipeline {
     fn dispatch(&mut self) -> Result<bool, Stop> {
         self.may_run()?;
         self.refresh();
+        self.read_holds()?;
         let mut progressed = false;
         // Deadlines: replies queued before them first, then the timeouts. Both only append
         // an event; the runs they make pending start below.
         let now = chrono::Utc::now();
         progressed |= self.deliver_early_replies(now)?;
-        progressed |= !reply::deliver_timeouts(&self.ctx, now, |id| self.owns(id))?.is_empty();
+        progressed |= !reply::deliver_timeouts(&self.ctx, now, |id| self.may_step(id))?.is_empty();
         progressed |= self.start_pending()?;
         let decree_dir = self.ctx.project_root.join(DECREE_DIR);
         let inbox = decree_dir.join(INBOX_DIR);
@@ -516,6 +562,7 @@ impl Pipeline {
                 if let Some(run) = run {
                     if self.executing_here(&run)
                         || self.not_yet_waiting(&run)
+                        || !self.may_step(&run)
                         || !answered.insert(run)
                     {
                         continue;
@@ -533,9 +580,10 @@ impl Pipeline {
                 progressed |= self.claim_inline(file, None)?;
                 continue;
             };
-            // Full is per slot key: a group found full keeps every member's messages queued.
+            // Full is per slot key: a group found full keeps every member's messages queued;
+            // so does a group a file in `.decree/attention/` holds.
             let key = crate::interpreter::child::slot_of(&self.ctx, &name).0;
-            if full.contains(&key) {
+            if full.contains(&key) || self.held_machine(&name) {
                 continue;
             }
             let Some(slot) = self.try_slot(&name)? else {
@@ -703,7 +751,7 @@ impl Pipeline {
     /// that were queued at or before the deadline, in filename order (the order they were
     /// queued), until one is delivered. One that fails a check is rejected as any reply is.
     fn deliver_early_replies(&mut self, now: chrono::DateTime<chrono::Utc>) -> Result<bool, Stop> {
-        let overdue = reply::overdue(&self.ctx, now, |id| self.owns(id))?;
+        let overdue = reply::overdue(&self.ctx, now, |id| self.may_step(id))?;
         if overdue.is_empty() {
             return Ok(false);
         }

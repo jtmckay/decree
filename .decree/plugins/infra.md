@@ -172,8 +172,8 @@ scripts:
     #!/usr/bin/env bash
     # onentry script of `failed`: leave the run's changes in the work tree, so a retry builds on
     # the last attempt (the agent sees them in `git status` and decides what to keep), and write
-    # the run's `hold`, so its file in .decree/attention/ holds the queue and no other run starts
-    # on them. `decree retry` of this run removes both; to set the changes aside
+    # the run's `hold`, so its file in .decree/attention/ holds the work tree's group and no
+    # other run in it starts on them. `decree retry` of this run removes both; to set the changes aside
     # instead, stash them and delete the run's attention file.
     # Only the project folder counts (`-- .`): a decree project can be a subfolder of a larger
     # repository. A run that failed because a person's own changes were there from the start
@@ -199,7 +199,7 @@ scripts:
       echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree install <name>\` for an installed copy), then delete ${attention}"
     } > "${DECREE_RUN_DIR}/hold"
     cat "${DECREE_RUN_DIR}/hold"
-    echo "no other run starts until then (${attention})"
+    echo "no other run in the work tree's group starts until then (${attention})"
   kinds/command.sh: |
     # A command that must be on PATH, at the version if the line gives one (found in the output
     # of `<name> --version`). install cannot know this system's package manager, so it names the

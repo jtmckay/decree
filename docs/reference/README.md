@@ -86,7 +86,7 @@ Each building block has its own directory in `.decree/`:
     .lock                           # pid of the process stepping this run (messages.md, Run lock)
     .running                        # the script running now: pid, state, phase, script, started_at, log (scripts.md)
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
-    hold                            # written by a script (keep): the run's attention file holds the queue (cli.md, Attention)
+    hold                            # written by a script (keep): the run's attention file holds its machine's group (cli.md, Attention)
   plugins/<machine name>.md         # committed: any of a machine, its scripts, cron files, state and order seeds as one file, installed by `decree install` into machines/<name>/ (plugins.md)
   machines/<machine name>/          # one folder per machine, its domain
     machine.yml                     # the statechart (machines.md); installed from plugins/, so git ignores it
@@ -103,7 +103,7 @@ Each building block has its own directory in `.decree/`:
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
   cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree keeps only cache/plugins/ there, its record of each plugin install (plugins.md)
   process.log                       # what `daemon` prints as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
-  attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops every run (cli.md, Attention)
+  attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops its group's runs (cli.md, Attention)
 ```
 
 `plugins/`, `system.md` and each machine's `order/`, `graph.md` and `state/**/*.git.*` are committed to git; `inbox/`, `runs/`, the rest of `machines/`, `cache/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).

@@ -108,6 +108,9 @@ struct Row {
     machine: String,
     state: String,
     detail: Option<Detail>,
+    /// A `waiting` or `pending` run whose machine a file in `.decree/attention/` holds: it
+    /// will not move until the file goes.
+    held: bool,
 }
 
 /// What the overview says about a run beyond its id, machine and state.
@@ -135,6 +138,9 @@ impl Row {
     /// or `child`, where they apply.
     fn json(&self) -> Value {
         let mut out = json!({ "id": self.id, "machine": self.machine, "state": self.state });
+        if self.held {
+            out["held"] = json!(true);
+        }
         match &self.detail {
             Some(Detail::Running(r)) => {
                 out["running"] = json!({
@@ -171,6 +177,14 @@ fn overview(
 ) -> Result<(), DecreeError> {
     let mut groups: Vec<(RunStatus, Row)> = Vec::new();
     let mut finished: BTreeMap<String, Vec<Row>> = BTreeMap::new();
+    // What the files in `.decree/attention/` hold: a held machine's runs and messages wait.
+    let holds = attention::holds(ctx, false)?;
+    let held = |machine: &str| {
+        !holds.all.is_empty()
+            || holds
+                .keys
+                .contains_key(&crate::interpreter::child::slot_of(ctx, machine).0)
+    };
     let ids = run_ids(&ctx.runs_dir())?;
     let retry = |_: &str| Detail::Retry;
     for id in &ids {
@@ -189,6 +203,7 @@ fn overview(
                 machine: field(Some(&last), "machine").to_string(),
                 detail: (group == FAILED).then(|| retry(id)),
                 state,
+                held: false,
             };
             finished.entry(group).or_default().push(row);
             continue;
@@ -203,9 +218,11 @@ fn overview(
             RunStatus::Finished if state == FAILED => Some(retry(id)),
             RunStatus::Finished | RunStatus::Pending => None,
         };
+        let machine = field(events.first(), "machine").to_string();
         let row = Row {
+            held: matches!(status, RunStatus::Waiting | RunStatus::Pending) && held(&machine),
             id: id.clone(),
-            machine: field(events.first(), "machine").to_string(),
+            machine,
             state: state.clone(),
             detail,
         };
@@ -215,7 +232,26 @@ fn overview(
         }
     }
 
-    let inbox = md_files(&project.decree_dir.join(INBOX_DIR))?;
+    let inbox_dir = project.decree_dir.join(INBOX_DIR);
+    let inbox = md_files(&inbox_dir)?;
+    // The queued messages a hold keeps there: for a held machine, or replies to its runs.
+    let held_inbox: Vec<&String> = inbox
+        .iter()
+        .filter(|file| {
+            let Ok(message) = crate::message::Message::read(&inbox_dir.join(file)) else {
+                return !holds.all.is_empty();
+            };
+            let machine = match message.text("to") {
+                Some(to) => crate::reply::target_run(&ctx.runs_dir(), to).and_then(|run| {
+                    ctx.events(&run)
+                        .ok()
+                        .and_then(|e| e.first().map(|e| field(Some(e), "machine").to_string()))
+                }),
+                None => message.machine().map(String::from),
+            };
+            machine.map_or(!holds.all.is_empty(), |m| held(&m))
+        })
+        .collect();
     // The files that hold the queue first, each group by name.
     let mut attention = attention::list(&ctx.project_root)?;
     attention.sort_by_key(|e| !e.holds());
@@ -282,7 +318,7 @@ fn overview(
             "attention": attention.iter().map(attention::Entry::json).collect::<Vec<_>>(),
             "counts": counts,
             "runs": runs,
-            "queued": { "inbox": inbox },
+            "queued": { "inbox": inbox, "held": held_inbox },
             "executing": executing
                 .iter()
                 .map(|(m, n)| (m.to_string(), entry(m, *n)))
@@ -312,7 +348,7 @@ fn overview(
         );
     }
     for entry in &attention {
-        println!("  {}", entry.summary());
+        println!("  {}", entry.summary(ctx));
     }
     println!("{} {}", "Runs:".bold(), ids.len());
     for status in unfinished {
@@ -444,6 +480,7 @@ fn active_rows(root: &Path) -> Result<Vec<Row>, DecreeError> {
             state: current_state(&events).unwrap_or("-").to_string(),
             detail: Running::read(&ctx.runs_dir().join(&id))?.map(Detail::Running),
             id,
+            held: false,
         });
     }
     Ok(rows)

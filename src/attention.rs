@@ -5,10 +5,11 @@
 //! status changes, never by rescanning, so a file a person deleted stays deleted.
 //!
 //! The files are read-only for people: answers go through `decree reply` or a reply, and a
-//! run continues with `decree retry`. A file with `holds: true` (its run has a
-//! `hold` file), or any `.md` file decree cannot read as one of its own, holds the queue:
-//! `daemon` starts and continues no runs until it is gone. decree never rewrites
-//! or deletes a file it did not write.
+//! run continues with `decree retry`. A run's file with `holds: true` (its run has a `hold`
+//! file) holds the runs that share its machine's slots, its `concurrency_group` or the machine
+//! alone: they neither start nor continue until it is gone. `pause.md`, and any `.md` file
+//! decree cannot read as one of its own, holds every run. decree never rewrites or deletes a
+//! file it did not write.
 //!
 //! `decree pause` writes the one file that is not about a run, `pause.md` (`kind: pause`): it
 //! holds the queue until `decree resume` deletes it.
@@ -101,6 +102,23 @@ impl Entry {
         format!("{DECREE_DIR}/{ATTENTION_DIR}/{}", self.name)
     }
 
+    /// What the file holds, if it holds: the runs of one slot key (`group/<g>` or
+    /// `machine/<m>`) for a run's file whose machine is loaded, else every run.
+    pub fn scope(&self, ctx: &Context) -> Option<Scope> {
+        if !self.holds() {
+            return None;
+        }
+        let machine = self.frontmatter.as_ref().ok().and_then(|fm| {
+            (fm.get("kind").and_then(Value::as_str) == Some(KIND_RUN))
+                .then(|| fm.get("machine").and_then(Value::as_str))
+                .flatten()
+        });
+        Some(match machine.filter(|m| ctx.machines.contains_key(*m)) {
+            Some(m) => Scope::Key(crate::interpreter::child::slot_of(ctx, m).0),
+            None => Scope::All,
+        })
+    }
+
     /// Whether the file holds the queue: `holds: true`, or a file decree cannot read.
     pub fn holds(&self) -> bool {
         match &self.frontmatter {
@@ -125,12 +143,12 @@ impl Entry {
         out.into()
     }
 
-    /// One line for `decree status` and `process`: the file, then what it says.
-    pub fn summary(&self) -> String {
-        let holds = if self.holds() {
-            "holds the queue: "
-        } else {
-            ""
+    /// One line for `decree status` and `daemon`: the file, what it holds, then what it says.
+    pub fn summary(&self, ctx: &Context) -> String {
+        let holds = match self.scope(ctx) {
+            None => String::new(),
+            Some(Scope::All) => "holds the queue: ".to_string(),
+            Some(Scope::Key(key)) => format!("holds {}: ", scope_name(&key)),
         };
         match &self.frontmatter {
             Ok(fm) if fm.get("kind").and_then(Value::as_str) == Some(KIND_PAUSE) => {
@@ -257,6 +275,108 @@ pub fn validate(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// What a holding file holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Scope {
+    /// Every run: `pause.md`, a file decree cannot read, or a run's file whose machine is not
+    /// loaded.
+    All,
+    /// The runs whose machine takes this slot key's slots: `group/<g>` or `machine/<m>`.
+    Key(String),
+}
+
+/// `group <g>` or `machine <m>`, for a slot key.
+pub fn scope_name(key: &str) -> String {
+    match key.split_once('/') {
+        Some((kind, name)) => format!("{kind} `{name}`"),
+        None => key.to_string(),
+    }
+}
+
+/// The holding files in `.decree/attention/`, by what they hold.
+#[derive(Debug, Default)]
+pub struct Holds {
+    /// Files that hold every run.
+    pub all: Vec<Entry>,
+    /// Files that hold the runs of one slot key, by key.
+    pub keys: std::collections::BTreeMap<String, Vec<Entry>>,
+}
+
+impl Holds {
+    /// What `daemon` prints, and stops for, while files hold every run: each one decree wrote
+    /// in full, and each it cannot read named with why. `None` when none does.
+    pub fn all_message(&self, ctx: &Context) -> Option<String> {
+        (!self.all.is_empty()).then(|| {
+            message(
+                ctx,
+                &format!(
+                    "nothing runs while a file in {DECREE_DIR}/{ATTENTION_DIR}/ holds the queue; \
+                     do what it says, or delete it:"
+                ),
+                &self.all,
+            )
+        })
+    }
+
+    /// What `daemon` prints while files hold the runs of some machines: for each slot key,
+    /// what waits and each file in full. `None` when none does.
+    pub fn keys_message(&self, ctx: &Context) -> Option<String> {
+        let parts: Vec<String> = self
+            .keys
+            .iter()
+            .map(|(key, entries)| {
+                message(
+                    ctx,
+                    &format!(
+                        "the runs of {} wait while a file in {DECREE_DIR}/{ATTENTION_DIR}/ \
+                         holds them; do what it says, or delete it:",
+                        scope_name(key)
+                    ),
+                    entries,
+                )
+            })
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("\n"))
+    }
+}
+
+/// `heading`, then each of `entries`: one decree wrote in full, one it cannot read named
+/// with why.
+fn message(ctx: &Context, heading: &str, entries: &[Entry]) -> String {
+    let dir = dir(&ctx.project_root);
+    let mut out = heading.to_string();
+    for entry in entries {
+        out.push('\n');
+        match &entry.frontmatter {
+            Ok(_) => {
+                let text = fs::read_to_string(dir.join(&entry.name)).unwrap_or_default();
+                let body = Message::parse(&text).map(|m| m.body).unwrap_or(text);
+                out.push_str(&format!("{}:\n{}", entry.path(), body.trim()));
+            }
+            Err(_) => out.push_str(&entry.summary(ctx)),
+        }
+    }
+    out
+}
+
+/// What the files in `.decree/attention/` hold now. With `release`, first deletes the `hold`
+/// of every run whose attention file a person deleted, which releases it.
+pub fn holds(ctx: &Context, release: bool) -> Result<Holds, InterpreterError> {
+    if release {
+        release_dropped_holds(ctx)?;
+    }
+    let dir = dir(&ctx.project_root);
+    let mut holds = Holds::default();
+    for entry in list(&ctx.project_root).map_err(io_err(&dir))? {
+        match entry.scope(ctx) {
+            None => {}
+            Some(Scope::All) => holds.all.push(entry),
+            Some(Scope::Key(key)) => holds.keys.entry(key).or_default().push(entry),
+        }
+    }
+    Ok(holds)
+}
+
 /// What `decree pause` did.
 #[derive(Debug, PartialEq)]
 pub enum Paused {
@@ -331,36 +451,6 @@ pub fn resume(project_root: &Path) -> io::Result<bool> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e),
     }
-}
-
-/// What `process` and `daemon` print, and stop for, while a file holds the queue: each
-/// holding file decree wrote in full, and each it cannot read named with why; `None` when
-/// nothing holds. First deletes the `hold` of every run whose attention file a person
-/// deleted, which releases it.
-pub fn held(ctx: &Context) -> Result<Option<String>, InterpreterError> {
-    release_dropped_holds(ctx)?;
-    let dir = dir(&ctx.project_root);
-    let entries = list(&ctx.project_root).map_err(io_err(&dir))?;
-    let holding: Vec<&Entry> = entries.iter().filter(|e| e.holds()).collect();
-    if holding.is_empty() {
-        return Ok(None);
-    }
-    let mut out = format!(
-        "nothing runs while a file in {DECREE_DIR}/{ATTENTION_DIR}/ holds the queue; \
-         do what it says, or delete it:"
-    );
-    for entry in holding {
-        out.push('\n');
-        match &entry.frontmatter {
-            Ok(_) => {
-                let text = fs::read_to_string(dir.join(&entry.name)).unwrap_or_default();
-                let body = Message::parse(&text).map(|m| m.body).unwrap_or(text);
-                out.push_str(&format!("{}:\n{}", entry.path(), body.trim()));
-            }
-            Err(_) => out.push_str(&entry.summary()),
-        }
-    }
-    Ok(Some(out))
 }
 
 /// The `hold` of each run whose attention file is gone, once the run is not active: a
@@ -581,9 +671,19 @@ fn render(
     if held {
         let hold = run_dir.join(HOLD_FILE);
         let text = fs::read_to_string(&hold).unwrap_or_default();
+        // What the file holds: its machine's group, or every run (docs/reference/cli.md,
+        // Attention).
+        let what = match machine_of(ctx, events, message).filter(|m| ctx.machines.contains_key(m)) {
+            Some(m) => format!(
+                "the runs of {}",
+                scope_name(&crate::interpreter::child::slot_of(ctx, &m).0)
+            ),
+            None => "every run".to_string(),
+        };
         body.push_str(&format!(
-            "## Hold\n\nThis run holds the queue: no run starts or continues until it is \
-             retried or this file is deleted. From `.decree/runs/{id}/{HOLD_FILE}`:\n\n{}\n\n",
+            "## Hold\n\nThis run holds {what}: none of them starts or continues until it is \
+             retried or this file is deleted; other machines go on. From \
+             `.decree/runs/{id}/{HOLD_FILE}`:\n\n{}\n\n",
             text.trim()
         ));
     }
@@ -789,7 +889,13 @@ mod tests {
         assert_eq!(entries.len(), 1, "no temp file is left");
         assert!(entries[0].holds());
         assert_eq!(
-            entries[0].summary(),
+            entries[0].summary(&Context {
+                project_root: tmp.path().to_path_buf(),
+                machines: Default::default(),
+                shutdown: Default::default(),
+                env: Default::default(),
+                slots: crate::slots::Slots::new(tmp.path()),
+            }),
             ".decree/attention/pause.md: holds the queue: `decree pause` since \
              2026-10-15T08:09:00.000Z"
         );

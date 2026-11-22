@@ -127,12 +127,16 @@ scripts:
       echo $(( k + 1 )) > "${pauses}"
       echo busy > "${DECREE_EVENT_FILE}"
     }
-    if find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | grep -q .; then
+    # A message or a pending run that a file in .decree/attention/ holds (`held`) waits for a
+    # person, not for this run: it does not count.
+    status=$("${DECREE:-decree}" status --format json)
+    queued=$(jq -r '.queued.inbox - .queued.held | length' <<<"${status}")
+    if [ "${queued}" != 0 ]; then
       busy "messages are queued in inbox/"
       exit 0
     fi
-    others=$("${DECREE:-decree}" status --format json |
-      jq -r --arg me "${DECREE_MESSAGE_ID}" '[.runs.active[], .runs.pending[]] | map(select(.id != $me)) | length')
+    others=$(jq -r --arg me "${DECREE_MESSAGE_ID}" \
+      '[.runs.active[], .runs.pending[]] | map(select(.id != $me and (.held | not))) | length' <<<"${status}")
     if [ "${others}" != 0 ]; then
       busy "${others} other run(s) executing or about to"
     else
@@ -236,7 +240,7 @@ Ordered work for every machine, run when the daemon starts. A machine's `order/`
 
 Each time `decree daemon` starts (and `decree daemon --once`, which CI and a system crontab run), its cron file `boot.md` (`@reboot`) starts this machine, which:
 
-1. waits until `.decree/inbox/` is empty and no other run is executing or pending (machines run at once; a run waiting for a reply or a timer does not count), so a file starts only once everything before it has been processed, its follow-ups included;
+1. waits until `.decree/inbox/` is empty and no other run is executing or pending (machines run at once; a run waiting for a reply or a timer does not count, nor a message or run that a file in `.decree/attention/` holds), so a file starts only once everything before it has been processed, its follow-ups included;
 2. finds the first file, across every machine's `order/`, by file name (the machine's name breaks a tie), that has not run, or changed since it ran;
 3. runs it as a child run (`machine: { message: next.md }`): its `machine` is the folder's unless it names another, and it gets `order: <machine>/<file>` so its scripts know which file it is;
 4. records `<file> <sha256>` in that machine's `state/order.git.txt` and goes back to 1.

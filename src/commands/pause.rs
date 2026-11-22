@@ -54,10 +54,16 @@ pub fn resume(project_root: &Path, format: Format) -> Result<(), DecreeError> {
     } else {
         println!("not paused: {path} does not exist");
     }
+    let project = crate::commands::check::Project::load(project_root)?;
+    let ctx = crate::commands::process::context(
+        project_root,
+        &project,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
     let holding: Vec<String> = attention::list(project_root)?
         .iter()
         .filter(|e| e.holds())
-        .map(attention::Entry::summary)
+        .map(|e| e.summary(&ctx))
         .collect();
     if !holding.is_empty() {
         println!("still held:\n  {}", holding.join("\n  "));

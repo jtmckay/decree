@@ -202,6 +202,18 @@ impl Interpreter<'_> {
         if depth > ctx.env.max_depth {
             return Ok(Err(format!("max_depth {} reached", ctx.env.max_depth)));
         }
+        // A file in `.decree/attention/` that holds the child's machine or group (a failed
+        // run's changes in a shared work tree) keeps it from starting: no child starts on
+        // them, and this run takes `error`.
+        let key = slot_of(ctx, name).0;
+        if let Some(entries) = crate::attention::holds(ctx, false)?.keys.get(&key) {
+            let files: Vec<String> = entries.iter().map(crate::attention::Entry::path).collect();
+            return Ok(Err(format!(
+                "{} is held by {}",
+                crate::attention::scope_name(&key),
+                files.join(", ")
+            )));
+        }
         // The child executes holding a slot of its own machine, waiting for one; this run
         // keeps its own meanwhile (docs/reference/machines.md, Concurrency).
         let Some(_slot) = take_slot(ctx, name)? else {

@@ -826,3 +826,11 @@ Left out, and why: existential's flows, `project:` tags, `endpoints:`, `handlers
 
 **Consequences.** One command writes the schemas, the one a project runs anyway. A script that read `daemon --once --dry-run --format json` reads `decree status --format json` (`queued.inbox`) and `decree check --format json` instead.
 
+## D95: A run's hold holds its group
+
+**Context.** [D65](#d65-a-failed-run-keeps-its-changes-and-holds-the-queue) had a failed run that left changes in the work tree hold the whole queue, and [D67](#d67-the-attention-folder-says-what-needs-a-person) made any holding attention file stop every run. Since [D89](#d89-machines-run-at-once-each-saying-how-many-of-itself) machines run at once, and those that share a resource say so with a `concurrency_group`: the official `develop` and its variants, `infra` and `qa` share `worktree`, the one tree `keep` protects. A `develop` run's leftover changes then stopped `lease`, `registry`, `prune` and every other machine that never touches the tree. The project's owner asked whether a hold should stop every run or only its own machine's. The `order` plugin needs none: a failed order file stops the files after it through its own record, not through an attention file.
+
+**Decision.** A run's attention file with `holds: true` holds the runs that share its machine's slots: its `concurrency_group`, or the machine alone, the same slot key that already says which runs may not execute together. Those runs neither start nor continue (inbox messages stay queued in order; no `pending` run, reply or timeout is taken), and a child run of a held machine does not start, so its parent takes `error`. Every other machine goes on. A run's file whose machine is not loaded, `decree pause`'s file and a file decree cannot read still hold every run. `daemon --once` runs what it can, prints each holding file with what it holds and exits 1; `daemon` prints it once; `decree status` says `holds group `worktree``.
+
+**Consequences.** A failed `develop` run no longer stops leases, service checks or pruning, and still keeps every machine that edits the tree off its changes. Machines that share a resource must say so with a group, as concurrency already asks. A parent outside the group, such as the `order` run, whose child would edit a held tree, fails that order file, and the next start runs it again.
+

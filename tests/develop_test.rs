@@ -1814,7 +1814,8 @@ fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
         .log(&id, "failed")
         .contains(&format!("`decree retry {id}`")));
 
-    // The next run waits: process names the file, starts nothing and exits 1.
+    // The next run waits: `daemon --once` names the file and what it holds, starts nothing of
+    // the group and exits 1.
     let next = p.emit_only();
     let out = p
         .decree(&["daemon", "--once"])
@@ -1824,7 +1825,9 @@ fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("nothing runs while a file in .decree/attention/ holds the queue"),
+        err.contains(
+            "the runs of group `worktree` wait while a file in .decree/attention/ holds them"
+        ),
         "{err}"
     );
     assert!(

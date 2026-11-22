@@ -64,7 +64,8 @@
         }
       },
       "queued": {
-        "inbox": []
+        "inbox": [],
+        "held": []
       },
       "executing": {}
     },
@@ -222,7 +223,8 @@
           "type": "object",
           "description": "Messages waiting to run.",
           "required": [
-            "inbox"
+            "inbox",
+            "held"
           ],
           "additionalProperties": false,
           "properties": {
@@ -232,6 +234,13 @@
                 "type": "string"
               },
               "description": "Filenames in inbox/, in filename order."
+            },
+            "held": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The filenames in `inbox` that a file in .decree/attention/ keeps there: messages for a held machine, or replies to its runs. They run once the file goes."
             }
           }
         },
@@ -310,6 +319,10 @@
         "child": {
           "type": "string",
           "description": "For a run waiting for a child run (a `machine` invoke or a router), the child's run id."
+        },
+        "held": {
+          "const": true,
+          "description": "For a `waiting` or `pending` run, when a file in .decree/attention/ holds its machine (its group's, or every run): it will not move until the file goes. Absent otherwise."
         }
       }
     },
