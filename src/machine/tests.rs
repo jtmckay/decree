@@ -1204,3 +1204,35 @@ fn machine_message_invoke_shapes() {
         assert!(err.contains(error), "{invoke}: {err}");
     }
 }
+
+/// `reply: { timeout_at }` parses; with `timeout` too, a path that leaves the run's folder,
+/// or something after `#` that is not a JSON Pointer, it does not.
+#[test]
+fn reply_timeout_at_shapes() {
+    let machine = |reply: &str| {
+        format!(
+            "name: m\ndescription: d\ninitial: wait\nstates:\n  wait:\n    invoke:\n      reply: {{ question: Go?, notify: tell, {reply} }}\n    transitions:\n      go: {{ target: done, description: Go. }}\n      error: failed\n  done: {{ final: true }}\n  failed: {{ final: true }}\n"
+        )
+    };
+    let m = load("m", &machine("timeout_at: 'lease.json#/expires'"));
+    let Some(Invoke::Reply(r)) = &m.nodes[m.find("wait").unwrap()].invoke else {
+        panic!("not a reply");
+    };
+    assert_eq!(r.timeout_at.as_deref(), Some("lease.json#/expires"));
+    assert_eq!(r.timeout, None);
+    load("m", &machine("timeout_at: deadline.txt"));
+    for (reply, error) in [
+        (
+            "timeout: 1m, timeout_at: deadline.txt",
+            "`timeout` or `timeout_at`, not both",
+        ),
+        (
+            "timeout_at: ../deadline.txt",
+            "is not a plain path in the run's folder",
+        ),
+        ("timeout_at: 'a.json#expires'", "comes a JSON Pointer"),
+    ] {
+        let err = load_err("m", &machine(reply));
+        assert!(err.contains(error), "{reply}: {err}");
+    }
+}

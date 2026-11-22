@@ -14,7 +14,9 @@ use crate::cond;
 use crate::cond::Condition;
 use crate::events::{confidences, is_transition, is_type, text, timestamp, visits, Event};
 use crate::layout::RECEIVED_DIR;
-use crate::machine::{LoadedMachine, ModelInvoke, ReplyInvoke, FAILED, ROUTER_MACHINE};
+use crate::machine::{
+    split_timeout_at, LoadedMachine, ModelInvoke, ReplyInvoke, FAILED, ROUTER_MACHINE,
+};
 use crate::runtime::{Phase, ScriptRun};
 
 /// The JSON file, in the run folder, mapping each option of the `reply` state the
@@ -218,13 +220,25 @@ impl Interpreter<'_> {
             )));
         }
 
-        let timeout_at = reply.timeout.map(|timeout| {
-            let deadline = chrono::TimeDelta::from_std(timeout)
-                .ok()
-                .and_then(|d| Utc::now().checked_add_signed(d))
-                .unwrap_or(DateTime::<Utc>::MAX_UTC);
-            timestamp(deadline)
-        });
+        let timeout_at = match (&reply.timeout, &reply.timeout_at) {
+            (Some(timeout), _) => Some(
+                chrono::TimeDelta::from_std(*timeout)
+                    .ok()
+                    .and_then(|d| Utc::now().checked_add_signed(d))
+                    .unwrap_or(DateTime::<Utc>::MAX_UTC),
+            ),
+            (None, Some(at)) => match self.deadline_at(at) {
+                Ok(deadline) => Some(deadline),
+                Err(reason) => {
+                    return Ok(Invoked::Event(Decision {
+                        error: Some(reason),
+                        ..Decision::new("error", "timeout", None)
+                    }))
+                }
+            },
+            (None, None) => None,
+        }
+        .map(timestamp);
         let mut waiting = json!({
             "state": node.id,
             "wait_id": wait_id,
@@ -239,6 +253,34 @@ impl Interpreter<'_> {
             state: node.id.clone(),
             wait_id,
         }))
+    }
+    /// The deadline a `reply` invoke's `timeout_at` names, read now, after `notify` ran:
+    /// `<file>` in the run's folder holding an RFC 3339 instant, or `<file>#<pointer>`, the
+    /// string a JSON Pointer (RFC 6901) picks in that JSON file. `Err` says why there is none.
+    fn deadline_at(&self, at: &str) -> Result<DateTime<Utc>, String> {
+        let (file, pointer) = split_timeout_at(at);
+        let path = self.executor.info().run_dir.join(file);
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            format!("`timeout_at` `{at}`: cannot read `{file}` in the run's folder: {e}")
+        })?;
+        let instant = match pointer {
+            None => text.trim().to_string(),
+            Some(pointer) => {
+                let json: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| format!("`timeout_at` `{at}`: `{file}` is not JSON: {e}"))?;
+                json.pointer(pointer)
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!("`timeout_at` `{at}`: `{file}` has no string at `{pointer}`")
+                    })?
+                    .to_string()
+            }
+        };
+        DateTime::parse_from_rfc3339(&instant)
+            .map(|t| t.with_timezone(&Utc))
+            .map_err(|e| {
+                format!("`timeout_at` `{at}`: `{instant}` is not an RFC 3339 instant: {e}")
+            })
     }
     /// `<run id>.w<seq>`, where `seq` is that of the `transition` event that entered the
     /// current state.

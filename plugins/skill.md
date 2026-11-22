@@ -495,7 +495,7 @@ scripts:
     | `script: { name: <script>, attempts?: <n> \| [<value>, …], timeout?: <duration> }` | The script (see `scripts.md`), re-run in place while it fails, once per attempt (default 1), each stopped after `timeout`. A list gives each attempt its value in `$DECREE_ATTEMPT_VALUE`. | `done` (exit 0), `error` (non-zero), or the event it writes to `$DECREE_EVENT_FILE`. |
     | `check: <condition>` | decree evaluates the condition. No AI. | `true` or `false`. |
     | `model: { question: ..., router?: <machine>, min_confidence?: 0.8, output?: <state> }` | A router machine asks a model to pick one of the state's transitions. | An option; `unsure` below `min_confidence`; `error` if the router fails. |
-    | `reply: { question: ..., notify: <script>, timeout?: <duration> }` | The `notify` script tells someone (a person, a UI, a program); the run pauses for a reply. | An option; `error` on timeout. |
+    | `reply: { question: ..., notify: <script>, timeout?: <duration> \| timeout_at?: <file>[#<pointer>], attention?: false }` | The `notify` script tells someone (a person, a UI, a program); the run pauses for a reply. `timeout_at` ends the wait at an instant a script wrote in the run's folder (`lease.json#/expires`). | An option; `error` on timeout. |
     | `machine: { name: <machine>, params?: {...} }` | The machine runs as a child run. | The child's root final state (`failed` becomes `error`). |
 
     A duration (`timeout`, `decree daemon --interval` and the `prune` plugin's `PRUNE_OLDER_THAN`) is a whole

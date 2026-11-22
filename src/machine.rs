@@ -205,8 +205,8 @@ pub struct ModelInvoke {
     pub output: Option<String>,
 }
 
-/// `{ reply: { question, notify, timeout?, attention? } }`. `question` and `notify` are
-/// optional here so that V8 and V12, not the parser, report them missing.
+/// `{ reply: { question, notify, timeout? | timeout_at?, attention? } }`. `question` and
+/// `notify` are optional here so that V8 and V12, not the parser, report them missing.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyInvoke {
@@ -215,10 +215,48 @@ pub struct ReplyInvoke {
     /// A duration (`crate::duration`).
     #[serde(default, deserialize_with = "crate::duration::deserialize_timeout")]
     pub timeout: Option<Duration>,
+    /// Where the deadline is, instead of `timeout`: `<file>` in the run's folder holding an
+    /// RFC 3339 instant, or `<file>#<JSON Pointer>` to one in a JSON file, read when the wait
+    /// starts (the Step Functions Wait state's `TimestampPath`).
+    #[serde(default)]
+    pub timeout_at: Option<String>,
     /// Whether the wait needs a person: `false` for a wait only programs answer, such as a
     /// timer, so it gets no file in `.decree/attention/` and no `Waiting:` line.
     #[serde(default = "yes")]
     pub attention: bool,
+}
+
+impl ReplyInvoke {
+    /// At most one of `timeout` and `timeout_at`, and a `timeout_at` whose file is a plain
+    /// path in the run's folder and whose pointer, if any, is a JSON Pointer.
+    fn check(self) -> Result<ReplyInvoke, String> {
+        let Some(at) = &self.timeout_at else {
+            return Ok(self);
+        };
+        if self.timeout.is_some() {
+            return Err("a `reply` has `timeout` or `timeout_at`, not both".to_string());
+        }
+        let (file, pointer) = split_timeout_at(at);
+        if !crate::plugin::is_plain_path(file) {
+            return Err(format!(
+                "`timeout_at` `{at}`: `{file}` is not a plain path in the run's folder: no `..`, `.`, empty parts or leading `/`"
+            ));
+        }
+        if pointer.is_some_and(|p| !p.is_empty() && !p.starts_with('/')) {
+            return Err(format!(
+                "`timeout_at` `{at}`: after `#` comes a JSON Pointer, such as `#/expires`"
+            ));
+        }
+        Ok(self)
+    }
+}
+
+/// A `timeout_at` value: the file, and the JSON Pointer after `#` when there is one.
+pub fn split_timeout_at(at: &str) -> (&str, Option<&str>) {
+    match at.split_once('#') {
+        Some((file, pointer)) => (file, Some(pointer)),
+        None => (at, None),
+    }
 }
 
 fn yes() -> bool {
@@ -309,9 +347,10 @@ impl<'de> Deserialize<'de> for Invoke {
             "model" => serde_norway::from_value(value)
                 .map(Invoke::Model)
                 .map_err(|e| e.to_string()),
-            "reply" => serde_norway::from_value(value)
-                .map(Invoke::Reply)
-                .map_err(|e| e.to_string()),
+            "reply" => serde_norway::from_value::<ReplyInvoke>(value)
+                .map_err(|e| e.to_string())
+                .and_then(ReplyInvoke::check)
+                .map(Invoke::Reply),
             "machine" => named::<MachineInvoke>(value)
                 .and_then(MachineInvoke::check)
                 .map(Invoke::Machine),

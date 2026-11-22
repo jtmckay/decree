@@ -84,7 +84,7 @@ pub(crate) const RULES: [(&str, &str); 27] = [
     ),
     (
         "V16",
-        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `reply`), which the parser enforces with V19.",
+        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); a `reply` has at most one of `timeout` and `timeout_at`, whose file is a plain path in the run's folder and whose part after `#`, if any, is a JSON Pointer; `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `reply`), which the parser enforces with V19.",
     ),
     (
         "V17",

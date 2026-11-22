@@ -390,13 +390,22 @@
           "$ref": "#/$defs/duration",
           "description": "How long to wait for a reply; after that the event is `error`. A duration (V16). Default: wait forever."
         },
+        "timeout_at": {
+          "type": "string",
+          "pattern": "^[^#/\\\\][^#\\\\]*(#(/[^#]*)?)?$",
+          "description": "Instead of `timeout`: where the deadline is, read when the wait starts (after `notify` ran). `<file>`, a file in the run's folder holding an RFC 3339 instant, or `<file>#<JSON Pointer>` (RFC 6901), the instant at that place in a JSON file, as AWS Step Functions' Wait state takes `TimestampPath`. A script writes it, and each entry to the state reads it again. With no instant to read, the event is `error` at once, naming why. The path stays in the run's folder (no `..` or `.` parts)."
+        },
         "attention": {
           "type": "boolean",
           "default": true,
           "description": "Whether the wait needs a person. `false` for a wait only programs answer, such as a short `timeout` used as a timer: the run gets no file in `.decree/attention/` and no `Waiting:` line from `process`. Default: `true`."
         }
       },
-      "examples": [{ "question": "Tests still fail. What next?", "notify": "notify_person", "timeout": "2d" }]
+      "not": { "required": ["timeout", "timeout_at"] },
+      "examples": [
+        { "question": "Tests still fail. What next?", "notify": "notify_person", "timeout": "2d" },
+        { "question": "Give it back, or keep it?", "notify": "tell", "timeout_at": "lease.json#/expires", "attention": false }
+      ]
     },
     "machineInvoke": {
       "description": "SCXML's own invoke type: run another machine as a child run. With `name`, its event is the id of the root-level final state the child reached (`done`, `rejected`, ...), and `failed` becomes `error`; this state must handle each of them (V8). With `message`, the child is decided when the state runs, as SCXML's `srcexpr`: a message file in the run's folder (one a script of this run wrote) names the machine, its `params` and the body, and the event is `done`, or `error` when the child ends in `failed` or cannot start. A bare name is short for `{ name: <name> }`. A machine never invokes itself, directly or through others (V20).",

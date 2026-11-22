@@ -1586,6 +1586,47 @@ fn reply_without_timeout_has_null_timeout_at() {
     assert_eq!(p.events_of("waiting")[0]["timeout_at"], Value::Null);
 }
 
+/// `timeout_at` names a file in the run's folder, read after `notify` ran: a JSON file with
+/// a JSON Pointer to the instant, or a file holding the instant alone.
+#[test]
+fn reply_timeout_at_reads_the_deadline_from_the_runs_folder() {
+    for at in ["deadline.json#/lease/expires", "deadline.txt"] {
+        let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_reply.yml"))
+            .unwrap()
+            .replace("timeout: 60s", &format!("timeout_at: '{at}'"));
+        let p = Project::from_text("step_reply", &text, &[("ask_person", "write_deadline")]);
+        assert!(matches!(p.run(), Outcome::Waiting { .. }), "{at}");
+        assert_eq!(
+            p.events_of("waiting")[0]["timeout_at"],
+            json!("2099-01-02T03:04:05.678Z"),
+            "{at}"
+        );
+    }
+}
+
+/// A `timeout_at` with no instant to read is `error` at once, naming why; the run never waits.
+#[test]
+fn reply_timeout_at_without_a_deadline_is_error() {
+    for (at, why) in [
+        ("missing.json#/expires", "cannot read `missing.json`"),
+        ("deadline.json#/expires", "has no string at `/expires`"),
+        ("deadline.json#/lease", "has no string at `/lease`"),
+    ] {
+        let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_reply.yml"))
+            .unwrap()
+            .replace("timeout: 60s", &format!("timeout_at: '{at}'"));
+        let p = Project::from_text("step_reply", &text, &[("ask_person", "write_deadline")]);
+        assert_eq!(p.run(), Outcome::Finished("failed".into()), "{at}");
+        assert!(p.events_of("waiting").is_empty());
+        let t = p.events_of("transition");
+        let taken = t.iter().find(|e| e["from"] == "approval").unwrap();
+        assert_eq!(taken["event"], "error");
+        assert_eq!(taken["source"], "timeout");
+        let error = taken["error"].as_str().unwrap();
+        assert!(error.contains(why), "{at}: {error}");
+    }
+}
+
 #[test]
 fn reply_waits_need_a_person_unless_attention_is_false() {
     let (p, _) = reply_project(&[]);
