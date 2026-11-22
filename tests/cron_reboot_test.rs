@@ -201,16 +201,22 @@ fn daemon_once_fires_reboot_at_each_start() {
 #[test]
 fn reboot_file_added_while_running_waits_for_next_start() {
     let p = Project::new();
+    // A plain message for `boot`, done once the daemon's first pass is over: no fixed
+    // sleep has to stand for it.
+    common::write_file(
+        &p.decree_dir().join("inbox/marker.md"),
+        "---\nmachine: boot\n---\nThe first pass.\n",
+    );
     let daemon = p.daemon(&[]);
-    // Let the first pass go by, then add the file and let more passes go by.
-    thread::sleep(Duration::from_millis(1500));
+    wait_for("the first pass", || p.boot_done() == 1);
+    // Add the file and let more passes go by: it waits for the next start.
     p.reboot_file();
     thread::sleep(Duration::from_millis(3000));
     stop(daemon);
-    assert!(p.boot_messages().is_empty());
+    assert!(p.boot_messages().is_empty(), "the @reboot file fired before the next start");
 
     let daemon = p.daemon(&[]);
-    wait_for("the boot run after restart", || p.boot_done() == 1);
+    wait_for("the boot run after restart", || p.boot_done() == 2);
     stop(daemon);
     assert_eq!(p.boot_messages().len(), 1);
 }

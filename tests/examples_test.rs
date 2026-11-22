@@ -184,8 +184,18 @@ fn every_example_ships_its_graph_not_its_schema_and_starts_fresh_unless_recorded
     for name in projects() {
         let decree = examples().join(&name).join(".decree");
         assert!(decree.join("system.md").is_file(), "{name}: no graph");
-        // Editors read the hosted schemas; a local copy is generated and ignored.
-        assert!(!decree.join("schema").exists(), "{name}: .decree/schema");
+        // Editors read the hosted schemas; a local copy is generated (by `decree install`)
+        // and ignored, so none is committed.
+        let tracked = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&decree)
+            .args(["ls-files", "schema"])
+            .output()
+            .unwrap();
+        assert!(
+            !tracked.status.success() || tracked.stdout.is_empty(),
+            "{name}: .decree/schema is committed"
+        );
         let gitignore = fs::read_to_string(decree.join(".gitignore")).unwrap();
         assert!(
             gitignore.lines().any(|l| l == "schema/"),

@@ -39,6 +39,19 @@ fn work(seconds: f32) -> String {
     )
 }
 
+/// `work` for runs that must meet: after logging `start`, it marks itself in `met/<key>/`
+/// and waits (up to 20s) until `peers` runs have, so the runs that meet surely execute at
+/// once, however loaded the machine; then it goes on as `work`.
+fn meet(key: &str, peers: usize, seconds: f32) -> String {
+    format!(
+        "#!/usr/bin/env bash\n\
+         log() {{ echo \"$1 $DECREE_MACHINE $DECREE_MESSAGE_ID $(date +%s%N)\" >> \"$DECREE_PROJECT_ROOT/log.txt\"; }}\n\
+         log start\nmet=\"$DECREE_PROJECT_ROOT/met/{key}\"\nmkdir -p \"$met\"\ntouch \"$met/$DECREE_MESSAGE_ID\"\n\
+         for _ in $(seq 200); do [ \"$(ls \"$met\" | wc -l)\" -ge {peers} ] && break; sleep 0.1; done\n\
+         echo first line\nsleep {seconds}\necho second line\nlog end\n"
+    )
+}
+
 impl Project {
     fn new() -> Project {
         let p = Project {
@@ -127,8 +140,9 @@ fn overlap(times: &BTreeMap<String, (u128, u128)>, a: &str, b: &str) -> bool {
 #[test]
 fn machines_do_not_block_each_other() {
     let p = Project::new();
-    p.machine("slow", &machine("slow", None), &work(2.0));
-    p.machine("fast", &machine("fast", None), &work(0.0));
+    // `fast` and `slow` meet, so each starts before the other ends; then `slow` sleeps.
+    p.machine("slow", &machine("slow", None), &meet("pair", 2, 2.0));
+    p.machine("fast", &machine("fast", None), &meet("pair", 2, 0.0));
     let slow = p.emit("slow");
     let fast = p.emit("fast");
     let (code, out) = p.once();
@@ -144,7 +158,7 @@ fn machines_do_not_block_each_other() {
 fn concurrency_limits_the_runs_of_one_machine() {
     let p = Project::new();
     p.machine("one", &machine("one", None), &work(0.5));
-    p.machine("two", &machine("two", Some(2)), &work(0.5));
+    p.machine("two", &machine("two", Some(2)), &meet("two", 2, 0.1));
     let one = [p.emit("one"), p.emit("one")];
     let two = [p.emit("two"), p.emit("two")];
     let (code, out) = p.once();
@@ -239,9 +253,9 @@ fn a_child_run_takes_a_slot_of_its_own_machine() {
     assert!(!overlap(&t, children[0], children[1]), "{t:?}");
 }
 
-/// AC: a finished child continues its parent without holding its own slot, so parents and
-/// children with one slot each never wait for each other: two parents whose children wait
-/// for a reply, both answered, both finish.
+/// AC: a finished child leaves its parent pending, holding no slot, and the dispatcher
+/// continues the parent once: two parents whose children wait for a reply, both answered,
+/// both finish, and `daemon --once` exits 0 (a parent continued twice made it exit 1).
 #[test]
 fn a_finished_child_continues_its_parent() {
     let p = Project::new();
@@ -277,8 +291,8 @@ fn a_finished_child_continues_its_parent() {
 #[test]
 fn output_of_runs_at_once_is_prefixed() {
     let p = Project::new();
-    p.machine("a", &machine("a", None), &work(1.0));
-    p.machine("b", &machine("b", None), &work(1.0));
+    p.machine("a", &machine("a", None), &meet("ab", 2, 0.5));
+    p.machine("b", &machine("b", None), &meet("ab", 2, 0.5));
     let a = p.emit("a");
     let b = p.emit("b");
     let (code, out) = p.once();
@@ -340,9 +354,11 @@ fn a_concurrency_group_shares_its_slots() {
     let grouped = |name: &str| {
         machine(name, None).replace("initial: work", "concurrency_group: tree\ninitial: work")
     };
-    p.machine("a", &grouped("a"), &work(0.5));
-    p.machine("b", &grouped("b"), &work(0.5));
-    p.machine("c", &machine("c", None), &work(0.5));
+    // `c` meets whichever of `a` and `b` runs first; the group keeps them apart, so the
+    // second of them meets the marks already there.
+    p.machine("a", &grouped("a"), &meet("x", 2, 0.3));
+    p.machine("b", &grouped("b"), &meet("x", 2, 0.3));
+    p.machine("c", &machine("c", None), &meet("x", 2, 0.3));
     let a = p.emit("a");
     let b = p.emit("b");
     let c = p.emit("c");
