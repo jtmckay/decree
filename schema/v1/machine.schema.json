@@ -39,7 +39,7 @@
     "concurrency_group": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "Machines that name the same group share its slots: at most `concurrency` runs of all of them execute at once (V14), as GitHub Actions' `concurrency.group`. For machines that must not run beside each other, such as those editing one git work tree. No machine may invoke, directly or through others, a machine in its own group: the child would wait for a slot its parent holds (V20). Default: none, each machine its own slots.",
+      "description": "Machines that name the same group share its slots: at most `concurrency` runs of all of them execute at once, and every machine of the group gives the same `concurrency` (V14), as GitHub Actions' `concurrency.group`. For machines that must not run beside each other, such as those editing one git work tree. No chain of invokes may lead from a group's slots back to them, a machine in the group or one in another group that invokes back (V20): a child would wait for a slot its parent holds. Default: none, each machine its own slots.",
       "examples": ["worktree"]
     },
     "state_files": {
