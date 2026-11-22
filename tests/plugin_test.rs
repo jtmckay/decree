@@ -423,9 +423,11 @@ fn a_changed_plugin_over_an_edit_fails_check_and_touches_nothing() {
     assert_eq!(err.matches("plugin `helper` changed").count(), 1, "{err}");
     assert_eq!(p.get("machines/helper/scripts/help"), edited);
 
-    // `decree install` with no name keeps the edit too, names the conflict, exits 1.
+    // `decree install` with no name keeps the edit too, names the conflict, exits 1, and
+    // still writes the schemas, as the plugins it could install are installed.
     let (code, _, err) = p.decree(&["install"], "");
     assert_eq!(code, 1, "{err}");
+    assert!(p.exists("schema/v1/machine.schema.json"));
     assert!(err.contains("plugin `helper` changed"), "{err}");
     assert_eq!(p.get("machines/helper/scripts/help"), edited);
 }
@@ -436,7 +438,11 @@ fn plugin_install_takes_the_plugin_and_removes_added_files() {
     p.put("machines/helper/scripts/added.txt", "added in place\n");
     let (code, out, err) = p.decree(&["install", "helper"], "");
     assert_eq!(code, 0, "{err}");
-    assert_eq!(out, "installed helper\n");
+    // The edit in place is dropped, and it says so.
+    assert_eq!(
+        out,
+        "installed .decree/plugins/helper.md, dropping the edits in place to .decree/machines/helper/ (machine.yml, scripts/ or cron/), which were not exported\ninstalled helper\n"
+    );
     assert_eq!(
         p.get("machines/helper/scripts/help"),
         "#!/usr/bin/env bash\necho helped twice\n"
@@ -477,13 +483,21 @@ fn a_deleted_plugin_removes_its_copy_and_keeps_hand_written_machines() {
     assert!(p.exists("machines/extra/machine.yml") && p.exists("scripts/work"));
 }
 
-/// A plugin piped to `decree install`, with no argument or with `-`, is copied into `plugins/`
-/// and installed (`curl -fsSL <url> | decree install`); with nothing piped, `decree install`
-/// installs every plugin as its file says, and `--force` needs a name or a plugin.
+/// `decree install -` copies the plugin on stdin into `plugins/` and installs it
+/// (`curl -fsSL <url> | decree install -`); with no argument `decree install` never reads
+/// stdin, even when something is piped (a loop's input stays the loop's), and installs every
+/// plugin as its file says; `--force` needs a name or a plugin.
 #[test]
-fn install_reads_a_piped_plugin() {
+fn install_reads_stdin_only_with_a_dash() {
     let p = Project::new();
     let (code, out, err) = p.decree(&["install"], HELPER);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "every plugin is installed as its file says: nothing to install\n"
+    );
+    assert!(!p.exists("plugins/helper.md"));
+    let (code, out, err) = p.decree(&["install", "-"], HELPER);
     assert_eq!(code, 0, "{err}");
     assert!(
         out.ends_with("installed .decree/plugins/helper.md\n"),
@@ -514,7 +528,7 @@ fn install_reads_a_piped_plugin() {
 fn import_refuses_missing_needs_and_writes_nothing() {
     let p = Project::new();
     let before = p.tree("");
-    let (code, out, err) = p.decree(&["install"], DEVELOP);
+    let (code, out, err) = p.decree(&["install", "-"], DEVELOP);
     assert_eq!(code, 1);
     assert_eq!(out, "");
     assert!(err.contains("`helper`"), "{err}");
@@ -529,12 +543,12 @@ fn import_refuses_a_taken_name_unless_forced() {
     let before = p.tree("");
     let changed = HELPER.replace("echo helped", "echo helped twice");
 
-    let (code, out, err) = p.decree(&["install"], &changed);
+    let (code, out, err) = p.decree(&["install", "-"], &changed);
     assert_eq!(code, 1, "{out}");
     assert!(err.contains("--force"), "{err}");
     assert_eq!(p.tree(""), before);
 
-    let (code, out, err) = p.decree(&["install", "--force"], &changed);
+    let (code, out, err) = p.decree(&["install", "-", "--force"], &changed);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("plugin `helper`: Helps."), "{out}");
     assert!(
@@ -586,7 +600,7 @@ fn a_script_path_that_leaves_the_folder_fails_check() {
     assert!(out.contains("`../x.sh`") && out.contains("(P1)"), "{out}");
     assert!(!p.exists("scripts/x.sh") && !p.exists("machines/bad/machine.yml"));
     // import refuses it the same way.
-    let (code, _, err) = p.decree(&["install"], &p.get("plugins/bad.md"));
+    let (code, _, err) = p.decree(&["install", "-"], &p.get("plugins/bad.md"));
     assert_eq!(code, 1);
     assert!(err.contains("`../x.sh`"), "{err}");
 }
@@ -621,7 +635,7 @@ fn json_output_follows_the_cli_schema() {
         docs.push(out);
     }
     let changed = HELPER.replace("echo helped", "echo helped twice");
-    let (code, out, err) = p.decree(&["install", "--force", "--format", "json"], &changed);
+    let (code, out, err) = p.decree(&["install", "-", "--force", "--format", "json"], &changed);
     assert_eq!(code, 0, "{err}");
     docs.push(out);
     for doc in &docs {

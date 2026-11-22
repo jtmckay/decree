@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/plugin.schema.json",
   "title": "decree install / list / export --format json",
-  "description": "What `decree install`, `decree list` and `decree export --format json` print on stdout, one shape per `action`. On failure (a name neither in plugins/ nor official, a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. Reference: docs/reference/plugins.md.",
+  "description": "What `decree install`, `decree list` and `decree export --format json` print on stdout, one shape per `action`. On failure (a name neither in plugins/ nor official, a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. `decree install` with no argument is the exception: it installs every plugin it can, prints `sync`, names each conflict or invalid plugin on stderr and exits 1. Reference: docs/reference/plugins.md.",
   "oneOf": [
     {
       "type": "object",
@@ -307,13 +307,14 @@
         "files",
         "needs",
         "replaced",
-        "changes"
+        "changes",
+        "added"
       ],
       "additionalProperties": false,
       "properties": {
         "action": {
           "const": "import",
-          "description": "`decree install <file|->`, or a plugin piped on stdin: the plugin copied into plugins/ and installed."
+          "description": "`decree install <file|->` (`-` reads stdin): the plugin copied into plugins/ and installed."
         },
         "plugin": {
           "type": "string",
@@ -388,6 +389,14 @@
               }
             }
           }
+        },
+        "added": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "The official plugins the plugin needs that plugins/ lacked, seeded from this decree's copies and installed first, by name; empty when none."
         }
       }
     },
@@ -403,7 +412,7 @@
       "properties": {
         "action": {
           "const": "sync",
-          "description": "`decree install` with no argument and nothing piped: every plugin that is new or changed installed, every deleted plugin's copy removed and every edited copy kept."
+          "description": "`decree install` with no argument: every plugin that is new or changed installed, every deleted plugin's copy removed and every edited copy kept."
         },
         "installed": {
           "type": "array",

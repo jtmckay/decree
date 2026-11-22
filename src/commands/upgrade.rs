@@ -159,16 +159,42 @@ fn install_here(yes: bool) -> Result<(), DecreeError> {
             return Ok(());
         }
     }
+    // The copy on PATH is the one just installed, unless another (a `cargo install` copy)
+    // comes first: say which runs, so an old one is noticed.
+    let found = std::process::Command::new("decree")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    match &found {
+        Some(v) => println!("Running `decree install` with the `decree` on PATH ({v}):"),
+        None => {
+            eprintln!("warning: no `decree` on PATH runs; run `decree install` in each project with the new copy");
+            return Ok(());
+        }
+    }
     let status = std::process::Command::new("decree")
         .arg("install")
         .current_dir(&root)
-        .status()
-        .map_err(|e| DecreeError::Other(format!("cannot run decree install: {e}")))?;
-    if !status.success() {
-        return Err(DecreeError::Other(format!(
-            "decree install failed in {} ({status})",
-            root.display()
-        )));
+        .stdin(std::process::Stdio::null())
+        .status();
+    // decree is installed either way: a failing project install is a warning, not a failed
+    // upgrade.
+    match status {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            eprintln!(
+                "warning: decree install failed in {} ({status}); fix what it names and run it again",
+                root.display()
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            eprintln!("warning: cannot run decree install: {e}");
+            return Ok(());
+        }
     }
     println!("Run `decree install` in each other project too.");
     Ok(())

@@ -3,8 +3,8 @@
 //! `.decree/machines/<name>/` is ignored by git. `decree install` with no argument installs every
 //! plugin as its file says (the step after a checkout); `decree install <name>` installs that
 //! plugin, seeding its file from the official copy built into decree when the project has none;
-//! `decree install <file>`, or a plugin piped on stdin, copies it into `plugins/` and installs
-//! it. decree fetches nothing: `curl -fsSL <url> | decree install` installs from a URL. `list`
+//! `decree install <file>`, or `-` for stdin, copies it into `plugins/` and installs
+//! it. decree fetches nothing: `curl -fsSL <url> | decree install -` installs from a URL. `list`
 //! shows the official plugins, and `export` writes a plugin file from the installed copy.
 
 use std::collections::BTreeMap;
@@ -42,9 +42,10 @@ pub fn export(project_root: &Path, name: &str, format: Format) -> Result<(), Dec
     }
 }
 
-/// `decree install <file|->`, or a plugin on stdin: check the plugin, copy it to
-/// `plugins/<name>.md` and install it. Refuses, writing nothing, a plugin that fails the
-/// schema, whose `needs` are not in `plugins/`, or whose name is taken, unless `force`.
+/// `decree install <file|->`: check the plugin, copy it to
+/// `plugins/<name>.md` and install it, seeding each official plugin it needs that `plugins/`
+/// lacks. Refuses, writing nothing, a plugin that fails the schema, that needs a plugin
+/// neither in `plugins/` nor official, or whose name is taken, unless `force`.
 fn import(
     decree_dir: &Path,
     shown: &str,
@@ -69,22 +70,40 @@ fn import(
     })?;
     let name = plugin.name.clone();
 
-    let missing: Vec<&String> = plugin
-        .needs
-        .iter()
-        .filter(|n| !decree_dir.join(plugin::plugin_file(n)).is_file())
-        .collect();
+    // Each need not in plugins/ that decree ships is seeded from its official copy, with the
+    // official plugins it needs in turn, as `decree install <name>` does; any other is missing.
+    let mut seed: Vec<String> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = plugin.needs.clone();
+    while let Some(n) = queue.pop() {
+        if n == name || seed.contains(&n) || decree_dir.join(plugin::plugin_file(&n)).is_file() {
+            continue;
+        }
+        match official::get(&n).map(|o| o.plugin()) {
+            Some(Ok(p)) => {
+                queue.extend(p.needs.iter().cloned());
+                seed.push(n);
+            }
+            _ => {
+                if !missing.contains(&n) {
+                    missing.push(n);
+                }
+            }
+        }
+    }
     if !missing.is_empty() {
+        missing.sort();
         let list = missing
             .iter()
             .map(|n| format!("`{n}`"))
             .collect::<Vec<_>>()
             .join(", ");
         return Err(DecreeError::Other(format!(
-            "plugin `{name}` needs {list}, not in {DECREE_DIR}/{PLUGINS_DIR}/: install {} first; nothing was installed",
+            "plugin `{name}` needs {list}, not in {DECREE_DIR}/{PLUGINS_DIR}/ and not an official plugin: install {} first; nothing was installed",
             if missing.len() == 1 { "it" } else { "them" }
         )));
     }
+    seed.sort();
 
     let target = decree_dir.join(plugin::plugin_file(&name));
     let old = if target.is_file() {
@@ -136,6 +155,22 @@ fn import(
         std::fs::create_dir_all(dir)
             .map_err(|e| DecreeError::Other(format!("{}: {e}", dir.display())))?;
     }
+    for n in &seed {
+        let o = official::get(n).ok_or_else(|| {
+            DecreeError::Other(format!("official plugin `{n}` is not built into decree"))
+        })?;
+        let p = o.plugin().map_err(DecreeError::Other)?;
+        let path = decree_dir.join(plugin::plugin_file(n));
+        crate::message::write_replace(&path, o.text.as_bytes())
+            .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
+        plugin::install(decree_dir, &p, o.text.as_bytes())?;
+        if format == Format::Text {
+            println!(
+                "added {DECREE_DIR}/{}, needed by {name}",
+                plugin::plugin_file(n)
+            );
+        }
+    }
     crate::message::write_replace(&target, &bytes)
         .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
     plugin::install(decree_dir, &plugin, &bytes)?;
@@ -149,6 +184,7 @@ fn import(
                 "description": plugin.description(),
                 "replaced": changes.is_some(),
                 "changes": changes.unwrap_or_default(),
+                "added": seed,
             });
             merge(&mut doc, summary);
             print_json(&doc)
@@ -161,12 +197,13 @@ fn import(
 }
 
 /// `decree install [<name>...|<file>|-]` (docs/reference/plugins.md, Installing). No argument:
-/// a plugin piped on stdin is imported, and with nothing piped every plugin is installed as its
-/// file says (`plugin::sync`). A name is a plugin, installed from `plugins/<name>.md`, or from
+/// every plugin is installed as its file says (`plugin::sync`); stdin is never read, so a
+/// script or a loop can run it safely. A name is a plugin, installed from `plugins/<name>.md`, or from
 /// decree's official copy when `plugins/` has none or with `force`. Anything else is a plugin
 /// file, or `-` for stdin, imported alone.
 ///
-/// An install that succeeds also writes `.decree/schema/`, as `decree schema` does, quietly
+/// An install that succeeds, or one with no argument that installed what it could, also
+/// writes `.decree/schema/`, as `decree schema` does, quietly
 /// (it is generated, like a graph), so the step after a clone, a pull or an upgrade leaves the
 /// project's schemas this decree's.
 pub fn install(
@@ -175,9 +212,13 @@ pub fn install(
     force: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
-    install_plugins(project_root, sources, force, format)?;
-    crate::commands::schema::write(project_root)?;
-    Ok(())
+    let result = install_plugins(project_root, sources, force, format);
+    // With no argument, plugins that installed stay installed when another is a conflict,
+    // so the schemas are written then too; a refused install by name or file writes nothing.
+    if result.is_ok() || (sources.is_empty() && !force) {
+        crate::commands::schema::write(project_root)?;
+    }
+    result
 }
 
 fn install_plugins(
@@ -186,7 +227,6 @@ fn install_plugins(
     force: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
-    use std::io::IsTerminal;
     let decree_dir = project_root.join(DECREE_DIR);
     let read_stdin = || -> Result<Vec<u8>, DecreeError> {
         let mut bytes = Vec::new();
@@ -196,12 +236,6 @@ fn install_plugins(
         Ok(bytes)
     };
     if sources.is_empty() {
-        if !std::io::stdin().is_terminal() {
-            let bytes = read_stdin()?;
-            if !bytes.iter().all(u8::is_ascii_whitespace) {
-                return import(&decree_dir, "stdin", bytes, force, format);
-            }
-        }
         if force {
             return Err(DecreeError::Other(
                 "--force replaces a plugin by name (`decree install --force <name>`) or from a file; with no argument, `decree install` installs every plugin as its file says".into(),
@@ -684,6 +718,9 @@ fn install_named(
     }
 
     for a in plan.iter_mut() {
+        if a.status == "installed" {
+            a.dropped_edits_in_place = plugin::edited_since_install(&decree_dir, &a.name)?;
+        }
         if a.status == "replaced" {
             let old = plugin::read_one(&decree_dir, &a.name)?;
             let old_plugin = old.parsed.as_ref().ok();
@@ -731,6 +768,10 @@ fn install_named(
             for a in &plan {
                 let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(&a.name));
                 match a.status {
+                    "installed" if a.dropped_edits_in_place => println!(
+                        "installed {file}, dropping the edits in place to {DECREE_DIR}/{MACHINES_DIR}/{0}/ (machine.yml, scripts/ or cron/), which were not exported",
+                        a.name
+                    ),
                     "installed" => {}
                     "added" => println!("added {file}"),
                     "needed" => println!("added {file}, needed by {}", a.needed_by.join(", ")),

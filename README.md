@@ -253,7 +253,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | Command | What it does |
 | --- | --- |
 | `decree init [--ai AI] [--permissions]` | Create `.decree/`, add the default plugins (`ai`, `order`, `prune`, `skill`) and write the decree skill; list the other official plugins |
-| `decree install [NAME...\|FILE\|-]` | Install every plugin in `.decree/plugins/` (after a clone or a pull), the named ones (seeding an official one), or a plugin file or piped plugin (`curl -fsSL URL \| decree install`) |
+| `decree install [NAME...\|FILE\|-]` | Install every plugin in `.decree/plugins/` (after a clone or a pull), the named ones (seeding an official one), or a plugin file or `-` for stdin (`curl -fsSL URL \| decree install -`) |
 | `decree list` | The plugins in `.decree/plugins/` (official or own, `differs`, install state), the machines no plugin installed, and the official plugins not yet installed |
 | `decree export [NAME]` | Write `.decree/plugins/<name>.md` from an installed copy; with no name, every plugin edited in place |
 | `decree check [--format text\|json\|sarif]` | Validate machines and pending messages; `sarif` for code scanning |

@@ -263,7 +263,7 @@ scripts:
     | `decree check [--format json\|sarif]` | Validate every machine, script name, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
     | `decree install` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone or a pull. Keeps an edited installed copy, naming a conflict. |
     | `decree install <name>... [--force]` | Install these plugins, replacing an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--force` takes this decree's copy and prints the edits it drops. |
-    | `decree install <file\|->`, or `curl -fsSL <url> \| decree install` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
+    | `decree install <file\|->`, or `curl -fsSL <url> \| decree install -` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
     | `decree list` / `decree export [<name>]` | List the project's plugins (`official` or `own`, `differs`, `not installed`, `edited`), the machines no plugin installed, and the official plugins it can add. Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. |
     | `decree graph` | Write `.decree/machines/<machine>/graph.md` (Mermaid) for every machine, plus `.decree/system.md`. |
     | `decree schema` | Write a local copy of the JSON Schemas of machines, messages, events and router files to `.decree/schema/v1/` (ignored by git). |

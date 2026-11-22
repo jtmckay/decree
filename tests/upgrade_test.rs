@@ -163,13 +163,23 @@ fn json_output_matches_its_schema() {
 /// `decree upgrade <args>` in `dir`, with `stdin`, and a `PATH` whose `curl` is a stub that
 /// prints a script saying it ran: (exit code, stdout, stderr).
 fn upgrade_with(dir: &Path, args: &[&str], stdin: &str) -> (i32, String, String) {
+    upgrade_with_decree(dir, args, stdin, "#!/bin/sh\necho \"stub decree $1 ran in $(pwd)\"\n")
+}
+
+/// `upgrade_with`, with `decree_stub` as the `decree` on PATH.
+fn upgrade_with_decree(
+    dir: &Path,
+    args: &[&str],
+    stdin: &str,
+    decree_stub: &str,
+) -> (i32, String, String) {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let curl = bin.join("curl");
     std::fs::write(&curl, "#!/bin/sh\necho 'echo stub install ran'\n").unwrap();
     // The new copy on PATH, whose `decree install` the prompt after the install line runs.
     let decree = bin.join("decree");
-    std::fs::write(&decree, "#!/bin/sh\necho \"stub decree $1 ran in $(pwd)\"\n").unwrap();
+    std::fs::write(&decree, decree_stub).unwrap();
     use std::os::unix::fs::PermissionsExt;
     for stub in [&curl, &decree] {
         std::fs::set_permissions(stub, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -257,4 +267,16 @@ fn offers_decree_install_in_the_project_after_installing() {
     let tmp = dir(false);
     let (_, stdout, _) = upgrade_with(tmp.path(), &["--yes"], "");
     assert!(!stdout.contains("stub decree"), "{stdout}");
+}
+
+/// The new copy's `decree install` gets no stdin (it never waits on a pipe), and when it
+/// fails, the upgrade still succeeds, with a warning: decree itself was installed.
+#[test]
+fn a_failing_project_install_is_a_warning() {
+    let tmp = dir(true);
+    let stub = "#!/bin/sh\nif [ \"$1\" = install ]; then cat >/dev/null; echo broken >&2; exit 3; fi\necho 'decree 9.9.9'\n";
+    let (code, stdout, stderr) = upgrade_with_decree(tmp.path(), &["--yes"], "", stub);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("with the `decree` on PATH (decree 9.9.9)"), "{stdout}");
+    assert!(stderr.contains("warning: decree install failed in"), "{stderr}");
 }

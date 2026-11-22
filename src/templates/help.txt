@@ -37,8 +37,8 @@ Commands:
                               decree's official copy
   decree install FILE|- [--force]
                               Check a plugin, copy it to .decree/plugins/
-                              and install it; a plugin piped on stdin needs
-                              no argument (curl -fsSL URL | decree install)
+                              and install it; - reads it from stdin
+                              (curl -fsSL URL | decree install -)
   decree list                 The plugins in .decree/plugins/ (official or
                               own, differs, not installed, edited), machines
                               no plugin installed, and the official plugins

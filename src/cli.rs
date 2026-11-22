@@ -193,9 +193,9 @@ pub enum Command {
         format: Format,
     },
 
-    /// Install plugins: every plugin in .decree/plugins/ as its file says (after a checkout), the named ones (an official one is seeded into .decree/plugins/ first), or a plugin file or stdin (`curl -fsSL <url> | decree install`)
+    /// Install plugins: every plugin in .decree/plugins/ as its file says (after a checkout), the named ones (an official one is seeded into .decree/plugins/ first), or a plugin file or - for stdin (`curl -fsSL <url> | decree install -`)
     Install {
-        /// Plugin names, or one plugin file, or - for stdin [default: stdin if a plugin is piped, else every plugin in .decree/plugins/]
+        /// Plugin names, or one plugin file, or - for stdin [default: every plugin in .decree/plugins/; stdin is never read]
         sources: Vec<String>,
 
         /// Replace .decree/plugins/<name>.md with decree's official copy, or a plugin of the file's name, printing what changes

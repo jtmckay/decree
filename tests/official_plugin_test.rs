@@ -306,3 +306,30 @@ fn export_with_no_name_takes_only_edited_plugins() {
     let develop = fs::read_to_string(p.path().join(".decree/plugins/develop.md")).unwrap();
     assert_eq!(develop, built_in("develop"));
 }
+
+/// AC: a plugin file whose `needs` names an official plugin `plugins/` lacks seeds it, as
+/// `decree install <name>` does, and says so; one needing a plugin that is neither fails,
+/// writing nothing.
+#[test]
+fn a_plugin_file_seeds_the_official_plugins_it_needs() {
+    let tmp = init();
+    let file = tmp.path().join("mine.md");
+    std::fs::write(
+        &file,
+        "---\nname: mine\nneeds: [lease]\nmachine:\n  description: d\n  initial: a\n  states:\n    a: { invoke: x, transitions: { done: done } }\n    done: { final: true }\n    failed: { final: true }\nscripts:\n  x.sh: |\n    #!/usr/bin/env bash\n    true\n---\n",
+    )
+    .unwrap();
+    let out = ok(tmp.path(), &["install", file.to_str().unwrap()]);
+    assert!(out.contains("added .decree/plugins/lease.md, needed by mine"), "{out}");
+    assert!(tmp.path().join(".decree/machines/lease/machine.yml").exists());
+    let other = tmp.path().join("other.md");
+    std::fs::write(
+        &other,
+        std::fs::read_to_string(&file).unwrap().replace("name: mine", "name: other").replace("[lease]", "[nope]"),
+    )
+    .unwrap();
+    let (code, _, err) = decree(tmp.path(), &["install", other.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(err.contains("needs `nope`, not in .decree/plugins/ and not an official plugin"), "{err}");
+    assert!(!tmp.path().join(".decree/plugins/other.md").exists());
+}

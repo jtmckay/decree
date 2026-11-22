@@ -1103,6 +1103,22 @@ pub fn edited(decree_dir: &Path, plugin: &Plugin) -> Result<bool, DecreeError> {
     Ok(!copy.is_absent() && !copy.matches(plugin))
 }
 
+/// Whether plugin `name`'s installed copy was edited in place since it was installed: it
+/// differs from what the plugin file it was installed from installs. False when nothing is
+/// installed or no record says what it was installed from.
+pub fn edited_since_install(decree_dir: &Path, name: &str) -> Result<bool, DecreeError> {
+    let path = record_path(decree_dir, name);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(io_error(&path, e)),
+    };
+    match Plugin::parse(&text, Some(name)) {
+        Ok(recorded) => edited(decree_dir, &recorded),
+        Err(_) => Ok(false),
+    }
+}
+
 /// Whether plugin file `text` is not the one plugin `name` was installed from: changed
 /// since (a `git pull`), or never installed over a copy that was already there. An edited
 /// copy of such a plugin is a conflict for a person to merge; exporting it would write the
