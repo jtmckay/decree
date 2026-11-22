@@ -249,7 +249,9 @@ fn overview(
         }
     }
     let entry = |m: &str, n: usize| match group_of(m) {
-        Some(g) => json!({ "running": n, "limit": limit(m), "group": g, "group_running": in_group[&g] }),
+        Some(g) => {
+            json!({ "running": n, "limit": limit(m), "group": g, "group_running": in_group[&g] })
+        }
         None => json!({ "running": n, "limit": limit(m) }),
     };
     if format == Format::Json {

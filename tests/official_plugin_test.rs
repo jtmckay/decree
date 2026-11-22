@@ -320,16 +320,28 @@ fn a_plugin_file_seeds_the_official_plugins_it_needs() {
     )
     .unwrap();
     let out = ok(tmp.path(), &["install", file.to_str().unwrap()]);
-    assert!(out.contains("added .decree/plugins/lease.md, needed by mine"), "{out}");
-    assert!(tmp.path().join(".decree/machines/lease/machine.yml").exists());
+    assert!(
+        out.contains("added .decree/plugins/lease.md, needed by mine"),
+        "{out}"
+    );
+    assert!(tmp
+        .path()
+        .join(".decree/machines/lease/machine.yml")
+        .exists());
     let other = tmp.path().join("other.md");
     std::fs::write(
         &other,
-        std::fs::read_to_string(&file).unwrap().replace("name: mine", "name: other").replace("[lease]", "[nope]"),
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .replace("name: mine", "name: other")
+            .replace("[lease]", "[nope]"),
     )
     .unwrap();
     let (code, _, err) = decree(tmp.path(), &["install", other.to_str().unwrap()]);
     assert_eq!(code, 1);
-    assert!(err.contains("needs `nope`, not in .decree/plugins/ and not an official plugin"), "{err}");
+    assert!(
+        err.contains("needs `nope`, not in .decree/plugins/ and not an official plugin"),
+        "{err}"
+    );
     assert!(!tmp.path().join(".decree/plugins/other.md").exists());
 }

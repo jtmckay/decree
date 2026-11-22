@@ -55,7 +55,11 @@ pub fn check(
 /// not waiting now but will be: it is `active` or `pending`, and `event` is an option of some
 /// `reply` state of its machine. Delivery holds it until the run waits (docs/reference/
 /// messages.md, Replies); one the wait then does not take is rejected as any is.
-pub fn check_later(ctx: &Context, to: &str, event: &str) -> Result<Result<(), String>, InterpreterError> {
+pub fn check_later(
+    ctx: &Context,
+    to: &str,
+    event: &str,
+) -> Result<Result<(), String>, InterpreterError> {
     let runs_dir = ctx.runs_dir();
     let Some((run_id, None)) = resolve(&runs_dir, to) else {
         return Ok(Err(format!("`{to}` is not a run id")));
@@ -66,7 +70,9 @@ pub fn check_later(ctx: &Context, to: &str, event: &str) -> Result<Result<(), St
     }
     let machine = first_text(&events, "machine").unwrap_or_default();
     let Some(m) = ctx.machines.get(machine) else {
-        return Ok(Err(format!("run {run_id}'s machine `{machine}` does not load")));
+        return Ok(Err(format!(
+            "run {run_id}'s machine `{machine}` does not load"
+        )));
     };
     let takes = (0..m.nodes.len())
         .filter(|&i| matches!(m.nodes[i].invoke, Some(crate::machine::Invoke::Reply(_))))

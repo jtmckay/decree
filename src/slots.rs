@@ -5,11 +5,11 @@
 //! file, so two threads of one process count as two holders, and a process that dies frees
 //! its slots with it. A run of this process waiting for a slot goes before a new claim.
 
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;

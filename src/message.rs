@@ -596,10 +596,12 @@ pub enum LockState {
 pub fn lock_state(run_dir: &Path) -> io::Result<LockState> {
     match std::fs::read_to_string(run_dir.join(LOCK_FILE)) {
         // `<pid>` or `<pid> <token>`: the first word is the process.
-        Ok(text) => Ok(match text.split_whitespace().next().unwrap_or("").parse::<u32>() {
-            Ok(pid) if pid_alive(pid) => LockState::Live(pid),
-            _ => LockState::Stale,
-        }),
+        Ok(text) => Ok(
+            match text.split_whitespace().next().unwrap_or("").parse::<u32>() {
+                Ok(pid) if pid_alive(pid) => LockState::Live(pid),
+                _ => LockState::Stale,
+            },
+        ),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(LockState::Free),
         Err(e) => Err(e),
     }
@@ -682,7 +684,8 @@ impl Drop for RunLock {
     fn drop(&mut self) {
         // Only this lock: never one another process created after a stale one, nor another
         // thread's.
-        let ours = std::fs::read_to_string(&self.path).is_ok_and(|text| text.trim() == self.content);
+        let ours =
+            std::fs::read_to_string(&self.path).is_ok_and(|text| text.trim() == self.content);
         if ours {
             let _ = std::fs::remove_file(&self.path);
         }

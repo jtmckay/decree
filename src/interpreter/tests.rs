@@ -1640,7 +1640,11 @@ fn reply_timeout_at_stays_in_the_run_folder_and_quotes_little() {
         let text = fs::read_to_string(repo().join("tests/fixtures/machines/step/step_reply.yml"))
             .unwrap()
             .replace("timeout: 60s", &format!("timeout_at: '{at}'"));
-        let p = Project::from_text("step_reply", &text, &[("ask_person", "write_odd_deadlines")]);
+        let p = Project::from_text(
+            "step_reply",
+            &text,
+            &[("ask_person", "write_odd_deadlines")],
+        );
         assert_eq!(p.run(), Outcome::Finished("failed".into()), "{at}");
         let t = p.events_of("transition");
         let taken = t.iter().find(|e| e["from"] == "approval").unwrap();
@@ -2268,10 +2272,7 @@ fn no_child_starts_after_a_signal() {
     let p = parent_project("print_env");
     p.shutdown.store(true, Ordering::SeqCst);
     let outcome = p.run();
-    assert!(
-        matches!(outcome, Outcome::Interrupted(_)),
-        "{outcome:?}"
-    );
+    assert!(matches!(outcome, Outcome::Interrupted(_)), "{outcome:?}");
     assert!(p.events_of("waiting").is_empty());
     assert_eq!(p.events().last().unwrap()["type"], "interrupted");
 }

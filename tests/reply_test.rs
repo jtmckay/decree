@@ -470,7 +470,12 @@ fn event_while_a_reply_is_already_queued_exits_1() {
     assert!(stderr(&out).contains(&expected), "{}", stderr(&out));
     // One to the run id goes to the wait the run is in when it is delivered, so it is
     // queued after the first; here the first finishes the run, and it is rejected then.
-    let out = p.event(&[RUN, "reject"]).assert().code(0).get_output().clone();
+    let out = p
+        .event(&[RUN, "reject"])
+        .assert()
+        .code(0)
+        .get_output()
+        .clone();
     let second = format!("{}.md", String::from_utf8_lossy(&out.stdout).trim());
     assert_eq!(p.inbox(), [first, second]);
     // `--once` exits 1 for the rejected reply's failed run, which names why.
@@ -492,14 +497,26 @@ fn a_reply_to_a_busy_run_is_queued_for_its_next_wait() {
     let decree = p.decree();
     let events = decree.join("runs").join(RUN).join("events.jsonl");
     let mut log = fs::read_to_string(&events).unwrap();
-    let wait_id = p.events(RUN).last().unwrap()["wait_id"].as_str().unwrap().to_string();
+    let wait_id = p.events(RUN).last().unwrap()["wait_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     log.push_str(&format!(
         "{}\n",
         json!({"type": "received", "run_id": RUN, "machine": "deploy", "seq": 99, "wait_id": wait_id, "event": "approve", "ts": "2026-01-01T00:00:00Z"})
     ));
     fs::write(&events, log).unwrap();
-    let out = p.event(&[RUN, "nope"]).assert().code(1).get_output().clone();
-    assert!(stderr(&out).contains("no `reply` state of machine `deploy` takes `nope`"), "{}", stderr(&out));
+    let out = p
+        .event(&[RUN, "nope"])
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    assert!(
+        stderr(&out).contains("no `reply` state of machine `deploy` takes `nope`"),
+        "{}",
+        stderr(&out)
+    );
     p.event(&[RUN, "reject"]).assert().code(0);
 }
 
@@ -826,7 +843,10 @@ fn once_sleeping_on_a_timer_delivers_a_reply_that_arrives() {
     let start = std::time::Instant::now();
     let events = p.decree().join("runs").join(RUN).join("events.jsonl");
     while !fs::read_to_string(&events).is_ok_and(|t| t.contains("\"type\":\"waiting\"")) {
-        assert!(start.elapsed() < std::time::Duration::from_secs(20), "never waited");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(20),
+            "never waited"
+        );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     p.event(&[RUN, "approve"]).assert().code(0);

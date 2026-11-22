@@ -298,7 +298,10 @@ fn init_and_install_write_the_schema_folder() {
         .assert()
         .success();
     assert_ne!(fs::read_to_string(&machine).unwrap(), "{}");
-    assert!(!tmp.path().join(".decree/schema/v1/old.schema.json").exists());
+    assert!(!tmp
+        .path()
+        .join(".decree/schema/v1/old.schema.json")
+        .exists());
     let gitignore = fs::read_to_string(tmp.path().join(".decree/.gitignore")).unwrap();
     assert!(gitignore.lines().any(|l| l == "schema/"), "{gitignore}");
     assert!(gitignore.lines().any(|l| l == ".env*"), "{gitignore}");

@@ -297,7 +297,11 @@ impl Interpreter<'_> {
             .map(|t| t.with_timezone(&Utc))
             .map_err(|e| {
                 let quoted: String = instant.chars().take(MAX_QUOTED).collect();
-                let more = if quoted.len() < instant.len() { "…" } else { "" };
+                let more = if quoted.len() < instant.len() {
+                    "…"
+                } else {
+                    ""
+                };
                 format!("`timeout_at` `{at}`: `{quoted}{more}` is not an RFC 3339 instant: {e}")
             })
     }

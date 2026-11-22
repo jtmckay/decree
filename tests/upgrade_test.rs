@@ -163,7 +163,12 @@ fn json_output_matches_its_schema() {
 /// `decree upgrade <args>` in `dir`, with `stdin`, and a `PATH` whose `curl` is a stub that
 /// prints a script saying it ran: (exit code, stdout, stderr).
 fn upgrade_with(dir: &Path, args: &[&str], stdin: &str) -> (i32, String, String) {
-    upgrade_with_decree(dir, args, stdin, "#!/bin/sh\necho \"stub decree $1 ran in $(pwd)\"\n")
+    upgrade_with_decree(
+        dir,
+        args,
+        stdin,
+        "#!/bin/sh\necho \"stub decree $1 ran in $(pwd)\"\n",
+    )
 }
 
 /// `upgrade_with`, with `decree_stub` as the `decree` on PATH.
@@ -251,11 +256,18 @@ fn offers_decree_install_in_the_project_after_installing() {
         assert_eq!(code, 0, "{stderr}");
         assert!(stdout.contains("stub install ran\n"), "{stdout}");
         assert_eq!(
-            stdout.contains(&format!("Run `decree install` in {} now? [y/N] ", tmp.path().display())),
+            stdout.contains(&format!(
+                "Run `decree install` in {} now? [y/N] ",
+                tmp.path().display()
+            )),
             args.is_empty(),
             "{stdout}"
         );
-        assert_eq!(stdout.contains("stub decree install ran in "), ran, "{stdout}");
+        assert_eq!(
+            stdout.contains("stub decree install ran in "),
+            ran,
+            "{stdout}"
+        );
         let next = if ran {
             "Run `decree install` in each other project too."
         } else {
@@ -277,6 +289,12 @@ fn a_failing_project_install_is_a_warning() {
     let stub = "#!/bin/sh\nif [ \"$1\" = install ]; then cat >/dev/null; echo broken >&2; exit 3; fi\necho 'decree 9.9.9'\n";
     let (code, stdout, stderr) = upgrade_with_decree(tmp.path(), &["--yes"], "", stub);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("with the `decree` on PATH (decree 9.9.9)"), "{stdout}");
-    assert!(stderr.contains("warning: decree install failed in"), "{stderr}");
+    assert!(
+        stdout.contains("with the `decree` on PATH (decree 9.9.9)"),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains("warning: decree install failed in"),
+        "{stderr}"
+    );
 }

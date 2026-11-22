@@ -213,7 +213,10 @@ fn reboot_file_added_while_running_waits_for_next_start() {
     p.reboot_file();
     thread::sleep(Duration::from_millis(3000));
     stop(daemon);
-    assert!(p.boot_messages().is_empty(), "the @reboot file fired before the next start");
+    assert!(
+        p.boot_messages().is_empty(),
+        "the @reboot file fired before the next start"
+    );
 
     let daemon = p.daemon(&[]);
     wait_for("the boot run after restart", || p.boot_done() == 2);

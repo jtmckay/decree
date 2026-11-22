@@ -948,7 +948,9 @@ fn daemon_runs_messages_through_the_same_pipeline_and_exits_0_on_signal() {
 
     let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
     let finished = |id: &str| {
-        p.events(id).last().is_some_and(|e| e["type"] == "run_finished")
+        p.events(id)
+            .last()
+            .is_some_and(|e| e["type"] == "run_finished")
     };
     let deadline = Instant::now() + Duration::from_secs(30);
     while !finished(&failing) {
@@ -1266,7 +1268,9 @@ fn daemon_reads_dotenv_again_on_each_pass() {
 
     let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
     let finished = |id: &str| {
-        p.events(id).last().is_some_and(|e| e["type"] == "run_finished")
+        p.events(id)
+            .last()
+            .is_some_and(|e| e["type"] == "run_finished")
     };
     let deadline = Instant::now() + Duration::from_secs(30);
     while !finished(&first) {
@@ -1332,8 +1336,7 @@ fn daemon_runs_nothing_while_an_attention_file_holds() {
     assert!(!p.run_dir(&id).exists(), "claimed while held");
     fs::remove_file(&note).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
-    while p.events(&id).last().is_none_or(|e| e["state"] != "done")
-    {
+    while p.events(&id).last().is_none_or(|e| e["state"] != "done") {
         assert!(Instant::now() < deadline, "run {id} never ran");
         thread::sleep(Duration::from_millis(50));
     }
@@ -1365,8 +1368,7 @@ fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
 
     let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
     let deadline = Instant::now() + Duration::from_secs(30);
-    while p.events(&first).last().is_none_or(|e| e["state"] != "done")
-    {
+    while p.events(&first).last().is_none_or(|e| e["state"] != "done") {
         assert!(Instant::now() < deadline, "run {first} never finished");
         thread::sleep(Duration::from_millis(50));
     }
@@ -1377,7 +1379,10 @@ fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
     thread::sleep(Duration::from_millis(1500));
     assert!(!p.run_dir(&second).exists(), "claimed while held");
     fs::remove_file(&stop).unwrap();
-    while p.events(&second).last().is_none_or(|e| e["state"] != "done")
+    while p
+        .events(&second)
+        .last()
+        .is_none_or(|e| e["state"] != "done")
     {
         assert!(Instant::now() < deadline, "run {second} never ran");
         thread::sleep(Duration::from_millis(50));

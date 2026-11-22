@@ -811,7 +811,9 @@ impl Validator<'_> {
                 .env
                 .machines
                 .values()
-                .filter(|m| m.id != self.m.id && m.concurrency_group.as_deref() == Some(group.as_str()))
+                .filter(|m| {
+                    m.id != self.m.id && m.concurrency_group.as_deref() == Some(group.as_str())
+                })
                 .filter(|m| m.concurrency() != mine)
                 .map(|m| format!("`{}` ({})", m.id, m.concurrency()))
                 .collect();
@@ -1044,7 +1046,10 @@ impl Validator<'_> {
                     for (_, child) in m.invoked_machines() {
                         let next = key_of(child);
                         if seen.insert(next.clone()) {
-                            path.insert(next.clone(), (key.clone(), m.id.clone(), child.to_string()));
+                            path.insert(
+                                next.clone(),
+                                (key.clone(), m.id.clone(), child.to_string()),
+                            );
                             back |= next == start;
                             queue.push_back(next);
                         }

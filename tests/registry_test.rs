@@ -206,7 +206,10 @@ fn check_records_health_and_lookups_put_live_addresses_first() {
     // A 404 is an answer: up, with its code; no answer has none.
     assert_eq!(health[1]["http"], 404, "{health}");
     assert!(health[0].get("http").is_none(), "{health}");
-    assert!(health[1]["checked"].as_str().unwrap().ends_with('Z'), "{health}");
+    assert!(
+        health[1]["checked"].as_str().unwrap().ends_with('Z'),
+        "{health}"
+    );
     assert_eq!(
         registry(&root, &["url", "comfy"]).1,
         format!("{up}\n{down}\n")
@@ -252,7 +255,9 @@ fn a_server_error_is_down_and_list_json_says_so() {
     }
     let broken = http_server_answering("503 Service Unavailable");
     let up = http_server();
-    let (_tmp, root) = project(&format!("a comfy {broken}\nb comfy {up}\nc comfy http://127.0.0.1:9 box1\n"));
+    let (_tmp, root) = project(&format!(
+        "a comfy {broken}\nb comfy {up}\nc comfy http://127.0.0.1:9 box1\n"
+    ));
     decree(&root, &["daemon", "--once"]).assert().success();
     let (code, out, err) = registry(&root, &["list", "--json"]);
     assert_eq!(code, 0, "{err}");

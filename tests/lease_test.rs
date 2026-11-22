@@ -262,7 +262,6 @@ impl Project {
         }
     }
 
-
     fn swaps(&self) -> Vec<String> {
         fs::read_to_string(self.root().join("swaps.log"))
             .unwrap_or_default()
@@ -645,7 +644,9 @@ fn a_renewal_with_nothing_waiting_extends_the_lease() {
         p.log(&a).contains("lease: renew resource=")
     });
     // The status is rewritten as the renewal's lock is let go, just after the log line.
-    p.wait_for("the renewed status", || p.info(&a)["expires"] != expires.as_str());
+    p.wait_for("the renewed status", || {
+        p.info(&a)["expires"] != expires.as_str()
+    });
     // The new expiry is later, and the held wait's deadline with it.
     let renewed = p.info(&a)["expires"].as_str().unwrap().to_string();
     assert!(renewed > expires, "{expires} -> {renewed}");
@@ -866,10 +867,19 @@ fn a_waiting_lease_sleeps_until_the_line_changes() {
     let released = Instant::now();
     p.send(&a, "release");
     p.wait_state(&b, "held");
-    assert!(released.elapsed() < Duration::from_secs(5), "{:?}", released.elapsed());
+    assert!(
+        released.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        released.elapsed()
+    );
     // Its deadline was a minute away at most, and at least a second.
-    let deadline = fs::read_to_string(p.root().join(".decree/runs").join(&b).join("lease.deadline"))
-        .unwrap();
+    let deadline = fs::read_to_string(
+        p.root()
+            .join(".decree/runs")
+            .join(&b)
+            .join("lease.deadline"),
+    )
+    .unwrap();
     assert!(deadline.trim_end().ends_with('Z'), "{deadline}");
     p.send(&b, "release");
     p.wait_finished(&b, "done");
@@ -1191,7 +1201,10 @@ fn a_wake_for_a_lease_that_ends_is_taken_back() {
         .collect();
     assert!(rejected.is_empty(), "{rejected:?}");
     assert!(
-        fs::read_dir(p.root().join(".decree/inbox")).unwrap().next().is_none(),
+        fs::read_dir(p.root().join(".decree/inbox"))
+            .unwrap()
+            .next()
+            .is_none(),
         "a wake was left queued"
     );
     p.stop();
