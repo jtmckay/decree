@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/attention.schema.json",
   "title": "decree attention file frontmatter",
-  "description": "The YAML frontmatter of a file decree writes in .decree/attention/, in one of two shapes by `kind`. `run`: .decree/attention/<id>.md, written when run <id> needs a person: it failed, was interrupted, waits in a `reply` state. `manual-stop`: .decree/attention/manual-stop.md, written by `decree stop`, which holds the queue until a person deletes it. A markdown body follows: what happened and the exact command that continues the run, or how to resume. The files are read-only: answer with `decree reply` or a reply, continue with `decree retry`. A `.md` file in the folder whose frontmatter is missing or does not match this schema holds the queue as if it had `holds: true`. Reference: docs/reference/cli.md, Attention.",
+  "description": "The YAML frontmatter of a file decree writes in .decree/attention/, in one of two shapes by `kind`. `run`: .decree/attention/<id>.md, written when run <id> needs a person: it failed, was interrupted, waits in a `reply` state. `pause`: .decree/attention/pause.md, written by `decree pause`, which holds the queue until `decree resume` deletes it. A markdown body follows: what happened and the exact command that continues the run, or how to resume. The files are read-only: answer with `decree reply` or a reply, continue with `decree retry`. A `.md` file in the folder whose frontmatter is missing or does not match this schema holds the queue as if it had `holds: true`. Reference: docs/reference/cli.md, Attention.",
   "oneOf": [
     {
       "$ref": "#/$defs/run"
     },
     {
-      "$ref": "#/$defs/manualStop"
+      "$ref": "#/$defs/pause"
     }
   ],
   "$defs": {
@@ -69,9 +69,9 @@
         }
       }
     },
-    "manualStop": {
+    "pause": {
       "type": "object",
-      "description": "Written by `decree stop`: .decree/attention/manual-stop.md. The runs going when it was written finish their current step loop; no run starts or continues until a person deletes it.",
+      "description": "Written by `decree pause`: .decree/attention/pause.md. The runs going when it was written finish their current step loop; no run starts or continues until `decree resume` deletes it.",
       "required": [
         "kind",
         "since",
@@ -80,13 +80,13 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "manual-stop",
-          "description": "`decree stop` was run."
+          "const": "pause",
+          "description": "`decree pause` was run."
         },
         "since": {
           "type": "string",
           "format": "date-time",
-          "description": "When `decree stop` wrote the file, RFC 3339 UTC; a later `decree stop` leaves it."
+          "description": "When `decree pause` wrote the file, RFC 3339 UTC; a later `decree pause` leaves it."
         },
         "holds": {
           "const": true,
@@ -107,7 +107,7 @@
       "holds": true
     },
     {
-      "kind": "manual-stop",
+      "kind": "pause",
       "since": "2026-10-15T08:09:00.000Z",
       "holds": true
     }

@@ -106,7 +106,10 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         Command::Cancel { id, note, format } => {
             commands::cancel::run(&root()?, &id, note.as_deref(), format)
         }
-        Command::Stop { note, format } => commands::stop::run(&root()?, note.as_deref(), format),
+        Command::Pause { note, format } => {
+            commands::pause::pause(&root()?, note.as_deref(), format)
+        }
+        Command::Resume { format } => commands::pause::resume(&root()?, format),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
         Command::Status {
             id,

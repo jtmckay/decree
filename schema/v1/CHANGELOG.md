@@ -24,6 +24,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 
 ### Removed
 
+- `cli/stop.schema.json`, with `decree stop`: `cli/pause.schema.json` describes `decree pause` and `decree resume`. `attention.schema.json`'s `manual-stop` kind is `pause` (`.decree/attention/pause.md`), and so in `cli/status.schema.json`.
 - `cli/prune.schema.json`, with `decree prune`, and `cli/skill.schema.json`, with `decree skill`.
 - `message.schema.json`: the `migration` key and the `migration` trigger; `cli/status.schema.json` and `cli/check.schema.json`: their migration fields (`status`'s `blocked` and `queued.migrations`, `check`'s rule `M1`); `attention.schema.json`'s `message` is always `inbox`.
 

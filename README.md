@@ -265,7 +265,8 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree reply ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
 | `decree retry ID [--state S]` | Make a failed or interrupted run pending again; the daemon, or the next `decree daemon --once`, continues it |
 | `decree cancel ID [-m NOTE]` | End a waiting, pending or interrupted run, and the child runs below it, in `failed`; no script runs |
-| `decree stop [-m NOTE]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the run instead |
+| `decree pause [-m NOTE]` | Let the runs going now finish their step, then run nothing more until `decree resume`; Ctrl-C interrupts the runs instead |
+| `decree resume` | Go on after `decree pause`; a running daemon needs no restart |
 | `decree status [ID]` | What needs attention, runs by status and queued messages; one run's events |
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
@@ -274,7 +275,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree` | Print a synopsis of the quick start; it runs nothing (`decree daemon --once` runs the queue) |
 | `decree --version` | Print the version |
 
-`--format json` on `check`, `status`, `emit`, `reply`, `stop`, `graph`, `schema`, `upgrade` and `daemon --once --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
+`--format json` on `check`, `status`, `emit`, `reply`, `retry`, `cancel`, `pause`, `resume`, `graph`, `schema`, `upgrade` and `daemon --once --dry-run` prints one JSON document, described by `schema/v1/cli/<command>.schema.json`, for CI and agents; exit codes do not change. `decree check --format sarif` prints a SARIF 2.1.0 log for GitHub code scanning, GitLab or Azure DevOps ([Machine-readable output](docs/reference/cli.md#machine-readable-output) has a GitHub Actions job).
 
 decree never continues a run that was stopped by a signal or a crash: the run is `interrupted` until you run `decree retry <id>`, because a kill may be deliberate; a running daemon then continues it, or the next `decree daemon --once` does. `decree daemon --once` prints the exact command that continues it.
 

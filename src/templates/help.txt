@@ -71,9 +71,11 @@ Commands:
   decree cancel ID [-m NOTE]  End a waiting, pending or interrupted run, and
                               the child runs below it, in failed; no script
                               runs
-  decree stop [-m NOTE]       Let the runs going now finish, then hold the
-                              queue: writes .decree/attention/manual-stop.md;
-                              delete it to resume (Ctrl-C interrupts the run)
+  decree pause [-m NOTE]      Let the runs going now finish their step, then
+                              run nothing more until decree resume (writes
+                              .decree/attention/pause.md); Ctrl-C interrupts
+                              the runs instead
+  decree resume               Go on after decree pause, with no restart
   decree emit [--machine M] [--param K=V]...
                               Queue a message from stdin: a body for M, or a
                               whole message (decree emit < FILE runs it
@@ -96,7 +98,7 @@ Commands:
                               nothing (run the queue with decree daemon --once)
   decree --version            Print the version
 
-  --format json on check, status, emit, reply, retry, cancel, stop, graph, schema, upgrade,
+  --format json on check, status, emit, reply, retry, cancel, pause, resume, graph, schema, upgrade,
   install, list, export and daemon --once --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json (install, list and export:
   cli/plugin.schema.json); exit codes stay the same.

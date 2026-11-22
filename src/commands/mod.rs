@@ -4,6 +4,7 @@ pub mod daemon;
 pub mod emit;
 pub mod graph;
 pub mod init;
+pub mod pause;
 pub mod plugin;
 pub mod process;
 pub mod reply;
@@ -11,7 +12,6 @@ pub(crate) mod report;
 pub mod retry;
 pub mod schema;
 pub mod status;
-pub mod stop;
 pub mod tail;
 pub mod upgrade;
 

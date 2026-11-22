@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/pause.schema.json",
+  "title": "decree pause --format json and decree resume --format json",
+  "description": "What `decree pause --format json` and `decree resume --format json` print on stdout: the file that holds the queue while it is paused, and whether it is paused now. `resume` adds `resumed`: whether it deleted the file. On failure nothing is printed on stdout; the error goes to stderr and the exit code is 1. Reference: docs/reference/cli.md, Machine-readable output.",
+  "type": "object",
+  "required": [
+    "attention",
+    "paused"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "attention": {
+      "const": ".decree/attention/pause.md",
+      "description": "The file, relative to the project root: `decree pause` writes it, `decree resume` deletes it."
+    },
+    "paused": {
+      "type": "boolean",
+      "description": "`true` from `decree pause`, whether it wrote the file or the file was there; `false` from `decree resume`."
+    },
+    "resumed": {
+      "type": "boolean",
+      "description": "From `decree resume` only: `true` when it deleted the file, `false` when there was none."
+    }
+  },
+  "examples": [
+    {
+      "attention": ".decree/attention/pause.md",
+      "paused": true
+    },
+    {
+      "attention": ".decree/attention/pause.md",
+      "paused": false,
+      "resumed": true
+    }
+  ]
+}

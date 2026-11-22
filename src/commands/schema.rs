@@ -47,6 +47,10 @@ const SCHEMAS: [(&str, &str); 19] = [
         include_str!("../../schema/v1/cli/graph.schema.json"),
     ),
     (
+        "v1/cli/pause.schema.json",
+        include_str!("../../schema/v1/cli/pause.schema.json"),
+    ),
+    (
         "v1/cli/plugin.schema.json",
         include_str!("../../schema/v1/cli/plugin.schema.json"),
     ),
@@ -65,10 +69,6 @@ const SCHEMAS: [(&str, &str); 19] = [
     (
         "v1/cli/status.schema.json",
         include_str!("../../schema/v1/cli/status.schema.json"),
-    ),
-    (
-        "v1/cli/stop.schema.json",
-        include_str!("../../schema/v1/cli/stop.schema.json"),
     ),
     (
         "v1/cli/upgrade.schema.json",

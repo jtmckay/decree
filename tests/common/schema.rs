@@ -56,8 +56,8 @@ pub const CLI_SCHEMA_SCHEMA: &str = include_str!("../../schema/v1/cli/schema.sch
 /// The schema of `decree status --format json`.
 pub const CLI_STATUS_SCHEMA: &str = include_str!("../../schema/v1/cli/status.schema.json");
 
-/// The schema of `decree stop --format json`.
-pub const CLI_STOP_SCHEMA: &str = include_str!("../../schema/v1/cli/stop.schema.json");
+/// The schema of `decree pause --format json` and `decree resume --format json`.
+pub const CLI_PAUSE_SCHEMA: &str = include_str!("../../schema/v1/cli/pause.schema.json");
 
 /// The schema of `decree cancel --format json`.
 pub const CLI_CANCEL_SCHEMA: &str = include_str!("../../schema/v1/cli/cancel.schema.json");
@@ -77,12 +77,12 @@ pub const ALL: [(&str, &str); 19] = [
     ("cli/daemon", CLI_DAEMON_SCHEMA),
     ("cli/emit", CLI_EMIT_SCHEMA),
     ("cli/graph", CLI_GRAPH_SCHEMA),
+    ("cli/pause", CLI_PAUSE_SCHEMA),
     ("cli/plugin", CLI_PLUGIN_SCHEMA),
     ("cli/reply", CLI_REPLY_SCHEMA),
     ("cli/retry", CLI_RETRY_SCHEMA),
     ("cli/schema", CLI_SCHEMA_SCHEMA),
     ("cli/status", CLI_STATUS_SCHEMA),
-    ("cli/stop", CLI_STOP_SCHEMA),
     ("cli/upgrade", CLI_UPGRADE_SCHEMA),
     ("events", EVENTS_SCHEMA),
     ("machine", MACHINE_SCHEMA),

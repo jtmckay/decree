@@ -23,6 +23,8 @@ const OLD_TERMS: &[&str] = &[
     "decree prune",
     "`decree skill`",
     "--retry",
+    "decree stop",
+    "manual-stop",
 ];
 
 /// The commands of docs/reference/cli.md, `daemon --once`, and
@@ -40,7 +42,8 @@ const COMMANDS: &[&str] = &[
     "decree retry",
     "decree cancel",
     "decree reply",
-    "decree stop",
+    "decree pause",
+    "decree resume",
     "decree upgrade",
     "decree install",
     "decree list",

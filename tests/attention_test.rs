@@ -411,10 +411,10 @@ fn a_run_that_ends_in_done_has_no_file() {
     assert!(!stderr.contains("need attention"), "{stderr}");
 }
 
-/// Runs `decree stop` from inside its run, as a person would while it goes.
+/// Runs `decree pause` from inside its run, as a person would while it goes.
 const STOPPER: &str = "\
 name: stopper
-description: Stop the queue, then finish.
+description: Pause the queue, then finish.
 initial: work
 states:
   work:
@@ -425,12 +425,12 @@ states:
 ";
 
 #[test]
-fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
+fn decree_pause_lets_the_run_finish_and_holds_the_queue_until_resume() {
     let p = Project::new();
     p.write("machines/stopper/machine.yml", STOPPER);
     write_script(
         &p.path("scripts/stop_queue"),
-        "#!/bin/sh\n\"${DECREE}\" stop -m \"release freeze\"\n",
+        "#!/bin/sh\n\"${DECREE}\" pause -m \"release freeze\"\n",
     );
     p.write(
         "inbox/20260101T000000.000000Z-000000.md",
@@ -443,8 +443,8 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
         "done",
         "the run is not interrupted"
     );
-    // A message queued after the stop does not start. (One already queued for another
-    // machine would have started beside the stopper, before the stop: machines run at once.)
+    // A message queued after the pause does not start. (One already queued for another
+    // machine would have started beside the stopper, before the pause: machines run at once.)
     p.write(
         "inbox/20260101T000000.000001Z-000001.md",
         "---\nid: 20260101T000000.000001Z-000001\nmachine: hello\n---\n",
@@ -459,14 +459,14 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     assert!(
         stderr.contains(
             "holds the queue; do what it says, or delete it:\n\
-             .decree/attention/manual-stop.md:\n# decree stop\n"
+             .decree/attention/pause.md:\n# decree pause\n"
         ),
         "{stderr}"
     );
     assert!(stderr.contains("\nrelease freeze\n"), "{stderr}");
-    let path = p.attention("manual-stop");
+    let path = p.attention("pause");
     let fm = frontmatter(&path);
-    assert_eq!(fm["kind"], "manual-stop");
+    assert_eq!(fm["kind"], "pause");
     assert_eq!(fm["holds"], true);
     let text = fs::read_to_string(&path).unwrap();
 
@@ -474,8 +474,8 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     let (_, status, _) = p.output(&["status"]);
     assert!(
         status.starts_with(
-            "Attention: .decree/attention/: 1 file(s)\n  .decree/attention/manual-stop.md: \
-             holds the queue: `decree stop` since "
+            "Attention: .decree/attention/: 1 file(s)\n  .decree/attention/pause.md: \
+             holds the queue: `decree pause` since "
         ),
         "{status}"
     );
@@ -483,11 +483,8 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     let doc: Value = serde_json::from_str(&json).unwrap();
     let validator = schema::validator(schema::CLI_STATUS_SCHEMA);
     assert_eq!(schema::errors(&validator, &doc), Vec::<String>::new());
-    assert_eq!(doc["attention"][0]["kind"], "manual-stop");
-    assert_eq!(
-        doc["attention"][0]["path"],
-        ".decree/attention/manual-stop.md"
-    );
+    assert_eq!(doc["attention"][0]["kind"], "pause");
+    assert_eq!(doc["attention"][0]["path"], ".decree/attention/pause.md");
 
     // A new `process` starts nothing; a retried run waits as `pending`, and the file stays.
     let (code, _, stderr) = p.output(&["daemon", "--once"]);
@@ -511,16 +508,19 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     let doc: Value = serde_json::from_str(&status).unwrap();
     assert_eq!(doc["status"], "pending");
 
-    // Deleting it resumes: the next `process` runs the queue.
-    fs::remove_file(&path).unwrap();
+    // `decree resume` deletes it: the next `daemon --once` runs the queue.
+    let (code, stdout, _) = p.output(&["resume"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(stdout, "resumed: deleted .decree/attention/pause.md\n");
+    assert!(!path.exists());
     let (code, _, stderr) = p.output(&["daemon", "--once"]);
-    // 20260101T000000.000000Z-000000 stops the queue again as it is retried; it ends in `done` first.
+    // 20260101T000000.000000Z-000000 pauses the queue again as it is retried; it ends in `done` first.
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
         "done"
     );
-    fs::remove_file(&path).unwrap();
+    p.output(&["resume"]);
     let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
@@ -531,26 +531,27 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
 }
 
 #[test]
-fn decree_stop_keeps_the_first_file_and_prints_json() {
+fn decree_pause_keeps_the_first_file_and_resume_deletes_it_with_json() {
     let p = Project::new();
-    let (code, stdout, stderr) = p.output(&["stop"]);
+    let (code, stdout, stderr) = p.output(&["pause"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         stdout,
-        "stopping after the runs executing now; delete .decree/attention/manual-stop.md to resume\n"
+        "paused: the runs executing now finish their step, and nothing more runs until \
+         `decree resume` (.decree/attention/pause.md)\n"
     );
-    let path = p.attention("manual-stop");
+    let path = p.attention("pause");
     let text = fs::read_to_string(&path).unwrap();
     assert!(
-        text.contains("`decree stop` was run at ") && text.contains("Delete this file to resume"),
+        text.contains("`decree pause` was run at ") && text.contains("\n    decree resume\n"),
         "{text}"
     );
 
-    let (code, stdout, _) = p.output(&["stop", "-m", "again"]);
+    let (code, stdout, _) = p.output(&["pause", "-m", "again"]);
     assert_eq!(code, Some(0));
     assert_eq!(
         stdout,
-        "already stopped: .decree/attention/manual-stop.md exists; delete it to resume\n"
+        "already paused since .decree/attention/pause.md was written; `decree resume` to go on\n"
     );
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
@@ -558,17 +559,40 @@ fn decree_stop_keeps_the_first_file_and_prints_json() {
         "the first `since` stays"
     );
 
-    let (code, json, _) = p.output(&["stop", "--format", "json"]);
+    let validator = schema::validator(schema::CLI_PAUSE_SCHEMA);
+    let (code, json, _) = p.output(&["pause", "--format", "json"]);
     assert_eq!(code, Some(0));
     let doc: Value = serde_json::from_str(&json).unwrap();
-    let validator = schema::validator(schema::CLI_STOP_SCHEMA);
     assert_eq!(schema::errors(&validator, &doc), Vec::<String>::new());
-    assert_eq!(doc["attention"], ".decree/attention/manual-stop.md");
+    assert_eq!(
+        doc,
+        serde_json::json!({ "attention": ".decree/attention/pause.md", "paused": true })
+    );
+
+    // Another file that holds is named after a resume; resume twice says it is not paused.
+    p.write("attention/note.md", "hold everything\n");
+    let (code, stdout, _) = p.output(&["resume"]);
+    assert_eq!(code, Some(0));
+    assert!(
+        stdout.starts_with(
+            "resumed: deleted .decree/attention/pause.md\nstill held:\n  \
+             .decree/attention/note.md: holds the queue: no frontmatter"
+        ),
+        "{stdout}"
+    );
+    assert!(!path.exists());
+    let (code, json, _) = p.output(&["resume", "--format", "json"]);
+    assert_eq!(code, Some(0));
+    let doc: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(schema::errors(&validator, &doc), Vec::<String>::new());
+    assert_eq!(doc["resumed"], false);
+    let (_, stdout, _) = p.output(&["resume"]);
+    assert!(stdout.starts_with("not paused: "), "{stdout}");
 
     // Outside a project it fails, and writes nothing.
     let outside = TempDir::new().unwrap();
     common::decree_at(outside.path())
-        .arg("stop")
+        .arg("pause")
         .assert()
         .code(1);
     assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);

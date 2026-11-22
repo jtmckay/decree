@@ -259,14 +259,14 @@ fn excluded_machine_does_not_fire_reboot() {
 fn reboot_is_queued_while_held_and_runs_after() {
     let p = Project::new();
     p.reboot_file();
-    p.decree(&["stop"]).assert().success();
+    p.decree(&["pause"]).assert().success();
     let daemon = p.daemon(&[]);
     wait_for("the queued boot message", || p.boot_messages().len() == 1);
     thread::sleep(Duration::from_millis(2500));
     assert_eq!(p.inbox_len(), 1, "held: still in inbox");
     assert_eq!(p.boot_done(), 0, "held: not run");
 
-    fs::remove_file(p.decree_dir().join("attention/manual-stop.md")).unwrap();
+    p.decree(&["resume"]).assert().success();
     wait_for("the boot run after the hold", || p.boot_done() == 1);
     stop(daemon);
     assert_eq!(p.boot_messages().len(), 1);

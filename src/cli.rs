@@ -160,13 +160,19 @@ pub enum Command {
         format: Format,
     },
 
-    /// Hold the queue: runs going now finish, no new run starts until
-    /// .decree/attention/manual-stop.md is deleted
-    Stop {
-        /// Note, written into the file
+    /// Pause the queue: runs going now finish their step, and nothing more runs until `decree resume`
+    Pause {
+        /// Note, written into .decree/attention/pause.md
         #[arg(short = 'm', value_name = "NOTE")]
         note: Option<String>,
 
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
+    },
+
+    /// Resume the queue `decree pause` held: delete .decree/attention/pause.md
+    Resume {
         /// Output format
         #[arg(long, value_enum, default_value_t)]
         format: Format,

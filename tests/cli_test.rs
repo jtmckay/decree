@@ -1016,7 +1016,7 @@ fn machine_and_daemon_take_the_same_durations() {
 #[test]
 fn commands_without_a_project_fail() {
     let tmp = TempDir::new().unwrap();
-    for cmd in ["daemon", "check", "graph", "status", "stop"] {
+    for cmd in ["daemon", "check", "graph", "status", "pause", "resume"] {
         common::decree_at(tmp.path()).arg(cmd).assert().failure();
     }
 }
@@ -1338,10 +1338,10 @@ fn daemon_runs_nothing_while_an_attention_file_holds() {
     );
 }
 
-/// `decree stop` during a daemon's run: the run finishes, the next queued message waits
-/// while `manual-stop.md` exists, and runs once it is deleted, without a restart.
+/// `decree pause` during a daemon's run: the run finishes, the next queued message waits
+/// while paused, and runs after `decree resume`, without a restart.
 #[test]
-fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
+fn daemon_paused_by_decree_pause_goes_on_after_resume() {
     let p = Project::init();
     p.machine("flaky", FLAKY);
     p.script("work", FLAKY_WORK);
@@ -1351,10 +1351,10 @@ fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
             .replace("name: flaky", "name: stopper")
             .replace("invoke: work", "invoke: stop_queue"),
     );
-    p.script("stop_queue", "#!/bin/sh\n\"${DECREE}\" stop\n");
+    p.script("stop_queue", "#!/bin/sh\n\"${DECREE}\" pause\n");
     fs::write(p.root().join("ok.flag"), "").unwrap();
     let first = p.emit("stopper", "Stop.\n");
-    let stop = p.decree_dir().join("attention/manual-stop.md");
+    let stop = p.decree_dir().join("attention/pause.md");
 
     let mut daemon = p.spawn(&["daemon", "--interval", "1s"]);
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -1363,12 +1363,13 @@ fn daemon_held_by_decree_stop_goes_on_when_the_file_is_deleted() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(stop.exists());
-    // Queued after the stop (one queued before, for another machine, would have started
+    // Queued after the pause (one queued before, for another machine, would have started
     // beside the stopper: machines run at once).
     let second = p.emit("flaky", "Works.\n");
     thread::sleep(Duration::from_millis(1500));
     assert!(!p.run_dir(&second).exists(), "claimed while held");
-    fs::remove_file(&stop).unwrap();
+    p.decree(&["resume"]).assert().success();
+    assert!(!stop.exists());
     while p
         .events(&second)
         .last()

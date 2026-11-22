@@ -182,8 +182,9 @@ scripts:
       `decree graph` after changing a machine. Commit each `machines/<name>/graph.md` and
       `.decree/system.md`.
     - **Read decree's output as JSON, never by parsing its text**: `decree check --format json`,
-      `decree status [<id>] --format json`, and `--format json` on `emit`, `event`, `stop`,
-      `graph`, `schema`, `upgrade` and `daemon --once --dry-run` print one JSON document, described by
+      `decree status [<id>] --format json`, and `--format json` on `emit`, `reply`, `retry`,
+      `cancel`, `pause`, `resume`, `graph`, `schema`, `upgrade` and `daemon --once --dry-run`
+      print one JSON document, described by
       `.decree/schema/v1/cli/<command>.schema.json`. Exit codes are the same as in text.
       `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
       `message`.
@@ -233,9 +234,8 @@ scripts:
       to answer; never write one from a machine's script. A step whose failure must stop every
       run writes `$DECREE_RUN_DIR/hold` (what `keep` does), and decree turns it into a holding
       attention file. Any `.md` file a person or another tool puts in the folder halts the queue
-      until it is deleted. To pause the queue, `decree stop`: the runs going now finish, and
-      nothing more runs until `.decree/attention/manual-stop.md` is deleted; Ctrl-C interrupts the
-      run instead.
+      until it is deleted. To pause the queue, `decree pause`: the runs going now finish their
+      step, and nothing more runs until `decree resume`; Ctrl-C interrupts the runs instead.
     - **Plugins are the source.** Each `.decree/plugins/<name>.md` holds one machine folder,
       `.decree/machines/<name>/`: its `machine.yml` (or none: a library of scripts), `scripts/`,
       `cron/`, and seeds for its `state/` and `order/`; `x-` keys are for other tools. decree
@@ -278,7 +278,8 @@ scripts:
     | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
     | `decree reply <wait id> <event> [-m <note>]` | Answer a run waiting in a `reply` state; a run id means its current wait. |
     | `decree cancel <id> [-m <note>]` | End a waiting, pending or interrupted run, and the child runs below it, in `failed`; no script runs, and no attention file stays. `decree retry` continues it. |
-    | `decree stop [-m <note>]` | Let the runs going now finish, then hold the queue until `.decree/attention/manual-stop.md` is deleted (no restart needed). Ctrl-C interrupts the run instead. |
+    | `decree pause [-m <note>]` | Let the runs going now finish their step, then run nothing more until `decree resume` (no restart needed). Ctrl-C interrupts the runs instead. |
+    | `decree resume` | Go on after `decree pause`. |
 
     `daemon --once` exits once nothing more can run, leaving `reply` waits for the next start;
     `daemon` keeps polling, fires scheduled cron and continues runs as replies arrive, so unattended

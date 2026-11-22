@@ -810,3 +810,11 @@ Left out, and why: existential's flows, `project:` tags, `endpoints:`, `handlers
 
 **Consequences.** A person can always end a run, and see that they did: the event names `cancel` and its note. A cancelled run is finished, so `decree retry` continues it, and a cancel is undone the same way a failure is. A plugin whose runs hold something outside decree (the `lease` plugin) must treat a finished run as gone, which `lease` already does for a crashed or interrupted holder; until its next check, its status file still shows the lease.
 
+## D93: `decree pause` and `decree resume`
+
+**Context.** [D68](#d68-a-graceful-stop-is-an-attention-file) named the graceful hold `decree stop`, though it stops nothing: the daemon keeps running and starts no run while `manual-stop.md` exists, and resuming meant knowing to delete that file. `stop` reads as "the process exits". The project's owner asked for commands that are what one would expect. Prior art: `docker pause` and `docker unpause`, which keep the container and freeze its work; Sidekiq's quiet; `kubectl rollout pause` and `resume`.
+
+**Decision.** `decree pause [-m <note>]` writes `.decree/attention/pause.md` (`kind: pause`, was `manual-stop`), with the same rules as before: the runs going now finish their step, no run starts or continues, a second pause keeps the first `since`. `decree resume` deletes it, refusing a `pause.md` that `decree pause` did not write, and names any other file that still holds the queue. Both take `--format json` (`cli/pause.schema.json`, was `cli/stop.schema.json`). `decree stop` is gone. The file stays the mechanism, so a pause reaches every daemon of the project and deleting the file still resumes.
+
+**Consequences.** The pair reads as what it does, and nobody needs the file's name to go on. Ctrl-C keeps its meaning: interrupt now, and the daemon exits.
+
