@@ -14,12 +14,12 @@ machine:
         busy: pause
         other: done
     pause:
-      description: A one-second timer while the daemon works through the inbox; nothing answers it.
+      description: A timer while the daemon works through the inbox, 1s at first and doubling to 30s while it stays busy (idle writes order.deadline), so a quick follow-up goes on soon and a long run costs a look every 30s; nothing answers it.
       invoke:
         reply:
           question: Nothing to answer; order waits for the inbox to empty.
           notify: wait
-          timeout: 1s
+          timeout_at: order.deadline
           attention: false
       transitions:
         ready:
@@ -112,16 +112,31 @@ scripts:
       esac
     fi
     echo "${DECREE_MESSAGE_ID}" > "${lock}"
-    if find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | grep -q .; then
+    # Busy: pause until order.deadline, 1s after the first look and doubling up to 30s
+    # while the daemon stays busy; the count is reset once it is idle. Says why only on the
+    # first look of a pause, so a long run adds no line per look.
+    pauses="${DECREE_RUN_DIR}/order.pauses"
+    busy() {
+      local k t ms
+      k=$(cat "${pauses}" 2>/dev/null || echo 0)
+      (( k > 0 )) || echo "$1"
+      t="${EPOCHREALTIME//[!0-9]/}"
+      ms=$(( 10#$t / 1000 + (k >= 5 ? 30000 : 1000 << k) ))
+      jq -nr --argjson ms "${ms}" '($ms / 1000 | floor | strftime("%Y-%m-%dT%H:%M:%S")) + "." + ("00" + ($ms % 1000 | tostring))[-3:] + "Z"' \
+        > "${DECREE_RUN_DIR}/order.deadline"
+      echo $(( k + 1 )) > "${pauses}"
       echo busy > "${DECREE_EVENT_FILE}"
+    }
+    if find .decree/inbox -maxdepth 1 -name '*.md' 2>/dev/null | grep -q .; then
+      busy "messages are queued in inbox/"
       exit 0
     fi
     others=$("${DECREE:-decree}" status --format json |
       jq -r --arg me "${DECREE_MESSAGE_ID}" '[.runs.active[], .runs.pending[]] | map(select(.id != $me)) | length')
     if [ "${others}" != 0 ]; then
-      echo "${others} other run(s) executing or about to"
-      echo busy > "${DECREE_EVENT_FILE}"
+      busy "${others} other run(s) executing or about to"
     else
+      rm -f "${pauses}"
       echo idle > "${DECREE_EVENT_FILE}"
     fi
   next.sh: |
