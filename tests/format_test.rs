@@ -318,20 +318,13 @@ fn emit_event_retry_status_and_daemon_once() {
         serde_json::json!([{ "file": format!("{reply}.md"), "valid": true, "to": deploy }])
     );
 
-    // process --retry: a stream, so no --format (2); a waiting run cannot be retried (1);
-    // a failed one continues in its state, and the pipeline runs on.
-    let retry = ["daemon", "--once", "--retry", flaky.as_str()];
-    let (code, stdout, _) = run(p.root(), &[&retry[..], &["--format", "json"]].concat(), "");
-    assert_eq!((code, stdout.as_str()), (2, ""));
-    let (code, stdout, _) = run(p.root(), &["daemon", "--once", "--retry", &deploy], "");
+    // retry: a waiting run cannot be retried (1, nothing on stdout); a failed one is
+    // pending in its state, and says so.
+    let (code, stdout, _) = run(p.root(), &["retry", &deploy, "--format", "json"], "");
     assert_eq!((code, stdout.as_str()), (1, ""));
     p.touch("ok.flag");
-    let (code, stdout, stderr) = run(p.root(), &retry, "");
-    assert_eq!(code, 0, "{stderr}");
-    assert!(
-        stdout.contains(&format!("run {flaky} continues in `work`")),
-        "{stdout}"
-    );
+    let (_, doc) = p.json(&["retry", &flaky], "", schema::CLI_RETRY_SCHEMA, false);
+    assert_eq!(doc, serde_json::json!({ "id": flaky, "state": "work" }));
 }
 
 /// An invalid queued message: process --dry-run lists it as invalid, reports its error on

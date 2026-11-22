@@ -5,7 +5,7 @@
 //! status changes, never by rescanning, so a file a person deleted stays deleted.
 //!
 //! The files are read-only for people: answers go through `decree reply` or a reply, and a
-//! run continues with `decree daemon --once --retry`. A file with `holds: true` (its run has a
+//! run continues with `decree retry`. A file with `holds: true` (its run has a
 //! `hold` file), or any `.md` file decree cannot read as one of its own, holds the queue:
 //! `daemon` starts and continues no runs until it is gone. decree never rewrites
 //! or deletes a file it did not write.
@@ -378,7 +378,7 @@ pub fn record(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
     Ok(())
 }
 
-/// `decree daemon --once --retry` of run `id`: delete its `hold` and its attention file.
+/// `decree retry` of run `id`: delete its `hold` and its attention file.
 pub fn release(ctx: &Context, id: &str) -> Result<(), InterpreterError> {
     let hold = ctx.runs_dir().join(id).join(HOLD_FILE);
     if remove_if_present(&hold).map_err(io_err(&hold))? {
@@ -475,7 +475,7 @@ fn render(
 ) -> Result<String, InterpreterError> {
     let run_dir = ctx.runs_dir().join(id);
     let machine = machine_of(ctx, events, message);
-    // A failed run is in `failed`; the state it failed from is the one `--retry` continues in.
+    // A failed run is in `failed`; the state it failed from is the one `decree retry` continues in.
     let state = match need {
         Need::Failed => events
             .iter()
@@ -528,7 +528,7 @@ fn render(
         })
         .unwrap_or_else(|| format!("Run {id}"));
     let mut body = format!("# {heading}\n\n");
-    let retry = |run: &str| format!("    decree daemon --once --retry {run}\n\n");
+    let retry = |run: &str| format!("    decree retry {run}\n\n");
     match need {
         Need::Failed => {
             body.push_str(&format!(
@@ -573,7 +573,7 @@ fn render(
         body.push_str(&format!(
             "## {STOP_FILE}\n\nThe agent asked, in `.decree/runs/{id}/{STOP_FILE}`:\n\n{}\n\n\
              In `.decree/runs/{id}/`, answer it in plan.md, delete STOP, then \
-             decree daemon --once --retry {id}\n\n",
+             decree retry {id}\n\n",
             text.trim()
         ));
     }

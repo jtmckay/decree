@@ -81,11 +81,11 @@ The time is ISO 8601 basic format with a decimal fraction of the second. Ids sor
 3. **Validate.** If the frontmatter does not parse, `machine` is unknown, or a param is unknown or the wrong type, the run starts in `failed`: decree writes one `transition` event with `to: "failed"`, `source: "invalid_message"` and the reason, mirrors `state: failed` (unless the frontmatter itself did not parse, then `message.md` is left unchanged), appends `run_finished` with `state: "failed"` and `duration_ms: 0`, and runs nothing.
 4. **Run.** The interpreter steps the machine ([runs.md](runs.md)). A run in a `reply` state pauses until a reply arrives ([Replies](#replies)).
 5. **Finish.** The run ends when it enters a root-level final state. The run folder is kept until the official [`prune`](plugins.md#official-plugins) plugin removes it, weekly, once it is older than `PRUNE_OLDER_THAN`; decree itself removes none.
-6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only a person continues an interrupted run, with `decree daemon --once --retry` ([Retry](cli.md#retry)).
+6. **Interrupt.** A run that stops before a final state is *interrupted*, and decree never continues it on its own. Stopping is often deliberate, and decree cannot tell a deliberate kill from a crash, so it does not guess. Only a person continues an interrupted run, with `decree retry` ([Retry](cli.md#retry)).
 
 A run that ends in `failed`, is interrupted or waits for a person has a file in `.decree/attention/` saying what happened and the command that continues it, until its status changes ([Attention](cli.md#attention)).
 
-**A failed inbox run does not stop `daemon --once`.** Inbox messages are independent, so when a run claimed from `inbox/` ends in `failed` (a reply's rejection run, or a run continued after a reply, included), `decree daemon --once` reports it with `decree daemon --once --retry <id>` and goes on with the next inbox file. Once the queue is empty it lists every run that failed in the pass and exits 1.
+**A failed inbox run does not stop `daemon --once`.** Inbox messages are independent, so when a run claimed from `inbox/` ends in `failed` (a reply's rejection run, or a run continued after a reply, included), `decree daemon --once` reports it with `decree retry <id>` and goes on with the next inbox file. Once the queue is empty it lists every run that failed in the pass and exits 1.
 
 **Source of truth.** The run's state is the `to` of the last `transition` event in `events.jsonl`. `message.md`'s `state` is a mirror for humans and tools; whenever decree touches a run and the two disagree (a crash between the two writes), it rewrites the mirror. This is event sourcing: the log is the record, everything else is derived.
 
@@ -99,7 +99,7 @@ A run that ends in `failed`, is interrupted or waits for a person has a file in 
 | `pending` | The last event is `received`, or a `transition` with `source: "retry"`. `daemon` continues it. |
 | `interrupted` | Anything else. Includes a run whose last event is `interrupted`, and a run left mid-step by a crash. |
 
-A run that reaches a root final state appends `run_finished` last ([runs.md](runs.md#step-loop), step 8), and only `decree daemon --once --retry` appends after it. So a run whose last event is `run_finished` is finished, and when `daemon`, `decree status` or `decree tail` look over every run, decree reads only that last line of its `events.jsonl`: a finished run costs one small read, however long its log. `decree status <id>` and stepping a run still read the whole log.
+A run that reaches a root final state appends `run_finished` last ([runs.md](runs.md#step-loop), step 8), and only `decree retry` appends after it. So a run whose last event is `run_finished` is finished, and when `daemon`, `decree status` or `decree tail` look over every run, decree reads only that last line of its `events.jsonl`: a finished run costs one small read, however long its log. `decree status <id>` and stepping a run still read the whole log.
 
 When `daemon` starts, it appends an `interrupted` event with `cause: "crash"` to every run that is interrupted but whose last event is not already `interrupted`, so the stop is visible in the log. It continues `pending` runs, in `id` order, before reading `inbox/`.
 
@@ -115,7 +115,7 @@ A `reply` invoke ([machines.md](machines.md#invoke-the-states-function)) pauses 
 
 `decree daemon --once` ends by printing every waiting run, its question (the state's `description`), its options and the `decree reply` command for each, and exits 0. The same is in the run's file in `.decree/attention/` until the reply is delivered ([Attention](cli.md#attention)); the file is read-only, so a reply always goes through `decree reply` or a reply message.
 
-**Stopping.** On SIGINT or SIGTERM, decree stops the running script ([scripts.md](scripts.md#execution)), appends an `interrupted` event with `cause: "signal"`, deletes the lock and exits. No `onexit` scripts run; `decree daemon --once --retry` re-runs the `onentry` scripts instead ([runs.md](runs.md#step-loop), step 1).
+**Stopping.** On SIGINT or SIGTERM, decree stops the running script ([scripts.md](scripts.md#execution)), appends an `interrupted` event with `cause: "signal"`, deletes the lock and exits. No `onexit` scripts run; `decree retry` re-runs the `onentry` scripts instead ([runs.md](runs.md#step-loop), step 1).
 
 ## Run lock
 
@@ -129,7 +129,7 @@ Work that must happen in order, and once (setting a project up, a series of chan
 2. **Everything before it first.** A file starts only once `inbox/` is empty, so the follow-ups the file before it emitted have run. A follow-up that ends in `failed` has left `inbox/`, so it holds nothing back.
 3. **A child run.** The file runs as a child run of the `order` run (`invoke: { machine: { message } }`, [machines.md](machines.md#invoke-the-states-function)): its `machine` is its folder's unless it names another, and it gets `order: <machine>/<file>`, by which a script (the official `commit`) knows which file it is.
 4. **Once, and again when it changes.** A file that finishes in any state but `failed` is recorded, `<file> <sha256>`, in its machine's `state/order.git.txt`, which git keeps. A file whose hash is recorded does not run again; an edited file does.
-5. **Stop on error.** A file whose run fails stops the files after it: the `order` run fails, with its file in `.decree/attention/`, and the next start runs that file again. `decree daemon --once --retry <id>` continues the failed run, as for any run.
+5. **Stop on error.** A file whose run fails stops the files after it: the `order` run fails, with its file in `.decree/attention/`, and the next start runs that file again. `decree retry <id>` continues the failed run, as for any run.
 
 **Batching by resource.** Rule 2 batches work by resource for free. An order file that does the LLM work and emits a message for each GPU step runs every LLM step first; only then do its emitted messages run, all the ComfyUI work, before the next file starts. Ollama and ComfyUI then swap the GPU once per file, not once per step.
 
@@ -159,4 +159,4 @@ machine: boot
 Check that the services this project calls answer.
 ```
 
-The message goes through the same writer with `trigger: cron`, and `--machine` and `--exclude-machine` decide whether this daemon fires it, as for any cron file. It fires on every start, `decree daemon --retry` included, so a daemon a supervisor restarts after a crash queues it again each time; decree keeps no record of past starts. A script that must not repeat its work checks its own result first, as every script should. It fires only at start: a `@reboot` file added while the daemon runs waits for the next start, and `decree daemon --once` never fires it, as it fires no cron file. When a file in `.decree/attention/` holds the queue (or after `decree stop`), the message is still queued at start and runs once the hold is gone. `decree status --cron` shows `daemon start` in place of its next fire time; `--format json` gives it `next: null` and `at_daemon_start: true`.
+The message goes through the same writer with `trigger: cron`, and `--machine` and `--exclude-machine` decide whether this daemon fires it, as for any cron file. It fires on every start, so a daemon a supervisor restarts after a crash queues it again each time; decree keeps no record of past starts. A script that must not repeat its work checks its own result first, as every script should. It fires only at start: a `@reboot` file added while the daemon runs waits for the next start, and `decree daemon --once` never fires it, as it fires no cron file. When a file in `.decree/attention/` holds the queue (or after `decree stop`), the message is still queued at start and runs once the hold is gone. `decree status --cron` shows `daemon start` in place of its next fire time; `--format json` gives it `next: null` and `at_daemon_start: true`.

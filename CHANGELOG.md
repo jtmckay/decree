@@ -26,6 +26,7 @@ All notable changes to decree are listed here. The format follows [Keep a Change
 
 ### Changed
 
+- `decree retry <id> [--state <s>]` continues a failed or interrupted run ([D91](docs/decisions.md#d91-decree-retry-is-a-command-of-its-own), [Retry](docs/reference/cli.md#retry)): it makes the run `pending`, and a running `decree daemon` continues it at its next pass, with no restart, or the next `decree daemon --once` does. `--format json` prints `{ "id", "state" }` (`cli/retry.schema.json`). `daemon --retry` and `--state` are gone: run `decree retry <id>`, then `decree daemon --once`. Every message that says how to continue a run names `decree retry <id>`.
 - Each machine owns a folder ([D86](docs/decisions.md#d86-machines-own-their-folders-order-replaces-migrations), [File layout](docs/reference/README.md#file-layout)): `machines/<name>.yml` is `machines/<name>/machine.yml`, `scripts/<name>/` is `machines/<name>/scripts/`, cron files are `machines/<name>/cron/*.md` (`machine:` defaults to the folder), and `decree graph` writes `machines/<name>/graph.md` and `.decree/system.md` in place of `graph/`. A plugin installs into that folder; replace `.decree/.gitignore` with the one `decree init` writes.
 - `store` is `state` ([D86](docs/decisions.md#d86-machines-own-their-folders-order-replaces-migrations), [State](docs/reference/scripts.md#state)): the folder is `machines/<name>/state/`, the machine key `store:` is `state_files:`, and the plugin key `store` is `state`; `DECREE_STATE_DIR` names the folder. Move `store/<name>/` into the machine's folder as `state/`.
 - The plugin key `migrations` is `order`: seeds for `machines/<name>/order/`, written once. An uninstalled plugin keeps its `state/`, `order/` and `graph.md`.
@@ -43,7 +44,7 @@ All notable changes to decree are listed here. The format follows [Keep a Change
 ### Removed
 
 - Migrations ([D86](docs/decisions.md#d86-machines-own-their-folders-order-replaces-migrations)): `.decree/migrations/`, `processed.md`, the `migration` trigger and frontmatter key, `decree check`'s M1 and its warning about an inserted name, and naming a run by a migration's file. Move each file into the `order/` of the machine it names and write that machine's `state/order.git.txt` from `processed.md`, one `<file> <sha256>` line each (`sha256sum`), so none runs again.
-- `decree process`: run `decree daemon --once`, which takes the same flags; `--retry` now needs a run id.
+- `decree process`: run `decree daemon --once`; to continue a run, `decree retry <id>` first.
 - `decree prune`: the official `prune` plugin deletes old runs (`echo "Prune." | decree emit --machine prune` now; `PRUNE_OLDER_THAN` for the age).
 - `decree skill`: the official `skill` plugin, which `decree init` adds, writes the skill at init and refreshes it at each daemon start; after an upgrade, `decree install --force skill`. `cli/skill.schema.json` is gone.
 - Flat `.decree/scripts/` and `.decree/cron/`: a script resolves only in its machine's `scripts/`, and code several machines share is a library machine they source by path.

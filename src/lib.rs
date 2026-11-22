@@ -75,18 +75,15 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             dry_run,
             format,
             interval,
-            retry,
-            state,
             quiet,
             machines,
             exclude_machines,
         } => {
-            let retry = commands::process::Retry::from_args(retry, state);
             let select = filter::Select::new(machines, exclude_machines);
             if once {
-                commands::process::run(&root()?, dry_run, retry, format, quiet, &select)
+                commands::process::run(&root()?, dry_run, format, quiet, &select)
             } else {
-                commands::daemon::run(&root()?, interval, retry, quiet, &select)
+                commands::daemon::run(&root()?, interval, quiet, &select)
             }
         }
         Command::List { format } => commands::plugin::list(&root()?, format),
@@ -103,6 +100,9 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
             force,
             format,
         } => commands::plugin::install(&root()?, &sources, force, format),
+        Command::Retry { id, state, format } => {
+            commands::retry::run(&root()?, &id, state.as_deref(), format)
+        }
         Command::Stop { note, format } => commands::stop::run(&root()?, note.as_deref(), format),
         Command::Tail { id } => commands::tail::run(&root()?, id.as_deref()),
         Command::Status {

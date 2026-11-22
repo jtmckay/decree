@@ -92,7 +92,7 @@ scripts:
     #           continues where this one stopped. If the message is unclear, it
     #           writes the question to STOP instead of guessing; the state's event
     #           is then `stop`, and the run fails until a person answers it,
-    #           deletes STOP and runs `decree daemon --once --retry`.
+    #           deletes STOP and runs `decree retry`.
     set -euo pipefail
     . .decree/machines/ai/scripts/ai.sh
     OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3-coder:30b}"

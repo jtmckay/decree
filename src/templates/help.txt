@@ -56,16 +56,18 @@ Commands:
                               then exit. A failed run is reported and the rest
                               run. Exits 1 if any run failed. --quiet prints
                               only notices
-  decree daemon --once --retry ID [--state S]
-                              First continue a failed or interrupted run
   decree daemon --once --machine M,... | --exclude-machine M,...
                               Run only these machines, or all but these
                               (also DECREE_MACHINES, DECREE_EXCLUDE_MACHINES;
                               daemon takes them too)
-  decree daemon [--interval D] [--retry ID [--state S]] [--quiet]
+  decree daemon [--interval D] [--quiet]
                               The same, plus scheduled cron, every D (default
                               2s), until stopped; for unattended work, as
                               --once exits while a run waits for a reply
+  decree retry ID [--state S]
+                              Make a failed or interrupted run pending again,
+                              in S or the state it was in; the daemon (or the
+                              next daemon --once) continues it
   decree stop [-m NOTE]       Let the runs going now finish, then hold the
                               queue: writes .decree/attention/manual-stop.md;
                               delete it to resume (Ctrl-C interrupts the run)
@@ -91,7 +93,7 @@ Commands:
                               nothing (run the queue with decree daemon --once)
   decree --version            Print the version
 
-  --format json on check, status, emit, reply, stop, graph, schema, upgrade,
+  --format json on check, status, emit, reply, retry, stop, graph, schema, upgrade,
   install, list, export and daemon --once --dry-run prints one JSON document instead of text, described by
   .decree/schema/v1/cli/<command>.schema.json (install, list and export:
   cli/plugin.schema.json); exit codes stay the same.

@@ -614,15 +614,15 @@ fn a_flag_decree_does_not_have_fails_naming_the_file_and_the_flag() {
         assert!(errors[0].starts_with("docs/scratch.md:"), "{}", errors[0]);
         assert!(errors[0].contains("--no-such-flag"), "{}", errors[0]);
     }
-    let errors = command_errors(&cli, "README.md", "`decree retry 01-a`, `decree graph x`\n");
+    let errors = command_errors(&cli, "README.md", "`decree prune 01-a`, `decree graph x`\n");
     assert_eq!(errors.len(), 2, "{errors:?}");
-    assert!(errors[0].contains("no command `retry`"), "{}", errors[0]);
+    assert!(errors[0].contains("no command `prune`"), "{}", errors[0]);
     assert!(errors[1].contains("decree graph takes 0"), "{}", errors[1]);
     // Values, placeholders, quotes and what follows the command are not flags or arguments.
     for ok in [
         "```bash\ndecree reply 02-a.w15 retry -m \"a --note\"   # --nothing\n```\n",
         "```bash\necho x | decree emit --machine m --param a=1 <<'EOF'\n--x\nEOF\n```\n",
-        "```bash\ndecree daemon --once --retry 01-a --state implement > out.txt || true\n```\n",
+        "```bash\ndecree retry 01-a --state implement > out.txt || true\n```\n",
         "`decree status <id> --format json`, `decree daemon --once --dry-run --format json`\n",
         "`decree reply ID EVENT [-m NOTE]`, `cd projects/decree`, `.decree/inbox/`\n",
     ] {

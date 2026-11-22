@@ -1,5 +1,5 @@
-//! `decree daemon [--interval <duration>] [--retry <id> [--state <s>]]`
-//! (docs/reference/cli.md): report plugins not installed, validate, `--retry`, mark crashed
+//! `decree daemon [--interval <duration>]` (docs/reference/cli.md): report plugins not
+//! installed, validate, mark crashed
 //! runs `interrupted`, fire the `@reboot` cron files, then loop: read the machines and `.env`
 //! files again, deliver replies and timeouts, continue `pending` runs, cron tick, drain the
 //! inbox, sleep. Every step is the pipeline's (`commands::process::Pipeline`), which `daemon
@@ -7,7 +7,7 @@
 //! interrupts the current run and exits 0.
 
 use crate::commands::check::Project;
-use crate::commands::process::{context, plugin_notices, reporting, Pipeline, Retry, Stop};
+use crate::commands::process::{context, plugin_notices, reporting, Pipeline, Stop};
 use crate::commands::report::{line, notice};
 use crate::cron::{self, CronTracker};
 use crate::error::DecreeError;
@@ -20,12 +20,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Run the daemon polling loop, after `retry` if given. Unless `quiet`, each run's output is
+/// Run the daemon polling loop. Unless `quiet`, each run's output is
 /// printed as it goes (`commands::report`).
 pub fn run(
     project_root: &Path,
     interval: Duration,
-    retry: Option<Retry>,
     quiet: bool,
     select: &Select,
 ) -> Result<(), DecreeError> {
@@ -43,9 +42,6 @@ pub fn run(
         select,
     )?;
     pipeline.plugin_notes = plugin_notes;
-    if let Some(retry) = retry {
-        pipeline.retry(&retry)?;
-    }
     println!("decree daemon: polling every {}s", interval.as_secs());
     reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
         poll(project_root, pipeline, &shutdown, interval)

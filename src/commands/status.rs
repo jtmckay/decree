@@ -492,7 +492,7 @@ fn print_rows(rows: &[&Row], indent: &str) {
 
 /// The command that continues an `interrupted` or `failed` run.
 fn retry_line(id: &str) -> String {
-    format!("continue with `decree daemon --once --retry {id}`")
+    format!("continue with `decree retry {id}`")
 }
 
 /// The script an `active` run is running now: name, pid, how long, and log path.

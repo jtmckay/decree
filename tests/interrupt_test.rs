@@ -155,7 +155,7 @@ impl Project {
         fs::write(path, text).unwrap();
     }
 
-    /// The `transition` event `decree daemon --once --retry <id>` appends for an interrupted run
+    /// The `transition` event `decree retry <id>` appends for an interrupted run
     /// (docs/reference/cli.md): back into the state it was in, without continuing it. The
     /// command itself is tested in `cli_test.rs` and `process_test.rs`.
     fn retry(&self, id: &str, machine: &str, trigger: &str, state: &str) {
@@ -334,7 +334,7 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
 
     let out = p.process().output().unwrap();
     assert!(
-        stderr(&out).contains("`decree daemon --once --retry 20260101T000000.000000Z-000000`"),
+        stderr(&out).contains("`decree retry 20260101T000000.000000Z-000000`"),
         "{}",
         stderr(&out)
     );
@@ -357,12 +357,12 @@ fn sigkill_then_process_marks_the_run_crashed_and_retry_continues_it() {
     assert_eq!(p.events("20260101T000000.000000Z-000000").len(), before + 1);
     assert_eq!(p.order(), ["root_entry", "work_entry", "work"]);
 
-    // `decree daemon --once --retry 20260101T000000.000000Z-000000`: root `onentry` and the state's `onentry` run again,
-    // then the invoke, and the run finishes.
-    p.process()
-        .args(["--retry", "20260101T000000.000000Z-000000"])
+    // `decree retry 20260101T000000.000000Z-000000`, then `daemon --once`: root `onentry`
+    // and the state's `onentry` run again, then the invoke, and the run finishes.
+    decree(&p, &["retry", "20260101T000000.000000Z-000000"])
         .assert()
         .success();
+    p.process().assert().success();
     assert_eq!(
         p.order(),
         [
@@ -552,17 +552,11 @@ fn finished_run_retried_continues_after_run_finished() {
     let before = p.order().len();
     decree(
         &p,
-        &[
-            "daemon",
-            "--once",
-            "--retry",
-            "20260101T000000.000000Z-000000",
-            "--state",
-            "work",
-        ],
+        &["retry", "20260101T000000.000000Z-000000", "--state", "work"],
     )
     .assert()
     .success();
+    decree(&p, &["daemon", "--once"]).assert().success();
     let events = p.events("20260101T000000.000000Z-000000");
     assert_eq!(events[..before_events.len()], before_events[..]);
     assert_eq!(events[before_events.len() - 1]["type"], "run_finished");

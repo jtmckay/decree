@@ -97,31 +97,16 @@ pub enum Command {
         once: bool,
 
         /// With --once: show what would run, without running it
-        #[arg(long, requires = "once", conflicts_with_all = ["retry", "quiet"])]
+        #[arg(long, requires = "once", conflicts_with = "quiet")]
         dry_run: bool,
 
         /// Output format of --dry-run
-        #[arg(
-            long,
-            value_enum,
-            default_value_t,
-            requires = "dry_run",
-            conflicts_with = "retry"
-        )]
+        #[arg(long, value_enum, default_value_t, requires = "dry_run")]
         format: Format,
 
         /// Polling interval: a whole number and s, m, h or d (2s, 1m)
         #[arg(long, value_name = "DURATION", default_value = "2s", value_parser = crate::duration::parse)]
         interval: std::time::Duration,
-
-        /// First continue an interrupted or finished run
-        #[arg(long, value_name = "ID")]
-        retry: Option<String>,
-
-        /// Atomic state the retried run continues in [default: the interrupted run's state,
-        /// or the state a finished run last left]
-        #[arg(long = "state", value_name = "STATE", requires = "retry")]
-        state: Option<String>,
 
         /// Print no run output, status line or run summaries: only what needs attention
         #[arg(long, short = 'q')]
@@ -144,6 +129,21 @@ pub enum Command {
             value_delimiter = ','
         )]
         exclude_machines: Vec<String>,
+    },
+
+    /// Continue an interrupted or finished run: make it pending, for the daemon to continue
+    Retry {
+        /// Run id
+        id: String,
+
+        /// Atomic state to continue in [default: the interrupted run's state, or the state a
+        /// finished run last left]
+        #[arg(long = "state", value_name = "STATE")]
+        state: Option<String>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value_t)]
+        format: Format,
     },
 
     /// Hold the queue: runs going now finish, no new run starts until

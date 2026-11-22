@@ -62,7 +62,7 @@ scripts:
     #!/usr/bin/env bash
     # Root onentry script: the run starts from a clean git work tree, so the commit at `done`
     # holds this run's work only, and a failed run's changes never mix into the next one.
-    # It runs again when `decree daemon --once --retry` continues the run; by then the tree holds
+    # It runs again when `decree retry` continues the run; by then the tree holds
     # the run's own work, so it checks only the first time. Only the project folder counts
     # (`-- .`): a decree project can be a subfolder of a larger repository.
     # When it finds changes, it names each run that passed here and is now `interrupted` or
@@ -100,7 +100,7 @@ scripts:
         [ -f "${dir}/clean_tree" ] || continue
         title=$(sed -n 's/^# //p' "${dir}/message.md" 2>/dev/null | head -n 1)
         echo "run ${id} (${title:-no heading}) started from a clean tree and is ${status}; it may have left them:"
-        echo "  to continue it on them: \`decree daemon --once --retry ${id}\`"
+        echo "  to continue it on them: \`decree retry ${id}\`"
         echo "  to set them aside: \`git stash push --include-untracked -m \"decree ${id}\" -- .\`"
       done < <(stopped_runs)
     }
@@ -117,7 +117,7 @@ scripts:
         echo "${named}" >&2
         echo "${named}" > "${leftovers}"
       fi
-      echo "if a failed run left them, its file in .decree/attention/ names it; continue it with \`decree daemon --once --retry <id>\`" >&2
+      echo "if a failed run left them, its file in .decree/attention/ names it; continue it with \`decree retry <id>\`" >&2
       exit 1
     fi
     git rev-parse HEAD > "${mark}"
@@ -230,7 +230,7 @@ scripts:
     # each in progress.md, so a retry continues where the last attempt stopped. If
     # the message is unclear, it writes the question to STOP instead of guessing;
     # the run fails until a person answers it in plan.md, deletes STOP and runs
-    # `decree daemon --once --retry`. Its notes live in the root run's folder
+    # `decree retry`. Its notes live in the root run's folder
     # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
     # whose steps are develop's scripts shares them.
     set -euo pipefail
@@ -268,7 +268,7 @@ scripts:
     # onentry script of `failed`: leave the run's changes in the work tree, so a retry builds on
     # the last attempt (the agent sees them in `git status` and decides what to keep), and write
     # the run's `hold`, so its file in .decree/attention/ holds the queue and no other run starts
-    # on them. `decree daemon --once --retry` of this run removes both; to set the changes aside
+    # on them. `decree retry` of this run removes both; to set the changes aside
     # instead, stash them and delete the run's attention file.
     # Only the project folder counts (`-- .`): a decree project can be a subfolder of a larger
     # repository. A run that failed because a person's own changes were there from the start
@@ -290,7 +290,7 @@ scripts:
       echo "run ${DECREE_MESSAGE_ID} (${title:-${DECREE_MACHINE}}) failed and kept its changes in the work tree:"
       [ -z "${changes}" ] || echo "${changes}"
       [ -z "${edited}" ] || echo "${edited}" | sed 's/^/installed copy edited, not exported: /'
-      echo "to continue the run on them: \`decree daemon --once --retry ${DECREE_MESSAGE_ID}\`"
+      echo "to continue the run on them: \`decree retry ${DECREE_MESSAGE_ID}\`"
       echo "to set them aside instead: \`git stash push --include-untracked -m \"decree ${DECREE_MESSAGE_ID}\" -- .\` (and \`decree install <name>\` for an installed copy), then delete ${attention}"
     } > "${DECREE_RUN_DIR}/hold"
     cat "${DECREE_RUN_DIR}/hold"
@@ -315,7 +315,7 @@ scripts:
     # follow-ups; develop's `commit` records it in state/order.git.txt in the run's
     # commit. It ends with 0 when a pass ran no file (every file has run), and with 1
     # when a run needs a person: a file in .decree/attention/, a STOP, or a failed
-    # build. Ctrl-C interrupts the run going (`decree daemon --once --retry <id>`).
+    # build. Ctrl-C interrupts the run going (`decree retry <id>`).
     set -euo pipefail
     cd "$(git rev-parse --show-toplevel)"
     attention=.decree/attention
@@ -400,7 +400,7 @@ Implements a message, such as an order file describing a change, with an AI codi
 3. `implement`: the agent implements the message in small steps, logging each in the run's `progress.md`. If the message is ambiguous it writes `STOP` with its question instead of guessing, and the run ends in `failed`.
 4. `gate`: your project's checks, `.decree/machines/develop/scripts/gate.sh`. Passing goes to `verify`; failing goes to `fix`, where the agent fixes what `gate.log` reports, then to `final_gate`, whose failure ends the run.
 5. `verify`: the agent checks every acceptance criterion and ends its reply with `VERDICT: pass` or `VERDICT: fail`.
-6. `done`: `commit` exports every plugin a run edited (`decree export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree daemon --once --retry <id>`, and holds the queue.
+6. `done`: `commit` exports every plugin a run edited (`decree export`), then commits the run's work in one commit, titled with the message's first heading. `failed`: `keep` leaves the changes in the work tree for `decree retry <id>`, and holds the queue.
 
 ## What it needs
 

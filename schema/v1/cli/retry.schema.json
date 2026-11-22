@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/retry.schema.json",
+  "title": "decree retry --format json",
+  "description": "What `decree retry --format json` prints on stdout: the run made `pending` again and the state it continues in, which a running `decree daemon`, or the next `decree daemon --once`, continues. On failure nothing is printed on stdout; the error goes to stderr and the exit code is 1. Reference: docs/reference/cli.md, Machine-readable output.",
+  "type": "object",
+  "required": [
+    "id",
+    "state"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "The run id."
+    },
+    "state": {
+      "type": "string",
+      "description": "The atomic state the run continues in."
+    }
+  },
+  "examples": [
+    {
+      "id": "20260101T000000.000000Z-000000",
+      "state": "implement"
+    }
+  ]
+}

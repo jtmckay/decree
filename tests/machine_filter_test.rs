@@ -302,9 +302,9 @@ fn dry_run_honours_the_filter() {
     assert!(p.runs().is_empty());
 }
 
-/// `--retry <id>` of a run for a machine the process does not run is refused, naming it.
+/// A run `decree retry` made pending is continued only by a process that runs its machine.
 #[test]
-fn retry_of_another_machines_run_is_refused() {
+fn a_retried_run_waits_for_a_process_of_its_machine() {
     let p = Project::new();
     p.queue(
         "20260101T000000.000000Z-000000",
@@ -312,26 +312,21 @@ fn retry_of_another_machines_run_is_refused() {
         "params: { fail: true }\n",
     );
     p.process(&[]).assert().code(1);
-    let out = p
-        .process(&[
-            "--machine",
-            "a",
-            "--retry",
-            "20260101T000000.000000Z-000000",
-        ])
+    let events = || {
+        fs::read_to_string(
+            p.decree()
+                .join("runs/20260101T000000.000000Z-000000/events.jsonl"),
+        )
+        .unwrap()
+    };
+    p.decree_cmd(&["retry", "20260101T000000.000000Z-000000"])
         .assert()
-        .code(1);
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("run 20260101T000000.000000Z-000000 is for machine `b`, which this process does not run"),
-        "{stderr}"
-    );
-    let events = fs::read_to_string(
-        p.decree()
-            .join("runs/20260101T000000.000000Z-000000/events.jsonl"),
-    )
-    .unwrap();
-    assert!(!events.contains("\"retry\""), "{events}");
+        .success();
+    let retried = events();
+    p.process(&["--machine", "a"]).assert().success();
+    assert_eq!(events(), retried, "a process for `a` stepped a run of `b`");
+    p.process(&["--machine", "b"]).assert().code(1);
+    assert_ne!(events(), retried);
 }
 
 /// A child run belongs to its parent: a process that runs `p` steps `p`'s child of machine

@@ -7,6 +7,7 @@ pub mod plugin;
 pub mod process;
 pub mod reply;
 pub(crate) mod report;
+pub mod retry;
 pub mod schema;
 pub mod status;
 pub mod stop;

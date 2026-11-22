@@ -1,5 +1,5 @@
 //! Failure scenarios through the binary (docs/reference/runs.md, scripts.md, messages.md):
-//! signals and `decree daemon --once --retry`, two `decree process` at once, router replies decree
+//! signals and `decree retry`, two `decree process` at once, router replies decree
 //! rejects or doubts, `max_depth`, `onexit` failures and the log cap. Scenarios other files
 //! already cover: SIGKILL and the stale lock (`interrupt_test.rs`), stale or wrong replies
 //! and `timeout` (`reply_test.rs`), a failed migration (`process_test.rs`, rule 4). Each
@@ -312,14 +312,10 @@ fn sigterm_during_a_script_interrupts_the_run_and_decree_retry_reruns_the_script
     );
 
     fs::remove_file(p.root().join("wait.flag")).unwrap();
-    p.cmd(&[
-        "daemon",
-        "--once",
-        "--retry",
-        "20260101T000000.000000Z-000000",
-    ])
-    .assert()
-    .code(0);
+    p.cmd(&["retry", "20260101T000000.000000Z-000000"])
+        .assert()
+        .code(0);
+    p.cmd(&["daemon", "--once"]).assert().code(0);
     // Root and state `onentry` run again, then the invoke, then the exits.
     assert_eq!(
         p.order(),

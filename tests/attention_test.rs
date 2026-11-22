@@ -256,17 +256,15 @@ fn a_run_interrupted_by_sigint_has_a_file_and_status_starts_with_attention() {
     assert_eq!(fm["holds"], false);
     let text = fs::read_to_string(p.attention("20260101T000000.000000Z-000000")).unwrap();
     assert!(
-        text.contains("    decree daemon --once --retry 20260101T000000.000000Z-000000\n"),
+        text.contains("    decree retry 20260101T000000.000000Z-000000\n"),
         "{text}"
     );
 
-    // The retry continues it; the file goes as it starts, and it ends in `done`.
-    let (code, _, stderr) = p.output(&[
-        "daemon",
-        "--once",
-        "--retry",
-        "20260101T000000.000000Z-000000",
-    ]);
+    // The retry makes it pending and the file goes; `daemon --once` ends it in `done`.
+    let (code, _, stderr) = p.output(&["retry", "20260101T000000.000000Z-000000"]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(!p.attention("20260101T000000.000000Z-000000").exists());
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         p.last_event("20260101T000000.000000Z-000000")["state"],
@@ -495,17 +493,14 @@ fn decree_stop_lets_the_run_finish_and_holds_the_queue_until_deleted() {
     let (code, _, stderr) = p.output(&["daemon", "--once"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(p.runs(), 1);
-    let (code, stdout, stderr) = p.output(&[
-        "daemon",
-        "--once",
-        "--retry",
-        "20260101T000000.000000Z-000000",
-    ]);
-    assert_eq!(code, Some(1), "{stderr}");
+    let (code, stdout, stderr) = p.output(&["retry", "20260101T000000.000000Z-000000"]);
+    assert_eq!(code, Some(0), "{stderr}");
     assert!(
         stdout.contains("run 20260101T000000.000000Z-000000 continues in `work`"),
         "{stdout}"
     );
+    let (code, _, stderr) = p.output(&["daemon", "--once"]);
+    assert_eq!(code, Some(1), "{stderr}");
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
     let (_, status, _) = p.output(&[
         "status",

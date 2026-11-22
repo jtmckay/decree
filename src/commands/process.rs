@@ -5,11 +5,6 @@
 //! and the pass goes on. `daemon --once` ends by printing every waiting run, then every run
 //! that failed, and exits 1 if there was one.
 //!
-//! `--retry <id> [--state <s>]` first makes one `interrupted` or finished run `pending`
-//! again. It appends a `transition` event with `source: "retry"` and mirrors `state`; the
-//! pipeline then continues it, re-running root `onentry` and the `onentry` of every ancestor
-//! of `<s>` and of `<s>` (docs/reference/runs.md, step 1).
-//!
 //! A queued message with `to:` is a reply: it is delivered to its waiting run instead,
 //! or, failing a check, becomes a failed `invalid_message` run (docs/reference/messages.md,
 //! Replies).
@@ -24,51 +19,32 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
-use serde_json::json;
-
 use crate::attention;
 use crate::cli::Format;
 use crate::commands::check::{self, md_files, Project};
 use crate::commands::print_json;
 use crate::commands::report::{self, Reporter, RunNotes};
 use crate::error::DecreeError;
-use crate::events::{
-    current_state, first_text, is_transition, is_type, run_attempt, strings, text, Event, EventLog,
-};
+use crate::events::{is_type, strings, text, EventLog};
 use crate::filter::{self, MachineFilter, Select};
 use crate::interpreter::child::continue_holding;
-use crate::interpreter::recover::{self, mirror_state, RunStatus};
+use crate::interpreter::recover::{self, RunStatus};
 use crate::interpreter::{Context, Interpreter, InterpreterError, Outcome, RunInput};
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{self, ATTENTION_DIR, DECREE_DIR, INBOX_DIR};
 use crate::machine::FAILED;
-use crate::message::{self, is_valid_id, Claim, Message, RunLock, ARRIVED_AS};
+use crate::message::{self, Claim, Message, RunLock, ARRIVED_AS};
 use crate::reply::{self, Delivery};
 use crate::runtime::{self};
 use crate::slots::SlotGuard;
 
-/// What `--retry` continues: run `id`.
-pub struct Retry {
-    pub id: String,
-    /// The atomic state to continue in, from `--state`.
-    pub state: Option<String>,
-}
-
-impl Retry {
-    /// From `--retry <id>` and `--state`.
-    pub fn from_args(retry: Option<String>, state: Option<String>) -> Option<Retry> {
-        retry.map(|id| Retry { id, state })
-    }
-}
-
-/// Run `decree daemon --once [--dry-run | --retry <id> [--state <s>]] [--quiet]
+/// Run `decree daemon --once [--dry-run] [--quiet]
 /// [--machine <m> | --exclude-machine <m>]`: a daemon start, which fires the `@reboot` cron
 /// files, then works until only a person or a program can move a run on. Unless `quiet`,
 /// each run's output is printed as it goes (`commands::report`).
 pub fn run(
     project_root: &Path,
     dry_run: bool,
-    retry: Option<Retry>,
     format: Format,
     quiet: bool,
     select: &Select,
@@ -93,9 +69,6 @@ pub fn run(
     let observer_ctx = context(project_root, &project, Arc::clone(&shutdown));
     let mut pipeline = Pipeline::new(project_root, project, shutdown, "", select)?;
     pipeline.plugin_notes = plugin_notes;
-    if let Some(retry) = retry {
-        pipeline.retry(&retry)?;
-    }
     let result = reporting(&mut pipeline, &observer_ctx, quiet, |pipeline| {
         pipeline.recover()?;
         crate::commands::daemon::fire_cron_jobs(
@@ -114,8 +87,12 @@ pub fn run(
     result.map_err(Stop::into_error)?;
     match (failed.len(), errored.len()) {
         (0, 0) => Ok(()),
-        (n, 0) => Err(DecreeError::Other(format!("{n} run(s) ended in `{FAILED}`"))),
-        (0, e) => Err(DecreeError::Other(format!("{e} run(s) stopped with an error"))),
+        (n, 0) => Err(DecreeError::Other(format!(
+            "{n} run(s) ended in `{FAILED}`"
+        ))),
+        (0, e) => Err(DecreeError::Other(format!(
+            "{e} run(s) stopped with an error"
+        ))),
         (n, e) => Err(DecreeError::Other(format!(
             "{n} run(s) ended in `{FAILED}`, and {e} stopped with an error"
         ))),
@@ -257,17 +234,6 @@ impl Pipeline {
         })
     }
 
-    /// `--retry`: make run `id` `pending` again.
-    pub(crate) fn retry(&self, retry: &Retry) -> Result<(), DecreeError> {
-        retry_run(
-            &self.ctx,
-            &self.project,
-            &self.filter,
-            &retry.id,
-            retry.state.as_deref(),
-        )
-    }
-
     /// The machines this process runs.
     pub(crate) fn filter(&self) -> &MachineFilter {
         &self.filter
@@ -383,13 +349,13 @@ impl Pipeline {
         }
     }
 
-    /// Report run `id`, which ended in `failed`, with its `--retry` command.
+    /// Report run `id`, which ended in `failed`, with the command that continues it.
     /// Inbox messages are independent, so the pass goes on (docs/reference/messages.md, Lifecycle).
     fn fail(&mut self, id: &str, file: Option<&str>) {
         let file = file.map(|f| format!(" ({f})")).unwrap_or_default();
         report::notice(format!(
             "{}run {id}{file} ended in `{FAILED}`; see .decree/runs/{id}/, \
-             then continue it with `decree daemon --once --retry {id}`",
+             then continue it with `decree retry {id}`",
             self.prefix
         ));
         self.failed.push(id.to_string());
@@ -413,7 +379,7 @@ impl Pipeline {
         for (id, state) in &recovery.crashed {
             eprintln!(
                 "run {id} was interrupted in `{state}` (crash); \
-                 continue it with `decree daemon --once --retry {id}`"
+                 continue it with `decree retry {id}`"
             );
         }
         Ok(())
@@ -508,7 +474,7 @@ impl Pipeline {
         Ok(self.in_flight.len() < before)
     }
 
-    /// Every `pending` run this process runs, in `id` order: after `--retry`, a delivered
+    /// Every `pending` run this process runs, in `id` order: after `decree retry`, a delivered
     /// reply or timeout, a finished child, or a delivery another process made. A run another
     /// process holds is `active`, not `pending`.
     pub(crate) fn pending(&self) -> Result<Vec<String>, Stop> {
@@ -568,7 +534,10 @@ impl Pipeline {
                     .text("to")
                     .and_then(|to| reply::target_run(&self.ctx.runs_dir(), to));
                 if let Some(run) = run {
-                    if self.executing_here(&run) || self.not_yet_waiting(&run) || !answered.insert(run) {
+                    if self.executing_here(&run)
+                        || self.not_yet_waiting(&run)
+                        || !answered.insert(run)
+                    {
                         continue;
                     }
                 }
@@ -685,9 +654,11 @@ impl Pipeline {
                 }
                 Job::Claim(claim, lock) => {
                     let _slot = slot;
-                    reported(notes, &ctx, &id, || run_claim(&ctx, &project, *claim, None, lock))
-                        .map(Some)
-                        .map_err(Stop::from)
+                    reported(notes, &ctx, &id, || {
+                        run_claim(&ctx, &project, *claim, None, lock)
+                    })
+                    .map(Some)
+                    .map_err(Stop::from)
                 }
             }))
             .unwrap_or_else(|panic| {
@@ -696,7 +667,9 @@ impl Pipeline {
                     .map(|s| s.to_string())
                     .or_else(|| panic.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "a panic".to_string());
-                Err(Stop::Error(DecreeError::Other(format!("it panicked: {what}"))))
+                Err(Stop::Error(DecreeError::Other(format!(
+                    "it panicked: {what}"
+                ))))
             });
             let _ = tx.send(Done { id, file, result });
         });
@@ -725,7 +698,7 @@ impl Pipeline {
                     let e = stop.into_error();
                     report::notice(format!(
                         "{}run {id} stopped with an error: {e}; see .decree/runs/{id}/ and \
-                         `decree status {id}`, then continue it with `decree daemon --once --retry {id}`",
+                         `decree status {id}`, then continue it with `decree retry {id}`",
                         self.prefix
                     ));
                     self.errored.push(id.clone());
@@ -918,7 +891,7 @@ fn print_failed(failed: &[String]) {
     }
     eprintln!("{} run(s) ended in `{FAILED}` in this pass:", failed.len());
     for id in failed {
-        eprintln!("  run {id}: decree daemon --once --retry {id}");
+        eprintln!("  run {id}: decree retry {id}");
     }
 }
 
@@ -1030,110 +1003,6 @@ fn reject(
     Ok(Outcome::Finished(FAILED.to_string()))
 }
 
-/// `--retry` (docs/reference/cli.md): make an `interrupted` or finished run `pending` again,
-/// in `state` or by default the state it was in (for a finished run, the state it last
-/// left). The pipeline then continues it.
-fn retry_run(
-    ctx: &Context,
-    project: &Project,
-    filter: &MachineFilter,
-    id: &str,
-    state: Option<&str>,
-) -> Result<(), DecreeError> {
-    let run_dir = ctx.runs_dir().join(id);
-    if !is_valid_id(id) || !run_dir.is_dir() {
-        return Err(DecreeError::MessageNotFound(id.to_string()));
-    }
-    if !owns(ctx, filter, id) {
-        let machine = filter::owner(&ctx.runs_dir(), id).unwrap_or_default();
-        return Err(DecreeError::Other(format!(
-            "run {id} is for machine `{machine}`, which this process does not run"
-        )));
-    }
-    // Hold the lock while writing, so no other process steps the run meanwhile.
-    let Some(_lock) = RunLock::acquire(&run_dir)? else {
-        return Err(refuse_retry(id, RunStatus::Active));
-    };
-    let events = ctx.events(id)?;
-    let machine_name = first_text(&events, "machine").unwrap_or_default();
-    let Some(machine) = project.machines.get(machine_name) else {
-        return Err(DecreeError::Other(format!(
-            "run {id}: machine `{machine_name}` is not loaded; it cannot be continued"
-        )));
-    };
-    // This process holds the lock, so no other is stepping the run.
-    let status = ctx.status(machine, &events, false);
-    match status {
-        RunStatus::Interrupted | RunStatus::Finished => {}
-        RunStatus::Waiting => {
-            return Err(DecreeError::Other(format!(
-                "run {id} is waiting for a reply, not interrupted; answer it with `decree reply`"
-            )))
-        }
-        RunStatus::Pending | RunStatus::Active => return Err(refuse_retry(id, status)),
-    }
-
-    let from = current_state(&events);
-    let target = match (state, status) {
-        (Some(s), _) => s.to_string(),
-        (None, RunStatus::Finished) => last_from(&events).ok_or_else(|| {
-            DecreeError::Other(format!(
-                "run {id} never left a state; name one with --state"
-            ))
-        })?,
-        (None, _) => from
-            .ok_or_else(|| {
-                DecreeError::Other(format!("run {id} has no state; name one with --state"))
-            })?
-            .to_string(),
-    };
-    let atomic = machine.find(&target).is_some_and(|n| {
-        let node = &machine.nodes[n];
-        node.children.is_empty() && !node.is_final
-    });
-    if !atomic {
-        return Err(DecreeError::Other(format!(
-            "`{target}` is not an atomic state of machine `{machine_name}`"
-        )));
-    }
-
-    let trigger = first_text(&events, "trigger").unwrap_or_default();
-    let mut log = EventLog::open(&run_dir, id, machine_name, trigger)?;
-    log.append(
-        "transition",
-        json!({
-            "from": from,
-            "event": "retry",
-            "to": target,
-            "source": "retry",
-            "exit_code": null,
-            "run_attempt": run_attempt(&events) + 1,
-        }),
-    )?;
-    mirror_state(&run_dir.join(MESSAGE_FILE), &target)?;
-    println!("run {id} continues in `{target}`");
-    attention::release(ctx, id)?;
-    attention::record(ctx, id)?;
-    Ok(())
-}
-
-/// The `from` of the last `transition` event that has one.
-fn last_from(events: &[Event]) -> Option<String> {
-    events
-        .iter()
-        .rev()
-        .filter(|e| is_transition(e))
-        .find_map(|e| text(e, "from"))
-        .map(String::from)
-}
-
-fn refuse_retry(id: &str, status: RunStatus) -> DecreeError {
-    DecreeError::Other(format!(
-        "run {id} is {}; only an interrupted or finished run can be retried",
-        status.as_str()
-    ))
-}
-
 /// Print every waiting run of the machines `filter` runs: its question (the state's
 /// `description`), its wait id and options, and a `decree reply` command for each option
 /// (docs/reference/messages.md, Replies).
@@ -1241,25 +1110,4 @@ fn run_dry(project: &Project, format: Format, filter: &MachineFilter) -> Result<
 enum Target {
     Machine(String),
     Reply(String),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_last_from_skips_transitions_without_from() {
-        let events: Vec<_> = [
-            json!({"type": "transition", "from": null, "to": "a"}),
-            json!({"type": "transition", "from": "a", "to": "b"}),
-            json!({"type": "script", "state": "b"}),
-            json!({"type": "transition", "from": "b", "to": "failed"}),
-            json!({"type": "run_finished", "state": "failed"}),
-        ]
-        .into_iter()
-        .map(|v| v.as_object().cloned().unwrap())
-        .collect();
-        assert_eq!(last_from(&events).as_deref(), Some("b"));
-        assert_eq!(last_from(&events[..1]), None);
-    }
 }

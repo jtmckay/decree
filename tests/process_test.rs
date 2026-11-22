@@ -269,7 +269,7 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
     let err = stderr(&out);
     assert!(err.contains("run 20260101T000000.000001Z-000001 (20260101T000000.000001Z-000001.md) ended in `failed`"), "{err}");
     assert!(
-        err.contains("`decree daemon --once --retry 20260101T000000.000001Z-000001`"),
+        err.contains("`decree retry 20260101T000000.000001Z-000001`"),
         "{err}"
     );
     // After the queue is empty: every run that failed in the pass, with its retry command.
@@ -278,7 +278,9 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
         .unwrap_or_else(|| panic!("{err}"))
         .1;
     assert!(
-        summary.contains("run 20260101T000000.000001Z-000001: decree daemon --once --retry 20260101T000000.000001Z-000001"),
+        summary.contains(
+            "run 20260101T000000.000001Z-000001: decree retry 20260101T000000.000001Z-000001"
+        ),
         "{err}"
     );
     assert!(
@@ -325,16 +327,20 @@ fn a_failed_inbox_run_is_reported_and_process_drains_the_rest() {
         .next()
         .is_none());
 
-    // `--retry <id>` continues the failed inbox run in its folder, then the pass goes on.
+    // `decree retry <id>` makes the failed inbox run pending in its folder; `daemon --once`
+    // continues it, then the pass goes on.
     p.fix();
     p.write(
         "inbox/20260101T000000.000003Z-000003.md",
         "---\nid: 20260101T000000.000003Z-000003\nmachine: flow\n---\n",
     );
-    p.process()
-        .args(["--retry", "20260101T000000.000001Z-000001"])
-        .assert()
-        .success();
+    assert_eq!(
+        decree(&p, &["retry", "20260101T000000.000001Z-000001"])
+            .status
+            .code(),
+        Some(0)
+    );
+    p.process().assert().success();
     assert_eq!(
         p.order()[5..],
         [
@@ -569,7 +575,7 @@ fn decree(p: &Project, args: &[&str]) -> std::process::Output {
 fn a_name_that_is_not_a_run_is_not_found() {
     let p = Project::new();
     for args in [
-        &["daemon", "--once", "--retry", "01-a"][..],
+        &["retry", "01-a"][..],
         &["status", "01-a.md"],
         &["status", "nope"],
         &["tail", "01-a"],
@@ -617,15 +623,17 @@ fn process_retry_state_resumes_at_the_named_state() {
     // Without `--state`, a failed run continues in the state it last left (`second`);
     // `--state first` starts that state again instead.
     p.fix();
-    p.process()
-        .args([
-            "--retry",
+    let out = decree(
+        &p,
+        &[
+            "retry",
             "20260101T000000.000000Z-000000",
             "--state",
             "first",
-        ])
-        .assert()
-        .success();
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    p.process().assert().success();
     assert_eq!(p.order(), ["first", "second", "first", "second"]);
     assert_eq!(
         transitions(&p.events("20260101T000000.000000Z-000000"))[3..],

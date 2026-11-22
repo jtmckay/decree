@@ -63,7 +63,7 @@ states:
 
 - [`runs/20261001T143005.000000Z-189ed2/`](.decree/runs/20261001T143005.000000Z-189ed2/events.jsonl), the run of the order file `01-rate-limit-upload.md` on `develop`, finished `done`, and recorded in `state/order.git.txt`. `implement`'s `local` attempt failed (event 2, exit 1); decree ran the `claude` attempt in place (event 3, a `transition` with `source: "attempt"` and `attempt_value: "claude"`), which succeeded, and `test` passed.
 - [`runs/20261001T153012Z-7b4e2a/`](.decree/runs/20261001T153012Z-7b4e2a/events.jsonl), a `deploy` run from the inbox, is waiting in `approval` for a person. `ask_person.sh` ([`deploy`](.decree/plugins/deploy.md)'s) printed the commands that answer it ([its log](.decree/runs/20261001T153012Z-7b4e2a/0002-approval-notify_person.log)). The person ran `decree reply 20261001T153012Z-7b4e2a.w3 approve -m "..."`, which wrote [`inbox/20261001T160301Z-9be210.md`](.decree/inbox/20261001T160301Z-9be210.md); the next `decree daemon --once` delivers it and the run goes on to `ship`.
-- [`runs/20261001T030000Z-c4e81b/`](.decree/runs/20261001T030000Z-c4e81b/events.jsonl), the nightly cron run on `develop`, was interrupted by Ctrl-C during `implement`. decree does not continue it on its own: `decree daemon --once --retry 20261001T030000Z-c4e81b` does.
+- [`runs/20261001T030000Z-c4e81b/`](.decree/runs/20261001T030000Z-c4e81b/events.jsonl), the nightly cron run on `develop`, was interrupted by Ctrl-C during `implement`. decree does not continue it on its own: `decree retry 20261001T030000Z-c4e81b` does.
 
 [Runs](../../docs/reference/runs.md) describes every event in these logs.
 

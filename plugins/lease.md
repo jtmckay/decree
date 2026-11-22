@@ -116,7 +116,7 @@ scripts:
     # delivered. curl tries 3 times, 5s each, 1s apart; with no 2xx the lease fails (leave
     # gives the resource back). Then, or at once with no callback, the lease is `held`, so a
     # reader never sees `held` before the asker was told. The log names the address
-    # without its path or query, which may carry a token. Safe to run again (a `--retry`):
+    # without its path or query, which may carry a token. Safe to run again (a `decree retry`):
     # a lease that no longer holds the resource tells nobody.
     set -euo pipefail
     . .decree/machines/lease/scripts/lease.sh

@@ -188,7 +188,7 @@ scripts:
       `decree check --format json` gives each error's `rule`, `file`, `line` or `state` and
       `message`.
     - **Scripts must be safe to re-run**, after an interruption or a failure halfway:
-      `decree daemon --once --retry` runs the step again. Check that the result works (`pip --version`
+      `decree retry` runs the step again. Check that the result works (`pip --version`
       runs), not that a file exists.
     - **Keep a step's previous output until it has a new one.** A script that rewrites a file
       the next attempt or round reads (`gaps.md`, a report) sets the old one aside and puts it
@@ -211,7 +211,7 @@ scripts:
     - **Declare the environment.** A command, package or tool the project needs is a line in
       `.decree/machines/infra/scripts/requirements`, added by a message for the `infra` machine, never
       installed by another machine's step. Nothing runs `sudo`: a step only a person can do prints
-      the exact command and fails, and the person runs it, then `decree daemon --once --retry`.
+      the exact command and fails, and the person runs it, then `decree retry`.
     - **Check a boundary with a script, not only a prompt.** When an agent must not change
       something (QA never edits app code), a script after it checks, and fails the step if it did.
     - **A machine's helpers, config and data go in `machines/<machine>/scripts/`**, beside the scripts its
@@ -229,7 +229,7 @@ scripts:
       steps.
     - **What needs a person is in `.decree/attention/`.** Read it first when a run is failed,
       waiting or stuck, and do what each file says: `decree reply <wait id> <option>` for a wait,
-      `decree daemon --once --retry <id>` for a failed or interrupted run. Never edit an attention file
+      `decree retry <id>` for a failed or interrupted run. Never edit an attention file
       to answer; never write one from a machine's script. A step whose failure must stop every
       run writes `$DECREE_RUN_DIR/hold` (what `keep` does), and decree turns it into a holding
       attention file. Any `.md` file a person or another tool puts in the folder halts the queue
@@ -272,8 +272,8 @@ scripts:
     | `decree upgrade [--yes] [--format json]` | Print how to upgrade decree (the install line, pinned with `\| sh -s -- <tag>`, and `cargo install --git … --force` for a cargo copy) and what to run in each project after, then ask y/N before running the install line, and then before running `decree install` in this project; `--yes` runs both without asking. After an upgrade, run `decree install` in each project: it writes the new schemas and installs the plugins. An agent never answers `y` for a person. |
     | `decree emit [--machine <m>] [--param k=v]...` | Queue a message from stdin: a body for machine `m`, or a whole message whose frontmatter the flags override (`decree emit < <file>` runs a message again). Prints the new id. |
     | `decree daemon --once [--dry-run] [--quiet] [--machine <m> \| --exclude-machine <m>]` | Start (firing `@reboot` cron files, so `order` runs the order files), run everything queued: replies, pending runs, the inbox (FIFO), printing each run's output, then exit. `--quiet` for cron and CI. `--machine` runs only those machines, `--exclude-machine` all but those (repeatable, comma-separated; or `DECREE_MACHINES`, `DECREE_EXCLUDE_MACHINES`), so several processes can share one folder. |
-    | `decree daemon --once --retry <id> [--state <s>]` | Continue a failed or interrupted run first. The failure message prints the exact command. |
-    | `decree daemon [--interval <duration>] [--retry <id>] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with scheduled cron, every `2s` by default; `--machine` and `--exclude-machine` as for `--once`. |
+    | `decree retry <id> [--state <s>]` | Make a failed or interrupted run pending again; a running `decree daemon`, or the next `decree daemon --once`, continues it. The failure message prints the exact command. |
+    | `decree daemon [--interval <duration>] [--machine <m> \| --exclude-machine <m>]` | The same, in a loop, with scheduled cron, every `2s` by default; `--machine` and `--exclude-machine` as for `--once`. |
     | `decree status [<id>] [--cron] [--all] [--format json]` | Starts with `Attention:` (the files in `.decree/attention/`, those that hold first), then runs by status (`--all`: every run), and active runs in projects below; one run's events; `--cron`: cron files and when each fires next (`daemon start` for `@reboot`). |
     | `decree tail [<id>]` | Follow each run's output as it comes, or one run's until it stops. |
     | `decree reply <wait id> <event> [-m <note>]` | Answer a run waiting in a `reply` state; a run id means its current wait. |
@@ -294,13 +294,13 @@ scripts:
     plugins each time the daemon starts), each described in its plugin file. When one
     of the three below is there, start from it before writing a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
     unless the git work tree is clean, naming each `interrupted` or `failed` run that may have left
-    the changes, with its `--retry` and `git stash push` commands, also in its attention file) and
+    the changes, with its `decree retry` and `git stash push` commands, also in its attention file) and
     ends with `commit` (`done`'s `onentry`: the run's work as one commit, titled with the message's
     first heading, and the order file for an order file's run, recorded in the same commit), or, in `failed`, with `keep` (the
     run's changes stay in the work tree, and `keep` writes the run's `hold`, so its attention file
     in `.decree/attention/` holds every run until the run is retried). All three touch only the
     project folder. Before queuing work for them, commit or stash any changes. To continue: answer
-    any `STOP` in `plan.md`, delete `STOP`, `decree daemon --once --retry <id>`, which builds on the
+    any `STOP` in `plan.md`, delete `STOP`, `decree retry <id>`, which builds on the
     kept changes and removes the hold. To drop the run: stash its changes and delete its
     attention file. Never run `develop`, `infra` or `qa` in two processes in one checkout (they
     share the work tree through `clean_tree` and `commit`); give each its own git worktree. For divergent work,
@@ -436,7 +436,7 @@ scripts:
     - **`reference/scripts.md`**: where scripts live, how they run, how they report an event,
       every `DECREE_*` variable.
     - **`reference/runs.md`**: run folders, `events.jsonl`, run status, waiting and interrupted
-      runs, `decree daemon --once --retry`, graphs.
+      runs, `decree retry`, graphs.
 
     The reference files sit next to this file, in `reference/`.
   skill/reference/machines.md: |
@@ -854,7 +854,7 @@ scripts:
     - `id`, `state`, `trigger` and `arrived_as` are decree's alone: a file placed in `inbox/` gets
       decree's own, so a copy of an order file or of a run's `message.md` runs again as a new run.
     - A failed inbox run does not stop `decree daemon --once`: it prints the run with
-      `decree daemon --once --retry <id>` and goes on with the next file. When the inbox is empty it lists
+      `decree retry <id>` and goes on with the next file. When the inbox is empty it lists
       every run that failed in the pass and exits 1.
     - People may drop a file in directly. Programs write `.<name>.tmp`, then rename it to `<name>.md`;
       files starting with `.` are ignored, so nobody reads a partial file.
@@ -1010,32 +1010,32 @@ scripts:
 
     | Status | Meaning | What to do |
     | --- | --- | --- |
-    | `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; for `failed`, what its file in `.decree/attention/` says, `decree daemon --once --retry <id>`; or that to run it again from a state. |
+    | `finished` | Reached a final state (`done`, `failed`, ...). | Nothing; for `failed`, what its file in `.decree/attention/` says, `decree retry <id>`; or that to run it again from a state. |
     | `active` | A live process holds its lock. | `decree tail` to watch it. |
     | `waiting` | Paused for a person, or for a child run. | `decree reply <wait id> <event>`; the run's file in `.decree/attention/` and `decree daemon --once` give the commands. |
     | `pending` | A reply arrived, or a `retry` transition was written. | `decree daemon --once` continues it. |
-    | `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree daemon --once --retry <id>`, as its file in `.decree/attention/` says. decree never continues it on its own. |
+    | `interrupted` | Stopped by a signal or crash. | Fix the cause, then `decree retry <id>`, as its file in `.decree/attention/` says. decree never continues it on its own. |
 
     A failed order file stops the order files after it: the `order` run fails, and the next start
     runs that file again. `decree daemon --once` exits 1 when a run failed in its pass, naming
-    `decree daemon --once --retry <id>` for each.
+    `decree retry <id>` for each.
 
     ## Attention
 
     `.decree/attention/<id>.md` is decree's list of what needs a person: a file per run that is
     `failed`, `interrupted` or `waiting` in a `reply` state. Frontmatter `kind: run`, `run`, `machine`, `message`,
     `status`, `state`, `since`, `holds` (`.decree/schema/v1/attention.schema.json`), then what
-    happened, the exact command (`decree daemon --once --retry <id>`, or one `decree reply <wait id>
+    happened, the exact command (`decree retry <id>`, or one `decree reply <wait id>
     <option>` per option), the run's `hold` text, its `leftovers` and its `STOP` question. decree
     writes and deletes the files as each run's status changes; a file a person deleted stays deleted
     until it changes again. `decree daemon --once` ends with `<n> run(s) need attention: .decree/attention/`, and
     `decree status` starts with `Attention:` (`attention` in `--format json`).
 
-    - Read-only: answer with `decree reply` or a reply, continue with `decree daemon --once --retry`;
+    - Read-only: answer with `decree reply` or a reply, continue with `decree retry`;
       editing a file answers nothing, and no script writes one.
     - While a file has `holds: true` (its run wrote `hold`), or a `.md` file there cannot be read
       as one (no frontmatter, invalid frontmatter), `daemon` starts and continues no
-      runs; `daemon --once` exits 1 naming it. `decree daemon --once --retry <id>` removes the run's `hold`
+      runs; `daemon --once` exits 1 naming it. `decree retry <id>` removes the run's `hold`
       and its file; deleting the file drops the run (stash its changes first), and decree then
       deletes the `hold`. Other files and subfolders there are ignored.
 
@@ -1096,7 +1096,7 @@ scripts:
       is only a log: decree never reads an event from it.
     - On stop or timeout, decree sends SIGTERM to the group, then SIGKILL after 10 s.
     - Scripts must be safe to re-run: an interrupted or failed step runs again after
-      `decree daemon --once --retry`. Check that a result works, not that its file exists: a step that
+      `decree retry`. Check that a result works, not that its file exists: a step that
       failed halfway may have left the file.
 
     ## Reporting an event (invoke only)
@@ -1163,7 +1163,7 @@ scripts:
       reads it and continues.
     - `STOP`: a question instead of a guess. A script that finds it prints it and writes `stop` to
       `$DECREE_EVENT_FILE`; it keeps stopping retries until a person answers in `plan.md`, deletes
-      it and runs `decree daemon --once --retry`.
+      it and runs `decree retry`.
     - `gate.log`: the output of the project's checks (`machines/develop/scripts/gate.sh`), for the step that
       fixes them. The gate names `pass` or `fail`; a non-zero exit (`error`) means the checks could
       not run, such as a missing tool, and its message is here.
@@ -1172,12 +1172,12 @@ scripts:
       `verify` keeps the last one if an attempt dies.
     - `hold`, in the run's own `$DECREE_RUN_DIR`: written by a step whose failure must stop every
       run (the official plugins' `keep`, in `failed`). decree puts its text in the run's file in
-      `.decree/attention/` with `holds: true`, and nothing runs until `decree daemon --once --retry <id>`
+      `.decree/attention/` with `holds: true`, and nothing runs until `decree retry <id>`
       removes both or a person deletes the attention file.
     - `leftovers`, in the run's own `$DECREE_RUN_DIR`: written by the official plugins' `clean_tree` when it
       finds uncommitted changes. It names each run that passed `clean_tree` and is now
       `interrupted` or `failed` (from `"${DECREE}" status --all --format json`, read with `jq`),
-      with `decree daemon --once --retry <id>` and `git stash push --include-untracked -m "decree <id>"
+      with `decree retry <id>` and `git stash push --include-untracked -m "decree <id>"
       -- .`; `clean_tree` prints the same lines. decree quotes it in the run's attention file.
 
     ## Environment
@@ -1191,7 +1191,7 @@ scripts:
     | `DECREE_MACHINE`, `DECREE_STATE` | Machine and state (`_root` for root `onentry`/`onexit`). |
     | `DECREE_PHASE` | `onentry`, `invoke` or `onexit`. |
     | `DECREE_VISITS` | Times this state has been entered, including now, since the run's last retry. |
-    | `DECREE_RUN_ATTEMPT` | The run's attempt: 1, then one more per `decree daemon --once --retry`. |
+    | `DECREE_RUN_ATTEMPT` | The run's attempt: 1, then one more per `decree retry`. |
     | `DECREE_RUN_DIR` | `runs/<id>/`. |
     | `DECREE_STATE_DIR` | `.decree/machines/<machine>/state/`: what this machine keeps between runs; created before the script runs. |
     | `DECREE_ATTEMPT`, `DECREE_MAX_ATTEMPTS`, `DECREE_FINAL_ATTEMPT` | Attempt number, the limit, and `true` on the last one. |

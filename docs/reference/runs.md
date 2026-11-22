@@ -6,7 +6,7 @@ The interpreter is deterministic everywhere except `model` and `reply` states, a
 
 The run's current state is always an atomic state, `S`.
 
-1. **Start or continue.** New run: append the claim event (`type: "transition"`, `from: null`, `event: "claimed"`, `to`: root `initial` followed down to an atomic state), mirror `state`, run root `onentry`, then the `onentry` of each state from root `initial` down to `S`. A `pending` run after `decree daemon --once --retry`: run root `onentry`, then the `onentry` of every ancestor of `S` and of `S` itself, outermost first; scripts must be safe to re-run. A `pending` run after a `received` event (a reply or a timeout): go to step 4 with that event; nothing is re-run, because the run only paused.
+1. **Start or continue.** New run: append the claim event (`type: "transition"`, `from: null`, `event: "claimed"`, `to`: root `initial` followed down to an atomic state), mirror `state`, run root `onentry`, then the `onentry` of each state from root `initial` down to `S`. A `pending` run after `decree retry`: run root `onentry`, then the `onentry` of every ancestor of `S` and of `S` itself, outermost first; scripts must be safe to re-run. A `pending` run after a `received` event (a reply or a timeout): go to step 4 with that event; nothing is re-run, because the run only paused.
 2. **Invoke.** Run `S`'s function ([Invoke](machines.md#invoke-the-states-function)): a script ([scripts.md](scripts.md)), a check, a model, a reply, or a child machine (below). A `machine` or `model` invoke appends `waiting` for its child run and steps the child; when the child finishes, the parent continues at step 4. A `reply` invoke appends `waiting`, releases the lock and ends this step; a reply or timeout continues at step 4 ([Replies](messages.md#replies)).
 3. **The event.** An `onentry` failure gives `error`. Otherwise the event is what the function produced. A state with no `invoke` produces `done`.
 4. **Find the target.** Select the transition for the event ([Rules](machines.md#rules)): the state's own, else the nearest ancestor's. An `error` that matches nothing targets `failed`. If the target is compound, follow `initial` down to an atomic or final state. That state is `T`.
@@ -19,7 +19,7 @@ The run's current state is always an atomic state, `S`.
 
 **Visits.** `visits.<state>` counts the `transition` events whose `to` is that state, excluding `source: "attempt"`, since the run's last `retry` event. The claim event counts, and so does a `retry` event (it re-enters the state), which starts the count again: a retried run gets every round of a `check` on `visits` again, so a person's retry is not spent on rounds the run already used. Only atomic states have visits.
 
-**Run attempts.** A run's first attempt starts at its claim; each `decree daemon --once --retry` starts the next, and its `retry` event records the number as `run_attempt` (2, 3, …). Scripts get it as `DECREE_RUN_ATTEMPT`. It is GitHub Actions' `run_attempt`, which numbers a workflow run's re-runs. It is not `DECREE_ATTEMPT`, the attempt of one invoke inside a visit ([Invoke](machines.md#invoke-the-states-function)).
+**Run attempts.** A run's first attempt starts at its claim; each `decree retry` starts the next, and its `retry` event records the number as `run_attempt` (2, 3, …). Scripts get it as `DECREE_RUN_ATTEMPT`. It is GitHub Actions' `run_attempt`, which numbers a workflow run's re-runs. It is not `DECREE_ATTEMPT`, the attempt of one invoke inside a visit ([Invoke](machines.md#invoke-the-states-function)).
 
 ## Check
 
@@ -117,7 +117,7 @@ An `invoke: { machine: <name> }` state, and every `model` invoke, runs a **child
 
 - It is an ordinary run in its own folder, `runs/<child id>/`, so its events and logs are separate and it shows in `decree status` and Grafana like any other. Its `message.md` has `machine`, `parent` (the parent run's id), `depth` (the parent's + 1), and `traceparent`: the parent's trace, under the span of the router's `decision` or of the `machine` invoke's wait, so the child's run span nests under it ([Traces](observability.md#traces)). If that would exceed `max_depth`, no child starts: the state's event is `error`, with `router_error: "max_depth <n> reached"` on the `decision` event for `model`, and `error: "max_depth <n> reached"` on the `transition` for `machine`, `trigger: invoke`, any `params`, and the parent message's body.
 - The parent appends a `waiting` event naming the child (`child: <id>`), and the same process steps the child at once. When the child reaches a root final state, decree continues the parent: for a `machine` invoke it appends a `received` event whose event is the child's final state (`failed` becomes `error`); for a router it appends the `decision` event (above). A parent left waiting on a child that has already finished (a crash in between) is `pending`, and continues the same way.
-- If the child pauses (a `reply` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree daemon --once --retry` on the child continues both. The child's file in `.decree/attention/` says so; a child that ends in `failed` has none unless it holds the queue, since the parent takes its failure as `error` ([Attention](cli.md#attention)).
+- If the child pauses (a `reply` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree retry` on the child continues both. The child's file in `.decree/attention/` says so; a child that ends in `failed` has none unless it holds the queue, since the parent takes its failure as `error` ([Attention](cli.md#attention)).
 - Child runs are never claimed from the inbox.
 
 ## Reply
@@ -165,11 +165,11 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `file` | string | A claim from the inbox | Original inbox filename: for a file written into `inbox/` under another name, the name it arrived with (`arrived_as`, [Lifecycle](messages.md#lifecycle) step 1). Absent for a child run, which has none. |
 | `error` | string | `invalid_message`, a `machine` invoke that could not start, or a `reply` whose `timeout_at` names no instant | Validation message, why the child did not start, or why there is no deadline. |
 | `run_attempt` | integer | `retry` | The run attempt this retry starts: 2 for the first retry ([Step loop](#step-loop), Run attempts). |
-| `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree daemon --once --retry` starts a new run span, linked to the previous one. |
+| `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree retry` starts a new run span, linked to the previous one. |
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
 | `decree_version` | string | The claim (`claim` or `invalid_message`), and `retry` | The version of the decree that started or retried the run, for example `0.5.0-beta.11`. Runs recorded before decree wrote it have none. `decree status <id>` shows it on these rows. |
 
-`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes (`reply` also with `error` when a `timeout_at` has no instant to read, so the run does not wait); `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline that passed; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree daemon --once --retry`.
+`source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes (`reply` also with `error` when a `timeout_at` has no instant to read, so the run does not wait); `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline that passed; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`.
 
 **`script`**: one script execution finished. Written after the script exits, before any `transition` it causes.
 
@@ -229,7 +229,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `timed_out` | bool | A timeout | Always `true` when present; `event` is `error`. |
 | `span_id` | string | Always | The wait's span, from the `waiting` event to this one. For a child that finished, the parent of its run span. |
 
-**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree daemon --once --retry` continues it.
+**`run_finished`**: the run reached a root-level final state and root `onexit` has run. Always the run's last event, unless `decree retry` continues it.
 
 | Field | Type | Meaning |
 | --- | --- | --- |

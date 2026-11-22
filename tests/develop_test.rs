@@ -811,8 +811,11 @@ fn develop_stops_when_the_agent_writes_stop() {
     let log = p.log(&id, "implement");
     assert!(log.contains("Which greeting?\n"), "{log}");
 
-    // `decree daemon --once --retry` with STOP still there stops again, without asking the AI.
-    let mut cmd = p.decree(&["daemon", "--once", "--retry", &id, "--state", "implement"]);
+    // `decree retry` with STOP still there stops again, without asking the AI.
+    p.decree(&["retry", &id, "--state", "implement"])
+        .assert()
+        .success();
+    let mut cmd = p.decree(&["daemon", "--once"]);
     cmd.env("PATH", p.path());
     let out = cmd.output().unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
@@ -827,7 +830,10 @@ fn develop_stops_when_the_agent_writes_stop() {
 
     // `fix` and `verify` stop on it too.
     for state in ["fix", "verify"] {
-        let mut cmd = p.decree(&["daemon", "--once", "--retry", &id, "--state", state]);
+        p.decree(&["retry", &id, "--state", state])
+            .assert()
+            .success();
+        let mut cmd = p.decree(&["daemon", "--once"]);
         cmd.env("PATH", p.path());
         cmd.output().unwrap();
         assert_eq!(
@@ -982,10 +988,7 @@ fn a_reset_past_ai_limit_wait_stops_the_run() {
         "{stop}"
     );
     assert!(stop.contains("more than AI_LIMIT_WAIT (6h) away"), "{stop}");
-    assert!(
-        stop.contains(&format!("`decree daemon --once --retry {id}`")),
-        "{stop}"
-    );
+    assert!(stop.contains(&format!("`decree retry {id}`")), "{stop}");
 
     // A longer AI_LIMIT_WAIT waits it out.
     let p = Project::init();
@@ -1315,7 +1318,7 @@ fn a_missing_resource_fails_infra_and_develop_precheck() {
     // file holds the queue; the person commits it and deletes the file.
     assert!(p
         .log(&id, "failed")
-        .contains(&format!("`decree daemon --once --retry {id}`")));
+        .contains(&format!("`decree retry {id}`")));
     fs::remove_file(p.attention(&id)).unwrap();
     let id = p.run(&[]);
     assert_eq!(p.outcome(&id), "failed");
@@ -1557,7 +1560,7 @@ fn a_dirty_tree_fails_the_run_before_the_agent() {
         "clean_tree: uncommitted changes; commit or stash them, then run the message again:\n\
          ?? stray.txt\n\
          if a failed run left them, its file in .decree/attention/ names it; continue it with \
-         `decree daemon --once --retry <id>`\n"
+         `decree retry <id>`\n"
     );
     assert!(p.calls().is_empty());
 }
@@ -1594,7 +1597,7 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
     let named = format!(
         "run {first} (Add a greeting) started from a clean tree and is interrupted; it may \
          have left them:\n  \
-         to continue it on them: `decree daemon --once --retry {first}`\n  \
+         to continue it on them: `decree retry {first}`\n  \
          to set them aside: `git stash push --include-untracked -m \"decree {first}\" -- .`\n"
     );
     assert_eq!(
@@ -1605,7 +1608,7 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
              ?? hello.txt\n\
              {named}\
              if a failed run left them, its file in .decree/attention/ names it; continue it \
-             with `decree daemon --once --retry <id>`\n"
+             with `decree retry <id>`\n"
         )
     );
     assert_eq!(
@@ -1626,7 +1629,8 @@ fn clean_tree_names_the_interrupted_run_that_left_changes() {
         "--",
         ".",
     ]);
-    p.decree(&["daemon", "--once", "--retry", &second])
+    p.decree(&["retry", &second]).assert().success();
+    p.decree(&["daemon", "--once"])
         .env("PATH", p.path())
         .output()
         .unwrap();
@@ -1658,7 +1662,7 @@ fn clean_tree_names_a_failed_run_and_not_one_that_never_started() {
             )),
             "{log}"
         );
-        assert!(log.contains(&format!("--retry {first}`")), "{log}");
+        assert!(log.contains(&format!("decree retry {first}`")), "{log}");
         assert!(!log.contains(&format!("run {second}")), "{log}");
     }
 }
@@ -1804,14 +1808,11 @@ fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     assert_eq!(frontmatter["message"], "inbox", "{file}");
     assert!(file.contains("\n# Add a greeting\n"), "{file}");
     assert!(file.contains("?? hello.txt"), "the kept changes: {file}");
-    assert!(
-        file.contains(&format!("    decree daemon --once --retry {id}\n")),
-        "{file}"
-    );
+    assert!(file.contains(&format!("    decree retry {id}\n")), "{file}");
     assert!(p.run_dir(&id).join("hold").is_file());
     assert!(p
         .log(&id, "failed")
-        .contains(&format!("`decree daemon --once --retry {id}`")));
+        .contains(&format!("`decree retry {id}`")));
 
     // The next run waits: process names the file, starts nothing and exits 1.
     let next = p.emit_only();
@@ -1832,24 +1833,26 @@ fn a_failed_run_keeps_its_changes_and_holds_the_queue_until_retried() {
     );
     assert!(!p.run_dir(&next).exists(), "not claimed");
 
-    // A retry removes the hold and the attention file before the run continues on the kept
+    // A retry removes the hold and the attention file, then the run continues on the kept
     // changes, and the queue goes on.
     let out = p
-        .decree(&["daemon", "--once", "--retry", &id, "--state", "verify"])
-        .env("PATH", p.path())
+        .decree(&["retry", &id, "--state", "verify"])
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let removed = stdout
-        .find(&format!("removed .decree/runs/{id}/hold\n"))
-        .unwrap_or_else(|| panic!("{stdout}"));
-    let started = stdout
-        .find(&format!("▶ {id}"))
-        .unwrap_or_else(|| panic!("{stdout}"));
-    assert!(removed < started, "{stdout}");
+    assert!(
+        stdout.contains(&format!("removed .decree/runs/{id}/hold\n")),
+        "{stdout}"
+    );
     assert!(!p.run_dir(&id).join("hold").exists());
     assert!(!p.attention(&id).exists());
+    let out = p
+        .decree(&["daemon", "--once"])
+        .env("PATH", p.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
     assert_eq!(p.outcome(&id), "done");
     assert_eq!(p.commits()[0], "Add a greeting");
     assert_eq!(p.git(&["show", "HEAD:hello.txt"]), "hi\n");
