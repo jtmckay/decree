@@ -62,7 +62,7 @@ machine:
       transitions:
         done: callback
     callback:
-      description: The hold has started. When the lease was asked for with a callback, POSTs its status (state/status/leases/<id>.json) there (a few tries, a few seconds each), so the asker can start at once; with none, there is nothing to do. If no try is answered with a 2xx, the lease fails and gives the resource back, since nobody knows they hold it.
+      description: The hold starts. When the lease was asked for with a callback, POSTs its status (state/status/leases/<id>.json, state granted) there (a few tries, a few seconds each), so the asker can start at once; then, or at once with none, the lease is held. If no try is answered with a 2xx, the lease fails and gives the resource back, since nobody knows they hold it.
       invoke:
         script:
           name: callback
@@ -86,16 +86,18 @@ machine:
           description: Give the resource back now.
         renew:
           target: renew
-          description: Keep the resource for this lease's duration again, from now; refused while another lease waits for it.
+          description: Keep the resource for this lease's duration again, from now; refused while a lease waits that could not join the holders.
         error:
           target: turn
           description: The deadline passed; turn ends the lease as expired.
     renew:
-      description: Extends a held lease by its duration, only while no other lease waits for the resource; otherwise logs the refusal and keeps the expiry.
+      description: Extends a held lease by its duration, unless a lease waits that could not join the holders (another mode, or the holders full); then it logs the refusal and keeps the expiry.
       invoke: renew
       transitions:
         held: held
-        waiting: waiting
+        waiting:
+          target: turn
+          description: Not held yet; turn looks at the line again and sets when to look next.
         expired: done
     done:
       final: true
@@ -108,25 +110,40 @@ machine:
 scripts:
   callback.sh: |
     #!/usr/bin/env bash
-    # The hold has started: if the lease was asked for with the param callback, POST its
-    # status, state/status/leases/<id>.json (Content-Type application/json), so the asker starts as soon as it holds
-    # the resource, without looking. Any 2xx answer is delivered. curl tries 3 times, 5s
-    # each, 1s apart; with no 2xx the lease fails (leave gives the resource
-    # back). The log names the address without its path or query, which may carry a token.
+    # The hold starts. If the lease was asked for with the param callback, POST its status,
+    # state/status/leases/<id>.json (Content-Type application/json, `state: granted`), so the
+    # asker starts as soon as it holds the resource, without looking. Any 2xx answer is
+    # delivered. curl tries 3 times, 5s each, 1s apart; with no 2xx the lease fails (leave
+    # gives the resource back). Then, or at once with no callback, the lease is `held`, so a
+    # reader never sees `held` before the asker was told. The log names the address
+    # without its path or query, which may carry a token. Safe to run again (a `--retry`):
+    # a lease that no longer holds the resource tells nobody.
     set -euo pipefail
     . .decree/machines/lease/scripts/lease.sh
     load
-    [ -n "$callback" ] || exit 0
-    [[ "$callback" =~ ^(https?://[^/?#]+) ]] && where="${BASH_REMATCH[1]}"
-    rc=0
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --fail --retry 2 --retry-all-errors --retry-delay 1 --max-time 5 \
-      -X POST -H 'Content-Type: application/json' --data-binary @"$(lease_file "$me")" "$callback")" || rc=$?
-    if (( rc == 0 )); then
-      say "callback $(ids "$mode" "$me") to=$where http=$code"
-    else
-      say "callback failed $(ids "$mode" "$me") to=$where http=${code:-none} curl_exit=$rc reason=\"the holder was never told: the lease is given back\"" >&2
-      exit 1
+    still_holds() {
+      read_holder
+      [ "$h_id" = "$me" ] || { say "lost $(ids "$mode" "$me") reason=\"this lease no longer holds $res\"" >&2; return 1; }
+    }
+    if [ -n "$callback" ]; then
+      locked still_holds
+      [[ "$callback" =~ ^(https?://[^/?#]+) ]] && where="${BASH_REMATCH[1]}"
+      rc=0
+      code="$(curl -sS -o /dev/null -w '%{http_code}' --fail --retry 2 --retry-all-errors --retry-delay 1 --max-time 5 \
+        -X POST -H 'Content-Type: application/json' --data-binary @"$(lease_file "$me")" "$callback")" || rc=$?
+      if (( rc == 0 )); then
+        say "callback $(ids "$mode" "$me") to=$where http=$code"
+      else
+        say "callback failed $(ids "$mode" "$me") to=$where http=${code:-none} curl_exit=$rc reason=\"the holder was never told: the lease is given back\"" >&2
+        exit 1
+      fi
     fi
+    mark_held() {
+      still_holds
+      write_holder "$me" "$h_mode" "$h_exp" held
+      say "held $(ids "$h_mode" "$me") holder=\"$holder_name\" expires=$(at "$h_exp") status=$(rel "$(lease_file "$me")") answer=\"decree reply $me release|renew\""
+    }
+    locked mark_held
   lease.sh: |
     # lease's shared code, sourced by its scripts (never run on its own). The rules are the
     # project's $DECREE_STATE_DIR/resources.git.txt. What the machine keeps between runs is in
@@ -145,7 +162,7 @@ scripts:
     #                waiting, 1 first), expires (once granted), ended (once over)}; state is
     #                waiting, swapping, granted (in the mode already set), held,
     #                released, expired, failed or cancelled (released before it was held).
-    #                The lease holds the resource while state is held and the time is
+    #                The lease holds the resource while state is granted or held and the time is
     #                before expires. Kept a day after it ends.
     #   resources/<resource>.json  {resource, mode, mode_since, free_since, holders: [{lease,
     #                mode, state, expires}], queue: [{lease, mode, asked, position}], updated}.
@@ -244,6 +261,8 @@ scripts:
     load() {
       mode="${DECREE_DATA_MODE:-}"
       holder_name="${DECREE_DATA_HOLDER:-}"
+      # Free text, logged inside quotes: no quote, backslash or control character.
+      holder_name="${holder_name//[$'\"\\\t\r\n']/ }"
       callback="${DECREE_DATA_CALLBACK:-}"
       [ -z "$callback" ] || [[ "$callback" =~ ^https?://[^[:space:]]+$ ]] || die "callback \`$callback\` is not an http:// or https:// address"
       local named="${DECREE_DATA_RESOURCE:-}"
@@ -256,16 +275,17 @@ scripts:
 
     # Runs "$@" holding the resource's lock. Then, still holding it: when the holders, the
     # mode or its times changed, or a lease left the line, wakes the lease whose turn may
-    # now come (wake); and rewrites the status (publish).
+    # now come (wake); and rewrites the status (publish). "$@" runs as a plain command, so
+    # `set -e` holds inside it: a step that fails (or a body that returns 1 on purpose,
+    # such as a lease that lost its hold) ends the script there, the lock freed with it.
     locked() {
-      local fd rc=0 before line_before
+      local fd before line_before
       exec {fd}>"$dir/lock"; flock "$fd"
       before="$(snapshot)"; line_before="$(awk '{ print $2 }' "$dir/queue")"
-      "$@" || rc=$?
+      "$@"
       if [ "$(snapshot)" != "$before" ] || left_line "$line_before"; then wake; fi
       publish
       flock -u "$fd"; exec {fd}>&-
-      return "$rc"
     }
     # What a waiting lease's turn depends on, but expiries: a renewal or a swap's heartbeat
     # moves one without changing who may go next.
@@ -336,7 +356,11 @@ scripts:
         end_info cancelled "$next"
       done
       if (( n > 0 )); then grep -q " $next $held_mode\$" "$dir/queue" || return 0; fi
-      grep -qsl "^to: $next\$" .decree/inbox/*.md && return 0
+      # One wake queued for it is enough; a client's own reply is no wake.
+      local q
+      for q in .decree/inbox/*.md; do
+        grep -qsx "to: $next" "$q" && grep -qsx "event: again" "$q" && return 0
+      done
       f=".decree/inbox/lease-again-$next-$now"
       printf -- '---\nto: %s\nevent: again\n---\nThe line for %s changed.\n' "$next" "$res" > "$f.tmp"
       mv "$f.tmp" "$f.md"
@@ -366,22 +390,30 @@ scripts:
         --arg res "$res" --arg mode "$(current_mode)" --arg now "$(now_ms)" \
         --arg since "$(cat "$dir/mode_since" 2>/dev/null || true)" --arg free "$(cat "$dir/free_since" 2>/dev/null || true)" \
         --rawfile h <(cat "$dir/holder" 2>/dev/null || true) --rawfile q "$dir/queue")"
-      put "$status_dir/resources/$res.json" "$doc"
-      local f entry
+      local file="$status_dir/resources/$res.json" before='{"queue": [], "holders": []}'
+      [ -f "$file" ] && before="$(cat "$file")"
+      put "$file" "$doc"
+      # Only the leases whose entry changed: a change costs one rewrite per lease it moved,
+      # not one per lease in line.
+      local f entry updated
       while read -r entry; do
         f="$(lease_file "$(jq -r .lease <<<"$entry")")"
         [ -f "$f" ] || continue
-        put "$f" "$(jq --argjson e "$entry" '.state = ($e.state // "waiting") | .position = $e.position | .expires = $e.expires | del(.ended) | del(..|nulls)' "$f")"
-      done < <(jq -c '(.queue[] | {lease, position}), (.holders[] | {lease, state, expires})' <<<"$doc")
+        updated="$(jq --argjson e "$entry" '.state = ($e.state // "waiting") | .position = $e.position | .expires = $e.expires | del(.ended) | del(..|nulls)' "$f")"
+        put "$f" "$updated"
+      done < <(jq -c --argjson old "$before" '
+        def entries: [(.queue[] | {lease, position}), (.holders[] | {lease, state, expires})];
+        ($old | entries) as $was | entries[] | select(. as $e | $was | index([$e]) | not)' <<<"$doc")
     }
 
     # Writes this lease's status file when it first joins the line.
     open_status() {
-      local f; f="$(lease_file "$me")"
+      local f doc; f="$(lease_file "$me")"
       [ -f "$f" ] && return 0
       mkdir -p "$status_dir/leases"
-      put "$f" "$(jq -n "$jq_at"' {run: $run, resource: $res, mode: $mode, holder: (if $holder == "" then null else $holder end), asked: ($asked | tonumber | at), state: "waiting"} | del(..|nulls)' \
+      doc="$(jq -n "$jq_at"' {run: $run, resource: $res, mode: $mode, holder: (if $holder == "" then null else $holder end), asked: ($asked | tonumber | at), state: "waiting"} | del(..|nulls)' \
         --arg run "$me" --arg res "$res" --arg mode "$mode" --arg holder "$holder_name" --arg asked "$1")"
+      put "$f" "$doc"
     }
 
     # Writes the instant this run's waiting or held wait ends, ms $1, to lease.deadline.
@@ -412,8 +444,17 @@ scripts:
     set_free() { echo "$1" > "$dir/free_since"; }
     unqueue() { grep -v " $1 " "$dir/queue" > "$dir/queue.new" || true; mv "$dir/queue.new" "$dir/queue"; }
 
-    # "<status> <state>" of a run, as decree status reports it; "finished" for an unknown run.
-    run_state() { "$decree_bin" status "$1" --format json 2>/dev/null | jq -r '"\(.status) \(.state // "")"' || echo "finished"; }
+    # "<status> <state>" of a run, as decree status reports it: "finished -" for a run that
+    # does not exist, "unknown -" when decree status fails, so a hiccup never evicts a live
+    # lease (alive counts it as live).
+    run_state() {
+      local out
+      if ! out="$("$decree_bin" status "$1" --format json 2>/dev/null)"; then
+        [ -d ".decree/runs/$1" ] && echo "unknown -" || echo "finished -"
+        return 0
+      fi
+      jq -r '"\(.status) \(.state // "-")"' <<<"$out" 2>/dev/null || echo "unknown -"
+    }
     # Whether a run can still act: not finished, not interrupted.
     alive() { case "$(run_state "$1")" in finished*|interrupted*) return 1 ;; *) return 0 ;; esac; }
 
@@ -432,10 +473,11 @@ scripts:
     # expired, failed or cancelled), with when it ended; its expires is kept. Nothing to do
     # for a lease with no status, and nothing for one already over.
     end_info() {
-      local f; f="$(lease_file "${2:-$me}")"
+      local f doc; f="$(lease_file "${2:-$me}")"
       [ -f "$f" ] || return 0
-      put "$f" "$(jq "$jq_at"' if (.state | IN("released", "expired", "failed", "cancelled")) then . else .state = $state | .ended = ($now | tonumber | at) | del(.position) end' \
+      doc="$(jq "$jq_at"' if (.state | IN("released", "expired", "failed", "cancelled")) then . else .state = $state | .ended = ($now | tonumber | at) | del(.position) end' \
         --arg state "$1" --arg now "$(now_ms)" "$f")"
+      put "$f" "$doc"
     }
   leave.sh: |
     #!/usr/bin/env bash
@@ -474,6 +516,11 @@ scripts:
       done < <(find "$status_dir/leases" -name '*.json' -mmin +1440 2>/dev/null)
     }
     locked give_back
+    # Out of the line and the holders, nobody wakes it again: a wake still queued for it
+    # would reach a finished run and be rejected, so it is taken back.
+    for q in .decree/inbox/*.md; do
+      if grep -qsx "to: $me" "$q" && grep -qsx "event: again" "$q"; then rm -f "$q"; fi
+    done
   renew.sh: |
     #!/usr/bin/env bash
     # renew: a held lease gets its duration again from now (etcd's keepalive), but only while
@@ -506,10 +553,14 @@ scripts:
         echo expired > "$DECREE_EVENT_FILE"
         return 0
       fi
-      local others=0 asked id m
+      # Only a lease that cannot join the holders waits for this one: one in another mode,
+      # or any when the holders are full. One that can join will, without a swap.
+      local others=0 asked id m held_now
+      held_now="$(grep -c . "$dir/holder" 2>/dev/null || true)"
       while read -r asked id m; do
         [ -n "$id" ] && [ "$id" != "$me" ] || continue
-        if alive "$id"; then others=$((others + 1)); else unqueue "$id"; end_info cancelled "$id"; fi
+        if ! alive "$id"; then unqueue "$id"; end_info cancelled "$id"; continue; fi
+        if [ "$m" != "$h_mode" ] || (( ${held_now:-0} >= max_holders )); then others=$((others + 1)); fi
       done < <(cat "$dir/queue")
       if (( others > 0 )); then
         say "renew refused $(ids "$h_mode" "$me") expires=$(at "$h_exp") reason=\"$others other lease(s) wait for $res\""
@@ -570,10 +621,11 @@ scripts:
       [ "$h_id" = "$me" ] || { say "lost $(ids "$mode" "$me") reason=\"this lease no longer holds $res\"" >&2; return 1; }
       set_mode "$mode"
       [ "$from" = "$mode" ] && [ -s "$dir/mode_since" ] || now_ms > "$dir/mode_since"
+      # Set up and handed over: `granted`, with its expiry, until callback has told the
+      # asker (or at once, with no callback) and marks it `held`.
       local exp=$(( $(now_ms) + dur_ms_ ))
-      write_holder "$me" "$mode" "$exp" held
+      write_holder "$me" "$mode" "$exp" granted
       write_deadline "$exp"
-      say "held $(ids "$mode" "$me") holder=\"$holder_name\" expires=$(at "$exp") status=$(rel "$(lease_file "$me")") answer=\"decree reply $me release|renew\""
     }
     locked hold
   tell.sh: |
@@ -614,14 +666,17 @@ scripts:
       say "cap $(ids "$mode" "$me") duration=$DECREE_DATA_DURATION max_lease=$capped"
     fi
 
-    # Waits: writes lease.deadline, the next instant the pick can change by time alone (a
-    # holder's expiry, the end of the linger, the end of the mode's slice), at least a second
-    # and at most a minute away, so a lease whose run died, which wakes nobody, never holds
-    # the line for long. When the line or the holders change and the rules would pick this
-    # lease next, it is woken sooner (wake).
+    # Waits: writes lease.deadline. It is the next instant the pick can change by time alone
+    # (a holder's expiry, the end of the linger, the end of the mode's slice) when this
+    # lease is the one the rules would pick then; any other lease in line waits for the
+    # change to wake it (wake) or for the backstop, a minute and up to 15 s more at random,
+    # so a long line does not turn all at once, and a lease whose run died, which wakes
+    # nobody, never holds the line for long.
     wait_until() {
-      local now="$1" next=$(( $1 + 60000 )) id m exp phase cur free since
-      later() { if (( $1 > now && $1 < next )); then next=$1; fi; }
+      local now="$1" next=$(( $1 + 60000 + RANDOM % 15000 )) id m exp phase cur free since
+      later() {
+        if (( $1 > now && $1 < next )) && [ "$(pick "$1")" = "$me" ]; then next=$1; fi
+      }
       while read -r id m exp phase; do
         [ -z "$id" ] || later "$exp"
       done < <(cat "$dir/holder" 2>/dev/null || true)
@@ -671,7 +726,9 @@ scripts:
           case "$st" in
             finished*|interrupted*)
               drop_holder "$id" "$exp"
-              [ "$phase" = held ] || set_mode ""
+              # Only a swap cut short leaves the mode unknown; a lease that held, or was
+              # granted in the mode already set, leaves it as it was.
+              [ "$phase" != swapping ] || set_mode ""
               end_info expired "$id"
               say "expire $(ids "$m" "$id") at=$(at "$exp") reason=\"its run is ${st% *} in ${st#* }\" by=$me"
               continue ;;
@@ -695,7 +752,8 @@ scripts:
       if [ "$next" != "$me" ]; then wait_until "$now"; return 0; fi
       unqueue "$me"
       local cur; cur="$(current_mode)"
-      if [ "$cur" = "$mode" ]; then phase=granted; else phase=swapping; fi
+      # A lease joining holders (n > 0) is in their mode, set already: it never swaps.
+      if [ "$cur" = "$mode" ] || (( n > 0 )); then phase=granted; else phase=swapping; fi
       write_holder "$me" "$mode" $(( now + dur_ms_ )) "$phase"
       touch "$DECREE_RUN_DIR/lease.granted"
       say "grant $(ids "$mode" "$me") holder=\"$holder_name\" waited_ms=$(( now - asked )) from=${cur:-unknown}$( (( max_holders == 1 )) || echo " holders=$((n + 1))/$max_holders")"
@@ -792,16 +850,16 @@ cat ".decree/machines/lease/state/status/leases/$id.json"
 
 | `state` | Meaning |
 |---|---|
-| `waiting` | In line; `position` is its place (1 goes next). |
+| `waiting` | In line; `position` is its place by when it asked (1 asked first). The rules may let a later lease go first: one in the mode already set, or another mode once the current one's slice is used. |
 | `swapping` | Granted; the resource is being put into its mode. |
-| `granted` | Granted in the mode already set; the hold starts at once. |
+| `granted` | Set up for its mode, with its `expires`; its `callback`, if any, is being told. It holds the resource from here, and is `held` once told (at once without a callback). |
 | `held` | It holds the resource until `expires`. |
 | `released` | Given back (`ended` says when). |
 | `expired` | Its time ran out. |
 | `failed` | Its swap or its callback failed; the resource was given back. |
 | `cancelled` | It left the line before it was held, or its run stopped while it waited. |
 
-The lease holds the resource while `state` is `held` and the time is before `expires`, so a client reads it once when the hold starts and knows it has the resource until then, or until it releases it; it does not have to look again. A renewal that is granted moves `expires`; a refused one leaves it. The file is written as the lease first joins the line, rewritten after every change to its resource, and kept a day after the lease ends. A request that fails at once (an unknown resource, a bad mode) never joins the line and has no file: its run is `failed` (`decree status "$id" --format json` says why).
+The lease holds the resource while `state` is `granted` or `held` and the time is before `expires`, so a client reads it once when the hold starts and knows it has the resource until then, or until it releases it; it does not have to look again. A renewal that is granted moves `expires`; a refused one leaves it. The file is written as the lease first joins the line, rewritten after every change to its resource, and kept a day after the lease ends. A request that fails at once (an unknown resource, a bad mode) never joins the line and has no file: its run is `failed` (`decree status "$id" --format json` says why).
 
 Each resource has one too, `.decree/machines/lease/state/status/resources/<resource>.json`: its `mode` and since when (`mode_since`), when it was last given back (`free_since`, while nobody holds it), the `holders` (`lease`, `mode`, `state`, `expires`), the `queue` in order (`lease`, `mode`, `asked`, `position`) and when it was `updated`. Every file is written whole, through a rename, so a reader never sees half of one.
 
@@ -815,10 +873,10 @@ With `--param callback=<address>`, the lease POSTs its status to that address as
 id=$(echo "Render" | decree emit --machine lease --param resource=box1 --param mode=final \
   --param callback=https://render.example/leases/ready)
 # later, to that address: POST, Content-Type: application/json
-# {"run": "<id>", "resource": "box1", "mode": "final", "state": "held", "expires": "...", ...}
+# {"run": "<id>", "resource": "box1", "mode": "final", "state": "granted", "expires": "...", ...}
 ```
 
-It is called once per lease, not on a renewal. Any `2xx` answer counts; curl tries three times, 5 seconds each. If none answers, the lease fails (`failed`) and gives the resource back, since nobody knows they hold it. While it calls, the run is in `callback` and the status already says `held`. Put a token the receiver checks in the address (its path or query); the log names only the scheme and host. It needs `curl`.
+It is called once per lease, not on a renewal. Any `2xx` answer counts; curl tries three times, 5 seconds each. If none answers, the lease fails (`failed`) and gives the resource back, since nobody knows they hold it. While it calls, the run is in `callback` and the status says `granted`; it says `held` once the callback answered, so a reader never sees `held` before the asker was told. Put a token the receiver checks in the address (its path or query); the log names only the scheme and host. It needs `curl`.
 
 ## Giving it back, or keeping it
 
@@ -827,7 +885,7 @@ decree reply "$id" release    # give it back, or leave the line if still waiting
 decree reply "$id" renew      # hold it for its duration again, from now
 ```
 
-A renewal is refused while another lease waits for the resource: the expiry stays, and the run's log says why. A lease nobody releases ends at its expiry, and the next one goes. A holder past its expiry holds nothing, even if its run was interrupted, and no more leases than `holders` ever hold one resource, all in one mode, even with several `decree` processes sharing the project.
+A renewal is refused while a lease waits that could not join the holders (another mode, or the holders full): the expiry stays, and the run's log says why. A lease nobody releases ends at its expiry, and the next one goes. A holder past its expiry holds nothing, even if its run was interrupted, and no more leases than `holders` ever hold one resource, all in one mode, even with several `decree` processes sharing the project.
 
 ## Who goes next
 

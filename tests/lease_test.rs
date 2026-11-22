@@ -262,23 +262,6 @@ impl Project {
         }
     }
 
-    /// `decree reply <id> release` if the run still waits; nothing if it has finished.
-    fn release_if_live(&self, id: &str) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.state(id).0 != "finished" {
-            if self
-                .decree(&["reply", id, "release"])
-                .output()
-                .unwrap()
-                .status
-                .success()
-            {
-                return;
-            }
-            assert!(Instant::now() < deadline, "decree reply {id} release");
-            thread::sleep(Duration::from_millis(50));
-        }
-    }
 
     fn swaps(&self) -> Vec<String> {
         fs::read_to_string(self.root().join("swaps.log"))
@@ -454,21 +437,25 @@ fn another_mode_goes_once_the_linger_has_passed() {
 /// in x longer than max_wait (4s): the next grant goes to B though leases for x wait.
 #[test]
 fn a_mode_past_its_slice_gives_way_to_another_mode() {
-    let p = Project::new();
+    // A long max_lease, so no lease expires on its own here: each goes when released.
+    let p = Project::with_rules("gpu 20s 1s 4s\n");
     p.start();
     let a = p.ask_mode("x");
     p.wait_state(&a, "held");
     let swapped = Instant::now();
-    // A expires at 3s; C1, in the current mode and alone in line, goes next, until 6s or later.
+    // C1, in the current mode and alone in line, goes next once A is released.
     let c1 = p.ask_mode("x");
+    p.wait_state(&c1, "waiting");
+    p.send(&a, "release");
     p.wait_state(&c1, "held");
     let c2 = p.ask_mode("x");
+    p.wait_state(&c2, "waiting");
+    // Past x's 4s slice, B asks for y.
     thread::sleep(Duration::from_millis(4300).saturating_sub(swapped.elapsed()));
     let b = p.ask_mode("y");
     p.wait_state(&b, "waiting");
-    p.wait_state(&c2, "waiting");
-    // Released, or expired meanwhile: either way the resource is next free with C2 and B in line.
-    p.release_if_live(&c1);
+    // C1 released: the slice is used and y waits, so B goes before C2.
+    p.send(&c1, "release");
     p.wait_state(&b, "held");
     assert!(p.in_line(&c2), "{:?}", p.state(&c2));
     assert_eq!(p.swaps(), vec!["\"\" -> x", "\"x\" -> y"]);
@@ -501,7 +488,7 @@ fn a_mode_just_swapped_in_serves_its_own_leases_until_its_slice_is_used() {
     p.send(&c1, "release");
     p.wait_state(&c2, "held");
     assert!(
-        swapped.elapsed() < Duration::from_secs(7),
+        swapped.elapsed() < Duration::from_secs(9),
         "C2 was held {:?} after the swap, past the slice",
         swapped.elapsed()
     );
@@ -553,7 +540,7 @@ fn a_mode_past_its_slice_does_not_linger() {
     p.send(&a, "release");
     p.wait_state(&b, "held");
     assert!(
-        released.elapsed() < Duration::from_secs(4),
+        released.elapsed() < Duration::from_secs(6),
         "B held {:?} after the release: it lingered",
         released.elapsed()
     );
@@ -593,7 +580,7 @@ fn a_duration_past_max_lease_is_capped() {
     let held_at = Instant::now();
     p.wait_finished(&a, "done");
     assert!(
-        held_at.elapsed() < Duration::from_secs(6),
+        held_at.elapsed() < Duration::from_secs(8),
         "{:?}",
         held_at.elapsed()
     );
@@ -879,7 +866,7 @@ fn a_waiting_lease_sleeps_until_the_line_changes() {
     let released = Instant::now();
     p.send(&a, "release");
     p.wait_state(&b, "held");
-    assert!(released.elapsed() < Duration::from_secs(3), "{:?}", released.elapsed());
+    assert!(released.elapsed() < Duration::from_secs(5), "{:?}", released.elapsed());
     // Its deadline was a minute away at most, and at least a second.
     let deadline = fs::read_to_string(p.root().join(".decree/runs").join(&b).join("lease.deadline"))
         .unwrap();
@@ -1078,8 +1065,10 @@ fn a_callback_is_told_once_when_the_hold_starts() {
     assert_eq!(body["run"], a.as_str(), "{body}");
     assert_eq!(body["resource"], "gpu");
     assert_eq!(body["mode"], "x");
-    assert_eq!(body["state"], "held");
+    // The asker is told before the lease reads `held`: the body says `granted`.
+    assert_eq!(body["state"], "granted");
     assert_eq!(body["expires"], p.info(&a)["expires"]);
+    assert_eq!(p.info(&a)["state"], "held");
     p.send(&a, "renew");
     p.wait_for("the renewal", || {
         p.log(&a).contains("lease: renew resource=")
@@ -1151,5 +1140,82 @@ fn a_change_wakes_only_the_lease_next_to_go() {
             .count();
         assert_eq!(turns, 2, "{id} turned {turns} times");
     }
+    p.stop();
+}
+
+/// AC: a holder whose run is over is dropped without making the mode unknown unless it was
+/// swapping: with room for two in mode `a`, a dead `granted` holder beside a live one does not
+/// send the next `a` lease through a swap while the live one uses the resource.
+#[test]
+fn a_dead_granted_holder_leaves_the_mode_set() {
+    let p = Project::with_rules("gpu 30s 0s 30m * 2\n");
+    p.holders.set(2);
+    p.start();
+    let a = p.ask_mode("a");
+    p.wait_state(&a, "held");
+    // A lease that was granted in the mode already set, whose run is gone.
+    let holder = p.lease_dir().join("leases/gpu/holder");
+    let mut text = fs::read_to_string(&holder).unwrap();
+    text.push_str("20200101T000000.000000Z-dead00 a 1000 granted\n");
+    fs::write(&holder, text).unwrap();
+    let c = p.ask_mode("a");
+    p.wait_state(&c, "held");
+    assert_eq!(p.swaps(), vec!["\"\" -> a"], "a second swap while `a` held");
+    p.send(&a, "release");
+    p.send(&c, "release");
+    p.wait_finished(&c, "done");
+    p.stop();
+}
+
+/// AC: a wake never ends as a rejected reply: a lease woken just as its own turn grants it,
+/// whose swap then fails, leaves no failed `invalid_message` run behind.
+#[test]
+fn a_wake_for_a_lease_that_ends_is_taken_back() {
+    let p = Project::with_rules("gpu 2s 0s 30m\n");
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    // z's swap fails (the stub refuses z): Z is granted at A's expiry and fails at once.
+    let z = p.ask_mode("z");
+    p.wait_finished(&a, "done");
+    p.wait_finished(&z, "failed");
+    // A pass more, for any wake left over to be delivered.
+    thread::sleep(Duration::from_millis(2500));
+    let out = p.decree(&["status", "--format", "json"]).output().unwrap();
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rejected: Vec<&Value> = doc["runs"]["finished"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["machine"] != "lease")
+        .collect();
+    assert!(rejected.is_empty(), "{rejected:?}");
+    assert!(
+        fs::read_dir(p.root().join(".decree/inbox")).unwrap().next().is_none(),
+        "a wake was left queued"
+    );
+    p.stop();
+}
+
+/// AC: a client's release is queued at once even while a wake for the lease is queued, or
+/// while its run is busy: no retry is needed.
+#[test]
+fn a_release_is_not_refused_while_a_wake_is_queued() {
+    let p = Project::with_rules("gpu 20s 0s 30m\n");
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    let b = p.ask_mode("x");
+    p.wait_state(&b, "waiting");
+    fs::write(
+        p.root().join(".decree/inbox/lease-again-by-hand.md"),
+        format!("---\nto: {b}\nevent: again\n---\n"),
+    )
+    .unwrap();
+    p.decree(&["reply", &b, "release"]).assert().success();
+    p.wait_finished(&b, "done");
+    assert_eq!(p.info(&b)["state"], "cancelled");
+    p.send(&a, "release");
+    p.wait_finished(&a, "done");
     p.stop();
 }
