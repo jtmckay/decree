@@ -35,7 +35,7 @@ machine:
         held: held
         expired: done
     waiting:
-      description: In line, looking at nothing. A lease that leaves the line or the holders, or is granted, wakes the others with again; the deadline (lease.deadline, written by turn) is the next instant the pick can change by time alone (a holder's expiry, the linger's end, the mode's slice), at most a minute away, so a lease whose run died never holds the line for long.
+      description: In line, looking at nothing. When the line or the holders change, the lease the rules would pick next is woken with again, and only that one; the deadline (lease.deadline, written by turn) is the next instant the pick can change by time alone (a holder's expiry, the linger's end, the mode's slice), at most a minute away, so a lease whose run died never holds the line for long.
       invoke:
         reply:
           question: This lease waits in line for its resource. Give up its place, or ask to keep it longer once held?
@@ -255,8 +255,8 @@ scripts:
     }
 
     # Runs "$@" holding the resource's lock. Then, still holding it: when the holders, the
-    # mode or its times changed, or a lease left the line, wakes every other lease in line
-    # (wake), since its turn may now come; and rewrites the status (publish).
+    # mode or its times changed, or a lease left the line, wakes the lease whose turn may
+    # now come (wake); and rewrites the status (publish).
     locked() {
       local fd rc=0 before line_before
       exec {fd}>"$dir/lock"; flock "$fd"
@@ -283,20 +283,63 @@ scripts:
       return 1
     }
 
-    # Queues the reply `again` for each other lease in line whose run is live and has no
-    # reply queued yet, so its waiting state ends and its turn looks again. Written into
-    # inbox/ directly, not with decree reply, which refuses a run not waiting at that moment:
-    # a reply to a run executing now is delivered once it waits.
-    wake() {
-      local a id m f
+    # The lease the rules pick from the line at ms $1, or nothing (see the top of turn.sh).
+    pick() {
+      local now="$1" cur free since oldest="" other="" same=""
+      cur="$(current_mode)"
+      free="$(cat "$dir/free_since" 2>/dev/null || echo 0)"
+      since="$(cat "$dir/mode_since" 2>/dev/null || echo "$now")"
+      local a id m
       while read -r a id m; do
-        [ -n "$id" ] && [ "$id" != "$me" ] || continue
-        grep -qsl "^to: $id\$" .decree/inbox/*.md && continue
-        alive "$id" || continue
-        f=".decree/inbox/lease-again-$id-$(now_ms)"
-        printf -- '---\nto: %s\nevent: again\n---\nThe line for %s changed.\n' "$id" "$res" > "$f.tmp"
-        mv "$f.tmp" "$f.md"
-      done < <(cat "$dir/queue")
+        [ -n "$id" ] || continue
+        [ -n "$oldest" ] || oldest="$id"
+        if [ -n "$cur" ] && [ "$m" = "$cur" ]; then
+          [ -n "$same" ] || same="$id"
+        else
+          [ -n "$other" ] || other="$id"
+        fi
+      done < <(sort -n "$dir/queue")
+      if [ -n "$cur" ] && [ -n "$other" ] && (( now - since > max_wait_ms )); then echo "$other"
+      elif [ -n "$same" ]; then echo "$same"
+      elif [ -n "$cur" ] && (( now < free + linger_ms )); then echo ""
+      else echo "$oldest"
+      fi
+    }
+
+    # Queues the reply `again` for the one lease in line that can go now (the one pick
+    # names, or, while the resource lingers, the one it will name when the linger ends, so
+    # it looks again then), when its run is live and has no reply queued yet. Nobody is
+    # woken while the holders are full, swapping, or in a mode the picked lease is not in:
+    # the next change wakes it. A dead lease pick names leaves the line here. Written into
+    # inbox/ directly, not with decree reply, which refuses a run not waiting at that moment:
+    # a reply to a run executing now is delivered once it waits. One lease at a time, as a
+    # condition variable's signal, not a broadcast: each change costs one turn.
+    wake() {
+      local now n=0 held_mode="" swapping="" id m exp phase next f
+      now="$(now_ms)"
+      while read -r id m exp phase; do
+        [ -n "$id" ] || continue
+        n=$((n + 1)); held_mode="$m"
+        [ "$phase" != swapping ] || swapping=1
+      done < <(cat "$dir/holder" 2>/dev/null || true)
+      if (( n > 0 )); then
+        [ -z "$swapping" ] && (( n < max_holders )) || return 0
+      fi
+      while :; do
+        next="$(pick "$now")"
+        if [ -z "$next" ] && (( n == 0 )); then
+          next="$(pick $(( $(cat "$dir/free_since" 2>/dev/null || echo 0) + linger_ms )))"
+        fi
+        [ -n "$next" ] && [ "$next" != "$me" ] || return 0
+        alive "$next" && break
+        unqueue "$next"
+        end_info cancelled "$next"
+      done
+      if (( n > 0 )); then grep -q " $next $held_mode\$" "$dir/queue" || return 0; fi
+      grep -qsl "^to: $next\$" .decree/inbox/*.md && return 0
+      f=".decree/inbox/lease-again-$next-$now"
+      printf -- '---\nto: %s\nevent: again\n---\nThe line for %s changed.\n' "$next" "$res" > "$f.tmp"
+      mv "$f.tmp" "$f.md"
     }
 
     # An instant in ms, as RFC 3339, in jq.
@@ -571,34 +614,11 @@ scripts:
       say "cap $(ids "$mode" "$me") duration=$DECREE_DATA_DURATION max_lease=$capped"
     fi
 
-    # The lease the rules pick from the line, or nothing (see the top of this file).
-    pick() {
-      local now="$1" cur free since oldest="" other="" same=""
-      cur="$(current_mode)"
-      free="$(cat "$dir/free_since" 2>/dev/null || echo 0)"
-      since="$(cat "$dir/mode_since" 2>/dev/null || echo "$now")"
-      local a id m
-      while read -r a id m; do
-        [ -n "$id" ] || continue
-        [ -n "$oldest" ] || oldest="$id"
-        if [ -n "$cur" ] && [ "$m" = "$cur" ]; then
-          [ -n "$same" ] || same="$id"
-        else
-          [ -n "$other" ] || other="$id"
-        fi
-      done < <(sort -n "$dir/queue")
-      if [ -n "$cur" ] && [ -n "$other" ] && (( now - since > max_wait_ms )); then echo "$other"
-      elif [ -n "$same" ]; then echo "$same"
-      elif [ -n "$cur" ] && (( now < free + linger_ms )); then echo ""
-      else echo "$oldest"
-      fi
-    }
-
     # Waits: writes lease.deadline, the next instant the pick can change by time alone (a
     # holder's expiry, the end of the linger, the end of the mode's slice), at least a second
     # and at most a minute away, so a lease whose run died, which wakes nobody, never holds
-    # the line for long. A lease leaving the line or the holders, or being granted, wakes
-    # this one sooner (wake).
+    # the line for long. When the line or the holders change and the rules would pick this
+    # lease next, it is woken sooner (wake).
     wait_until() {
       local now="$1" next=$(( $1 + 60000 )) id m exp phase cur free since
       later() { if (( $1 > now && $1 < next )); then next=$1; fi; }
@@ -719,7 +739,7 @@ A lease is a decree run of this machine, and its run id is the lease's id. Nothi
 ## What it needs
 
 - `bash`, `flock` (util-linux) and `jq`, listed in `machines/lease/scripts/requirements`, so `infra`'s `run.sh check` checks them.
-- `decree daemon` running: a waiting lease looks again only when the line changes (a lease leaves it or the holders, or is granted, and wakes the others) or when time alone could change the pick (a holder's expiry, the linger's end, the mode's slice), and at least once a minute; a held one waits, without looking, until its expiry. Both are the deadlines of their waits (`timeout_at`). `decree daemon --once` keeps going through both, until no lease is left waiting or held. Those waits are timers, not questions for a person (`attention: false`), so a lease never puts a file in `.decree/attention/`.
+- `decree daemon` running: a waiting lease looks again only when it is the one the rules would pick next after a change to its line (a lease leaves the line or the holders, or is granted, and wakes that one alone) or when time alone could change the pick (a holder's expiry, the linger's end, the mode's slice), and at least once a minute; a held one waits, without looking, until its expiry. Both are the deadlines of their waits (`timeout_at`). `decree daemon --once` keeps going through both, until no lease is left waiting or held. Those waits are timers, not questions for a person (`attention: false`), so a lease never puts a file in `.decree/attention/`.
 
 ## Adding it
 

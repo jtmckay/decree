@@ -1122,3 +1122,34 @@ fn a_callback_nobody_takes_gives_the_resource_back() {
     );
     p.stop();
 }
+
+/// AC: a change to the line wakes only the lease next to go: as a line of four drains, each
+/// waiting lease turns twice, once on joining and once when its turn comes, wherever it
+/// stood.
+#[test]
+fn a_change_wakes_only_the_lease_next_to_go() {
+    let p = Project::with_rules("gpu 20s 1s 30m\n");
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    let line: Vec<String> = (0..4).map(|_| p.ask_mode("x")).collect();
+    for id in &line {
+        p.wait_state(id, "waiting");
+    }
+    p.send(&a, "release");
+    for id in &line {
+        p.wait_state(id, "held");
+        p.send(id, "release");
+        p.wait_finished(id, "done");
+    }
+    for id in &line {
+        let turns = p.run_json(id)["events"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| e["to"] == "turn")
+            .count();
+        assert_eq!(turns, 2, "{id} turned {turns} times");
+    }
+    p.stop();
+}
