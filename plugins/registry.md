@@ -24,96 +24,88 @@ scripts:
     # since the server is there and serving; a 5xx or no answer is down. Writes
     # state/health.json whole, through a rename, then logs one line per service.
     set -euo pipefail
-    bash .decree/machines/registry/scripts/registry.sh check
-    entries=()
+    reg=.decree/machines/registry/scripts/registry.sh
+    bash "$reg" check
+    for tool in curl jq; do
+      command -v "$tool" >/dev/null || { echo "registry: \`$tool\` is not installed; nothing was checked" >&2; exit 1; }
+    done
+    out="$(mktemp "$DECREE_STATE_DIR/.health.XXXXXX")"
+    trap 'rm -f "$out"' EXIT
     while read -r server service url lease _; do
       code="$(curl -s -o /dev/null -m "${REGISTRY_TIMEOUT:-5}" -w '%{http_code}' "$url" || true)"
       [ "$code" != 000 ] || code=""
       if [ -n "$code" ] && (( 10#$code < 500 )); then st=up; else st=down; fi
-      entries+=("$(jq -cn --arg server "$server" --arg service "$service" --arg url "$url" --arg lease "${lease:-}" \
-        --arg state "$st" --arg http "$code" --arg checked "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
+      t="${EPOCHREALTIME//[!0-9]/}"
+      jq -cn --arg server "$server" --arg service "$service" --arg url "$url" --arg lease "${lease:-}" \
+        --arg state "$st" --arg http "$code" --argjson ms "$(( 10#$t / 1000 ))" \
         '{server: $server, service: $service, url: $url, lease: (if $lease == "" then null else $lease end),
-          state: $state, http: (if $http == "" then null else ($http | tonumber) end), checked: $checked}
-         | del(..|nulls)')")
+          state: $state, http: (if $http == "" then null else ($http | tonumber) end),
+          checked: (($ms / 1000 | floor | strftime("%Y-%m-%dT%H:%M:%S")) + "." + ("00" + ($ms % 1000 | tostring))[-3:] + "Z")}
+         | del(..|nulls)' >> "$out"
       echo "registry: $st server=$server service=$service url=$url${code:+ http=$code}"
-    done < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$DECREE_STATE_DIR/services.git.txt" 2>/dev/null || true)
-    out="$DECREE_STATE_DIR/health.json"
-    if (( ${#entries[@]} )); then printf '%s\n' "${entries[@]}" | jq -s . > "$out.new"; else echo '[]' > "$out.new"; fi
-    mv "$out.new" "$out"
+    done < <(bash "$reg" rows)
+    jq -s . "$out" > "$out.json"
+    mv "$out.json" "$DECREE_STATE_DIR/health.json"
   registry.sh: |
     #!/usr/bin/env bash
     # The registry's lookups, for any script of any machine (list `needs: [registry]`). It
-    # only says where to go: it never takes a lease.
+    # only says where to go: it never takes a lease, and reads no other plugin's files.
     #   registry.sh resolve <service> [<server>]
     #       one line per place the service is: <server> <url> <lease>, the ones the last
-    #       check found up first, then the unchecked, then the down; among those alike, the
-    #       one whose lease of this project's lease machine has the fewest holders and
-    #       leases in line first; exit 1 when none. <lease> is the lease to get before using
-    #       it: <resource> (this project's lease machine), <resource>@<address> (the lease
+    #       check found up first, then the unchecked, then the down, each group in the
+    #       table's order; exit 1 when none. <lease> is the lease to get before using it:
+    #       <resource> (this project's lease machine), <resource>@<address> (the lease
     #       machine of the decree at that address), or - when it needs none.
     #   registry.sh url <service> [<server>]   the addresses alone, in the same order.
     #   registry.sh env                        <SERVICE>_URL=<address> for each service, its
     #                                          first address as `url` orders them (COMFY_URL,
-    #                                          OLLAMA_URL), for `eval`; a variable already set
-    #                                          is left out, so the environment wins.
-    #   registry.sh list [--json]              the table, with each line's health and, for a
-    #                                          lease of this project's lease machine, how many
-    #                                          hold it and wait for it; --json as one array.
+    #                                          OLLAMA_URL; a name that starts with a digit
+    #                                          gets a leading _), for `eval`; a variable
+    #                                          already set is left out, so the environment wins.
+    #   registry.sh list [--json]              the table, with each line's health; --json as
+    #                                          one array.
+    #   registry.sh rows                       the table's lines, comments removed.
     #   registry.sh check                      fails naming each malformed line of the table.
     # The table is .decree/machines/registry/state/services.git.txt; the health,
-    # state/health.json; a local lease's load, the lease machine's
-    # state/status/resources/<resource>.json.
+    # state/health.json. A `#` starts a comment at the start of a line or after a space, so an
+    # address may hold one.
     set -euo pipefail
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     table="$here/state/services.git.txt"
     health="$here/state/health.json"
-    leases="$here/../lease/state/status/resources"
+    shown="${table#"$PWD"/}"
+    command -v jq >/dev/null || { echo "registry: \`jq\` is not installed" >&2; exit 1; }
 
+    # A line with its comment removed: from a `#` at its start or after a space.
+    uncomment() { sed -E -e 's/(^|[[:space:]])#.*//' -e '/^[[:space:]]*$/d'; }
     # The table's lines, comments and blank lines removed.
-    rows() { [ -f "$table" ] || return 0; sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$table"; }
+    rows() { [ -f "$table" ] || return 0; uncomment < "$table"; }
 
-    # The last check's word for "<server> <service>": up, down, or nothing.
-    state_of() {
-      [ -f "$health" ] || return 0
-      jq -r --arg s "$1" --arg v "$2" 'map(select(.server == $s and .service == $v)) | last | .state // empty' "$health" 2>/dev/null || true
-    }
-
-    # "<server> <service>" -> 0 up, 1 unchecked, 2 down.
+    # "<server> <service>" -> 0 up, 1 unchecked, 2 down, from the last check.
     rank() {
-      case "$(state_of "$1" "$2")" in up) echo 0 ;; down) echo 2 ;; *) echo 1 ;; esac
+      local st=""
+      [ -f "$health" ] && st="$(jq -r --arg s "$1" --arg v "$2" 'map(select(.server == $s and .service == $v)) | last | .state // empty' "$health" 2>/dev/null || true)"
+      case "$st" in up) echo 0 ;; down) echo 2 ;; *) echo 1 ;; esac
     }
 
-    # How many hold lease $1 of this project's lease machine and wait for it ("<holders>
-    # <queue>"); "0 0" for none, one of another decree, or one with no status yet.
-    load_of() {
-      local f="$leases/${1:-}.json"
-      if [ -n "${1:-}" ] && [[ "$1" != *@* ]] && [ -f "$f" ]; then
-        jq -r '"\(.holders | length) \(.queue | length)"' "$f" 2>/dev/null || echo "0 0"
-      else
-        echo "0 0"
-      fi
-    }
-
-    # "<server> <url> <lease>" for each place $1 is (on server $2 only, when given): live
-    # first, then the least loaded local lease.
+    # "<server> <url> <lease>" for each place $1 is (on server $2 only, when given), live first.
     resolve() {
-      local found
+      local found server service url lease
       found="$(rows | while read -r server service url lease _; do
         [ "$service" = "$1" ] || continue
         [ -z "${2:-}" ] || [ "$server" = "$2" ] || continue
-        read -r h q <<<"$(load_of "${lease:-}")"
-        echo "$(rank "$server" "$service") $((h + q)) $server $url ${lease:--}"
-      done | sort -s -n -k1,1 -k2,2 | cut -d' ' -f3-)"
-      [ -n "$found" ] || { echo "registry: no service \`$1\`${2:+ on server \`$2\`} in ${table#"$PWD"/}" >&2; return 1; }
+        echo "$(rank "$server" "$service") $server $url ${lease:--}"
+      done | sort -s -n -k1,1 | cut -d' ' -f2-)"
+      [ -n "$found" ] || { echo "registry: no service \`$1\`${2:+ on server \`$2\`} in $shown" >&2; return 1; }
       echo "$found"
     }
 
     check_rows() {
-      local n=0 bad=0 server service url lease extra shown="${table#"$PWD"/}"
+      local n=0 bad=0 server service url lease extra line
       while IFS= read -r line; do
         n=$((n + 1))
-        line="${line%%#*}"
-        [[ "$line" =~ [^[:space:]] ]] || continue
+        line="$(uncomment <<<"$line")"
+        [ -n "$line" ] || continue
         read -r server service url lease extra <<<"$line"
         if [ -n "$extra" ] || [ -z "$url" ]; then
           echo "registry: $shown:$n: want <server> <service> <url> [lease], got: $line" >&2; bad=1; continue
@@ -129,24 +121,16 @@ scripts:
       return "$bad"
     }
 
-    # The table as JSON: [{server, service, url, lease, state, http, checked, holders,
-    # waiting}], state "unchecked" before any check; holders and waiting only for a lease
-    # of this project's lease machine that has a status.
+    # The table as JSON: [{server, service, url, lease, state, http, checked}], state
+    # "unchecked" before any check.
     list_json() {
-      local entries=() server service url lease h q
-      while read -r server service url lease _; do
-        h=""; q=""
-        if [ -n "${lease:-}" ] && [[ "$lease" != *@* ]] && [ -f "$leases/$lease.json" ]; then read -r h q <<<"$(load_of "$lease")"; fi
-        entries+=("$(jq -cn --arg server "$server" --arg service "$service" --arg url "$url" --arg lease "${lease:-}" \
-          --arg h "$h" --arg q "$q" --slurpfile health <( [ -f "$health" ] && cat "$health" || echo '[]' ) \
-          '($health[0] | map(select(.server == $server and .service == $service)) | last) as $c
-           | {server: $server, service: $service, url: $url, lease: (if $lease == "" then null else $lease end),
-              state: ($c.state // "unchecked"), http: $c.http, checked: $c.checked,
-              holders: (if $h == "" then null else ($h | tonumber) end),
-              waiting: (if $q == "" then null else ($q | tonumber) end)}
-           | del(..|nulls)')")
-      done < <(rows)
-      if (( ${#entries[@]} )); then printf '%s\n' "${entries[@]}" | jq -s .; else echo '[]'; fi
+      rows | jq -R -s --slurpfile health <( [ -f "$health" ] && cat "$health" || echo '[]' ) '
+        split("\n") | map(select(length > 0) | [splits("[[:space:]]+")] | map(select(length > 0)))
+        | map(. as [$server, $service, $url, $lease]
+          | ($health[0] | map(select(.server == $server and .service == $service)) | last) as $c
+          | {server: $server, service: $service, url: $url, lease: $lease,
+             state: ($c.state // "unchecked"), http: $c.http, checked: $c.checked}
+          | del(..|nulls))'
     }
 
     case "${1:-}" in
@@ -162,21 +146,21 @@ scripts:
       env)
         rows | awk '{ print $2 }' | awk '!seen[$0]++' | while read -r service; do
           var="$(printf '%s_URL' "$service" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_\n' '_')"
+          [[ "$var" =~ ^[0-9] ]] && var="_$var"
           [ -z "${!var:-}" ] || continue
           printf '%s=%q\n' "$var" "$(resolve "$service" | head -n 1 | cut -d' ' -f2)"
         done
         ;;
       list)
         if [ "${2:-}" = --json ]; then list_json; exit 0; fi
-        list_json | jq -r '.[] | [.server, .service, .url, (.lease // "-"), .state
-          + (if .http then " http=\(.http)" else "" end)
-          + (if .holders != null then " holders=\(.holders) waiting=\(.waiting)" else "" end)] | @tsv' |
+        list_json | jq -r '.[] | [.server, .service, .url, (.lease // "-"), .state + (if .http then " http=\(.http)" else "" end)] | @tsv' |
           while IFS=$'\t' read -r server service url lease st; do
             printf '%-12s %-12s %-36s %-16s %s\n' "$server" "$service" "$url" "$lease" "$st"
           done
         ;;
+      rows) rows ;;
       check) check_rows ;;
-      *) echo "registry: usage: registry.sh resolve <service> [<server>] | url <service> [<server>] | env | list [--json] | check" >&2; exit 2 ;;
+      *) echo "registry: usage: registry.sh resolve <service> [<server>] | url <service> [<server>] | env | list [--json] | rows | check" >&2; exit 2 ;;
     esac
   requirements: |
     # What registry's scripts need beyond decree, checked by infra's `run.sh check`.
@@ -222,7 +206,7 @@ decree install registry
 
 ## The table
 
-Write `.decree/machines/registry/state/services.git.txt`, one service per line, `#` for comments. It is the project's, so it is committed and no install replaces it:
+Write `.decree/machines/registry/state/services.git.txt`, one service per line; `#` at the start of a line or after a space starts a comment, so an address may hold one. It is the project's, so it is committed and no install replaces it:
 
 ```text
 # server  service  url                    lease
@@ -245,7 +229,7 @@ It writes what it found to `.decree/machines/registry/state/health.json`, whole,
   "state": "up", "http": 200, "checked": "2026-11-22T10:00:00.000Z"}]
 ```
 
-Lookups put live addresses first, then unchecked ones, then the down ones; among those alike, the one whose lease (of this project's `lease` machine) has the fewest holders and leases in line, read from the lease plugin's `state/status/resources/<resource>.json`.
+Lookups put live addresses first, then unchecked ones, then the down ones, each in the table's order. The registry reads no other plugin's files: to see how busy a resource is, read the `lease` plugin's status (`.decree/machines/lease/state/status/resources/<resource>.json`).
 
 ## Looking things up
 
@@ -258,7 +242,7 @@ bash "$reg" resolve render         # box1 http://10.0.0.5:8188 box1
 bash "$reg" resolve render box2    # the one on box2
 bash "$reg" url search             # http://localhost:7700
 eval "$(bash "$reg" env)"          # RENDER_URL, SEARCH_URL, ... unless already set
-bash "$reg" list                   # the table, each line's health and its lease's holders and line
+bash "$reg" list                   # the table and each line's health
 bash "$reg" list --json            # the same, as one JSON array
 ```
 

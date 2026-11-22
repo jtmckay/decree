@@ -267,39 +267,24 @@ fn a_server_error_is_down_and_list_json_says_so() {
     );
 }
 
-/// AC: among places alike in health, `resolve` puts first the one whose local lease has the
-/// fewest holders and leases in line, as the lease plugin's resource status says; `list`
-/// shows each local lease's holders and line.
+/// AC: a `#` inside an address is part of it (a comment starts at a line's start or after a
+/// space); `env` gives a service whose name starts with a digit a variable with a leading `_`.
 #[test]
-fn resolve_prefers_the_least_loaded_local_lease() {
+fn an_address_may_hold_a_hash_and_env_names_are_valid() {
     if !has("jq") {
         eprintln!("no jq: skipping");
         return;
     }
     let (_tmp, root) = project(
-        "box1 render http://10.0.0.5:8188 box1\n\
-         box2 render http://10.0.0.9:8188 box2\n",
+        "box1 3d http://10.0.0.5:8188/#/frag   # a comment\n\
+         # box2 3d http://10.0.0.9:8188\n",
     );
-    let status = root.join(".decree/machines/lease/state/status/resources");
-    fs::create_dir_all(&status).unwrap();
-    fs::write(
-        status.join("box1.json"),
-        r#"{"resource":"box1","holders":[{"lease":"a"}],"queue":[{"lease":"b"}]}"#,
-    )
-    .unwrap();
-    fs::write(
-        status.join("box2.json"),
-        r#"{"resource":"box2","holders":[],"queue":[]}"#,
-    )
-    .unwrap();
+    assert_eq!(registry(&root, &["check"]).0, 0);
     assert_eq!(
-        registry(&root, &["resolve", "render"]).1,
-        "box2 http://10.0.0.9:8188 box2\nbox1 http://10.0.0.5:8188 box1\n"
+        registry(&root, &["url", "3d"]).1,
+        "http://10.0.0.5:8188/#/frag\n"
     );
-    let list = registry(&root, &["list"]).1;
-    assert!(
-        list.lines()
-            .any(|l| l.starts_with("box1 ") && l.ends_with("unchecked holders=1 waiting=1")),
-        "{list}"
-    );
+    let (code, out, err) = registry(&root, &["env"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "_3D_URL=http://10.0.0.5:8188/#/frag\n");
 }
