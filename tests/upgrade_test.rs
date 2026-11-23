@@ -81,7 +81,7 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
     }
     assert!(stdout.contains("`which -a decree`"), "{stdout}");
     // AC (A10): the after-steps say `list` shows which plugins the new version changed,
-    // and `decree install --official <name>` takes the new copy.
+    // and `decree install --official [<name>...]` takes the new copies.
     assert!(
         lines.iter().any(|l| l.starts_with("decree list")
             && l.contains("`differs`")
@@ -91,8 +91,8 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("decree install --official <name>")
-                && l.contains("new version's copy")),
+            .any(|l| l.starts_with("decree install --official [<name>...]")
+                && l.contains("new version's copies")),
         "{stdout}"
     );
     assert!(stdout.contains("`cargo uninstall decree`"), "{stdout}");
@@ -154,7 +154,7 @@ fn json_output_matches_its_schema() {
             [
                 "decree install",
                 "decree list",
-                "decree install --official <name>"
+                "decree install --official [<name>...]"
             ]
         );
     }

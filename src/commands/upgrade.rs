@@ -25,7 +25,8 @@ const TWO_COPIES: &str = "If `which -a decree` lists two copies, the one first o
 /// What to run in each project afterwards: the command, and when it is needed.
 /// `decree install` writes the new version's schemas and installs each plugin as its file
 /// says. The official plugins are built into decree, so a new version may change them: `list`
-/// marks each one the project's copy differs from, and `decree install --official` takes the new copy.
+/// marks each one the project's copy differs from, and `decree install --official` takes the new
+/// copies: of the plugins named, or of every official plugin the project has.
 const AFTER: [(&str, Option<&str>); 3] = [
     (
         "decree install",
@@ -36,8 +37,8 @@ const AFTER: [(&str, Option<&str>); 3] = [
         Some("if you want to see each official plugin the new version changed: it marks them `differs`"),
     ),
     (
-        "decree install --official <name>",
-        Some("if you want the new version's copy of a plugin marked `differs`, such as skill: it prints the edits it drops"),
+        "decree install --official [<name>...]",
+        Some("if you want the new version's copies of the plugins marked `differs`, such as skill: with no name, of every official plugin you have (adding none); it prints the edits it replaces and archives the old files"),
     ),
 ];
 
