@@ -113,7 +113,7 @@ fn installs_with_an_empty_table_that_installs_keep() {
         .contains("# box1    render"));
     assert_eq!(registry(root, &["list"]).1, "");
     fs::write(&table, "a ollama http://127.0.0.1:9\n").unwrap();
-    decree(root, &["install", "--force", "registry"])
+    decree(root, &["install", "--official", "registry"])
         .assert()
         .success();
     assert_eq!(

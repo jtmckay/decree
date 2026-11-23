@@ -263,11 +263,11 @@ scripts:
     | --- | --- |
     | `decree check [--format json\|sarif]` | Validate every machine, script name, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
     | `decree install` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone or a pull. Moves an installed copy edited in place to `.decree/archive/` first. |
-    | `decree install <name>... [--force]` | Install these plugins, archiving an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--force` takes this decree's copy, prints the edits it replaces and archives the old file. |
+    | `decree install <name>... [--official]` | Install these plugins, archiving an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--official` takes this decree's built-in copy, prints the edits it replaces and archives the old file. |
     | `decree install <file\|->`, or `curl -fsSL <url> \| decree install -` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
     | `decree list` / `decree export [<name>]` | List the project's plugins (`official` or `own`, `differs`, `not installed`, `edited`), the machines no plugin installed, and the official plugins it can add. Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. |
     | `decree graph` | Write `.decree/machines/<machine>/graph.md` (Mermaid) for every machine, plus `.decree/system.md`. |
-    | `decree install --force skill` | After upgrading decree: take its `skill` plugin; the next daemon start rewrites this skill, keeping other files in the skill folder. |
+    | `decree install --official skill` | After upgrading decree: take its `skill` plugin; the next daemon start rewrites this skill, keeping other files in the skill folder. |
     | `decree` | Print a synopsis of the quick start and run nothing; run the queue with `decree daemon --once`. |
     | `decree upgrade [--yes] [--format json]` | Print how to upgrade decree (the install line, pinned with `\| sh -s -- <tag>`, and `cargo install --git … --force` for a cargo copy) and what to run in each project after, then ask y/N before running the install line, and then before running `decree install` in this project; `--yes` runs both without asking. After an upgrade, run `decree install` in each project: it writes the new schemas and installs the plugins. An agent never answers `y` for a person. |
     | `decree emit [--machine <m>] [--param k=v]...` | Queue a message from stdin: a body for machine `m`, or a whole message whose frontmatter the flags override (`decree emit < <file>` runs a message again). Prints the new id. |
@@ -1263,6 +1263,6 @@ cron:
 
 The decree skill, for an AI CLI that reads skills: `SKILL.md` and `reference/*.md`, which tell an agent how to write messages, machines and scripts and how to run decree. `decree init` adds this plugin and writes the skill for its AI backend; then, each time `decree daemon` starts (its cron file is `@reboot`), `install` copies each file that differs into each skill folder the project has, `.claude/skills/decree/` (Claude Code) and `.github/skills/decree/` (GitHub Copilot). Other files in those folders are the project's and stay.
 
-- **After upgrading decree:** `decree install --force skill`, then `decree daemon --once` (or the next daemon start) writes the new skill.
+- **After upgrading decree:** `decree install --official skill`, then `decree daemon --once` (or the next daemon start) writes the new skill.
 - **Your own edits:** edit `.decree/machines/skill/scripts/skill/`, then `decree export skill`; a file edited only in `.claude/skills/decree/` is written over at the next start.
 - **No skill:** delete `.decree/plugins/skill.md`, then `decree install`.

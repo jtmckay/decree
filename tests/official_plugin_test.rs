@@ -120,8 +120,8 @@ fn add_develop_adds_what_it_needs_and_names_it() {
 }
 
 /// AC: in a project that added `develop`, edited its gate and exported it, `list`
-/// marks `develop` added and differs; `decree install develop` without `--force` installs the
-/// project's file; `--force` shows the gate edit dropped and makes the file the built-in copy.
+/// marks `develop` added and differs; `decree install develop` without `--official` installs the
+/// project's file; `--official` shows the gate edit dropped and makes the file the built-in copy.
 #[test]
 fn an_edited_plugin_is_installed_from_its_file_and_replaced_only_with_force() {
     let p = init();
@@ -178,7 +178,7 @@ fn an_edited_plugin_is_installed_from_its_file_and_replaced_only_with_force() {
     assert_eq!(fs::read_to_string(&plugin).unwrap(), exported);
     assert_eq!(fs::read_to_string(&gate).unwrap(), before);
 
-    let out = ok(p.path(), &["install", "--force", "develop"]);
+    let out = ok(p.path(), &["install", "--official", "develop"]);
     assert!(out.contains("replaced .decree/plugins/develop.md"), "{out}");
     assert!(
         out.contains("  changed .decree/machines/develop/scripts/gate.sh\n"),

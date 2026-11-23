@@ -52,7 +52,7 @@
               },
               "differs": {
                 "type": "boolean",
-                "description": "With `official`: whether the file differs from this decree's copy, byte for byte (edited, or from another decree version); `decree install --force <name>` takes this decree's copy, archiving the old file. False otherwise."
+                "description": "With `official`: whether the file differs from this decree's copy, byte for byte (edited, or from another decree version); `decree install --official <name>` takes this decree's copy, archiving the old file. False otherwise."
               },
               "state": {
                 "enum": [
@@ -150,7 +150,7 @@
                   "needed",
                   "replaced"
                 ],
-                "description": "`installed`: named, and installed from its file in plugins/; `added`: named, not in plugins/, so seeded from the official copy and installed; `needed`: seeded and installed because a plugin needs it; `replaced`: named with --force, its file replaced with this decree's copy (the old one archived) and installed."
+                "description": "`installed`: named, and installed from its file in plugins/; `added`: named, not in plugins/, so seeded from the official copy and installed; `needed`: seeded and installed because a plugin needs it; `replaced`: named with --official, its file replaced with this decree's copy (the old one archived) and installed."
               },
               "needed_by": {
                 "type": "array",

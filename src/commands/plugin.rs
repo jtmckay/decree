@@ -192,7 +192,7 @@ fn import(
 /// `decree install [<name>...|<file>|-]` (docs/reference/plugins.md, Installing). No argument:
 /// every plugin is installed as its file says (`plugin::sync`); stdin is never read, so a
 /// script or a loop can run it safely. A name is a plugin, installed from `plugins/<name>.md`, or from
-/// decree's official copy when `plugins/` has none or with `force`. Anything else is a plugin
+/// decree's official copy when `plugins/` has none or with `take_official`. Anything else is a plugin
 /// file, or `-` for stdin, imported alone. Nothing an install replaces is lost: what it would
 /// lose is moved to `.decree/archive/` first.
 ///
@@ -202,13 +202,13 @@ fn import(
 pub fn install(
     project_root: &Path,
     sources: &[String],
-    force: bool,
+    take_official: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
-    let result = install_plugins(project_root, sources, force, format);
+    let result = install_plugins(project_root, sources, take_official, format);
     // With no argument, plugins that installed stay installed when another fails its schema,
     // so the schemas are written then too; a refused install by name or file writes nothing.
-    if result.is_ok() || (sources.is_empty() && !force) {
+    if result.is_ok() || (sources.is_empty() && !take_official) {
         // The install's own error, if any, is the one to report.
         let written = crate::commands::schema::write(project_root);
         result?;
@@ -221,7 +221,7 @@ pub fn install(
 fn install_plugins(
     project_root: &Path,
     sources: &[String],
-    force: bool,
+    take_official: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
@@ -233,19 +233,19 @@ fn install_plugins(
         Ok(bytes)
     };
     if sources.is_empty() {
-        if force {
+        if take_official {
             return Err(DecreeError::Other(
-                "--force replaces a plugin by name (`decree install --force <name>`) or from a file; with no argument, `decree install` installs every plugin as its file says".into(),
+                "--official takes this decree's copy of the plugins named (`decree install --official <name>`); with no argument, `decree install` installs every plugin as its file says".into(),
             ));
         }
         return install_all(&decree_dir, format);
     }
     if sources.iter().all(|s| crate::machine::is_ident(s)) {
-        return install_named(project_root, sources, force, format);
+        return install_named(project_root, sources, take_official, format);
     }
-    if force {
+    if take_official {
         return Err(DecreeError::Other(
-            "--force takes this decree's official copy of a plugin named (`decree install --force <name>`); a plugin file is installed without it, archiving the one it replaces".into(),
+            "--official takes this decree's copy of the plugins named (`decree install --official <name>`), not a plugin file".into(),
         ));
     }
     let [source] = sources else {
@@ -591,7 +591,7 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
         .collect();
     let mut notes = Vec::new();
     if marks.contains(&"differs") {
-        notes.push("`differs`: not this decree's copy; `decree install --force <name>` takes it, printing the edits it drops and moving the old file to .decree/archive/.");
+        notes.push("`differs`: not this decree's copy; `decree install --official <name>` takes it, printing the edits it replaces and archiving the old file.");
     }
     if marks.contains(&"not installed") {
         notes.push("`not installed`: new or changed since it was installed; run `decree install`.");
@@ -615,7 +615,7 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
 struct Installed {
     name: String,
     /// `installed` (from its file in `plugins/`), `added` (seeded from the official copy),
-    /// `needed` (seeded because a plugin needs it) or `replaced` (--force: the file replaced
+    /// `needed` (seeded because a plugin needs it) or `replaced` (--official: the file replaced
     /// with the official copy).
     status: &'static str,
     /// For `needed`: the plugins that need it.
@@ -631,13 +631,13 @@ struct Installed {
 /// `decree install <name>...`: install each named plugin from `plugins/<name>.md`, moving an
 /// installed copy edited in place, or a machine no plugin installed, to `archive/` first. A name `plugins/` lacks is seeded from the official plugin of
 /// that name, and so is each official plugin a seeded or installed one needs that `plugins/`
-/// lacks; `force` replaces a file in `plugins/` with the official copy, printing what changes
+/// lacks; `take_official` replaces a file in `plugins/` with the official copy, printing what changes
 /// and moving the old file to `archive/`. A name that is neither, or a plugin file that fails the schema, fails before anything is
 /// written.
 fn install_named(
     project_root: &Path,
     names: &[String],
-    force: bool,
+    take_official: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
@@ -658,6 +658,21 @@ fn install_named(
         )));
     }
 
+    if take_official {
+        let own: Vec<String> = names
+            .iter()
+            .filter(|n| official::get(n).is_none())
+            .map(|n| format!("`{n}`"))
+            .collect();
+        if !own.is_empty() {
+            return Err(DecreeError::Other(format!(
+                "--official: {} not an official plugin, so this decree has no copy to take; nothing was installed. The official plugins are: {}",
+                if own.len() == 1 { format!("{} is", own[0]) } else { format!("{} are", own.join(", ")) },
+                official::names().join(", ")
+            )));
+        }
+    }
+
     // The named plugins first, then each need not yet in plugins/, breadth first.
     let mut plan: Vec<Installed> = Vec::new();
     let mut problems = Vec::new();
@@ -676,7 +691,7 @@ fn install_named(
             continue;
         }
         let o = official::get(&name);
-        let status = match (needed_by.is_some(), present(&name), force && o.is_some()) {
+        let status = match (needed_by.is_some(), present(&name), take_official) {
             // A need already in plugins/ is the project's: left as it is, without a word.
             (true, true, _) => continue,
             (true, false, _) => "needed",

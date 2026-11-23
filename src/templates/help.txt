@@ -28,11 +28,11 @@ Commands:
                               file says (after a clone or a pull). An edited
                               installed copy, or a replaced plugin file, goes
                               to .decree/archive/ first. Nothing else installs
-  decree install NAME... [--force]
+  decree install NAME... [--official]
                               Install these plugins; an official one not in
                               .decree/plugins/ is copied there first, with
-                              those it needs. --force takes decree's official
-                              copy
+                              those it needs. --official takes decree's
+                              built-in copy
   decree install FILE|-       Check a plugin, copy it to .decree/plugins/
                               and install it; - reads it from stdin
                               (curl -fsSL URL | decree install -)

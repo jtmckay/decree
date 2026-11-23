@@ -654,7 +654,7 @@ fn a_deleted_plugin_removes_its_copy_and_keeps_hand_written_machines() {
 /// `decree install -` copies the plugin on stdin into `plugins/` and installs it
 /// (`curl -fsSL <url> | decree install -`); with no argument `decree install` never reads
 /// stdin, even when something is piped (a loop's input stays the loop's), and installs every
-/// plugin as its file says; `--force` needs a name or a plugin.
+/// plugin as its file says; `--official` needs a name.
 #[test]
 fn install_reads_stdin_only_with_a_dash() {
     let p = Project::new();
@@ -684,9 +684,12 @@ fn install_reads_stdin_only_with_a_dash() {
         out,
         "installed .decree/plugins/develop.md\ninstalled .decree/plugins/helper.md\n"
     );
-    let (code, _, err) = p.decree(&["install", "--force"], "");
+    let (code, _, err) = p.decree(&["install", "--official"], "");
     assert_eq!(code, 1);
-    assert!(err.contains("--force replaces a plugin by name"), "{err}");
+    assert!(
+        err.contains("--official takes this decree's copy of the plugins named"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -701,7 +704,7 @@ fn import_refuses_missing_needs_and_writes_nothing() {
 }
 
 /// A plugin whose name `plugins/` has is installed over it, the old file archived;
-/// `--force` is for names only.
+/// `--official` is for names only.
 #[test]
 fn import_replaces_a_taken_name_archiving_the_old_file() {
     let p = Project::new();
@@ -710,10 +713,10 @@ fn import_replaces_a_taken_name_archiving_the_old_file() {
     let changed = HELPER.replace("echo helped", "echo helped twice");
 
     let before = p.tree("");
-    let (code, _, err) = p.decree(&["install", "-", "--force"], &changed);
+    let (code, _, err) = p.decree(&["install", "-", "--official"], &changed);
     assert_eq!(code, 1);
     assert!(
-        err.contains("--force takes this decree's official copy"),
+        err.contains("--official takes this decree's copy of the plugins named"),
         "{err}"
     );
     assert_eq!(p.tree(""), before);
@@ -746,6 +749,22 @@ fn import_replaces_a_taken_name_archiving_the_old_file() {
     // The same file again replaces nothing worth keeping.
     assert_eq!(p.decree(&["install", "-"], &changed).0, 0);
     assert_eq!(p.archives("helper").len(), 1);
+}
+
+/// `--official` takes decree's built-in copy, so a project's own plugin has none to take:
+/// it exits 1, writing nothing.
+#[test]
+fn official_refuses_a_plugin_decree_does_not_ship() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    let before = p.tree("");
+    let (code, out, err) = p.decree(&["install", "--official", "helper"], "");
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(
+        err.contains("--official: `helper` is not an official plugin"),
+        "{err}"
+    );
+    assert_eq!(p.tree(""), before);
 }
 
 #[test]

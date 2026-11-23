@@ -94,9 +94,9 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         },
         Command::Install {
             sources,
-            force,
+            official,
             format,
-        } => commands::plugin::install(&root()?, &sources, force, format),
+        } => commands::plugin::install(&root()?, &sources, official, format),
         Command::Retry { id, state, format } => {
             commands::retry::run(&root()?, &id, state.as_deref(), format)
         }
