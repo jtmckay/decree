@@ -240,7 +240,9 @@ scripts:
       `.decree/machines/<name>/`: its `machine.yml` (or none: a library of scripts), `scripts/`,
       `cron/`, and seeds for its `state/` and `order/`; `x-` keys are for other tools. decree
       installs plugins only when asked: `decree install` (after a clone or a pull; `check`
-      and `daemon` say when one is due), `add` or `import`. Edit the installed copy
+      and `daemon` say when one is due), `add` or `import`; the daemon never installs. To
+      keep a deployed project installed, start it with `decree install && decree daemon`
+      (or run `decree install` from a git `post-merge` hook); suggest that, not a machine. Edit the installed copy
       (`machine.yml`, `scripts/`, `cron/`), run it, then keep the edit with
       `decree export <name>`, or let the next run's `commit` export it, and commit the
       plugin file. A machine written by hand in `machines/<name>/` is not committed until it is exported
@@ -294,8 +296,8 @@ scripts:
     A project may have added official plugins (`decree list` marks them `official`): `develop`
     (or its variants `develop_rust`, `develop_node` and `develop_react`, which work as it does),
     `infra` and `qa` below, `router` (the default router), and `newsletter`, `comfy`,
-    `develop_by_size`, `gliner_router`, `llm_router`, `lease` and `plugin_install` (installs the
-    plugins each time the daemon starts), each described in its plugin file. When one
+    `develop_by_size`, `gliner_router`, `llm_router`, `lease` and `registry`, each described in
+    its plugin file. When one
     of the three below is there, start from it before writing a machine of the same kind. Each starts with `clean_tree` (a root `onentry`: it fails the run
     unless the git work tree is clean, naming each `interrupted` or `failed` run that may have left
     the changes, with its `decree retry` and `git stash push` commands, also in its attention file) and

@@ -850,3 +850,11 @@ Left out, and why: existential's flows, `project:` tags, `endpoints:`, `handlers
 
 **Consequences.** A project tunes or turns off a plugin's schedules in place and they stay; sharing that choice still takes `decree export`. A plugin update that adds or changes a cron file reaches an installed project only with `--cron`, which `check` points to. After a decree upgrade, `decree install --official` takes every official plugin the project has in one step.
 
+## D98: No plugin installs on daemon start; the start command does
+
+**Context.** [D85](#d85-a-plugin-carries-any-of-decrees-files-and-installs-only-when-asked) offered automatic installs as an opt-in official plugin, `plugin_install`, whose `@reboot` cron file ran `decree install` at each daemon start. Since [D96](#d96-an-install-always-installs-and-archives-what-it-would-lose) an install archives every edit in place, so with it each restart quietly archived the edits a failed run had left for `decree retry`. The project's owner would not expect a daemon to install, and preferred `decree install && decree daemon` where installing at start is wanted.
+
+**Decision.** The `plugin_install` plugin is removed. decree installs only when `decree install` (or `init`) runs; `daemon` and `check` only report what an install would change. The docs and the skill recommend `decree install && decree daemon` for a deploy, a container or a service unit, and a git `post-merge` hook running `decree install` for a working copy. A project that has `plugins/plugin_install.md` keeps it as its own plugin (`decree list` marks it `own`) and may delete it.
+
+**Consequences.** Installing is always a visible step in whatever starts decree, not a run hidden among the daemon's. Nothing official installs on a timer.
+

@@ -520,7 +520,7 @@ fn an_edit_under_an_unchanged_plugin_is_archived() {
 }
 
 #[test]
-fn plugin_install_takes_the_plugin_and_archives_added_files() {
+fn install_by_name_takes_the_plugin_and_archives_added_files() {
     let (p, edited) = conflict();
     p.put("machines/helper/scripts/added.txt", "added in place\n");
     let (code, out, err) = p.decree(&["install", "helper"], "");
@@ -1047,40 +1047,4 @@ fn a_plugin_carries_cron_state_and_order_and_installs_only_when_asked() {
     assert!(!p.exists("machines/kit/cron") && !p.exists("machines/kit/scripts"));
     assert!(p.exists("machines/kit/order/A01-kit.md"));
     assert_eq!(p.get("machines/kit/state/seeds.txt"), "mine\n");
-}
-
-/// The official `plugin_install`: its run installs what `process` only reports.
-#[test]
-fn the_plugin_install_plugin_installs_the_plugins() {
-    let p = Project::new();
-    let (code, _, err) = p.decree(&["install", "plugin_install"], "");
-    assert_eq!(code, 0, "{err}");
-    assert!(p
-        .get("machines/plugin_install/cron/boot.md")
-        .contains("'@reboot'"));
-    p.put("plugins/helper.md", HELPER);
-    p.put(
-        "inbox/a.md",
-        "---\nmachine: plugin_install\n---\nInstall.\n",
-    );
-    let bin = Path::new(env!("CARGO_BIN_EXE_decree")).parent().unwrap();
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let out = common::decree_at(&p.root)
-        .env("NO_COLOR", "1")
-        .env("PATH", path)
-        .args(["daemon", "--once"])
-        .output()
-        .unwrap();
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(out.status.success(), "{text}");
-    assert!(text.contains("plugins/helper.md: not installed"), "{text}");
-    assert!(p.exists("machines/helper/machine.yml"), "{text}");
 }
