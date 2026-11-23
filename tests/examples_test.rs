@@ -103,6 +103,17 @@ fn every_example_passes_check_without_a_warning() {
     for name in names {
         let dir = tempfile::tempdir().unwrap();
         copy_dir(&examples().join(&name), dir.path());
+        // As after a clone: git ignores what is installed, so install it first.
+        let install = Command::new(env!("CARGO_BIN_EXE_decree"))
+            .arg("install")
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            install.status.success(),
+            "decree install in examples/{name}: {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
         let out = Command::new(env!("CARGO_BIN_EXE_decree"))
             .arg("check")
             .current_dir(dir.path())
@@ -438,11 +449,11 @@ fn text_to_media_readme_commands_run() {
 fn assert_readme_reads_only(name: &str) {
     let dir = run_readme(name, "true");
     let project = dir.path().join("examples").join(name);
-    // Leave out what `decree check` installs, here and in the example itself (it is
-    // installed there too when `decree check` runs in the example directory).
+    // Leave out what `decree install` writes and git ignores, here and in the example
+    // itself (installed there too when a person or a test runs it in the example directory).
     let not_installed = |root: &Path, p: &PathBuf| {
         let rel = p.strip_prefix(root).unwrap();
-        !["machines", "scripts", "cache"]
+        !["machines", "scripts", "cache", "schema", "archive"]
             .iter()
             .any(|d| rel.starts_with(Path::new(".decree").join(d)))
     };

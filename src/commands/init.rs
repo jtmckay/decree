@@ -397,11 +397,31 @@ mod tests {
     #[test]
     fn test_repository_skill_copies_are_the_templates() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        // The repository's skill folders link to its installed `skill` plugin, which git
+        // ignores: the plugin file it installs from is the copy to compare. Once installed
+        // (`decree install`), the folders themselves are compared too.
+        let found = crate::plugin::read_one(&root.join(".decree"), "skill").unwrap();
+        let plugin = found.parsed.unwrap();
+        for (name, content) in skill_files() {
+            assert_eq!(
+                plugin.scripts.get(&format!("skill/{name}")),
+                Some(&content),
+                ".decree/plugins/skill.md: skill/{name}"
+            );
+        }
         for b in AI_BACKENDS {
             let Some(skill_dir) = b.skill_dir else {
                 continue;
             };
             let dir = root.join(skill_dir);
+            assert_eq!(
+                std::fs::read_link(&dir).unwrap(),
+                Path::new("../../.decree/machines/skill/scripts/skill"),
+                "{skill_dir}"
+            );
+            if !dir.exists() {
+                continue; // a fresh clone: not installed yet
+            }
             assert_eq!(files_under(&dir), skill_names(), "{skill_dir}");
             for (name, content) in skill_files() {
                 let installed = std::fs::read_to_string(dir.join(&name)).unwrap();

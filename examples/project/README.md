@@ -10,6 +10,7 @@ Read it rather than run it: its scripts stand in for an AI agent and a deploy, a
 
 ```bash
 cd examples/project
+decree install                        # install the plugins, as after any clone (git ignores what is installed)
 decree check                          # every machine and message is valid
 decree graph                          # rewrites each graph.md and system.md with no change
 decree status                         # the waiting run, the interrupted run and the queue
