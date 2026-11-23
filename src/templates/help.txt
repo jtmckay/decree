@@ -121,8 +121,9 @@ Files (.decree/):
   runs/<id>/                  One folder per run: message.md, events.jsonl, logs
   schema/v1/                  Written by init and `decree install`; not committed.
                               Editors use the hosted copy (docs/editors.md)
-  archive/<name>/<time>/      What `decree install` replaced: an edited
-                              installed copy, an old plugin file; ignored by git
+  archive/<name>/<time>.md    What `decree install` replaced, as a plugin
+                              file (an edited installed copy, an old plugin
+                              file); decree install FILE restores it; ignored
 
 Messages:
   ---

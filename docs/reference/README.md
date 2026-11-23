@@ -102,7 +102,7 @@ Each building block has its own directory in `.decree/`:
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
   cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree keeps only cache/plugins/ there, its record of each plugin install (plugins.md)
-  archive/<name>/<time>/            # written by `decree install`, never committed (its own .gitignore is `*`): what an install replaced, an installed copy edited in place or a plugin file, kept for recovery (plugins.md)
+  archive/<name>/<time>.md          # written by `decree install`, never committed (its own .gitignore is `*`): what an install replaced, an installed copy edited in place (exported as a plugin file) or a plugin file, which `decree install <file>` restores (plugins.md)
   process.log                       # what `daemon` prints as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
   attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops its group's runs (cli.md, Attention)
 ```

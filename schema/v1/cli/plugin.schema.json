@@ -199,7 +199,7 @@
                   "string",
                   "null"
                 ],
-                "description": "The folder, relative to the project root, that the install moved what it replaced to (an installed copy edited in place or written by hand, and a replaced plugin file as `plugin.md`): .decree/archive/<name>/<time>/. Null when nothing was archived."
+                "description": "The file, relative to the project root, that the install archived what it replaced as: .decree/archive/<name>/<time>.md, a plugin file (an installed copy edited in place or written by hand, exported, or a replaced plugin file) that `decree install <file>` restores; or the folder .decree/archive/<name>/<time>/ for a copy that cannot be a plugin file. Null when nothing was archived."
               }
             }
           }
@@ -406,7 +406,7 @@
             "string",
             "null"
           ],
-          "description": "The folder, relative to the project root, that the install moved what it replaced to (an installed copy edited in place or written by hand, and a replaced plugin file as `plugin.md`): .decree/archive/<name>/<time>/. Null when nothing was archived."
+          "description": "The file, relative to the project root, that the install archived what it replaced as: .decree/archive/<name>/<time>.md, a plugin file (an installed copy edited in place or written by hand, exported, or a replaced plugin file) that `decree install <file>` restores; or the folder .decree/archive/<name>/<time>/ for a copy that cannot be a plugin file. Null when nothing was archived."
         }
       }
     },
@@ -442,7 +442,7 @@
         },
         "archived": {
           "type": "array",
-          "description": "Each installed copy edited in place or written by hand, moved to .decree/archive/ before it was installed over or removed.",
+          "description": "Each installed copy edited in place or written by hand, archived as a plugin file in .decree/archive/ before it was installed over or removed.",
           "items": {
             "type": "object",
             "required": [
@@ -457,7 +457,7 @@
               },
               "archive": {
                 "type": "string",
-                "description": "The folder, relative to the project root: .decree/archive/<name>/<time>/."
+                "description": "The archived plugin file, .decree/archive/<name>/<time>.md, relative to the project root, which `decree install <file>` restores; or the folder .decree/archive/<name>/<time>/ for a copy that cannot be a plugin file."
               }
             }
           }
@@ -499,7 +499,7 @@
       "archived": [
         {
           "plugin": "develop",
-          "archive": ".decree/archive/develop/20261122T153000Z"
+          "archive": ".decree/archive/develop/20261122T153000.123Z.md"
         }
       ]
     }

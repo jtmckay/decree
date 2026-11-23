@@ -937,10 +937,15 @@ pub fn install_archiving(
     Ok(dir)
 }
 
-/// Move plugin `name`'s installed copy (with `copy`: `machine.yml`, `scripts/` and `cron/`)
-/// and write `plugin_file`, the plugin file being replaced, as `plugin.md`, into a new
-/// `archive/<name>/<time>/`, the time in UTC, as `20261122T153000Z`. Returns that folder
-/// relative to `.decree/`. `archive/` holds a `.gitignore` of `*`, so git ignores it.
+/// Archive what an install of plugin `name` would lose: with `copy`, its installed copy,
+/// exported as a plugin file (`export_lenient`), its cron files with it; and `plugin_file`, the
+/// plugin file being replaced. Each is written to `archive/<name>/<time>.md`, the time in UTC
+/// to the millisecond (`20261122T153000.123Z`), so the names sort by time: a plugin file that
+/// `decree install <file>` restores. A replaced plugin file beside an archived copy that it
+/// does not equal is `<time>.replaced.md`. A copy that cannot be a plugin file (its
+/// `machine.yml` is not a YAML mapping, or a script is not text) is moved instead, as it is,
+/// into the folder `archive/<name>/<time>/`. Returns the file or folder relative to
+/// `.decree/`. `archive/` holds a `.gitignore` of `*`.
 fn archive(
     decree_dir: &Path,
     name: &str,
@@ -961,34 +966,51 @@ fn archive(
     }
     let parent = root.join(name);
     std::fs::create_dir_all(&parent).map_err(|e| io_error(&parent, e))?;
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let mut folder = stamp.clone();
+    let now = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
+    let mut stamp = now.clone();
     let mut n = 1;
-    loop {
-        match std::fs::create_dir(parent.join(&folder)) {
-            Ok(()) => break,
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                n += 1;
-                folder = format!("{stamp}-{n}");
+    while parent.join(&stamp).exists() || parent.join(format!("{stamp}.md")).exists() {
+        n += 1;
+        stamp = format!("{now}-{n}");
+    }
+    let rel = |file: &str| format!("{ARCHIVE_DIR}/{name}/{file}");
+    let write = |file: &str, bytes: &[u8]| -> Result<(), DecreeError> {
+        write_replace(&parent.join(file), bytes).map_err(|(path, e)| io_error(&path, e))
+    };
+
+    let exported = if copy {
+        Some(export_lenient(decree_dir, name).map(|p| p.to_bytes()))
+    } else {
+        None
+    };
+    match exported {
+        Some(Ok(bytes)) => {
+            write(&format!("{stamp}.md"), &bytes)?;
+            if let Some(old) = plugin_file.filter(|old| *old != bytes.as_slice()) {
+                write(&format!("{stamp}.replaced.md"), old)?;
             }
-            Err(e) => return Err(io_error(&parent.join(&folder), e)),
+            Ok(rel(&format!("{stamp}.md")))
+        }
+        Some(Err(_)) => {
+            let dir = parent.join(&stamp);
+            std::fs::create_dir(&dir).map_err(|e| io_error(&dir, e))?;
+            let from = layout::machine_dir(decree_dir, name);
+            for part in [layout::MACHINE_FILE, SCRIPTS_DIR, CRON_DIR] {
+                let path = from.join(part);
+                if path.symlink_metadata().is_ok() {
+                    std::fs::rename(&path, dir.join(part)).map_err(|e| io_error(&path, e))?;
+                }
+            }
+            if let Some(old) = plugin_file {
+                write(&format!("{stamp}/plugin.md"), old)?;
+            }
+            Ok(rel(&stamp))
+        }
+        None => {
+            write(&format!("{stamp}.md"), plugin_file.unwrap_or_default())?;
+            Ok(rel(&format!("{stamp}.md")))
         }
     }
-    let dir = parent.join(&folder);
-    if copy {
-        let from = layout::machine_dir(decree_dir, name);
-        for part in [layout::MACHINE_FILE, SCRIPTS_DIR, CRON_DIR] {
-            let path = from.join(part);
-            if path.symlink_metadata().is_ok() {
-                std::fs::rename(&path, dir.join(part)).map_err(|e| io_error(&path, e))?;
-            }
-        }
-    }
-    if let Some(text) = plugin_file {
-        let path = dir.join("plugin.md");
-        write_replace(&path, text).map_err(|(path, e)| io_error(&path, e))?;
-    }
-    Ok(format!("{ARCHIVE_DIR}/{name}/{folder}"))
 }
 
 impl Synced {
@@ -1025,7 +1047,7 @@ impl Synced {
 /// What an edited installed copy means for `decree install`, and how to keep the edit.
 pub fn edited_message(name: &str) -> String {
     format!(
-        "its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, or written by hand: `decree install` moves it to {}/{ARCHIVE_DIR}/{name}/ and installs the plugin; `decree export {name}` keeps the edit",
+        "its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, or written by hand: `decree install` archives it as a plugin file in {}/{ARCHIVE_DIR}/{name}/ and installs the plugin; `decree export {name}` keeps the edit",
         machine_file(name),
         layout::DECREE_DIR,
         dir = layout::machine_dir_rel(name)
@@ -1051,6 +1073,18 @@ pub fn plugin_file(name: &str) -> String {
 /// `needs`, its state and order seeds and its `x-` keys; a new one gets `# <name>` and
 /// the machine's description.
 pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
+    export_copy(decree_dir, name, true)
+}
+
+/// `export` for the archive: a machine that does not load (one edited halfway) is kept as
+/// written, and only the `needs` its machine would add are left out. Fails only when the
+/// copy cannot be a plugin file at all: a `machine.yml` that is not a YAML mapping, or a
+/// file that is not text.
+fn export_lenient(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
+    export_copy(decree_dir, name, false)
+}
+
+fn export_copy(decree_dir: &Path, name: &str, strict: bool) -> Result<Plugin, DecreeError> {
     if !is_ident(name) {
         return Err(DecreeError::Other(format!(
             "plugin name `{name}` does not match ^[a-z][a-z0-9_]*$"
@@ -1073,13 +1107,19 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
             dir = crate::layout::DECREE_DIR,
         )));
     }
-    let loaded = text
+    let loaded = match text
         .as_deref()
-        .map(|text| {
-            machine::load_machine_text(name, text)
-                .map_err(|e| DecreeError::Other(format!("{e}; fix it first (`decree check`)")))
-        })
-        .transpose()?;
+        .map(|text| machine::load_machine_text(name, text))
+    {
+        None => None,
+        Some(Ok(loaded)) => Some(loaded),
+        Some(Err(_)) if !strict => None,
+        Some(Err(e)) => {
+            return Err(DecreeError::Other(format!(
+                "{e}; fix it first (`decree check`)"
+            )))
+        }
+    };
     let machine = match text.as_deref().map(serde_norway::from_str::<Value>) {
         None => None,
         Some(Ok(Value::Mapping(mut m))) => {
@@ -1361,7 +1401,13 @@ Says hello.
         std::fs::read_to_string(dir.join(path)).ok()
     }
 
-    /// The archive folders of plugin `name`, relative to `.decree/`, oldest first.
+    /// The plugin file archived at `path`, relative to `.decree/`.
+    fn archived(dir: &Path, path: &str) -> Plugin {
+        assert!(path.ends_with(".md"), "{path}");
+        Plugin::parse(&get(dir, path).unwrap(), None).unwrap()
+    }
+
+    /// What is archived for plugin `name`, relative to `.decree/`, oldest first.
     fn archives(dir: &Path, name: &str) -> Vec<String> {
         let mut out: Vec<String> = std::fs::read_dir(dir.join(ARCHIVE_DIR).join(name))
             .map(|entries| {
@@ -1424,10 +1470,10 @@ Says hello.
         let [dir] = archives(d, "hello").try_into().unwrap();
         assert_eq!(s.archived, [("hello".to_string(), dir.clone())]);
         assert_eq!(
-            get(d, &format!("{dir}/scripts/greet.sh")).unwrap(),
+            archived(d, &dir).scripts["greet.sh"],
             "#!/bin/sh\necho edited\n"
         );
-        assert!(get(d, &format!("{dir}/machine.yml")).is_some());
+        assert!(archived(d, &dir).machine.is_some());
         assert_eq!(
             get(d, "archive/.gitignore").unwrap().lines().last(),
             Some("*")
@@ -1506,10 +1552,7 @@ Says hello.
         put(d, "machines/hello/scripts/greet.sh", "different");
         assert_eq!(sync(d).unwrap().archived.len(), 1);
         let [dir] = archives(d, "hello").try_into().unwrap();
-        assert_eq!(
-            get(d, &format!("{dir}/scripts/greet.sh")).unwrap(),
-            "different"
-        );
+        assert_eq!(archived(d, &dir).scripts["greet.sh"], "different");
     }
 
     #[test]
@@ -1524,10 +1567,7 @@ Says hello.
         assert_eq!(s.removed, ["hello"]);
         let [dir] = archives(d, "hello").try_into().unwrap();
         assert_eq!(s.archived, [("hello".to_string(), dir.clone())]);
-        assert_eq!(
-            get(d, &format!("{dir}/scripts/greet.sh")).unwrap(),
-            "edited"
-        );
+        assert_eq!(archived(d, &dir).scripts["greet.sh"], "edited");
         assert!(!d.join("machines/hello").exists());
         assert!(!record_path(d, "hello").exists());
     }

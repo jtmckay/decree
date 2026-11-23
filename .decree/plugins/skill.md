@@ -246,9 +246,9 @@ scripts:
       plugin file. A machine written by hand in `machines/<name>/` is not committed until it is exported
       (`decree check` warns about it). A project's settings for a plugin (`gate.sh`,
       `requirements`, `QA_RUN`) are such edits: they live in its plugin file. Export an edit
-      before the next `decree install`: an install never stops over one, it moves the edited
-      copy to `.decree/archive/<name>/<time>/` and installs the plugin over it (`decree check`
-      warns while one is pending). To recover an edit, copy it back from there and export it.
+      before the next `decree install`: an install never stops over one, it archives the edited
+      copy as a plugin file, `.decree/archive/<name>/<time>.md`, and installs the plugin over
+      it (`decree check` warns while one is pending). `decree install` that file restores it.
       Never edit `.decree/cache/plugins/`.
     - **Never delete run folders to clean up**; they are the record. The official `prune` plugin
       deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.

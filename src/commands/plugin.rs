@@ -181,7 +181,7 @@ fn import(
         }
         Format::Text => {
             if let Some(dir) = &archived {
-                println!("{}", archived_line(decree_dir, &name, dir));
+                println!("{}", archived_line(&name, dir));
             }
             println!("installed {file}");
             Ok(())
@@ -279,7 +279,7 @@ fn install_all(decree_dir: &Path, format: Format) -> Result<(), DecreeError> {
         }))?,
         Format::Text => {
             for (name, dir) in &synced.archived {
-                println!("{}", archived_line(decree_dir, name, dir));
+                println!("{}", archived_line(name, dir));
             }
             for name in &synced.removed {
                 println!(
@@ -308,23 +308,18 @@ fn install_all(decree_dir: &Path, format: Format) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// The line an install prints for what it moved to `dir`, an archive folder relative to
-/// `.decree/`: the installed copy, the plugin file it replaced (`plugin.md`), or both.
-fn archived_line(decree_dir: &Path, name: &str, dir: &str) -> String {
-    let full = decree_dir.join(dir);
-    let file = full.join("plugin.md").is_file();
-    let copy = std::fs::read_dir(&full)
-        .map(|entries| entries.flatten().any(|e| e.file_name() != "plugin.md"))
-        .unwrap_or(false);
-    let what = match (copy, file) {
-        (true, true) => format!(
-            "the edited installed copy of `{name}` and the replaced {}",
-            plugin::plugin_file(name)
-        ),
-        (false, true) => format!("the replaced {}", plugin::plugin_file(name)),
-        _ => format!("the edited installed copy of `{name}`"),
-    };
-    format!("archived {what} to {DECREE_DIR}/{dir}/")
+/// The line an install prints for what it archived to `path`, relative to `.decree/`: a
+/// plugin file, which `decree install <file>` restores, or a folder of the copy as it was.
+fn archived_line(name: &str, path: &str) -> String {
+    if path.ends_with(".md") {
+        format!(
+            "archived what installing `{name}` replaced as {DECREE_DIR}/{path}; `decree install {DECREE_DIR}/{path}` restores it"
+        )
+    } else {
+        format!(
+            "archived the installed copy of `{name}` as it was, to {DECREE_DIR}/{path}/ (it cannot be a plugin file: its machine.yml is not a YAML mapping, or a file is not text)"
+        )
+    }
 }
 
 /// What a plugin runs: each file it installs, relative to the project root, with its line
@@ -602,7 +597,7 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
         notes.push("`not installed`: new or changed since it was installed; run `decree install`.");
     }
     if marks.contains(&"edited") {
-        notes.push("`edited`: the installed copy was edited in place or written by hand; `decree export <name>` keeps the edit, `decree install` moves it to .decree/archive/.");
+        notes.push("`edited`: the installed copy was edited in place or written by hand; `decree export <name>` keeps the edit, `decree install` archives it as a plugin file in .decree/archive/.");
     }
     if marks.contains(&"invalid") {
         notes.push("`invalid`: fails the plugin schema; `decree check` names the problem.");
@@ -789,7 +784,7 @@ fn install_named(
                     _ => {}
                 }
                 if let Some(dir) = &a.archived {
-                    println!("{}", archived_line(&decree_dir, &a.name, dir));
+                    println!("{}", archived_line(&a.name, dir));
                 }
             }
             let names: Vec<&str> = plan.iter().map(|a| a.name.as_str()).collect();

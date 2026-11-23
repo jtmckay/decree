@@ -82,6 +82,13 @@ scripts:
 Helps.
 ";
 
+/// The line `decree install` prints for an archived plugin file, `path` relative to `.decree/`.
+fn archived_line(path: &str) -> String {
+    format!(
+        "archived what installing `helper` replaced as .decree/{path}; `decree install .decree/{path}` restores it"
+    )
+}
+
 const MESSAGE: &str = "---\nmachine: develop\n---\nDo the thing.\n";
 
 struct Project {
@@ -120,7 +127,13 @@ impl Project {
         self.path(rel).exists()
     }
 
-    /// The archive folders of plugin `name`, relative to `.decree/`, oldest first.
+    /// The plugin file archived at `path`, relative to `.decree/`, as JSON.
+    fn archived(&self, path: &str) -> serde_json::Value {
+        assert!(path.ends_with(".md"), "{path}");
+        schema::frontmatter_to_json(&self.get(path)).unwrap()
+    }
+
+    /// What is archived for plugin `name`, relative to `.decree/`, oldest first.
     fn archives(&self, name: &str) -> Vec<String> {
         let mut out: Vec<String> = fs::read_dir(self.path(&format!("archive/{name}")))
             .map(|entries| {
@@ -452,11 +465,18 @@ fn a_changed_plugin_over_an_edit_archives_the_edit_and_installs() {
     let [dir] = p.archives("helper").try_into().unwrap();
     assert_eq!(
         out,
-        format!("archived the edited installed copy of `helper` to .decree/{dir}/\ninstalled .decree/plugins/helper.md\n")
+        format!(
+            "{}\ninstalled .decree/plugins/helper.md\n",
+            archived_line(&dir)
+        )
     );
-    assert_eq!(p.get(&format!("{dir}/scripts/help")), edited);
-    assert!(p.exists(&format!("{dir}/machine.yml")));
-    assert!(!p.exists(&format!("{dir}/plugin.md")));
+    assert_eq!(p.archived(&dir)["scripts"]["help"], edited);
+    assert_eq!(p.archived(&dir)["machine"]["description"], "Helps.");
+    assert_eq!(
+        p.archives("helper"),
+        std::slice::from_ref(&dir),
+        "no `.replaced.md`"
+    );
     assert_eq!(p.get("archive/.gitignore").lines().last(), Some("*"));
     assert_eq!(
         p.get("machines/helper/scripts/help"),
@@ -490,7 +510,7 @@ fn an_edit_under_an_unchanged_plugin_is_archived() {
     assert_eq!(code, 0, "{err}");
     let [dir] = p.archives("helper").try_into().unwrap();
     assert_eq!(
-        p.get(&format!("{dir}/scripts/help")),
+        p.archived(&dir)["scripts"]["help"],
         "#!/usr/bin/env bash\necho mine\n"
     );
     assert_eq!(
@@ -506,17 +526,9 @@ fn plugin_install_takes_the_plugin_and_archives_added_files() {
     let (code, out, err) = p.decree(&["install", "helper"], "");
     assert_eq!(code, 0, "{err}");
     let [dir] = p.archives("helper").try_into().unwrap();
-    assert_eq!(
-        out,
-        format!(
-            "archived the edited installed copy of `helper` to .decree/{dir}/\ninstalled helper\n"
-        )
-    );
-    assert_eq!(p.get(&format!("{dir}/scripts/help")), edited);
-    assert_eq!(
-        p.get(&format!("{dir}/scripts/added.txt")),
-        "added in place\n"
-    );
+    assert_eq!(out, format!("{}\ninstalled helper\n", archived_line(&dir)));
+    assert_eq!(p.archived(&dir)["scripts"]["help"], edited);
+    assert_eq!(p.archived(&dir)["scripts"]["added.txt"], "added in place\n");
     assert_eq!(
         p.get("machines/helper/scripts/help"),
         "#!/usr/bin/env bash\necho helped twice\n"
@@ -535,13 +547,76 @@ fn installing_over_a_hand_written_machine_archives_it() {
     let (code, out, err) = p.decree(&["install", "-"], HELPER);
     assert_eq!(code, 0, "{err}");
     let [dir] = p.archives("helper").try_into().unwrap();
+    assert!(out.contains(&archived_line(&dir)), "{out}");
+    assert_eq!(p.archived(&dir)["machine"]["description"], "By hand.");
+    assert!(p.get("machines/helper/machine.yml").contains("Helps."));
+}
+
+/// The archive is the copy exported as one plugin file, its cron files with it, and
+/// `decree install <that file>` restores it, archiving what it replaces in turn.
+#[test]
+fn an_archived_copy_is_a_plugin_file_that_install_restores() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    assert_eq!(p.decree(&["install"], "").0, 0);
+    let cron = "---\ncron: 0 9 * * *\nmachine: helper\n---\nEach morning.\n";
+    p.put("machines/helper/cron/morning.md", cron);
+    p.put_exec(
+        "machines/helper/scripts/help",
+        "#!/usr/bin/env bash\necho mine\n",
+    );
+    assert_eq!(p.decree(&["install"], "").0, 0);
+    assert!(!p.exists("machines/helper/cron/morning.md"));
+    let [dir] = p.archives("helper").try_into().unwrap();
+    let plugin = p.archived(&dir);
+    assert_eq!(plugin["name"], "helper");
+    assert_eq!(plugin["cron"]["morning.md"], cron);
+    assert_eq!(
+        plugin["scripts"]["help"],
+        "#!/usr/bin/env bash\necho mine\n"
+    );
     assert!(
-        out.contains(&format!(
-            "archived the edited installed copy of `helper` to .decree/{dir}/"
-        )),
+        p.get(&dir).ends_with("# helper\n\nHelps.\n"),
+        "the body is kept"
+    );
+
+    let file = p.path(&dir);
+    let (code, out, err) = p.decree(&["install", file.to_str().unwrap()], "");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(p.get("machines/helper/cron/morning.md"), cron);
+    assert_eq!(
+        p.get("machines/helper/scripts/help"),
+        "#!/usr/bin/env bash\necho mine\n"
+    );
+    assert_eq!(p.get("plugins/helper.md"), p.get(&dir));
+    // The plugin file it replaced is archived in turn.
+    let archives = p.archives("helper");
+    assert_eq!(archives.len(), 2, "{archives:?}");
+    assert!(out.contains(&archived_line(&archives[1])), "{out}");
+    assert_eq!(p.get(&archives[1]), HELPER);
+}
+
+/// A copy that cannot be a plugin file, its machine.yml not YAML, is archived as it was,
+/// as a folder.
+#[test]
+fn a_copy_that_cannot_be_a_plugin_is_archived_as_a_folder() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    assert_eq!(p.decree(&["install"], "").0, 0);
+    p.put("machines/helper/machine.yml", "states: [unclosed\n");
+    let (code, out, err) = p.decree(&["install"], "");
+    assert_eq!(code, 0, "{err}");
+    let [dir] = p.archives("helper").try_into().unwrap();
+    assert!(!dir.ends_with(".md"), "{dir}");
+    assert!(
+        out.contains(&format!("to .decree/{dir}/ (it cannot be a plugin file")),
         "{out}"
     );
-    assert_eq!(p.get(&format!("{dir}/machine.yml")), by_hand);
+    assert_eq!(p.get(&format!("{dir}/machine.yml")), "states: [unclosed\n");
+    assert_eq!(
+        p.get(&format!("{dir}/scripts/help")),
+        "#!/usr/bin/env bash\necho helped\n"
+    );
     assert!(p.get("machines/helper/machine.yml").contains("Helps."));
 }
 
@@ -656,16 +731,11 @@ fn import_replaces_a_taken_name_archiving_the_old_file() {
         "{out}"
     );
     let [dir] = p.archives("helper").try_into().unwrap();
-    assert!(
-        out.contains(&format!(
-            "archived the replaced plugins/helper.md to .decree/{dir}/"
-        )),
-        "{out}"
-    );
-    assert_eq!(p.get(&format!("{dir}/plugin.md")), HELPER);
-    assert!(
-        !p.exists(&format!("{dir}/machine.yml")),
-        "the copy was unedited"
+    assert!(out.contains(&archived_line(&dir)), "{out}");
+    assert_eq!(
+        p.get(&dir),
+        HELPER,
+        "the copy was unedited: the old file alone"
     );
     assert_eq!(p.get("plugins/helper.md"), changed);
     assert_eq!(
