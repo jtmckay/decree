@@ -197,12 +197,12 @@ pub enum Command {
         format: Format,
     },
 
-    /// Install plugins: every plugin in .decree/plugins/ as its file says (after a checkout), the named ones (an official one is seeded into .decree/plugins/ first), or a plugin file or - for stdin (`curl -fsSL <url> | decree install -`)
+    /// Install plugins: every plugin in .decree/plugins/ as its file says (after a checkout), the named ones (an official one is seeded into .decree/plugins/ first), or a plugin file or - for stdin (`curl -fsSL <url> | decree install -`); an edited installed copy, or a replaced plugin file, is moved to .decree/archive/ first
     Install {
         /// Plugin names, or one plugin file, or - for stdin [default: every plugin in .decree/plugins/; stdin is never read]
         sources: Vec<String>,
 
-        /// Replace .decree/plugins/<name>.md with decree's official copy, or a plugin of the file's name, printing what changes
+        /// Replace .decree/plugins/<name>.md with decree's official copy, printing what changes and archiving the old file
         #[arg(long)]
         force: bool,
 

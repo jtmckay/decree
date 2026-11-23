@@ -1,5 +1,6 @@
 //! Plugins (docs/reference/plugins.md): installed only when asked, export from the installed
-//! copy, import, and never overwrite an installed copy edited in place. One test per
+//! copy, import, and an install that never refuses over a change but moves what it would
+//! lose to `.decree/archive/` first. One test per
 //! acceptance criterion of migration A09 and decision D85, each in its own temp project.
 
 mod common;
@@ -117,6 +118,24 @@ impl Project {
 
     fn exists(&self, rel: &str) -> bool {
         self.path(rel).exists()
+    }
+
+    /// The archive folders of plugin `name`, relative to `.decree/`, oldest first.
+    fn archives(&self, name: &str) -> Vec<String> {
+        let mut out: Vec<String> = fs::read_dir(self.path(&format!("archive/{name}")))
+            .map(|entries| {
+                entries
+                    .map(|e| {
+                        format!(
+                            "archive/{name}/{}",
+                            e.unwrap().file_name().to_string_lossy()
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
     }
 
     /// (exit code, stdout, stderr).
@@ -400,48 +419,103 @@ fn conflict() -> (Project, String) {
     (p, edited.to_string())
 }
 
+/// A plugin changed over an edit in place: `check` and `daemon` warn and run the edit;
+/// `decree install` archives the edit and installs the plugin, exiting 0.
 #[test]
-fn a_changed_plugin_over_an_edit_fails_check_and_touches_nothing() {
+fn a_changed_plugin_over_an_edit_archives_the_edit_and_installs() {
     let (p, edited) = conflict();
-    let (code, out, _) = p.decree(&["check"], "");
-    assert_eq!(code, 1);
+    let (code, out, err) = p.decree(&["check"], "");
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
     assert!(
-        out.starts_with("plugins/helper.md: plugin `helper` changed"),
-        "{out}"
+        err.contains("plugins/helper.md: its installed copy (machines/helper/machine.yml, or a file in machines/helper/scripts/ or machines/helper/cron/) was edited in place"),
+        "{err}"
     );
-    assert!(out.contains("`decree export helper`"), "{out}");
-    assert!(out.contains("`decree install helper`"), "{out}");
-    assert!(out.trim_end().ends_with("(P3)"), "{out}");
+    assert!(
+        err.contains("`decree export helper` keeps the edit"),
+        "{err}"
+    );
+    assert_eq!(err.matches("plugins/helper.md").count(), 1, "{err}");
     assert_eq!(p.get("machines/helper/scripts/help"), edited);
 
-    // `process` keeps running the edited copy and prints the conflict once.
+    // `daemon` keeps running the edited copy and says so once.
     p.put("inbox/01-a.md", "---\nmachine: helper\n---\nhi\n");
     p.put("inbox/a.md", "---\nmachine: helper\n---\nhi\n");
     let (code, out, err) = p.decree(&["daemon", "--once"], "");
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("edited in place"), "{out}");
-    assert_eq!(err.matches("plugin `helper` changed").count(), 1, "{err}");
+    assert_eq!(err.matches("was edited in place").count(), 1, "{err}");
     assert_eq!(p.get("machines/helper/scripts/help"), edited);
 
-    // `decree install` with no name keeps the edit too, names the conflict, exits 1, and
-    // still writes the schemas, as the plugins it could install are installed.
-    let (code, _, err) = p.decree(&["install"], "");
-    assert_eq!(code, 1, "{err}");
+    // `decree install` with no name moves the edit to the archive and installs the plugin.
+    let (code, out, err) = p.decree(&["install"], "");
+    assert_eq!(code, 0, "{err}");
+    let [dir] = p.archives("helper").try_into().unwrap();
+    assert_eq!(
+        out,
+        format!("archived the edited installed copy of `helper` to .decree/{dir}/\ninstalled .decree/plugins/helper.md\n")
+    );
+    assert_eq!(p.get(&format!("{dir}/scripts/help")), edited);
+    assert!(p.exists(&format!("{dir}/machine.yml")));
+    assert!(!p.exists(&format!("{dir}/plugin.md")));
+    assert_eq!(p.get("archive/.gitignore").lines().last(), Some("*"));
+    assert_eq!(
+        p.get("machines/helper/scripts/help"),
+        "#!/usr/bin/env bash\necho helped twice\n"
+    );
     assert!(p.exists("schema/v1/machine.schema.json"));
-    assert!(err.contains("plugin `helper` changed"), "{err}");
-    assert_eq!(p.get("machines/helper/scripts/help"), edited);
+    let (code, out, err) = p.decree(&["check"], "");
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+    assert!(!err.contains("edited in place"), "{err}");
+
+    // Installed as its file says, it installs again and archives nothing.
+    let (code, out, _) = p.decree(&["install"], "");
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "installed .decree/plugins/helper.md\n")
+    );
+    assert_eq!(p.archives("helper").len(), 1);
+}
+
+/// An edit with the plugin unchanged is archived too: an install always installs.
+#[test]
+fn an_edit_under_an_unchanged_plugin_is_archived() {
+    let p = Project::new();
+    p.put("plugins/helper.md", HELPER);
+    assert_eq!(p.decree(&["install"], "").0, 0);
+    p.put_exec(
+        "machines/helper/scripts/help",
+        "#!/usr/bin/env bash\necho mine\n",
+    );
+    let (code, _, err) = p.decree(&["install"], "");
+    assert_eq!(code, 0, "{err}");
+    let [dir] = p.archives("helper").try_into().unwrap();
+    assert_eq!(
+        p.get(&format!("{dir}/scripts/help")),
+        "#!/usr/bin/env bash\necho mine\n"
+    );
+    assert_eq!(
+        p.get("machines/helper/scripts/help"),
+        "#!/usr/bin/env bash\necho helped\n"
+    );
 }
 
 #[test]
-fn plugin_install_takes_the_plugin_and_removes_added_files() {
-    let (p, _) = conflict();
+fn plugin_install_takes_the_plugin_and_archives_added_files() {
+    let (p, edited) = conflict();
     p.put("machines/helper/scripts/added.txt", "added in place\n");
     let (code, out, err) = p.decree(&["install", "helper"], "");
     assert_eq!(code, 0, "{err}");
-    // The edit in place is dropped, and it says so.
+    let [dir] = p.archives("helper").try_into().unwrap();
     assert_eq!(
         out,
-        "installed .decree/plugins/helper.md, dropping the edits in place to .decree/machines/helper/ (machine.yml, scripts/ or cron/), which were not exported\ninstalled helper\n"
+        format!(
+            "archived the edited installed copy of `helper` to .decree/{dir}/\ninstalled helper\n"
+        )
+    );
+    assert_eq!(p.get(&format!("{dir}/scripts/help")), edited);
+    assert_eq!(
+        p.get(&format!("{dir}/scripts/added.txt")),
+        "added in place\n"
     );
     assert_eq!(
         p.get("machines/helper/scripts/help"),
@@ -450,6 +524,25 @@ fn plugin_install_takes_the_plugin_and_removes_added_files() {
     assert!(!p.exists("machines/helper/scripts/added.txt"));
     let (code, out, err) = p.decree(&["check"], "");
     assert_eq!((code, out.as_str()), (0, ""), "{err}");
+}
+
+/// A machine written by hand where a plugin installs is archived, not a refusal.
+#[test]
+fn installing_over_a_hand_written_machine_archives_it() {
+    let p = Project::new();
+    let by_hand = "name: helper\ndescription: By hand.\ninitial: work\nstates:\n  work:\n    invoke: work\n    transitions: { done: done }\n  done: { final: true }\n  failed: { final: true }\n";
+    p.put("machines/helper/machine.yml", by_hand);
+    let (code, out, err) = p.decree(&["install", "-"], HELPER);
+    assert_eq!(code, 0, "{err}");
+    let [dir] = p.archives("helper").try_into().unwrap();
+    assert!(
+        out.contains(&format!(
+            "archived the edited installed copy of `helper` to .decree/{dir}/"
+        )),
+        "{out}"
+    );
+    assert_eq!(p.get(&format!("{dir}/machine.yml")), by_hand);
+    assert!(p.get("machines/helper/machine.yml").contains("Helps."));
 }
 
 #[test]
@@ -492,10 +585,7 @@ fn install_reads_stdin_only_with_a_dash() {
     let p = Project::new();
     let (code, out, err) = p.decree(&["install"], HELPER);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(
-        out,
-        "every plugin is installed as its file says: nothing to install\n"
-    );
+    assert_eq!(out, "no plugins in .decree/plugins/: nothing to install\n");
     assert!(!p.exists("plugins/helper.md"));
     let (code, out, err) = p.decree(&["install", "-"], HELPER);
     assert_eq!(code, 0, "{err}");
@@ -517,7 +607,7 @@ fn install_reads_stdin_only_with_a_dash() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(
         out,
-        "every plugin is installed as its file says: nothing to install\n"
+        "installed .decree/plugins/develop.md\ninstalled .decree/plugins/helper.md\n"
     );
     let (code, _, err) = p.decree(&["install", "--force"], "");
     assert_eq!(code, 1);
@@ -535,20 +625,25 @@ fn import_refuses_missing_needs_and_writes_nothing() {
     assert_eq!(p.tree(""), before);
 }
 
+/// A plugin whose name `plugins/` has is installed over it, the old file archived;
+/// `--force` is for names only.
 #[test]
-fn import_refuses_a_taken_name_unless_forced() {
+fn import_replaces_a_taken_name_archiving_the_old_file() {
     let p = Project::new();
     p.put("plugins/helper.md", HELPER);
-    assert_eq!(p.decree(&["check"], "").0, 0);
-    let before = p.tree("");
+    assert_eq!(p.decree(&["install"], "").0, 0);
     let changed = HELPER.replace("echo helped", "echo helped twice");
 
-    let (code, out, err) = p.decree(&["install", "-"], &changed);
-    assert_eq!(code, 1, "{out}");
-    assert!(err.contains("--force"), "{err}");
+    let before = p.tree("");
+    let (code, _, err) = p.decree(&["install", "-", "--force"], &changed);
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("--force takes this decree's official copy"),
+        "{err}"
+    );
     assert_eq!(p.tree(""), before);
 
-    let (code, out, err) = p.decree(&["install", "-", "--force"], &changed);
+    let (code, out, err) = p.decree(&["install", "-"], &changed);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("plugin `helper`: Helps."), "{out}");
     assert!(
@@ -560,11 +655,27 @@ fn import_refuses_a_taken_name_unless_forced() {
         out.contains("changed .decree/machines/helper/scripts/help"),
         "{out}"
     );
+    let [dir] = p.archives("helper").try_into().unwrap();
+    assert!(
+        out.contains(&format!(
+            "archived the replaced plugins/helper.md to .decree/{dir}/"
+        )),
+        "{out}"
+    );
+    assert_eq!(p.get(&format!("{dir}/plugin.md")), HELPER);
+    assert!(
+        !p.exists(&format!("{dir}/machine.yml")),
+        "the copy was unedited"
+    );
     assert_eq!(p.get("plugins/helper.md"), changed);
     assert_eq!(
         p.get("machines/helper/scripts/help"),
         "#!/usr/bin/env bash\necho helped twice\n"
     );
+
+    // The same file again replaces nothing worth keeping.
+    assert_eq!(p.decree(&["install", "-"], &changed).0, 0);
+    assert_eq!(p.archives("helper").len(), 1);
 }
 
 #[test]
@@ -635,7 +746,7 @@ fn json_output_follows_the_cli_schema() {
         docs.push(out);
     }
     let changed = HELPER.replace("echo helped", "echo helped twice");
-    let (code, out, err) = p.decree(&["install", "-", "--force", "--format", "json"], &changed);
+    let (code, out, err) = p.decree(&["install", "-", "--format", "json"], &changed);
     assert_eq!(code, 0, "{err}");
     docs.push(out);
     for doc in &docs {

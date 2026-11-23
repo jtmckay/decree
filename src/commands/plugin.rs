@@ -17,7 +17,6 @@ use crate::cli::Format;
 use crate::commands::print_json;
 use crate::error::DecreeError;
 use crate::layout::DECREE_DIR;
-use crate::machine::MACHINES_DIR;
 use crate::official;
 use crate::plugin::{self, Plugin, PLUGINS_DIR};
 
@@ -44,13 +43,13 @@ pub fn export(project_root: &Path, name: &str, format: Format) -> Result<(), Dec
 
 /// `decree install <file|->`: check the plugin, copy it to
 /// `plugins/<name>.md` and install it, seeding each official plugin it needs that `plugins/`
-/// lacks. Refuses, writing nothing, a plugin that fails the schema, that needs a plugin
-/// neither in `plugins/` nor official, or whose name is taken, unless `force`.
+/// lacks. A plugin file of that name is replaced, and it and an installed copy that installing
+/// would lose are moved to `archive/` first. Refuses, writing nothing, a plugin that fails the
+/// schema or that needs a plugin neither in `plugins/` nor official.
 fn import(
     decree_dir: &Path,
     shown: &str,
     bytes: Vec<u8>,
-    force: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     let text = std::str::from_utf8(&bytes)
@@ -108,29 +107,14 @@ fn import(
     let target = decree_dir.join(plugin::plugin_file(&name));
     let old = if target.is_file() {
         let found = plugin::read_one(decree_dir, &name)?;
-        Some(found.parsed.ok())
+        Some((found.parsed.ok(), found.text))
     } else {
         None
     };
-    let machine = decree_dir.join(crate::layout::machine_file_rel(&name));
-    if !force {
-        if old.is_some() {
-            return Err(DecreeError::Other(format!(
-                "{DECREE_DIR}/{} exists; run with --force to replace it",
-                plugin::plugin_file(&name)
-            )));
-        }
-        if machine.exists() {
-            return Err(DecreeError::Other(format!(
-                "{DECREE_DIR}/{} exists and no plugin installed it; run with --force to replace it",
-                crate::layout::machine_file_rel(&name)
-            )));
-        }
-    }
 
     let changes = old
         .as_ref()
-        .map(|old| changes(old.as_ref(), &plugin, false));
+        .map(|(old, _)| changes(old.as_ref(), &plugin, false));
     let summary = summary(&plugin);
     let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(&name));
     if format == Format::Text {
@@ -171,9 +155,14 @@ fn import(
             );
         }
     }
+    let archived = plugin::install_archiving(
+        decree_dir,
+        &plugin,
+        &bytes,
+        old.as_ref().map(|(_, text)| text.as_slice()),
+    )?;
     crate::message::write_replace(&target, &bytes)
         .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
-    plugin::install(decree_dir, &plugin, &bytes)?;
 
     match format {
         Format::Json => {
@@ -185,11 +174,15 @@ fn import(
                 "replaced": changes.is_some(),
                 "changes": changes.unwrap_or_default(),
                 "added": seed,
+                "archived": archived.as_ref().map(|d| format!("{DECREE_DIR}/{d}")),
             });
             merge(&mut doc, summary);
             print_json(&doc)
         }
         Format::Text => {
+            if let Some(dir) = &archived {
+                println!("{}", archived_line(decree_dir, &name, dir));
+            }
             println!("installed {file}");
             Ok(())
         }
@@ -200,7 +193,8 @@ fn import(
 /// every plugin is installed as its file says (`plugin::sync`); stdin is never read, so a
 /// script or a loop can run it safely. A name is a plugin, installed from `plugins/<name>.md`, or from
 /// decree's official copy when `plugins/` has none or with `force`. Anything else is a plugin
-/// file, or `-` for stdin, imported alone.
+/// file, or `-` for stdin, imported alone. Nothing an install replaces is lost: what it would
+/// lose is moved to `.decree/archive/` first.
 ///
 /// An install that succeeds, or one with no argument that installed what it could, also
 /// writes `.decree/schema/`, quietly (it is generated, like a graph), so the step after a clone, a pull or an upgrade leaves the
@@ -212,7 +206,7 @@ pub fn install(
     format: Format,
 ) -> Result<(), DecreeError> {
     let result = install_plugins(project_root, sources, force, format);
-    // With no argument, plugins that installed stay installed when another is a conflict,
+    // With no argument, plugins that installed stay installed when another fails its schema,
     // so the schemas are written then too; a refused install by name or file writes nothing.
     if result.is_ok() || (sources.is_empty() && !force) {
         // The install's own error, if any, is the one to report.
@@ -249,6 +243,11 @@ fn install_plugins(
     if sources.iter().all(|s| crate::machine::is_ident(s)) {
         return install_named(project_root, sources, force, format);
     }
+    if force {
+        return Err(DecreeError::Other(
+            "--force takes this decree's official copy of a plugin named (`decree install --force <name>`); a plugin file is installed without it, archiving the one it replaces".into(),
+        ));
+    }
     let [source] = sources else {
         return Err(DecreeError::Other(
             "install one plugin file at a time, or plugins by name only".into(),
@@ -261,7 +260,7 @@ fn install_plugins(
             .map_err(|e| DecreeError::Other(format!("cannot read {source}: {e}")))?;
         (source.clone(), bytes)
     };
-    import(&decree_dir, &shown, bytes, force, format)
+    import(&decree_dir, &shown, bytes, format)
 }
 
 /// `decree install` with no argument: `plugin::sync`.
@@ -272,11 +271,15 @@ fn install_all(decree_dir: &Path, format: Format) -> Result<(), DecreeError> {
             "action": "sync",
             "installed": synced.installed,
             "removed": synced.removed,
-            "conflicts": synced.conflicts,
+            "archived": synced
+                .archived
+                .iter()
+                .map(|(name, dir)| json!({ "plugin": name, "archive": format!("{DECREE_DIR}/{dir}") }))
+                .collect::<Vec<_>>(),
         }))?,
         Format::Text => {
-            for name in &synced.installed {
-                println!("installed {DECREE_DIR}/{}", plugin::plugin_file(name));
+            for (name, dir) in &synced.archived {
+                println!("{}", archived_line(decree_dir, name, dir));
             }
             for name in &synced.removed {
                 println!(
@@ -284,23 +287,44 @@ fn install_all(decree_dir: &Path, format: Format) -> Result<(), DecreeError> {
                     plugin::plugin_file(name)
                 );
             }
-            let quiet = synced.conflicts.is_empty() && synced.invalid.is_empty();
-            if quiet && synced.installed.is_empty() && synced.removed.is_empty() {
-                println!("every plugin is installed as its file says: nothing to install");
+            for name in &synced.installed {
+                println!("installed {DECREE_DIR}/{}", plugin::plugin_file(name));
+            }
+            if synced.installed.is_empty() && synced.removed.is_empty() && synced.invalid.is_empty()
+            {
+                println!("no plugins in {DECREE_DIR}/{PLUGINS_DIR}/: nothing to install");
             }
         }
     }
-    let notices = synced.notices();
-    for note in &notices {
+    for note in synced.notices() {
         eprintln!("{note}");
     }
-    let failed = synced.conflicts.len() + synced.invalid.len();
-    if failed > 0 {
+    if !synced.invalid.is_empty() {
         return Err(DecreeError::Other(format!(
-            "{failed} plugin(s) not installed; see above"
+            "{} plugin(s) not installed; see above",
+            synced.invalid.len()
         )));
     }
     Ok(())
+}
+
+/// The line an install prints for what it moved to `dir`, an archive folder relative to
+/// `.decree/`: the installed copy, the plugin file it replaced (`plugin.md`), or both.
+fn archived_line(decree_dir: &Path, name: &str, dir: &str) -> String {
+    let full = decree_dir.join(dir);
+    let file = full.join("plugin.md").is_file();
+    let copy = std::fs::read_dir(&full)
+        .map(|entries| entries.flatten().any(|e| e.file_name() != "plugin.md"))
+        .unwrap_or(false);
+    let what = match (copy, file) {
+        (true, true) => format!(
+            "the edited installed copy of `{name}` and the replaced {}",
+            plugin::plugin_file(name)
+        ),
+        (false, true) => format!("the replaced {}", plugin::plugin_file(name)),
+        _ => format!("the edited installed copy of `{name}`"),
+    };
+    format!("archived {what} to {DECREE_DIR}/{dir}/")
 }
 
 /// What a plugin runs: each file it installs, relative to the project root, with its line
@@ -385,8 +409,9 @@ pub fn export_edited(
         Format::Text => {
             for name in &conflicts {
                 println!(
-                    "not exported: {} changed since `{name}` was installed, and its installed copy was edited; merge by hand (`decree export {name}` writes the copy, `decree install {name}` takes the file)",
-                    plugin::plugin_file(name)
+                    "not exported: {} changed since `{name}` was installed, and its installed copy was edited; merge by hand (`decree export {name}` writes the copy; `decree install {name}` takes the file, moving the copy to {DECREE_DIR}/{ARCHIVE}/{name}/)",
+                    plugin::plugin_file(name),
+                    ARCHIVE = plugin::ARCHIVE_DIR
                 );
             }
             if exported.is_empty() && conflicts.is_empty() {
@@ -412,12 +437,10 @@ fn listing(decree_dir: &Path) -> Result<Json, DecreeError> {
         let (description, state) = match &found.parsed {
             Err(_) => (String::new(), "invalid"),
             Ok(p) => {
-                let state = if status.conflicts.contains(&p.name) {
-                    "conflict"
+                let state = if status.archived.iter().any(|(n, _)| *n == p.name) {
+                    "edited"
                 } else if status.installed.contains(&p.name) {
                     "not installed"
-                } else if plugin::edited(decree_dir, p)? {
-                    "edited"
                 } else {
                     "installed"
                 };
@@ -573,16 +596,13 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
         .collect();
     let mut notes = Vec::new();
     if marks.contains(&"differs") {
-        notes.push("`differs`: not this decree's copy; `decree install --force <name>` takes it, printing the edits it drops.");
+        notes.push("`differs`: not this decree's copy; `decree install --force <name>` takes it, printing the edits it drops and moving the old file to .decree/archive/.");
     }
     if marks.contains(&"not installed") {
         notes.push("`not installed`: new or changed since it was installed; run `decree install`.");
     }
     if marks.contains(&"edited") {
-        notes.push("`edited`: the installed copy was edited in place; `decree export <name>` keeps the edit, `decree install <name>` drops it.");
-    }
-    if marks.contains(&"conflict") {
-        notes.push("`conflict`: changed while its installed copy was edited; `decree check` says how to merge.");
+        notes.push("`edited`: the installed copy was edited in place or written by hand; `decree export <name>` keeps the edit, `decree install` moves it to .decree/archive/.");
     }
     if marks.contains(&"invalid") {
         notes.push("`invalid`: fails the plugin schema; `decree check` names the problem.");
@@ -609,15 +629,15 @@ struct Installed {
     text: Vec<u8>,
     /// For `replaced`: each file added, changed or removed, with the lines it drops and adds.
     changes: Vec<Json>,
-    /// For `replaced`: whether the installed copy had edits in place that were not exported.
-    dropped_edits_in_place: bool,
+    /// The folder under `.decree/` the install moved what it replaced to, if any.
+    archived: Option<String>,
 }
 
-/// `decree install <name>...`: install each named plugin from `plugins/<name>.md`, replacing an
-/// installed copy edited in place. A name `plugins/` lacks is seeded from the official plugin of
+/// `decree install <name>...`: install each named plugin from `plugins/<name>.md`, moving an
+/// installed copy edited in place, or a machine no plugin installed, to `archive/` first. A name `plugins/` lacks is seeded from the official plugin of
 /// that name, and so is each official plugin a seeded or installed one needs that `plugins/`
-/// lacks; `force` replaces a file in `plugins/` with the official copy, printing what changes.
-/// A name that is neither, or a plugin file that fails the schema, fails before anything is
+/// lacks; `force` replaces a file in `plugins/` with the official copy, printing what changes
+/// and moving the old file to `archive/`. A name that is neither, or a plugin file that fails the schema, fails before anything is
 /// written.
 fn install_named(
     project_root: &Path,
@@ -694,12 +714,6 @@ fn install_named(
                 o.text.as_bytes().to_vec(),
             )
         };
-        if machine_without_plugin(&decree_dir, &name) && status != "replaced" {
-            return Err(DecreeError::Other(format!(
-                "{DECREE_DIR}/{} exists and no plugin installed it; export it (`decree export {name}`) or move it, then install `{name}` again; nothing was installed",
-                crate::layout::machine_file_rel(&name)
-            )));
-        }
         for need in &plugin.needs {
             queue.push((need.clone(), Some(name.clone())));
         }
@@ -710,7 +724,7 @@ fn install_named(
             plugin,
             text,
             changes: Vec::new(),
-            dropped_edits_in_place: false,
+            archived: None,
         });
     }
     if !problems.is_empty() {
@@ -721,18 +735,14 @@ fn install_named(
     }
 
     for a in plan.iter_mut() {
-        if a.status == "installed" {
-            a.dropped_edits_in_place = plugin::edited_since_install(&decree_dir, &a.name)?;
-        }
+        let mut replaced = None;
         if a.status == "replaced" {
             let old = plugin::read_one(&decree_dir, &a.name)?;
-            let old_plugin = old.parsed.as_ref().ok();
-            a.changes = changes(old_plugin, &a.plugin, true);
-            a.dropped_edits_in_place = match old_plugin {
-                Some(p) => plugin::edited(&decree_dir, p)?,
-                None => false,
-            };
+            a.changes = changes(old.parsed.as_ref().ok(), &a.plugin, true);
+            replaced = Some(old.text);
         }
+        a.archived =
+            plugin::install_archiving(&decree_dir, &a.plugin, &a.text, replaced.as_deref())?;
         if a.status != "installed" {
             let target = decree_dir.join(plugin::plugin_file(&a.name));
             if let Some(dir) = target.parent() {
@@ -742,7 +752,6 @@ fn install_named(
             crate::message::write_replace(&target, &a.text)
                 .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
         }
-        plugin::install(&decree_dir, &a.plugin, &a.text)?;
     }
     // Draw the machines installed, so their graphs stay current. The plugins are installed
     // either way: a project whose own machines do not load yet is told, not refused.
@@ -761,7 +770,7 @@ fn install_named(
                         "status": a.status,
                         "needed_by": a.needed_by,
                         "changes": a.changes,
-                        "dropped_edits_in_place": a.dropped_edits_in_place,
+                        "archived": a.archived.as_ref().map(|d| format!("{DECREE_DIR}/{d}")),
                     })
                 })
                 .collect();
@@ -771,23 +780,16 @@ fn install_named(
             for a in &plan {
                 let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(&a.name));
                 match a.status {
-                    "installed" if a.dropped_edits_in_place => println!(
-                        "installed {file}, dropping the edits in place to {DECREE_DIR}/{MACHINES_DIR}/{0}/ (machine.yml, scripts/ or cron/), which were not exported",
-                        a.name
-                    ),
-                    "installed" => {}
                     "added" => println!("added {file}"),
                     "needed" => println!("added {file}, needed by {}", a.needed_by.join(", ")),
-                    _ => {
+                    "replaced" => {
                         println!("replaced {file} with this decree's copy:");
                         print_line_changes(&a.changes);
-                        if a.dropped_edits_in_place {
-                            println!(
-                                "  and dropped the edits in place to {DECREE_DIR}/{MACHINES_DIR}/{0}/ (machine.yml, scripts/ or cron/), which were not exported",
-                                a.name
-                            );
-                        }
                     }
+                    _ => {}
+                }
+                if let Some(dir) = &a.archived {
+                    println!("{}", archived_line(&decree_dir, &a.name, dir));
                 }
             }
             let names: Vec<&str> = plan.iter().map(|a| a.name.as_str()).collect();
@@ -795,14 +797,6 @@ fn install_named(
             Ok(())
         }
     }
-}
-
-/// Whether `machines/<name>/machine.yml` exists and no plugin file names it.
-fn machine_without_plugin(decree_dir: &Path, name: &str) -> bool {
-    decree_dir
-        .join(crate::layout::machine_file_rel(name))
-        .exists()
-        && !decree_dir.join(plugin::plugin_file(name)).is_file()
 }
 
 /// What replacing `old` with `new` changes, file by file in path order: each file added,
@@ -958,7 +952,7 @@ mod tests {
         // A pull changes the plugin file under the edit.
         let pulled = format!("{text}\nA teammate's note.\n");
         std::fs::write(&file, &pulled).unwrap();
-        assert_eq!(plugin::sync(&decree_dir).unwrap().conflicts, ["develop"]);
+        assert_eq!(plugin::status(&decree_dir).unwrap().archived.len(), 1);
         export_edited(root, false, Format::Json).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), pulled);
         assert!(std::fs::read_to_string(&gate)
@@ -966,7 +960,6 @@ mod tests {
             .contains("cargo test"));
         // Without the pull, the edit is exported.
         std::fs::write(&file, text).unwrap();
-        plugin::sync(&decree_dir).unwrap();
         export_edited(root, false, Format::Json).unwrap();
         assert!(std::fs::read_to_string(&file)
             .unwrap()

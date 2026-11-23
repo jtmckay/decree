@@ -94,10 +94,9 @@
             "E1",
             "P1",
             "P2",
-            "P3",
             null
           ],
-          "description": "The rule that failed, V1–V21, M2, M3, E1 or P1–P3 (docs/reference/machines.md, Validation), or null for an error no rule names, such as YAML that does not parse."
+          "description": "The rule that failed, V1–V21, M2, M3, E1, P1 or P2 (docs/reference/machines.md, Validation), or null for an error no rule names, such as YAML that does not parse."
         },
         "file": {
           "type": "string",

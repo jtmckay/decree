@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/plugin.schema.json",
   "title": "decree install / list / export --format json",
-  "description": "What `decree install`, `decree list` and `decree export --format json` print on stdout, one shape per `action`. On failure (a name neither in plugins/ nor official, a plugin that fails its schema, a missing `needs`, a name already taken without --force) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. `decree install` with no argument is the exception: it installs every plugin it can, prints `sync`, names each conflict or invalid plugin on stderr and exits 1. Reference: docs/reference/plugins.md.",
+  "description": "What `decree install`, `decree list` and `decree export --format json` print on stdout, one shape per `action`. On failure (a name neither in plugins/ nor official, a plugin that fails its schema, a missing `needs`) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. `decree install` with no argument is the exception: it installs every plugin it can, prints `sync`, names each invalid plugin on stderr and exits 1. An install never refuses over a change: what it would lose goes to .decree/archive/ first. Reference: docs/reference/plugins.md.",
   "oneOf": [
     {
       "type": "object",
@@ -52,17 +52,16 @@
               },
               "differs": {
                 "type": "boolean",
-                "description": "With `official`: whether the file differs from this decree's copy, byte for byte (edited, or from another decree version); `decree install --force <name>` takes this decree's copy. False otherwise."
+                "description": "With `official`: whether the file differs from this decree's copy, byte for byte (edited, or from another decree version); `decree install --force <name>` takes this decree's copy, archiving the old file. False otherwise."
               },
               "state": {
                 "enum": [
                   "installed",
                   "not installed",
                   "edited",
-                  "conflict",
                   "invalid"
                 ],
-                "description": "`installed`: installed as its file says; `not installed`: new or changed since it was installed, so `decree install` would install it; `edited`: its installed copy was edited in place and not exported; `conflict`: it changed while its installed copy was edited (P3); `invalid`: it fails its schema (P1)."
+                "description": "`installed`: installed as its file says; `not installed`: new or changed since it was installed, so `decree install` would install it; `edited`: its installed copy was edited in place or written by hand, and not exported, so `decree install` would move it to .decree/archive/; `invalid`: it fails its schema (P1)."
               }
             }
           }
@@ -131,7 +130,7 @@
               "status",
               "needed_by",
               "changes",
-              "dropped_edits_in_place"
+              "archived"
             ],
             "additionalProperties": false,
             "properties": {
@@ -151,7 +150,7 @@
                   "needed",
                   "replaced"
                 ],
-                "description": "`installed`: named, and installed from its file in plugins/; `added`: named, not in plugins/, so seeded from the official copy and installed; `needed`: seeded and installed because a plugin needs it; `replaced`: named with --force, its file replaced with this decree's copy and installed."
+                "description": "`installed`: named, and installed from its file in plugins/; `added`: named, not in plugins/, so seeded from the official copy and installed; `needed`: seeded and installed because a plugin needs it; `replaced`: named with --force, its file replaced with this decree's copy (the old one archived) and installed."
               },
               "needed_by": {
                 "type": "array",
@@ -193,11 +192,14 @@
                     }
                   }
                 },
-                "description": "For `replaced`: what changed, including the project's own edits it dropped. Empty otherwise."
+                "description": "For `replaced`: what changed, including the project's own edits it replaced. Empty otherwise."
               },
-              "dropped_edits_in_place": {
-                "type": "boolean",
-                "description": "For `replaced`: whether the installed copy had edits in place, not exported, which installing dropped."
+              "archived": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The folder, relative to the project root, that the install moved what it replaced to (an installed copy edited in place or written by hand, and a replaced plugin file as `plugin.md`): .decree/archive/<name>/<time>/. Null when nothing was archived."
               }
             }
           }
@@ -289,7 +291,7 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
-          "description": "Edited plugins not exported because their plugin file changed since they were installed: exporting would write the old version over the new file, so a person merges them."
+          "description": "Edited plugins not exported because their plugin file changed since they were installed: exporting would write the old version over the new file, so a person merges them (or `decree install` archives the edit)."
         },
         "dry_run": {
           "type": "boolean",
@@ -308,7 +310,8 @@
         "needs",
         "replaced",
         "changes",
-        "added"
+        "added",
+        "archived"
       ],
       "additionalProperties": false,
       "properties": {
@@ -362,7 +365,7 @@
         },
         "replaced": {
           "type": "boolean",
-          "description": "Whether a plugin of the same name was replaced (--force)."
+          "description": "Whether a plugin file of the same name was replaced (and archived, when it differed)."
         },
         "changes": {
           "type": "array",
@@ -397,6 +400,13 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "description": "The official plugins the plugin needs that plugins/ lacked, seeded from this decree's copies and installed first, by name; empty when none."
+        },
+        "archived": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The folder, relative to the project root, that the install moved what it replaced to (an installed copy edited in place or written by hand, and a replaced plugin file as `plugin.md`): .decree/archive/<name>/<time>/. Null when nothing was archived."
         }
       }
     },
@@ -406,13 +416,13 @@
         "action",
         "installed",
         "removed",
-        "conflicts"
+        "archived"
       ],
       "additionalProperties": false,
       "properties": {
         "action": {
           "const": "sync",
-          "description": "`decree install` with no argument: every plugin that is new or changed installed, every deleted plugin's copy removed and every edited copy kept."
+          "description": "`decree install` with no argument: every plugin installed and every deleted plugin's copy removed, each installed copy that would be lost archived first."
         },
         "installed": {
           "type": "array",
@@ -420,7 +430,7 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
-          "description": "The plugins installed, by name."
+          "description": "The plugins installed, by name: every plugin in plugins/ that passes its schema."
         },
         "removed": {
           "type": "array",
@@ -430,20 +440,34 @@
           },
           "description": "The plugins whose file was deleted, whose installed copy was removed."
         },
-        "conflicts": {
+        "archived": {
           "type": "array",
+          "description": "Each installed copy edited in place or written by hand, moved to .decree/archive/ before it was installed over or removed.",
           "items": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_]*$"
-          },
-          "description": "The plugins that changed while their installed copy was edited, not installed (P3); the exit code is then 1."
+            "type": "object",
+            "required": [
+              "plugin",
+              "archive"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "plugin": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "archive": {
+                "type": "string",
+                "description": "The folder, relative to the project root: .decree/archive/<name>/<time>/."
+              }
+            }
+          }
         }
       }
     }
   ],
   "examples": [
     {
-      "action": "add",
+      "action": "install",
       "plugins": [
         {
           "plugin": "develop",
@@ -451,7 +475,7 @@
           "status": "added",
           "needed_by": [],
           "changes": [],
-          "dropped_edits_in_place": false
+          "archived": null
         },
         {
           "plugin": "infra",
@@ -461,17 +485,23 @@
             "develop"
           ],
           "changes": [],
-          "dropped_edits_in_place": false
+          "archived": null
         }
       ]
     },
     {
-      "action": "install",
+      "action": "sync",
       "installed": [
-        "develop"
+        "develop",
+        "infra"
       ],
       "removed": [],
-      "conflicts": []
+      "archived": [
+        {
+          "plugin": "develop",
+          "archive": ".decree/archive/develop/20261122T153000Z"
+        }
+      ]
     }
   ]
 }

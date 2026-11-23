@@ -1210,6 +1210,8 @@ fn check_ignores_the_files_beside_a_machines_scripts() {
     assert!(develop.join("commit.sh").is_file());
     fs::write(develop.join("conventions.md"), "# Conventions\n").unwrap();
     fs::write(develop.join("requirements"), "command   git\n").unwrap();
+    // Kept in the plugin file, so `check` has no edit in place to warn about.
+    p.decree(&["export", "develop"]).assert().success();
     p.decree(&["check"])
         .assert()
         .success()

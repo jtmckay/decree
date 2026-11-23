@@ -25,15 +25,15 @@ Commands:
                               scanning)
   decree graph                Write each machines/<name>/graph.md and system.md: Mermaid diagrams in Markdown
   decree install              Install every plugin in .decree/plugins/ as its
-                              file says (after a clone or a pull), keeping
-                              edited copies. Nothing else installs plugins
+                              file says (after a clone or a pull). An edited
+                              installed copy, or a replaced plugin file, goes
+                              to .decree/archive/ first. Nothing else installs
   decree install NAME... [--force]
-                              Install these plugins over any edit; an
-                              official one not in .decree/plugins/ is copied
-                              there first, with those it needs. --force takes
-                              decree's official copy
-  decree install FILE|- [--force]
-                              Check a plugin, copy it to .decree/plugins/
+                              Install these plugins; an official one not in
+                              .decree/plugins/ is copied there first, with
+                              those it needs. --force takes decree's official
+                              copy
+  decree install FILE|-       Check a plugin, copy it to .decree/plugins/
                               and install it; - reads it from stdin
                               (curl -fsSL URL | decree install -)
   decree list                 The plugins in .decree/plugins/ (official or
@@ -121,6 +121,8 @@ Files (.decree/):
   runs/<id>/                  One folder per run: message.md, events.jsonl, logs
   schema/v1/                  Written by init and `decree install`; not committed.
                               Editors use the hosted copy (docs/editors.md)
+  archive/<name>/<time>/      What `decree install` replaced: an edited
+                              installed copy, an old plugin file; ignored by git
 
 Messages:
   ---

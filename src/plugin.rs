@@ -2,8 +2,9 @@
 //! frontmatter holds a machine's folder, `machines/<name>/`: its `machine.yml`, its scripts,
 //! its cron files, and seeds for its `state/` and `order/`. decree installs a plugin into
 //! `machine.yml`, `scripts/` and `cron/` (its installed copy), writes its state and order seeds
-//! once, exports an installed copy back to its file, and never overwrites an installed copy
-//! that was edited in place.
+//! once, and exports an installed copy back to its file. An install always installs: what it
+//! would lose (an installed copy edited in place, a machine no plugin installed, a plugin file
+//! it replaces) is moved to `.decree/archive/<name>/<time>/` first.
 //!
 //! What decree records about an install is a copy of the plugin file as it was installed,
 //! `.decree/cache/plugins/<name>.md`. A plugin changed since its install when its file differs
@@ -27,6 +28,10 @@ use crate::runtime::resolve::SCRIPTS_DIR;
 
 /// Directory holding plugin files, relative to `.decree/`.
 pub const PLUGINS_DIR: &str = "plugins";
+
+/// Directory under `.decree/` where an install moves what it would lose, one folder per
+/// plugin and install: `archive/<name>/<time>/`.
+pub const ARCHIVE_DIR: &str = "archive";
 
 /// Directory under `.decree/cache/` holding the record of each install.
 const RECORDS_DIR: &str = "plugins";
@@ -790,34 +795,34 @@ pub fn read_one(decree_dir: &Path, name: &str) -> Result<Found, DecreeError> {
 /// What `sync` did and found, or what `status` found `sync` would do.
 #[derive(Debug, Default)]
 pub struct Synced {
-    /// Whether this is `status`: nothing was written, and `installed`, `removed` and `kept`
-    /// are what `decree install` would do.
+    /// Whether this is `status`: nothing was written, and `installed`, `removed` and
+    /// `archived` are what `decree install` would do.
     pub checked: bool,
-    /// Plugins installed now.
+    /// Plugins installed now: every valid plugin. For `status`, those whose installed copy is
+    /// not what their file installs, but those in `archived`.
     pub installed: Vec<String>,
     /// Plugins whose file was deleted, whose installed copy was removed.
     pub removed: Vec<String>,
-    /// Plugins whose file was deleted but whose installed copy was edited: the copy stays,
-    /// as a machine no plugin installed.
-    pub kept: Vec<String>,
-    /// Plugins that changed while their installed copy was edited: not installed (P3).
-    pub conflicts: Vec<String>,
+    /// Plugins whose installed copy held what installing (or removing) would lose, edited in
+    /// place or never installed by decree, moved to `archive/` first: (plugin, the archive
+    /// folder relative to `.decree/`, empty for `status`).
+    pub archived: Vec<(String, String)>,
     /// Plugin files that fail the schema (P1), by name: not installed.
     pub invalid: Vec<(String, Vec<Problem>)>,
     /// `needs` that are not in `plugins/` (P2): (plugin, missing).
     pub missing_needs: Vec<(String, Vec<String>)>,
 }
 
-/// Install every plugin in `plugins/` that is new or changed since it was installed, and
-/// remove the installed copy of each plugin whose file was deleted, never overwriting an
-/// installed copy that was edited (docs/reference/plugins.md, Installing): what
-/// `decree install` with no name does. A project without `plugins/` and without
-/// records is left as it is.
+/// Install every plugin in `plugins/`, whether or not its installed copy already matches,
+/// and remove the installed copy of each plugin whose file was deleted, first moving to
+/// `archive/` each installed copy that holds what that would lose (docs/reference/plugins.md,
+/// Installing): what `decree install` with no name does. A plugin file that fails its schema
+/// is not installed. A project without `plugins/` and without records is left as it is.
 pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
     reconcile(decree_dir, true)
 }
 
-/// What `sync` would do, writing nothing: `check`, `process` and `daemon` report it, and
+/// What `sync` would change, writing nothing: `check`, `process` and `daemon` report it, and
 /// never install.
 pub fn status(decree_dir: &Path) -> Result<Synced, DecreeError> {
     reconcile(decree_dir, false)
@@ -850,77 +855,145 @@ fn reconcile(decree_dir: &Path, write: bool) -> Result<Synced, DecreeError> {
         if !missing.is_empty() {
             out.missing_needs.push((plugin.name.clone(), missing));
         }
-        let record = recorded.remove(&plugin.name);
+        recorded.remove(&plugin.name);
+        if write {
+            if let Some(dir) = install_archiving(decree_dir, &plugin, &f.text, None)? {
+                out.archived.push((plugin.name.clone(), dir));
+            }
+            out.installed.push(plugin.name);
+            continue;
+        }
         let copy = Copy::read(decree_dir, &plugin.name)?;
-        if copy.is_absent() {
-            if write {
-                install(decree_dir, &plugin, &f.text)?;
-            }
+        if would_lose(decree_dir, &plugin.name, &copy, Some(&plugin))? {
+            out.archived.push((plugin.name, String::new()));
+        } else if !copy.matches(&plugin) {
             out.installed.push(plugin.name);
-            continue;
-        }
-        if record.as_deref() == Some(f.text.as_slice()) {
-            // Unchanged: an edit stays and runs.
-            continue;
-        }
-        if copy.matches(&plugin) {
-            if write {
-                record_only(decree_dir, &plugin, &f.text)?;
-            }
-            continue;
-        }
-        let unedited = record
-            .as_deref()
-            .and_then(|old| std::str::from_utf8(old).ok())
-            .and_then(|old| Plugin::parse(old, None).ok())
-            .is_some_and(|old| copy.matches(&old));
-        if unedited {
-            if write {
-                install(decree_dir, &plugin, &f.text)?;
-            }
-            out.installed.push(plugin.name);
-        } else {
-            out.conflicts.push(plugin.name);
         }
     }
     // What is left was recorded, but its plugin file is gone.
-    for (name, old) in recorded {
+    for name in recorded.into_keys() {
         let copy = Copy::read(decree_dir, &name)?;
-        let unedited = std::str::from_utf8(&old)
-            .ok()
-            .and_then(|old| Plugin::parse(old, None).ok())
-            .is_some_and(|old| copy.matches(&old));
-        if !write {
-            if copy.is_absent() {
-                continue;
-            } else if unedited {
-                out.removed.push(name);
-            } else {
-                out.kept.push(name);
+        if copy.is_absent() {
+            if write {
+                forget(decree_dir, &name)?;
             }
-        } else if copy.is_absent() {
-            forget(decree_dir, &name)?;
-        } else if unedited {
-            uninstall(decree_dir, &name)?;
-            out.removed.push(name);
-        } else {
-            forget(decree_dir, &name)?;
-            out.kept.push(name);
+            continue;
         }
+        let lose = would_lose(decree_dir, &name, &copy, None)?;
+        if write {
+            if lose {
+                let dir = archive(decree_dir, &name, true, None)?;
+                out.archived.push((name.clone(), dir));
+            }
+            uninstall(decree_dir, &name)?;
+        } else if lose {
+            out.archived.push((name.clone(), String::new()));
+        }
+        out.removed.push(name);
     }
     Ok(out)
 }
 
-/// Record a plugin whose installed copy already matches it, and write what it seeds.
-fn record_only(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), DecreeError> {
-    seed(decree_dir, plugin)?;
-    record(decree_dir, &plugin.name, text)
+/// Whether plugin `name`'s installed copy `copy` holds what installing `plugin` over it
+/// (`None`: removing it) would lose: it exists, is not what `plugin` installs, and is not
+/// what decree's record of its install says was installed, so it was edited in place or
+/// written by hand.
+fn would_lose(
+    decree_dir: &Path,
+    name: &str,
+    copy: &Copy,
+    plugin: Option<&Plugin>,
+) -> Result<bool, DecreeError> {
+    if copy.is_absent() || plugin.is_some_and(|p| copy.matches(p)) {
+        return Ok(false);
+    }
+    let path = record_path(decree_dir, name);
+    let installed = match std::fs::read_to_string(&path) {
+        Ok(text) => Plugin::parse(&text, None).ok(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(io_error(&path, e)),
+    };
+    Ok(!installed.is_some_and(|old| copy.matches(&old)))
+}
+
+/// Install `plugin` from `text`, first moving to `archive/` the installed copy when installing
+/// would lose it (`would_lose`), and `replaced`, the plugin file this install replaces, when
+/// it is not `text`. Returns the archive folder relative to `.decree/`, if one was written.
+pub fn install_archiving(
+    decree_dir: &Path,
+    plugin: &Plugin,
+    text: &[u8],
+    replaced: Option<&[u8]>,
+) -> Result<Option<String>, DecreeError> {
+    let copy = Copy::read(decree_dir, &plugin.name)?;
+    let lose = would_lose(decree_dir, &plugin.name, &copy, Some(plugin))?;
+    let replaced = replaced.filter(|old| *old != text);
+    let dir = if lose || replaced.is_some() {
+        Some(archive(decree_dir, &plugin.name, lose, replaced)?)
+    } else {
+        None
+    };
+    install(decree_dir, plugin, text)?;
+    Ok(dir)
+}
+
+/// Move plugin `name`'s installed copy (with `copy`: `machine.yml`, `scripts/` and `cron/`)
+/// and write `plugin_file`, the plugin file being replaced, as `plugin.md`, into a new
+/// `archive/<name>/<time>/`, the time in UTC, as `20261122T153000Z`. Returns that folder
+/// relative to `.decree/`. `archive/` holds a `.gitignore` of `*`, so git ignores it.
+fn archive(
+    decree_dir: &Path,
+    name: &str,
+    copy: bool,
+    plugin_file: Option<&[u8]>,
+) -> Result<String, DecreeError> {
+    // The archive ignores itself, as pytest's and ruff's caches do, so it never dirties the
+    // work tree of a project whose `.gitignore` predates it.
+    let root = decree_dir.join(ARCHIVE_DIR);
+    std::fs::create_dir_all(&root).map_err(|e| io_error(&root, e))?;
+    let ignore = root.join(".gitignore");
+    if !ignore.exists() {
+        write_replace(
+            &ignore,
+            b"# Written by decree install: what an install replaced, kept for recovery.\n*\n",
+        )
+        .map_err(|(path, e)| io_error(&path, e))?;
+    }
+    let parent = root.join(name);
+    std::fs::create_dir_all(&parent).map_err(|e| io_error(&parent, e))?;
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let mut folder = stamp.clone();
+    let mut n = 1;
+    loop {
+        match std::fs::create_dir(parent.join(&folder)) {
+            Ok(()) => break,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                n += 1;
+                folder = format!("{stamp}-{n}");
+            }
+            Err(e) => return Err(io_error(&parent.join(&folder), e)),
+        }
+    }
+    let dir = parent.join(&folder);
+    if copy {
+        let from = layout::machine_dir(decree_dir, name);
+        for part in [layout::MACHINE_FILE, SCRIPTS_DIR, CRON_DIR] {
+            let path = from.join(part);
+            if path.symlink_metadata().is_ok() {
+                std::fs::rename(&path, dir.join(part)).map_err(|e| io_error(&path, e))?;
+            }
+        }
+    }
+    if let Some(text) = plugin_file {
+        let path = dir.join("plugin.md");
+        write_replace(&path, text).map_err(|(path, e)| io_error(&path, e))?;
+    }
+    Ok(format!("{ARCHIVE_DIR}/{name}/{folder}"))
 }
 
 impl Synced {
-    /// One line per conflict, invalid plugin, and plugin whose edited copy was kept, for
-    /// `process`, `daemon` and `decree install` to print; for `status`, also one per
-    /// plugin `decree install` would install or remove.
+    /// One line per invalid plugin, for `process`, `daemon` and `decree install` to print;
+    /// for `status`, also one per plugin `decree install` would install, remove or archive.
     pub fn notices(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.checked {
@@ -936,28 +1009,27 @@ impl Synced {
                     plugin_file(name)
                 ));
             }
+            for (name, _) in &self.archived {
+                out.push(format!("{}: {}", plugin_file(name), edited_message(name)));
+            }
         }
         for (name, problems) in &self.invalid {
             for p in problems {
                 out.push(format!("{}: {} (P1)", problem_at(name, p.line), p.message));
             }
         }
-        for name in &self.conflicts {
-            out.push(format!(
-                "{}: {} (P3)",
-                plugin_file(name),
-                conflict_message(name)
-            ));
-        }
-        for name in &self.kept {
-            out.push(format!(
-                "{}: deleted, but its installed copy was edited, so {} stays as a machine no plugin installed",
-                plugin_file(name),
-                machine_file(name)
-            ));
-        }
         out
     }
+}
+
+/// What an edited installed copy means for `decree install`, and how to keep the edit.
+pub fn edited_message(name: &str) -> String {
+    format!(
+        "its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, or written by hand: `decree install` moves it to {}/{ARCHIVE_DIR}/{name}/ and installs the plugin; `decree export {name}` keeps the edit",
+        machine_file(name),
+        layout::DECREE_DIR,
+        dir = layout::machine_dir_rel(name)
+    )
 }
 
 fn problem_at(name: &str, line: Option<usize>) -> String {
@@ -970,15 +1042,6 @@ fn problem_at(name: &str, line: Option<usize>) -> String {
 /// `plugins/<name>.md`, relative to `.decree/`.
 pub fn plugin_file(name: &str) -> String {
     format!("{PLUGINS_DIR}/{name}.md")
-}
-
-/// What a conflict is and both ways out of it.
-pub fn conflict_message(name: &str) -> String {
-    format!(
-        "plugin `{name}` changed, but its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree export {name}` and merge with git; to take the plugin's version, run `decree install {name}`",
-        machine_file(name),
-        dir = layout::machine_dir_rel(name)
-    )
 }
 
 /// The plugin of the installed copy `name` (docs/reference/plugins.md, Export): the machine
@@ -1101,22 +1164,6 @@ pub fn export(decree_dir: &Path, name: &str) -> Result<Plugin, DecreeError> {
 pub fn edited(decree_dir: &Path, plugin: &Plugin) -> Result<bool, DecreeError> {
     let copy = Copy::read(decree_dir, &plugin.name)?;
     Ok(!copy.is_absent() && !copy.matches(plugin))
-}
-
-/// Whether plugin `name`'s installed copy was edited in place since it was installed: it
-/// differs from what the plugin file it was installed from installs. False when nothing is
-/// installed or no record says what it was installed from.
-pub fn edited_since_install(decree_dir: &Path, name: &str) -> Result<bool, DecreeError> {
-    let path = record_path(decree_dir, name);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(io_error(&path, e)),
-    };
-    match Plugin::parse(&text, Some(name)) {
-        Ok(recorded) => edited(decree_dir, &recorded),
-        Err(_) => Ok(false),
-    }
 }
 
 /// Whether plugin file `text` is not the one plugin `name` was installed from: changed
@@ -1314,8 +1361,26 @@ Says hello.
         std::fs::read_to_string(dir.join(path)).ok()
     }
 
+    /// The archive folders of plugin `name`, relative to `.decree/`, oldest first.
+    fn archives(dir: &Path, name: &str) -> Vec<String> {
+        let mut out: Vec<String> = std::fs::read_dir(dir.join(ARCHIVE_DIR).join(name))
+            .map(|entries| {
+                entries
+                    .map(|e| {
+                        format!(
+                            "{ARCHIVE_DIR}/{name}/{}",
+                            e.unwrap().file_name().to_string_lossy()
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
     #[test]
-    fn sync_installs_keeps_edits_and_reports_conflicts() {
+    fn sync_installs_every_plugin_and_archives_edits() {
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/hello.md", PLUGIN);
@@ -1339,52 +1404,62 @@ Says hello.
             .mode();
         assert_eq!(mode & 0o777, 0o644);
 
-        // An edit stays while the plugin is unchanged.
+        // Unchanged and unedited, it is installed again, archiving nothing.
+        let s = sync(d).unwrap();
+        assert_eq!(s.installed, ["hello"]);
+        assert!(s.archived.is_empty() && archives(d, "hello").is_empty());
+        assert!(status(d).unwrap().installed.is_empty());
+
+        // An edit, with the plugin unchanged, is archived and the plugin installed over it.
         put(
             d,
             "machines/hello/scripts/greet.sh",
             "#!/bin/sh\necho edited\n",
         );
+        let checked = status(d).unwrap();
+        assert_eq!(checked.archived, [("hello".to_string(), String::new())]);
+        assert!(checked.notices()[0].contains("was edited in place"));
         let s = sync(d).unwrap();
-        assert!(s.installed.is_empty() && s.conflicts.is_empty());
+        assert_eq!(s.installed, ["hello"]);
+        let [dir] = archives(d, "hello").try_into().unwrap();
+        assert_eq!(s.archived, [("hello".to_string(), dir.clone())]);
         assert_eq!(
-            get(d, "machines/hello/scripts/greet.sh").unwrap(),
+            get(d, &format!("{dir}/scripts/greet.sh")).unwrap(),
             "#!/bin/sh\necho edited\n"
         );
+        assert!(get(d, &format!("{dir}/machine.yml")).is_some());
+        assert_eq!(
+            get(d, "archive/.gitignore").unwrap().lines().last(),
+            Some("*")
+        );
+        assert!(get(d, "machines/hello/scripts/greet.sh")
+            .unwrap()
+            .contains("echo hi"));
 
-        // A changed plugin over an edit is a conflict; nothing is touched.
+        // A changed plugin over an edit (an added file is one): archived, then installed.
         put(
             d,
             "plugins/hello.md",
             &PLUGIN.replace("echo hi", "echo bye"),
         );
+        put(d, "machines/hello/scripts/added.txt", "x");
         let s = sync(d).unwrap();
-        assert_eq!(s.conflicts, ["hello"]);
-        assert_eq!(
-            get(d, "machines/hello/scripts/greet.sh").unwrap(),
-            "#!/bin/sh\necho edited\n"
-        );
-
-        // Install takes the plugin's version.
-        let found = read_one(d, "hello").unwrap();
-        install(d, &found.parsed.unwrap(), &found.text).unwrap();
+        assert_eq!(s.archived.len(), 1);
+        assert_eq!(archives(d, "hello").len(), 2);
+        assert!(!d.join("machines/hello/scripts/added.txt").exists());
         assert!(get(d, "machines/hello/scripts/greet.sh")
             .unwrap()
             .contains("echo bye"));
-        assert!(sync(d).unwrap().conflicts.is_empty());
 
-        // An unedited copy follows a changed plugin.
+        // An unedited copy follows a changed plugin, archiving nothing.
         put(
             d,
             "plugins/hello.md",
             &PLUGIN.replace("echo hi", "echo again"),
         );
-        put(d, "machines/hello/scripts/added.txt", "x");
+        assert_eq!(status(d).unwrap().installed, ["hello"]);
         let s = sync(d).unwrap();
-        assert_eq!(s.conflicts, ["hello"], "an added file is an edit");
-        std::fs::remove_file(d.join("machines/hello/scripts/added.txt")).unwrap();
-        let s = sync(d).unwrap();
-        assert_eq!(s.installed, ["hello"]);
+        assert!(s.archived.is_empty());
         assert!(get(d, "machines/hello/scripts/greet.sh")
             .unwrap()
             .contains("echo again"));
@@ -1401,7 +1476,7 @@ Says hello.
     }
 
     #[test]
-    fn an_existing_copy_is_recorded_when_it_matches_and_a_conflict_when_not() {
+    fn an_existing_copy_is_archived_only_when_it_differs() {
         let tmp = project();
         let d = tmp.path();
         let plugin = Plugin::parse(PLUGIN, None).unwrap();
@@ -1415,8 +1490,9 @@ Says hello.
             put(d, &format!("machines/hello/scripts/{path}"), text);
         }
         put(d, "plugins/hello.md", PLUGIN);
+        assert!(status(d).unwrap().installed.is_empty());
         let s = sync(d).unwrap();
-        assert!(s.installed.is_empty() && s.conflicts.is_empty());
+        assert!(s.archived.is_empty());
         assert_eq!(
             std::fs::read(record_path(d, "hello")).unwrap(),
             PLUGIN.as_bytes()
@@ -1425,13 +1501,19 @@ Says hello.
             .unwrap()
             .starts_with("# by hand"));
 
+        // Written by hand and different, with no record: archived.
         std::fs::remove_file(record_path(d, "hello")).unwrap();
         put(d, "machines/hello/scripts/greet.sh", "different");
-        assert_eq!(sync(d).unwrap().conflicts, ["hello"]);
+        assert_eq!(sync(d).unwrap().archived.len(), 1);
+        let [dir] = archives(d, "hello").try_into().unwrap();
+        assert_eq!(
+            get(d, &format!("{dir}/scripts/greet.sh")).unwrap(),
+            "different"
+        );
     }
 
     #[test]
-    fn a_deleted_plugin_with_an_edited_copy_keeps_it() {
+    fn a_deleted_plugin_with_an_edited_copy_archives_it() {
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/hello.md", PLUGIN);
@@ -1439,8 +1521,14 @@ Says hello.
         put(d, "machines/hello/scripts/greet.sh", "edited");
         std::fs::remove_file(d.join("plugins/hello.md")).unwrap();
         let s = sync(d).unwrap();
-        assert_eq!(s.kept, ["hello"]);
-        assert_eq!(get(d, "machines/hello/scripts/greet.sh").unwrap(), "edited");
+        assert_eq!(s.removed, ["hello"]);
+        let [dir] = archives(d, "hello").try_into().unwrap();
+        assert_eq!(s.archived, [("hello".to_string(), dir.clone())]);
+        assert_eq!(
+            get(d, &format!("{dir}/scripts/greet.sh")).unwrap(),
+            "edited"
+        );
+        assert!(!d.join("machines/hello").exists());
         assert!(!record_path(d, "hello").exists());
     }
 
@@ -1472,17 +1560,18 @@ Says hello.
         );
         let s = sync(d).unwrap();
         assert_eq!(s.invalid.len(), 1);
-        assert!(s.removed.is_empty() && s.kept.is_empty());
+        assert!(s.removed.is_empty() && s.archived.is_empty());
         assert!(d.join("machines/hello/machine.yml").exists());
         assert!(d.join("machines/hello/scripts/greet.sh").exists());
         assert_eq!(
             std::fs::read(record_path(d, "hello")).unwrap(),
             PLUGIN.as_bytes()
         );
-        // Fixed again, it is unchanged: no conflict, nothing to install.
+        // Fixed again, it is unchanged: nothing to archive.
         put(d, "plugins/hello.md", PLUGIN);
+        assert!(status(d).unwrap().installed.is_empty());
         let s = sync(d).unwrap();
-        assert!(s.installed.is_empty() && s.conflicts.is_empty());
+        assert!(s.archived.is_empty());
     }
 
     #[test]
@@ -1572,14 +1661,14 @@ x-exist-services:
             .unwrap()
             .contains("Each day."));
 
-        // An edited cron file is an edit: a plugin change over it is a conflict.
+        // An edited cron file is an edit, which `decree install` would archive.
         put(
             d,
             "machines/kit/cron/daily.md",
             "---\ncron: '@reboot'\nmachine: hello\n---\n",
         );
         put(d, "plugins/kit.md", KIT);
-        assert_eq!(sync(d).unwrap().conflicts, ["kit"]);
+        assert_eq!(status(d).unwrap().archived.len(), 1);
 
         // Export keeps the x- keys and the state and order seeds, and takes the edited cron file.
         let out = export(d, "kit").unwrap();

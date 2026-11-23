@@ -5,7 +5,7 @@ machine:
   initial: install
   states:
     install:
-      description: Run `decree install`, which installs new and changed plugins, removes deleted ones and keeps edited copies.
+      description: Run `decree install`, which installs every plugin, removes deleted ones and archives edited copies first.
       invoke: install
       transitions:
         done: done
@@ -16,11 +16,10 @@ machine:
 scripts:
   install.sh: |
     #!/usr/bin/env bash
-    # plugin_install's only script. Installs every plugin in .decree/plugins/ that is new
-    # or changed, and removes the installed copy of each deleted one. An installed copy
-    # edited in place is never overwritten: a plugin that changed over one is a conflict,
-    # which fails this run, so a person merges it (`decree export <name>` keeps the
-    # edit, `decree install <name>` takes the plugin's version).
+    # plugin_install's only script. Installs every plugin in .decree/plugins/, and removes
+    # the installed copy of each deleted one. An installed copy edited in place is moved
+    # to .decree/archive/<name>/<time>/ first, so nothing is lost; `decree export <name>`
+    # before a restart keeps an edit in the plugin file instead.
     set -euo pipefail
     decree install
 cron:
@@ -38,5 +37,5 @@ decree installs a plugin only when asked: `decree install`. `process`, `daemon` 
 This plugin asks for you. Its cron file, `.decree/machines/plugin_install/cron/boot.md`, fires once each time `decree daemon` starts (`@reboot`), and its run runs `decree install`. A daemon restarted after `git pull` then runs the plugins as pulled.
 
 - **Needs:** `decree` on the `PATH` of the daemon, and `.decree/machines/` writable. A container that mounts them read-only should not add this plugin; install on the host instead.
-- **Conflicts:** a plugin that changed while its installed copy was edited in place is not installed, and the run fails, naming it. Its attention file tells a person to merge it.
+- **Edits in place:** an installed copy edited in place, and not exported, is moved to `.decree/archive/<name>/<time>/` and the plugin installed over it, so export an edit you want to keep before restarting the daemon. That includes the edits a failed `develop` or `infra` run left for `decree retry`: copy them back from the archive. Only a plugin file that fails its schema fails the run.
 - **More often:** add a cron file beside `boot.md` in the installed copy (`.decree/machines/plugin_install/cron/hourly.md` with `cron: 0 * * * *` and `machine: plugin_install`), then `decree export plugin_install`.

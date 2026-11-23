@@ -166,8 +166,8 @@ pub(crate) struct Pipeline {
     done_rx: Receiver<Done>,
 }
 
-/// Print, once each, every plugin `decree install` would install or remove and every
-/// problem that would stop one (a conflict, a plugin that fails its schema): `daemon`
+/// Print, once each, every plugin `decree install` would install, remove or archive, and
+/// every plugin file that fails its schema, which would stop one: `daemon`
 /// installs nothing (docs/reference/plugins.md, Installing). `printed` holds the
 /// lines already printed, and keeps those still there.
 pub(crate) fn plugin_notices(project_root: &Path, printed: &mut BTreeSet<String>, prefix: &str) {

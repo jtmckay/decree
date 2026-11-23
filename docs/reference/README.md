@@ -102,11 +102,12 @@ Each building block has its own directory in `.decree/`:
   .env.<name>                       # optional, never committed: a machine's `env_file`, for that machine's scripts only
   .env.example                      # optional, committed: the template people copy to .env; decree never reads it
   cache/                            # optional, never committed: project-wide files no machine owns, such as a test tool's browsers; decree keeps only cache/plugins/ there, its record of each plugin install (plugins.md)
+  archive/<name>/<time>/            # written by `decree install`, never committed (its own .gitignore is `*`): what an install replaced, an installed copy edited in place or a plugin file, kept for recovery (plugins.md)
   process.log                       # what `daemon` prints as runs go, its last 2 MiB, even with --quiet (cli.md, Output)
   attention/<id>.md                 # a run that needs a person: what happened and the command; one that holds stops its group's runs (cli.md, Attention)
 ```
 
-`plugins/`, `system.md` and each machine's `order/`, `graph.md` and `state/**/*.git.*` are committed to git; `inbox/`, `runs/`, the rest of `machines/`, `cache/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
+`plugins/`, `system.md` and each machine's `order/`, `graph.md` and `state/**/*.git.*` are committed to git; `inbox/`, `runs/`, the rest of `machines/`, `cache/`, `archive/`, `process.log`, `attention/` and the `.env*` files but `.env.example` are not. A run folder may also hold `received/` (delivered replies, [Replies](messages.md#replies)), `request.json` and `reply.json` (in a router run, [Model](runs.md#model)).
 
 ### No configuration file
 

@@ -146,9 +146,8 @@ impl std::fmt::Display for CheckWarning {
     }
 }
 
-/// P1–P3 (docs/reference/plugins.md, Checks): each plugin file that fails the schema, each
-/// `needs` that is not in `plugins/`, and each plugin not installed because its installed
-/// copy was edited, by plugin name.
+/// P1–P2 (docs/reference/plugins.md, Checks): each plugin file that fails the schema and each
+/// `needs` that is not in `plugins/`, by plugin name.
 fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
     let mut out: Vec<(String, CheckError)> = Vec::new();
     for (name, problems) in &synced.invalid {
@@ -185,25 +184,13 @@ fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
             },
         ));
     }
-    for name in &synced.conflicts {
-        out.push((
-            name.clone(),
-            CheckError {
-                rule: Some("P3".to_string()),
-                file: plugin::plugin_file(name),
-                line: None,
-                state: None,
-                message: plugin::conflict_message(name),
-            },
-        ));
-    }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out.into_iter().map(|(_, e)| e).collect()
 }
 
 /// Each machine no plugin installed, in a project with `plugins/`.
-/// A warning for each plugin `decree install` would install, remove, or leave as a
-/// machine no plugin installed: `check` installs nothing (docs/reference/plugins.md,
+/// A warning for each plugin `decree install` would install or remove, and for each installed
+/// copy it would move to `archive/`: `check` installs nothing (docs/reference/plugins.md,
 /// Installing).
 fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
     let mut out = Vec::new();
@@ -222,10 +209,10 @@ fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
                     .to_string(),
         });
     }
-    for name in &synced.kept {
+    for (name, _) in &synced.archived {
         out.push(CheckWarning {
             file: plugin::plugin_file(name),
-            message: "deleted, but its installed copy was edited: `decree install` keeps it as files no plugin installed".to_string(),
+            message: plugin::edited_message(name),
         });
     }
     out

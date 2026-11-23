@@ -21,7 +21,7 @@ const HELP_URI: &str =
 
 /// Every rule of docs/reference/machines.md (Validation) with its check, as the table
 /// states it (a test holds the two equal).
-pub(crate) const RULES: [(&str, &str); 27] = [
+pub(crate) const RULES: [(&str, &str); 26] = [
     (
         "V1",
         "`name` equals the file stem and matches `^[a-z][a-z0-9_]*$`.",
@@ -125,10 +125,6 @@ pub(crate) const RULES: [(&str, &str); 27] = [
     (
         "P2",
         "Every plugin a plugin `needs` is in `plugins/`.",
-    ),
-    (
-        "P3",
-        "No plugin changed while its installed copy (`machine.yml`, `scripts/` or `cron/` in `machines/<name>/`) was edited in place.",
     ),
 ];
 

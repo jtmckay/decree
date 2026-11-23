@@ -86,40 +86,6 @@ scripts:
 # m
 ";
 
-/// `PLUGIN_BASE` with another description.
-const PLUGIN_CHANGED: &str = "\
----
-name: m
-machine:
-  description: Changed machine.
-  initial: work
-  states:
-    work:
-      invoke: work
-      transitions: { done: done }
-    done: { final: true }
-    failed: { final: true }
-scripts:
-  work: |
-    #!/usr/bin/env bash
-    exit 0
----
-# m
-";
-
-/// `BASE` edited in place.
-const BASE_EDITED: &str = "\
-name: m
-description: Edited in place.
-initial: work
-states:
-  work:
-    invoke: work
-    transitions: { done: done }
-  done: { final: true }
-  failed: { final: true }
-";
-
 /// A plugin `r`, with its script.
 const PLUGIN_R: &str = "\
 ---
@@ -1717,29 +1683,6 @@ machines/m/cron/b.md: line 3: unknown machine `nope` (M3)
         scripts: &[],
         expected: "plugins/m.md: `needs` names `r`, not in `plugins/`: install it with `decree install <name>` or `decree install <file>` (P2)\n",
     },
-    // P3
-    Case {
-        rule: "P3",
-        name: "a changed plugin over an unedited copy is no conflict",
-        files: &[
-            ("cache/plugins/m.md", PLUGIN_BASE),
-            ("machines/m/machine.yml", BASE),
-            ("plugins/m.md", PLUGIN_CHANGED),
-        ],
-        scripts: &[],
-        expected: PASSES,
-    },
-    Case {
-        rule: "P3",
-        name: "a changed plugin over an edited copy",
-        files: &[
-            ("cache/plugins/m.md", PLUGIN_BASE),
-            ("machines/m/machine.yml", BASE_EDITED),
-            ("plugins/m.md", PLUGIN_CHANGED),
-        ],
-        scripts: &[],
-        expected: "plugins/m.md: plugin `m` changed, but its installed copy (machines/m/machine.yml, or a file in machines/m/scripts/ or machines/m/cron/) was edited in place, so it was not installed and the edited copy keeps running. To keep the edit, run `decree export m` and merge with git; to take the plugin's version, run `decree install m` (P3)\n",
-    },
 ];
 
 /// Root and state `onentry`/`onexit` scripts (V12).
@@ -2130,9 +2073,9 @@ fn run_rule(rule: &str) {
     }
 }
 
-const RULES: [&str; 27] = [
+const RULES: [&str; 26] = [
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15",
-    "V16", "V17", "V18", "V19", "V20", "V21", "M2", "M3", "E1", "P1", "P2", "P3",
+    "V16", "V17", "V18", "V19", "V20", "V21", "M2", "M3", "E1", "P1", "P2",
 ];
 
 #[test]
@@ -2182,7 +2125,6 @@ rule_tests! {
     m3_cron => "M3",
     p1_plugin_schema => "P1",
     p2_plugin_needs => "P2",
-    p3_plugin_edit_conflict => "P3",
 }
 
 /// Files of failing cases that the schemas accept: what is wrong is beyond what a JSON Schema
@@ -2205,12 +2147,6 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
         "needs a plugin that is not there",
         "plugins/m.md",
         "which plugins exist depends on other files",
-    ),
-    (
-        "P3",
-        "a changed plugin over an edited copy",
-        "plugins/m.md",
-        "an edit conflict depends on the installed copy and the record of its install",
     ),
     (
         "V1",

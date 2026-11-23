@@ -245,10 +245,11 @@ scripts:
       `decree export <name>`, or let the next run's `commit` export it, and commit the
       plugin file. A machine written by hand in `machines/<name>/` is not committed until it is exported
       (`decree check` warns about it). A project's settings for a plugin (`gate.sh`,
-      `requirements`, `QA_RUN`) are such edits: they live in its plugin file. If `decree check` reports a P3
-      conflict (the plugin changed while the copy was edited), export to keep the edit and merge
-      with git, or `decree install <name>` to take the plugin's version. Never edit
-      `.decree/cache/plugins/`.
+      `requirements`, `QA_RUN`) are such edits: they live in its plugin file. Export an edit
+      before the next `decree install`: an install never stops over one, it moves the edited
+      copy to `.decree/archive/<name>/<time>/` and installs the plugin over it (`decree check`
+      warns while one is pending). To recover an edit, copy it back from there and export it.
+      Never edit `.decree/cache/plugins/`.
     - **Never delete run folders to clean up**; they are the record. The official `prune` plugin
       deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.
     - Commit `.decree/plugins/`, `.decree/system.md` and each `machines/<name>/graph.md` and
@@ -261,8 +262,8 @@ scripts:
     | Command | Use |
     | --- | --- |
     | `decree check [--format json\|sarif]` | Validate every machine, script name, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
-    | `decree install` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone or a pull. Keeps an edited installed copy, naming a conflict. |
-    | `decree install <name>... [--force]` | Install these plugins, replacing an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--force` takes this decree's copy and prints the edits it drops. |
+    | `decree install` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone or a pull. Moves an installed copy edited in place to `.decree/archive/` first. |
+    | `decree install <name>... [--force]` | Install these plugins, archiving an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--force` takes this decree's copy, prints the edits it replaces and archives the old file. |
     | `decree install <file\|->`, or `curl -fsSL <url> \| decree install -` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
     | `decree list` / `decree export [<name>]` | List the project's plugins (`official` or `own`, `differs`, `not installed`, `edited`), the machines no plugin installed, and the official plugins it can add. Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. |
     | `decree graph` | Write `.decree/machines/<machine>/graph.md` (Mermaid) for every machine, plus `.decree/system.md`. |
