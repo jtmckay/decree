@@ -27,5 +27,8 @@
       "WebFetch(domain:github.com)",
       "Bash(bash test_decree.sh -v)"
     ]
+  },
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "25"
   }
 }
