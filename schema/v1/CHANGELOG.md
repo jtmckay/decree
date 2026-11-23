@@ -6,6 +6,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 
 ### Added
 
+- `cli/plugin.schema.json`: `sync`'s `official`, with `--official`: each official plugin whose file was replaced by this decree's copy, with its changes and archived file.
 - `cli/plugin.schema.json`: `archived`, the plugin file (or, for a copy that cannot be one, the folder) an install archived what it replaced as: `sync` lists `{ "plugin", "archive" }` in place of `conflicts`; `install` gives each plugin's folder or `null` in place of `dropped_edits_in_place`; `import` gives its folder or `null`. `list`'s `state` loses `conflict`. `cli/check.schema.json`: the rule `P3` is gone.
 - `cli/status.schema.json`: `queued.held`, the inbox files a hold keeps queued, and a run's `held: true` for a `waiting` or `pending` run of a held machine.
 - `cli/cancel.schema.json`: what `decree cancel --format json` prints, `{ "cancelled": [id] }`. `events.schema.json`: the `cancel` source of a `transition` (with its `note`), and `run_finished`'s `cancelled`. `cli/status.schema.json`: cancelled runs are under `finished.cancelled`.

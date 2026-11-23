@@ -24,15 +24,19 @@ Commands:
                               (--format sarif: a SARIF 2.1.0 log for code
                               scanning)
   decree graph                Write each machines/<name>/graph.md and system.md: Mermaid diagrams in Markdown
-  decree install              Install every plugin in .decree/plugins/ as its
+  decree install [--official] [--cron]
+                              Install every plugin in .decree/plugins/ as its
                               file says (after a clone or a pull). An edited
                               installed copy, or a replaced plugin file, goes
-                              to .decree/archive/ first. Nothing else installs
-  decree install NAME... [--official]
+                              to .decree/archive/ first. --official first
+                              takes decree's copy of each official plugin
+                              there. Nothing else installs plugins
+  decree install NAME... [--official] [--cron]
                               Install these plugins; an official one not in
                               .decree/plugins/ is copied there first, with
                               those it needs. --official takes decree's
-                              built-in copy
+                              built-in copy. Cron files are installed the
+                              first time only; --cron installs them again
   decree install FILE|-       Check a plugin, copy it to .decree/plugins/
                               and install it; - reads it from stdin
                               (curl -fsSL URL | decree install -)

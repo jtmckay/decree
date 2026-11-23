@@ -497,11 +497,19 @@ impl Copy {
 
     /// Whether this is exactly what `plugin` installs.
     fn matches(&self, plugin: &Plugin) -> bool {
+        self.matches_with(plugin, true)
+    }
+
+    /// Whether this is what `plugin` installs, its cron files only with `cron`.
+    fn matches_with(&self, plugin: &Plugin, cron: bool) -> bool {
         self.machine_matches(plugin)
             && !self.scripts_is_file
             && same_files(self.scripts.as_ref(), &plugin.scripts)
-            && !self.cron_is_file
-            && same_files(self.cron.as_ref(), &plugin.cron)
+            && (!cron || self.cron_matches(plugin))
+    }
+
+    fn cron_matches(&self, plugin: &Plugin) -> bool {
+        !self.cron_is_file && same_files(self.cron.as_ref(), &plugin.cron)
     }
 
     fn machine_matches(&self, plugin: &Plugin) -> bool {
@@ -579,6 +587,16 @@ fn read_tree(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, DecreeError> {
 /// `scripts/<name>/`, files the plugin does not ship are removed, and each file is written
 /// when its bytes differ. A file is executable when it starts with `#!`.
 pub fn install(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), DecreeError> {
+    install_with(decree_dir, plugin, text, true)
+}
+
+/// `install`, leaving `cron/<name>/` as it is unless `cron`.
+fn install_with(
+    decree_dir: &Path,
+    plugin: &Plugin,
+    text: &[u8],
+    cron: bool,
+) -> Result<(), DecreeError> {
     let copy = Copy::read(decree_dir, &plugin.name)?;
     let path = decree_dir.join(machine_file(&plugin.name));
     if !copy.machine_matches(plugin) {
@@ -607,6 +625,9 @@ pub fn install(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), De
         ),
     ];
     for (dir, is_file, have, want, scripts) in folders {
+        if !scripts && !cron {
+            continue;
+        }
         if is_file {
             return Err(DecreeError::Other(format!(
                 "{}: is a file, but plugin `{}` installs a folder of that name; move it",
@@ -807,6 +828,10 @@ pub struct Synced {
     /// place or never installed by decree, moved to `archive/` first: (plugin, the archive
     /// folder relative to `.decree/`, empty for `status`).
     pub archived: Vec<(String, String)>,
+    /// Installed plugins whose cron files are not their plugin file's (edited, deleted, or a
+    /// plugin that changed them): an install leaves them, and `decree install --cron` takes
+    /// the plugin's. For `status` only.
+    pub cron_differs: Vec<String>,
     /// Plugin files that fail the schema (P1), by name: not installed.
     pub invalid: Vec<(String, Vec<Problem>)>,
     /// `needs` that are not in `plugins/` (P2): (plugin, missing).
@@ -814,21 +839,26 @@ pub struct Synced {
 }
 
 /// Install every plugin in `plugins/`, whether or not its installed copy already matches,
-/// and remove the installed copy of each plugin whose file was deleted, first moving to
-/// `archive/` each installed copy that holds what that would lose (docs/reference/plugins.md,
-/// Installing): what `decree install` with no name does. A plugin file that fails its schema
-/// is not installed. A project without `plugins/` and without records is left as it is.
-pub fn sync(decree_dir: &Path) -> Result<Synced, DecreeError> {
-    reconcile(decree_dir, true)
+/// and remove the installed copy of each plugin whose file was deleted, first archiving each
+/// installed copy that holds what that would lose (docs/reference/plugins.md, Installing):
+/// what `decree install` with no name does. A plugin already installed keeps its cron files
+/// unless `cron`. A plugin file that fails its schema is not installed. A project without
+/// `plugins/` and without records is left as it is.
+pub fn sync(decree_dir: &Path, cron: bool) -> Result<Synced, DecreeError> {
+    reconcile(decree_dir, Some(cron))
 }
 
 /// What `sync` would change, writing nothing: `check`, `process` and `daemon` report it, and
 /// never install.
 pub fn status(decree_dir: &Path) -> Result<Synced, DecreeError> {
-    reconcile(decree_dir, false)
+    reconcile(decree_dir, None)
 }
 
-fn reconcile(decree_dir: &Path, write: bool) -> Result<Synced, DecreeError> {
+/// `write`: `Some(cron)` installs, taking the cron files of plugins already installed only
+/// with `cron`; `None` writes nothing.
+fn reconcile(decree_dir: &Path, write: Option<bool>) -> Result<Synced, DecreeError> {
+    let with_cron = write;
+    let write = write.is_some();
     let mut out = Synced {
         checked: !write,
         ..Synced::default()
@@ -856,17 +886,21 @@ fn reconcile(decree_dir: &Path, write: bool) -> Result<Synced, DecreeError> {
             out.missing_needs.push((plugin.name.clone(), missing));
         }
         recorded.remove(&plugin.name);
-        if write {
-            if let Some(dir) = install_archiving(decree_dir, &plugin, &f.text, None)? {
+        if let Some(cron) = with_cron {
+            if let Some(dir) = install_archiving(decree_dir, &plugin, &f.text, None, cron)? {
                 out.archived.push((plugin.name.clone(), dir));
             }
             out.installed.push(plugin.name);
             continue;
         }
+        let cron = takes_cron(decree_dir, &plugin.name, false);
         let copy = Copy::read(decree_dir, &plugin.name)?;
-        if would_lose(decree_dir, &plugin.name, &copy, Some(&plugin))? {
+        if !cron && !copy.cron_matches(&plugin) {
+            out.cron_differs.push(plugin.name.clone());
+        }
+        if would_lose(decree_dir, &plugin.name, &copy, Some(&plugin), cron)? {
             out.archived.push((plugin.name, String::new()));
-        } else if !copy.matches(&plugin) {
+        } else if !copy.matches_with(&plugin, cron) {
             out.installed.push(plugin.name);
         }
     }
@@ -879,7 +913,7 @@ fn reconcile(decree_dir: &Path, write: bool) -> Result<Synced, DecreeError> {
             }
             continue;
         }
-        let lose = would_lose(decree_dir, &name, &copy, None)?;
+        let lose = would_lose(decree_dir, &name, &copy, None, true)?;
         if write {
             if lose {
                 let dir = archive(decree_dir, &name, true, None)?;
@@ -897,14 +931,15 @@ fn reconcile(decree_dir: &Path, write: bool) -> Result<Synced, DecreeError> {
 /// Whether plugin `name`'s installed copy `copy` holds what installing `plugin` over it
 /// (`None`: removing it) would lose: it exists, is not what `plugin` installs, and is not
 /// what decree's record of its install says was installed, so it was edited in place or
-/// written by hand.
+/// written by hand. Its cron files count only with `cron`, when the install takes them.
 fn would_lose(
     decree_dir: &Path,
     name: &str,
     copy: &Copy,
     plugin: Option<&Plugin>,
+    cron: bool,
 ) -> Result<bool, DecreeError> {
-    if copy.is_absent() || plugin.is_some_and(|p| copy.matches(p)) {
+    if copy.is_absent() || plugin.is_some_and(|p| copy.matches_with(p, cron)) {
         return Ok(false);
     }
     let path = record_path(decree_dir, name);
@@ -913,28 +948,45 @@ fn would_lose(
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(io_error(&path, e)),
     };
-    Ok(!installed.is_some_and(|old| copy.matches(&old)))
+    Ok(!installed.is_some_and(|old| copy.matches_with(&old, cron)))
 }
 
-/// Install `plugin` from `text`, first moving to `archive/` the installed copy when installing
-/// would lose it (`would_lose`), and `replaced`, the plugin file this install replaces, when
-/// it is not `text`. Returns the archive folder relative to `.decree/`, if one was written.
+/// Whether an install of plugin `name` writes its cron files: with `cron`
+/// (`decree install --cron`), or when decree has no record of installing it, so a fresh
+/// clone or a new plugin gets them. Once installed, its cron files are the project's: an edit
+/// or a deleted file stays.
+fn takes_cron(decree_dir: &Path, name: &str, cron: bool) -> bool {
+    cron || !record_path(decree_dir, name).exists()
+}
+
+/// Install `plugin` from `text`, first archiving the installed copy when installing would
+/// lose it (`would_lose`), and `replaced`, the plugin file this install replaces, when it is
+/// not `text`. The cron files of a plugin already installed are left as they are unless
+/// `cron` (`takes_cron`). Returns the archive file relative to `.decree/`, if one was written.
 pub fn install_archiving(
     decree_dir: &Path,
     plugin: &Plugin,
     text: &[u8],
     replaced: Option<&[u8]>,
+    cron: bool,
 ) -> Result<Option<String>, DecreeError> {
+    let cron = takes_cron(decree_dir, &plugin.name, cron);
     let copy = Copy::read(decree_dir, &plugin.name)?;
-    let lose = would_lose(decree_dir, &plugin.name, &copy, Some(plugin))?;
+    let lose = would_lose(decree_dir, &plugin.name, &copy, Some(plugin), cron)?;
     let replaced = replaced.filter(|old| *old != text);
     let dir = if lose || replaced.is_some() {
         Some(archive(decree_dir, &plugin.name, lose, replaced)?)
     } else {
         None
     };
-    install(decree_dir, plugin, text)?;
+    install_with(decree_dir, plugin, text, cron)?;
     Ok(dir)
+}
+
+/// Archive `text`, plugin `name`'s file, which `decree install --official` is about to
+/// replace, as `archive/<name>/<time>.md`. Returns that file relative to `.decree/`.
+pub fn archive_file(decree_dir: &Path, name: &str, text: &[u8]) -> Result<String, DecreeError> {
+    archive(decree_dir, name, false, Some(text))
 }
 
 /// Archive what an install of plugin `name` would lose: with `copy`, its installed copy,
@@ -1034,6 +1086,9 @@ impl Synced {
             for (name, _) in &self.archived {
                 out.push(format!("{}: {}", plugin_file(name), edited_message(name)));
             }
+            for name in &self.cron_differs {
+                out.push(format!("{}: {}", plugin_file(name), cron_message(name)));
+            }
         }
         for (name, problems) in &self.invalid {
             for p in problems {
@@ -1042,6 +1097,14 @@ impl Synced {
         }
         out
     }
+}
+
+/// What installed cron files that are not the plugin's mean, and the two ways to settle it.
+pub fn cron_message(name: &str) -> String {
+    format!(
+        "its installed cron files ({}/{CRON_DIR}/) are not the plugin's: an install keeps them; `decree export {name}` writes them to the plugin, `decree install --cron {name}` takes the plugin's (archiving these)",
+        layout::machine_dir_rel(name)
+    )
 }
 
 /// What an edited installed copy means for `decree install`, and how to keep the edit.
@@ -1430,7 +1493,7 @@ Says hello.
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/hello.md", PLUGIN);
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.installed, ["hello"]);
         assert_eq!(
             s.missing_needs,
@@ -1451,7 +1514,7 @@ Says hello.
         assert_eq!(mode & 0o777, 0o644);
 
         // Unchanged and unedited, it is installed again, archiving nothing.
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.installed, ["hello"]);
         assert!(s.archived.is_empty() && archives(d, "hello").is_empty());
         assert!(status(d).unwrap().installed.is_empty());
@@ -1465,7 +1528,7 @@ Says hello.
         let checked = status(d).unwrap();
         assert_eq!(checked.archived, [("hello".to_string(), String::new())]);
         assert!(checked.notices()[0].contains("was edited in place"));
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.installed, ["hello"]);
         let [dir] = archives(d, "hello").try_into().unwrap();
         assert_eq!(s.archived, [("hello".to_string(), dir.clone())]);
@@ -1489,7 +1552,7 @@ Says hello.
             &PLUGIN.replace("echo hi", "echo bye"),
         );
         put(d, "machines/hello/scripts/added.txt", "x");
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.archived.len(), 1);
         assert_eq!(archives(d, "hello").len(), 2);
         assert!(!d.join("machines/hello/scripts/added.txt").exists());
@@ -1504,7 +1567,7 @@ Says hello.
             &PLUGIN.replace("echo hi", "echo again"),
         );
         assert_eq!(status(d).unwrap().installed, ["hello"]);
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert!(s.archived.is_empty());
         assert!(get(d, "machines/hello/scripts/greet.sh")
             .unwrap()
@@ -1513,7 +1576,7 @@ Says hello.
         // A deleted plugin's copy is removed, a hand-written machine stays.
         put(d, "machines/extra.yml", "name: extra\n");
         std::fs::remove_file(d.join("plugins/hello.md")).unwrap();
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.removed, ["hello"]);
         assert!(!d.join("machines/hello/machine.yml").exists());
         assert!(!d.join("machines/hello/scripts").exists());
@@ -1537,7 +1600,7 @@ Says hello.
         }
         put(d, "plugins/hello.md", PLUGIN);
         assert!(status(d).unwrap().installed.is_empty());
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert!(s.archived.is_empty());
         assert_eq!(
             std::fs::read(record_path(d, "hello")).unwrap(),
@@ -1550,7 +1613,7 @@ Says hello.
         // Written by hand and different, with no record: archived.
         std::fs::remove_file(record_path(d, "hello")).unwrap();
         put(d, "machines/hello/scripts/greet.sh", "different");
-        assert_eq!(sync(d).unwrap().archived.len(), 1);
+        assert_eq!(sync(d, false).unwrap().archived.len(), 1);
         let [dir] = archives(d, "hello").try_into().unwrap();
         assert_eq!(archived(d, &dir).scripts["greet.sh"], "different");
     }
@@ -1560,10 +1623,10 @@ Says hello.
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/hello.md", PLUGIN);
-        sync(d).unwrap();
+        sync(d, false).unwrap();
         put(d, "machines/hello/scripts/greet.sh", "edited");
         std::fs::remove_file(d.join("plugins/hello.md")).unwrap();
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.removed, ["hello"]);
         let [dir] = archives(d, "hello").try_into().unwrap();
         assert_eq!(s.archived, [("hello".to_string(), dir.clone())]);
@@ -1581,7 +1644,7 @@ Says hello.
             "plugins/hello.md",
             "---\nname: hello\nmachine: {}\nscripts: { ../x.sh: hi }\n---\n",
         );
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.invalid.len(), 1);
         assert!(!d.join("machines/hello/machine.yml").exists());
         assert!(s.notices()[0].starts_with("plugins/hello.md: line 4: script path `../x.sh`"));
@@ -1592,13 +1655,13 @@ Says hello.
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/hello.md", PLUGIN);
-        sync(d).unwrap();
+        sync(d, false).unwrap();
         put(
             d,
             "plugins/hello.md",
             &PLUGIN.replace("name: hello", "name: hello\ncron: x"),
         );
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.invalid.len(), 1);
         assert!(s.removed.is_empty() && s.archived.is_empty());
         assert!(d.join("machines/hello/machine.yml").exists());
@@ -1610,7 +1673,7 @@ Says hello.
         // Fixed again, it is unchanged: nothing to archive.
         put(d, "plugins/hello.md", PLUGIN);
         assert!(status(d).unwrap().installed.is_empty());
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert!(s.archived.is_empty());
     }
 
@@ -1620,7 +1683,7 @@ Says hello.
         let d = tmp.path();
         put(d, "shared/keep.txt", "mine");
         put(d, "plugins/hello.md", PLUGIN);
-        sync(d).unwrap();
+        sync(d, false).unwrap();
         std::os::unix::fs::symlink("../../../shared", d.join("machines/hello/scripts/shared"))
             .unwrap();
         let found = read_one(d, "hello").unwrap();
@@ -1663,7 +1726,7 @@ x-exist-services:
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/kit.md", KIT);
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert_eq!(s.installed, ["kit"]);
         assert!(!d.join("machines/kit/machine.yml").exists());
         assert!(get(d, "machines/kit/scripts/lib.sh")
@@ -1691,7 +1754,10 @@ x-exist-services:
                 .replace("Set up.", "Again.")
                 .replace("Daily.", "Each day."),
         );
-        assert_eq!(sync(d).unwrap().installed, ["kit"]);
+        // Installed already, its cron file is the project's: an install keeps it, `check`
+        // says it is not the plugin's, and `--cron` takes the plugin's.
+        assert_eq!(status(d).unwrap().cron_differs, ["kit"]);
+        assert_eq!(sync(d, false).unwrap().installed, ["kit"]);
         assert_eq!(
             get(d, "machines/kit/state/seeds/list.txt").unwrap(),
             "mine\n"
@@ -1699,16 +1765,24 @@ x-exist-services:
         assert_eq!(get(d, "machines/kit/order/A01-kit.md").unwrap(), "edited\n");
         assert!(get(d, "machines/kit/cron/daily.md")
             .unwrap()
+            .contains("Daily."));
+        assert!(sync(d, false).unwrap().archived.is_empty());
+        assert_eq!(sync(d, true).unwrap().installed, ["kit"]);
+        assert!(get(d, "machines/kit/cron/daily.md")
+            .unwrap()
             .contains("Each day."));
+        assert!(status(d).unwrap().cron_differs.is_empty());
 
-        // An edited cron file is an edit, which `decree install` would archive.
+        // An edited cron file is the project's: kept, not archived, and named by `status`.
         put(
             d,
             "machines/kit/cron/daily.md",
             "---\ncron: '@reboot'\nmachine: hello\n---\n",
         );
         put(d, "plugins/kit.md", KIT);
-        assert_eq!(status(d).unwrap().archived.len(), 1);
+        let checked = status(d).unwrap();
+        assert!(checked.archived.is_empty());
+        assert_eq!(checked.cron_differs, ["kit"]);
 
         // Export keeps the x- keys and the state and order seeds, and takes the edited cron file.
         let out = export(d, "kit").unwrap();
@@ -1726,9 +1800,9 @@ x-exist-services:
         let tmp = project();
         let d = tmp.path();
         put(d, "plugins/kit.md", KIT);
-        sync(d).unwrap();
+        sync(d, false).unwrap();
         std::fs::remove_file(d.join("plugins/kit.md")).unwrap();
-        assert_eq!(sync(d).unwrap().removed, ["kit"]);
+        assert_eq!(sync(d, false).unwrap().removed, ["kit"]);
         assert!(!d.join("machines/kit/cron").exists() && !d.join("machines/kit/scripts").exists());
         assert!(d.join("machines/kit/order/A01-kit.md").exists());
         assert!(d.join("machines/kit/state/seeds/list.txt").exists());
@@ -1736,7 +1810,7 @@ x-exist-services:
         // A seed already there is not written again.
         put(d, "machines/kit/order/A01-kit.md", "mine\n");
         put(d, "plugins/kit.md", KIT);
-        sync(d).unwrap();
+        sync(d, false).unwrap();
         assert_eq!(get(d, "machines/kit/order/A01-kit.md").unwrap(), "mine\n");
     }
 
@@ -1745,7 +1819,7 @@ x-exist-services:
         let tmp = tempfile::TempDir::new().unwrap();
         let d = tmp.path();
         put(d, "machines/a/machine.yml", "name: a\n");
-        let s = sync(d).unwrap();
+        let s = sync(d, false).unwrap();
         assert!(s.installed.is_empty() && s.removed.is_empty());
         assert!(!d.join(CACHE_DIR).exists());
     }

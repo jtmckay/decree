@@ -422,7 +422,7 @@
       "properties": {
         "action": {
           "const": "sync",
-          "description": "`decree install` with no argument: every plugin installed and every deleted plugin's copy removed, each installed copy that would be lost archived first."
+          "description": "`decree install` with no argument: every plugin installed and every deleted plugin's copy removed, each installed copy that would be lost archived first. A plugin installed already keeps its cron files unless --cron. With --official, the official plugins in plugins/ first become this decree's copies (`official`)."
         },
         "installed": {
           "type": "array",
@@ -458,6 +458,85 @@
               "archive": {
                 "type": "string",
                 "description": "The archived plugin file, .decree/archive/<name>/<time>.md, relative to the project root, which `decree install <file>` restores; or the folder .decree/archive/<name>/<time>/ for a copy that cannot be a plugin file."
+              }
+            }
+          }
+        },
+        "official": {
+          "type": "array",
+          "description": "With --official: each official plugin already in plugins/ whose file was not this decree's copy, replaced by it (the old file archived) before the install. It adds no plugin. Absent without --official.",
+          "items": {
+            "type": "object",
+            "required": [
+              "plugin",
+              "file",
+              "status",
+              "needed_by",
+              "changes",
+              "archived"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "plugin": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "The plugin's name."
+              },
+              "file": {
+                "type": "string",
+                "description": "The plugin file, .decree/plugins/<name>.md, relative to the project root."
+              },
+              "status": {
+                "enum": [
+                  "replaced"
+                ],
+                "description": "Its file replaced with this decree's copy."
+              },
+              "needed_by": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "description": "For `needed`: the plugins that need it. Empty otherwise."
+              },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "change",
+                    "lines"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "The file, relative to the project root, or `needs`."
+                    },
+                    "change": {
+                      "enum": [
+                        "added",
+                        "changed",
+                        "removed"
+                      ],
+                      "description": "How it changed."
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The lines it drops (`- `) and adds (`+ `), in order, without context."
+                    }
+                  }
+                },
+                "description": "For `replaced`: what changed, including the project's own edits it replaced. Empty otherwise."
+              },
+              "archived": {
+                "type": "string",
+                "description": "The archived plugin file it replaced, .decree/archive/<name>/<time>.md, relative to the project root."
               }
             }
           }

@@ -566,7 +566,8 @@ fn an_archived_copy_is_a_plugin_file_that_install_restores() {
         "#!/usr/bin/env bash\necho mine\n",
     );
     assert_eq!(p.decree(&["install"], "").0, 0);
-    assert!(!p.exists("machines/helper/cron/morning.md"));
+    // Installed already, its cron files are the project's: the install keeps them.
+    assert_eq!(p.get("machines/helper/cron/morning.md"), cron);
     let [dir] = p.archives("helper").try_into().unwrap();
     let plugin = p.archived(&dir);
     assert_eq!(plugin["name"], "helper");
@@ -654,7 +655,7 @@ fn a_deleted_plugin_removes_its_copy_and_keeps_hand_written_machines() {
 /// `decree install -` copies the plugin on stdin into `plugins/` and installs it
 /// (`curl -fsSL <url> | decree install -`); with no argument `decree install` never reads
 /// stdin, even when something is piped (a loop's input stays the loop's), and installs every
-/// plugin as its file says; `--official` needs a name.
+/// plugin as its file says.
 #[test]
 fn install_reads_stdin_only_with_a_dash() {
     let p = Project::new();
@@ -684,12 +685,6 @@ fn install_reads_stdin_only_with_a_dash() {
         out,
         "installed .decree/plugins/develop.md\ninstalled .decree/plugins/helper.md\n"
     );
-    let (code, _, err) = p.decree(&["install", "--official"], "");
-    assert_eq!(code, 1);
-    assert!(
-        err.contains("--official takes this decree's copy of the plugins named"),
-        "{err}"
-    );
 }
 
 #[test]
@@ -716,7 +711,7 @@ fn import_replaces_a_taken_name_archiving_the_old_file() {
     let (code, _, err) = p.decree(&["install", "-", "--official"], &changed);
     assert_eq!(code, 1);
     assert!(
-        err.contains("--official takes this decree's copy of the plugins named"),
+        err.contains("--official takes this decree's copy of official plugins"),
         "{err}"
     );
     assert_eq!(p.tree(""), before);
@@ -749,6 +744,101 @@ fn import_replaces_a_taken_name_archiving_the_old_file() {
     // The same file again replaces nothing worth keeping.
     assert_eq!(p.decree(&["install", "-"], &changed).0, 0);
     assert_eq!(p.archives("helper").len(), 1);
+}
+
+/// A plugin installed already keeps its cron files, edited or deleted: `check` says they are
+/// not the plugin's, and `decree install --cron` takes the plugin's, archiving the edit.
+#[test]
+fn an_installed_plugin_keeps_its_cron_files_unless_cron() {
+    let p = Project::new();
+    p.put("plugins/kit.md", KIT);
+    p.put("plugins/helper.md", HELPER);
+    assert_eq!(p.decree(&["install"], "").0, 0);
+    let original = p.get("machines/kit/cron/daily.md");
+    let edited = original.replace("0 9 * * *", "30 6 * * *");
+    p.put("machines/kit/cron/daily.md", &edited);
+
+    // A changed plugin, as after a pull: the scripts follow it, the cron file stays.
+    p.put("plugins/kit.md", &KIT.replace("echo kit;", "echo kit2;"));
+    let (code, out, err) = p.decree(&["install"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(!out.contains("archived"), "{out}");
+    assert_eq!(p.get("machines/kit/cron/daily.md"), edited);
+    assert!(p.get("machines/kit/scripts/lib.sh").contains("kit2"));
+    let (code, _, err) = p.decree(&["check"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        err.contains(
+            "plugins/kit.md: its installed cron files (machines/kit/cron/) are not the plugin's"
+        ),
+        "{err}"
+    );
+    assert!(err.contains("`decree install --cron kit`"), "{err}");
+
+    // A deleted cron file stays deleted.
+    fs::remove_file(p.path("machines/kit/cron/daily.md")).unwrap();
+    assert_eq!(p.decree(&["install"], "").0, 0);
+    assert!(!p.exists("machines/kit/cron/daily.md"));
+
+    // `--cron` takes the plugin's, archiving the project's.
+    p.put("machines/kit/cron/daily.md", &edited);
+    let (code, out, err) = p.decree(&["install", "--cron", "kit"], "");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(p.get("machines/kit/cron/daily.md"), original);
+    let [dir] = p.archives("kit").try_into().unwrap();
+    assert!(out.contains(&dir), "{out}");
+    assert_eq!(p.archived(&dir)["cron"]["daily.md"], edited.as_str());
+    let (_, _, err) = p.decree(&["check"], "");
+    assert!(!err.contains("cron files"), "{err}");
+}
+
+/// `decree install --official` with no name takes this decree's copy of each official plugin
+/// the project has, archiving the file it replaces, and adds none it does not have.
+#[test]
+fn official_with_no_name_updates_only_the_official_plugins_present() {
+    let p = Project::new();
+    assert_eq!(p.decree(&["install", "router"], "").0, 0);
+    p.put("plugins/helper.md", HELPER);
+    let official = p.get("plugins/router.md");
+    let old = official.replace("\n# ", "\nAn older copy.\n\n# ");
+    assert_ne!(old, official);
+    p.put("plugins/router.md", &old);
+    assert_eq!(p.decree(&["install"], "").0, 0);
+    let plugins_before: Vec<String> = fs::read_dir(p.path("plugins"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+
+    let (code, out, err) = p.decree(&["install", "--official"], "");
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with("replaced .decree/plugins/router.md with this decree's copy:\n"),
+        "{out}"
+    );
+    assert_eq!(p.get("plugins/router.md"), official);
+    assert_eq!(p.get("plugins/helper.md"), HELPER);
+    let [dir] = p.archives("router").try_into().unwrap();
+    assert_eq!(p.get(&dir), old);
+    assert!(
+        out.contains("installed .decree/plugins/helper.md\ninstalled .decree/plugins/router.md\n"),
+        "{out}"
+    );
+    let mut plugins_after: Vec<String> = fs::read_dir(p.path("plugins"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    let mut plugins_before = plugins_before;
+    plugins_before.sort();
+    plugins_after.sort();
+    assert_eq!(plugins_after, plugins_before, "no plugin added");
+
+    // Already this decree's copy: nothing to replace.
+    let (code, out, _) = p.decree(&["install", "--official", "--format", "json"], "");
+    assert_eq!(code, 0);
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["official"], serde_json::json!([]));
+    let validator = schema::validator(schema::CLI_PLUGIN_SCHEMA);
+    assert!(schema::errors(&validator, &doc).is_empty(), "{doc}");
 }
 
 /// `--official` takes decree's built-in copy, so a project's own plugin has none to take:

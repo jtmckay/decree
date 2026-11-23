@@ -189,8 +189,8 @@ fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
 }
 
 /// Each machine no plugin installed, in a project with `plugins/`.
-/// A warning for each plugin `decree install` would install or remove, and for each installed
-/// copy it would move to `archive/`: `check` installs nothing (docs/reference/plugins.md,
+/// A warning for each plugin `decree install` would install or remove, for each installed
+/// copy it would archive, and for each plugin whose installed cron files are not its own: `check` installs nothing (docs/reference/plugins.md,
 /// Installing).
 fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
     let mut out = Vec::new();
@@ -213,6 +213,12 @@ fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
         out.push(CheckWarning {
             file: plugin::plugin_file(name),
             message: plugin::edited_message(name),
+        });
+    }
+    for name in &synced.cron_differs {
+        out.push(CheckWarning {
+            file: plugin::plugin_file(name),
+            message: plugin::cron_message(name),
         });
     }
     out

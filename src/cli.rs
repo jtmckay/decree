@@ -202,9 +202,13 @@ pub enum Command {
         /// Plugin names, or one plugin file, or - for stdin [default: every plugin in .decree/plugins/; stdin is never read]
         sources: Vec<String>,
 
-        /// Install decree's built-in official copy of each named plugin, replacing .decree/plugins/<name>.md (archived) and printing what changes: how a project takes a new decree version's plugin
+        /// Install decree's built-in copy of each named official plugin, or with no name of every official plugin in .decree/plugins/, replacing its file (archived) and printing what changes: how a project takes a new decree version's plugins
         #[arg(long)]
         official: bool,
+
+        /// Also install the cron files of plugins already installed, archiving edited ones; otherwise only a plugin installed for the first time gets its cron files
+        #[arg(long)]
+        cron: bool,
 
         /// Output format
         #[arg(long, value_enum, default_value_t)]

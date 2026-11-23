@@ -249,6 +249,8 @@ scripts:
       before the next `decree install`: an install never stops over one, it archives the edited
       copy as a plugin file, `.decree/archive/<name>/<time>.md`, and installs the plugin over
       it (`decree check` warns while one is pending). `decree install` that file restores it.
+      Cron files are the exception: installed with the plugin the first time, they are then the
+      project's, and an install keeps them; `decree install --cron <name>` takes the plugin's.
       Never edit `.decree/cache/plugins/`.
     - **Never delete run folders to clean up**; they are the record. The official `prune` plugin
       deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.
@@ -262,8 +264,8 @@ scripts:
     | Command | Use |
     | --- | --- |
     | `decree check [--format json\|sarif]` | Validate every machine, script name, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
-    | `decree install` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone or a pull. Moves an installed copy edited in place to `.decree/archive/` first. |
-    | `decree install <name>... [--official]` | Install these plugins, archiving an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--official` takes this decree's built-in copy, prints the edits it replaces and archives the old file. |
+    | `decree install [--official] [--cron]` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone or a pull. Archives an installed copy edited in place first. A plugin already installed keeps its cron files (edited or deleted) unless `--cron`. `--official` first takes this decree's copy of each official plugin already there, adding none. |
+    | `decree install <name>... [--official] [--cron]` | Install these plugins, archiving an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it needs. `--official` takes this decree's built-in copy, prints the edits it replaces and archives the old file. |
     | `decree install <file\|->`, or `curl -fsSL <url> \| decree install -` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
     | `decree list` / `decree export [<name>]` | List the project's plugins (`official` or `own`, `differs`, `not installed`, `edited`), the machines no plugin installed, and the official plugins it can add. Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`); with no name, every plugin whose installed copy was edited. |
     | `decree graph` | Write `.decree/machines/<machine>/graph.md` (Mermaid) for every machine, plus `.decree/system.md`. |

@@ -50,6 +50,7 @@ fn import(
     decree_dir: &Path,
     shown: &str,
     bytes: Vec<u8>,
+    cron: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     let text = std::str::from_utf8(&bytes)
@@ -160,6 +161,7 @@ fn import(
         &plugin,
         &bytes,
         old.as_ref().map(|(_, text)| text.as_slice()),
+        cron,
     )?;
     crate::message::write_replace(&target, &bytes)
         .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
@@ -203,12 +205,13 @@ pub fn install(
     project_root: &Path,
     sources: &[String],
     take_official: bool,
+    cron: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
-    let result = install_plugins(project_root, sources, take_official, format);
+    let result = install_plugins(project_root, sources, take_official, cron, format);
     // With no argument, plugins that installed stay installed when another fails its schema,
     // so the schemas are written then too; a refused install by name or file writes nothing.
-    if result.is_ok() || (sources.is_empty() && !take_official) {
+    if result.is_ok() || sources.is_empty() {
         // The install's own error, if any, is the one to report.
         let written = crate::commands::schema::write(project_root);
         result?;
@@ -222,6 +225,7 @@ fn install_plugins(
     project_root: &Path,
     sources: &[String],
     take_official: bool,
+    cron: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
@@ -233,19 +237,19 @@ fn install_plugins(
         Ok(bytes)
     };
     if sources.is_empty() {
-        if take_official {
-            return Err(DecreeError::Other(
-                "--official takes this decree's copy of the plugins named (`decree install --official <name>`); with no argument, `decree install` installs every plugin as its file says".into(),
-            ));
-        }
-        return install_all(&decree_dir, format);
+        let official = if take_official {
+            Some(take_official_files(&decree_dir, format)?)
+        } else {
+            None
+        };
+        return install_all(&decree_dir, cron, official, format);
     }
     if sources.iter().all(|s| crate::machine::is_ident(s)) {
-        return install_named(project_root, sources, take_official, format);
+        return install_named(project_root, sources, take_official, cron, format);
     }
     if take_official {
         return Err(DecreeError::Other(
-            "--official takes this decree's copy of the plugins named (`decree install --official <name>`), not a plugin file".into(),
+            "--official takes this decree's copy of official plugins, by name or, with no argument, all of them; not a plugin file".into(),
         ));
     }
     let [source] = sources else {
@@ -260,23 +264,84 @@ fn install_plugins(
             .map_err(|e| DecreeError::Other(format!("cannot read {source}: {e}")))?;
         (source.clone(), bytes)
     };
-    import(&decree_dir, &shown, bytes, format)
+    import(&decree_dir, &shown, bytes, cron, format)
 }
 
-/// `decree install` with no argument: `plugin::sync`.
-fn install_all(decree_dir: &Path, format: Format) -> Result<(), DecreeError> {
-    let synced = plugin::sync(decree_dir)?;
+/// `decree install --official` with no argument: make the file of each official plugin
+/// already in `plugins/` this decree's copy, archiving each file it replaces, before
+/// `install_all` installs them. It adds no plugin: an official one that a new copy `needs`
+/// and `plugins/` lacks is P2, which `decree install <name>` settles. Prints what it
+/// replaced (text); returns it, as `install --format json` gives each plugin.
+fn take_official_files(decree_dir: &Path, format: Format) -> Result<Vec<Json>, DecreeError> {
+    let mut out = Vec::new();
+    for found in plugin::read_all(decree_dir)? {
+        let Some(o) = official::get(&found.name) else {
+            continue;
+        };
+        if found.text == o.text.as_bytes() {
+            continue;
+        }
+        let new = o.plugin().map_err(DecreeError::Other)?;
+        let changes = changes(found.parsed.as_ref().ok(), &new, true);
+        let archived = plugin::archive_file(decree_dir, &found.name, &found.text)?;
+        let target = decree_dir.join(plugin::plugin_file(&found.name));
+        crate::message::write_replace(&target, o.text.as_bytes())
+            .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
+        out.push(json!({
+            "plugin": found.name,
+            "file": format!("{DECREE_DIR}/{}", plugin::plugin_file(&found.name)),
+            "status": "replaced",
+            "needed_by": [],
+            "changes": changes,
+            "archived": format!("{DECREE_DIR}/{archived}"),
+        }));
+    }
+    if format == Format::Text {
+        for e in &out {
+            let file = e["file"].as_str().unwrap_or("");
+            println!("replaced {file} with this decree's copy:");
+            print_line_changes(e["changes"].as_array().map_or(&[][..], Vec::as_slice));
+            let name = e["plugin"].as_str().unwrap_or("");
+            let archived = e["archived"].as_str().unwrap_or("");
+            let rel = archived
+                .strip_prefix(&format!("{DECREE_DIR}/"))
+                .unwrap_or(archived);
+            println!("{}", archived_line(name, rel));
+        }
+        if out.is_empty() {
+            println!("every official plugin in {DECREE_DIR}/{PLUGINS_DIR}/ is this decree's copy");
+        }
+    }
+    Ok(out)
+}
+
+/// `decree install` with no argument: `plugin::sync`, taking the cron files of plugins
+/// already installed only with `cron`. `official` is what `--official` replaced and added
+/// first, which the JSON document includes.
+fn install_all(
+    decree_dir: &Path,
+    cron: bool,
+    official: Option<Vec<Json>>,
+    format: Format,
+) -> Result<(), DecreeError> {
+    let synced = plugin::sync(decree_dir, cron)?;
     match format {
-        Format::Json => print_json(&json!({
-            "action": "sync",
-            "installed": synced.installed,
-            "removed": synced.removed,
-            "archived": synced
-                .archived
-                .iter()
-                .map(|(name, dir)| json!({ "plugin": name, "archive": format!("{DECREE_DIR}/{dir}") }))
-                .collect::<Vec<_>>(),
-        }))?,
+        Format::Json => {
+            let mut doc = json!({
+                "action": "sync",
+                "installed": synced.installed,
+                "removed": synced.removed,
+                "archived": synced
+                    .archived
+                    .iter()
+                    .map(|(name, dir)| json!({ "plugin": name, "archive": format!("{DECREE_DIR}/{dir}") }))
+                    .collect::<Vec<_>>(),
+            });
+            if let Some(official) = official {
+                doc["official"] = Json::Array(official);
+            }
+            print_json(&doc)?
+        }
         Format::Text => {
             for (name, dir) in &synced.archived {
                 println!("{}", archived_line(name, dir));
@@ -638,6 +703,7 @@ fn install_named(
     project_root: &Path,
     names: &[String],
     take_official: bool,
+    cron: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
@@ -752,7 +818,7 @@ fn install_named(
             replaced = Some(old.text);
         }
         a.archived =
-            plugin::install_archiving(&decree_dir, &a.plugin, &a.text, replaced.as_deref())?;
+            plugin::install_archiving(&decree_dir, &a.plugin, &a.text, replaced.as_deref(), cron)?;
         if a.status != "installed" {
             let target = decree_dir.join(plugin::plugin_file(&a.name));
             if let Some(dir) = target.parent() {
@@ -956,7 +1022,7 @@ mod tests {
         let text = official::get("develop").unwrap().text;
         let file = plugins.join("develop.md");
         std::fs::write(&file, text).unwrap();
-        plugin::sync(&decree_dir).unwrap();
+        plugin::sync(&decree_dir, false).unwrap();
         let gate = decree_dir.join("machines/develop/scripts/gate.sh");
         std::fs::write(&gate, "#!/usr/bin/env bash\ncargo test\n").unwrap();
         // A pull changes the plugin file under the edit.
