@@ -37,14 +37,27 @@ pub const ARCHIVE_DIR: &str = "archive";
 const RECORDS_DIR: &str = "plugins";
 
 /// The keys a plugin's frontmatter may have, besides any `x-` key.
-const KEYS: [&str; 7] = [
-    "name", "machine", "scripts", "cron", "state", "order", "needs",
+const KEYS: [&str; 9] = [
+    "name", "extends", "source", "machine", "scripts", "cron", "state", "order", "needs",
 ];
+
+/// The prefix of every official plugin's name, and only theirs (docs/reference/plugins.md,
+/// Official plugins).
+pub const OFFICIAL_PREFIX: &str = "decree_";
+
+/// The file keys of a plugin, each a map of paths to their text.
+pub const FILE_KEYS: [&str; 4] = ["scripts", "cron", "state", "order"];
 
 /// A plugin file, parsed and checked against the plugin schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plugin {
     pub name: String,
+    /// `extends`: the plugin this one is installed on top of, path by path; its other keys
+    /// hold only what it adds or replaces.
+    pub extends: Option<String>,
+    /// `source`: the https URL the plugin is published at, which `decree install --update`
+    /// fetches.
+    pub source: Option<String>,
     /// The machine as `machines/<name>.yml` holds it, without `name`; `None` for a plugin of
     /// scripts or cron files only.
     pub machine: Option<Mapping>,
@@ -58,6 +71,11 @@ pub struct Plugin {
     pub order: BTreeMap<String, String>,
     /// The other plugins this one relies on, as written.
     pub needs: Vec<String>,
+    /// Each need met by another plugin (`needs: [{<need>: <plugin>}]`): need to plugin.
+    pub need_map: BTreeMap<String, String>,
+    /// For a plugin that extends another: each path, by file key (`scripts`, `cron`, `state`,
+    /// `order`), that it maps to `null`, removing the base's file there.
+    pub removed: BTreeMap<String, BTreeSet<String>>,
     /// Every `x-` key, as written: decree keeps them and reads none.
     pub extensions: Mapping,
     /// The markdown below the frontmatter.
@@ -106,7 +124,7 @@ impl Plugin {
                     problems.push(Problem::at(
                         key.as_str().map_or(1, line),
                         format!(
-                            "unknown key `{shown}`: a plugin has `name`, `machine`, `scripts`, `cron`, `state`, `order`, `needs` and `x-` keys"
+                            "unknown key `{shown}`: a plugin has `name`, `extends`, `source`, `machine`, `scripts`, `cron`, `state`, `order`, `needs` and `x-` keys"
                         ),
                     ));
                 }
@@ -126,6 +144,9 @@ impl Plugin {
                             "`name` is `{name}`, but the file is `{stem}.md`: they must be equal"
                         ),
                     ));
+                }
+                if let Some(problem) = reserved_name(name) {
+                    problems.push(Problem::at(line("name"), problem));
                 }
                 Some(name.clone())
             }
@@ -159,41 +180,117 @@ impl Plugin {
             }
         };
 
+        let extends = match message.frontmatter.get("extends") {
+            None => None,
+            Some(Value::String(base)) if is_ident(base) => {
+                if name.as_deref() == Some(base.as_str()) {
+                    problems.push(Problem::at(
+                        line("extends"),
+                        format!(
+                            "`extends` names `{base}`, the plugin itself: a plugin that extends another has a name of its own, and both are installed"
+                        ),
+                    ));
+                }
+                Some(base.clone())
+            }
+            Some(_) => {
+                problems.push(Problem::at(
+                    line("extends"),
+                    "`extends` must be a plugin name matching ^[a-z][a-z0-9_]*$",
+                ));
+                None
+            }
+        };
+
+        let source = match message.frontmatter.get("source") {
+            None => None,
+            Some(Value::String(url)) if is_https_url(url) => {
+                if name
+                    .as_deref()
+                    .is_some_and(|n| n.starts_with(OFFICIAL_PREFIX))
+                {
+                    problems.push(Problem::at(
+                        line("source"),
+                        "an official plugin has no `source`: `decree install` under a new decree updates it",
+                    ));
+                }
+                Some(url.clone())
+            }
+            Some(other) => {
+                let shown = other.as_str().map_or_else(
+                    || serde_norway::to_string(other).unwrap_or_default(),
+                    String::from,
+                );
+                problems.push(Problem::at(
+                    line("source"),
+                    format!(
+                        "`source` is `{}`: it must be the https:// URL the plugin is published at",
+                        shown.trim()
+                    ),
+                ));
+                None
+            }
+        };
+
+        let mut removed = BTreeMap::new();
         let mut files = |key: &str, what: &str, folders: bool, md: bool| {
-            file_map(
+            let (files, nulls) = file_map(
                 message.frontmatter.get(key),
                 key,
                 what,
                 folders,
                 md,
+                extends.is_some(),
                 line(key),
                 &mut problems,
-            )
+            );
+            if !nulls.is_empty() {
+                removed.insert(key.to_string(), nulls);
+            }
+            files
         };
         let scripts = files("scripts", "script", true, false);
         let cron = files("cron", "cron file", false, true);
         let state = files("state", "state file", true, false);
         let order = files("order", "order file", false, true);
 
-        let mut needs = Vec::new();
+        let mut needs: Vec<String> = Vec::new();
+        let mut need_map = BTreeMap::new();
         match message.frontmatter.get("needs") {
             None => {}
             Some(Value::Sequence(list)) => {
                 for need in list {
-                    match need.as_str() {
-                        Some(n) if is_ident(n) => {
-                            if needs.iter().any(|x| x == n) {
+                    let entry = match need {
+                        Value::String(n) if is_ident(n) => Some((n.clone(), None)),
+                        Value::Mapping(m) if m.len() == 1 => {
+                            match m.iter().next().map(|(k, v)| (k.as_str(), v.as_str())) {
+                                Some((Some(k), Some(v)))
+                                    if is_ident(k) && is_ident(v) && k != v =>
+                                {
+                                    Some((k.to_string(), Some(v.to_string())))
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    match entry {
+                        Some((n, met_by)) => {
+                            if needs.contains(&n) {
                                 problems.push(Problem::at(
                                     line("needs"),
                                     format!("`needs` lists `{n}` twice"),
                                 ));
                             } else {
-                                needs.push(n.to_string());
+                                if let Some(by) = met_by {
+                                    need_map.insert(n.clone(), by);
+                                }
+                                needs.push(n);
                             }
                         }
-                        _ => problems.push(Problem::at(
+                        None => problems.push(Problem::at(
                             line("needs"),
-                            "each `needs` entry is a plugin name matching ^[a-z][a-z0-9_]*$",
+                            "each `needs` entry is a plugin name matching ^[a-z][a-z0-9_]*$, or a one-key map `{<need>: <plugin>}` naming the plugin that meets it",
                         )),
                     }
                 }
@@ -214,12 +311,16 @@ impl Plugin {
         match name {
             Some(name) if problems.is_empty() => Ok(Plugin {
                 name,
+                extends,
+                source,
                 machine,
                 scripts,
                 cron,
                 state,
                 order,
                 needs,
+                need_map,
+                removed,
                 extensions,
                 body: message.body,
             }),
@@ -232,8 +333,25 @@ impl Plugin {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut message = Message::new(self.body.clone());
         message.set("name", self.name.as_str());
+        if let Some(base) = &self.extends {
+            message.set("extends", base.as_str());
+        }
+        if let Some(url) = &self.source {
+            message.set("source", url.as_str());
+        }
         if !self.needs.is_empty() {
-            let needs: Vec<Value> = self.needs.iter().map(|n| n.as_str().into()).collect();
+            let needs: Vec<Value> = self
+                .needs
+                .iter()
+                .map(|n| match self.need_map.get(n) {
+                    Some(by) => {
+                        let mut m = Mapping::new();
+                        m.insert(n.as_str().into(), by.as_str().into());
+                        Value::Mapping(m)
+                    }
+                    None => n.as_str().into(),
+                })
+                .collect();
             message.set("needs", Value::Sequence(needs));
         }
         if let Some(machine) = &self.machine {
@@ -245,11 +363,19 @@ impl Plugin {
             ("state", &self.state),
             ("order", &self.order),
         ] {
-            if !files.is_empty() {
-                let mut map = Mapping::new();
-                for (path, text) in files {
-                    map.insert(path.as_str().into(), text.as_str().into());
+            let nulls = self.removed.get(key);
+            if !files.is_empty() || nulls.is_some_and(|n| !n.is_empty()) {
+                let mut entries: BTreeMap<&str, Value> = files
+                    .iter()
+                    .map(|(path, text)| (path.as_str(), text.as_str().into()))
+                    .collect();
+                for path in nulls.into_iter().flatten() {
+                    entries.insert(path.as_str(), Value::Null);
                 }
+                let map: Mapping = entries
+                    .into_iter()
+                    .map(|(path, value)| (path.into(), value))
+                    .collect();
                 message.set(key, Value::Mapping(map));
             }
         }
@@ -334,6 +460,199 @@ impl Plugin {
     }
 }
 
+/// What `plugin` installs (docs/reference/plugins.md, `extends`): with no `extends`, itself;
+/// else its base's resolved plugin with this file on top, path by path. `bases` holds every
+/// plugin file of the project by name, parsed (`None` for one that fails the schema). The
+/// `needs` maps are applied to the machine at the end (`map_needs`).
+pub fn resolve(
+    plugin: &Plugin,
+    bases: &BTreeMap<String, Option<Plugin>>,
+) -> Result<Plugin, Unresolved> {
+    let mut chain = vec![plugin];
+    let mut seen = vec![plugin.name.as_str()];
+    while let Some(base) = chain.last().and_then(|p| p.extends.as_deref()) {
+        if let Some(at) = seen.iter().position(|n| *n == base) {
+            let mut names: Vec<&str> = seen[at..].to_vec();
+            names.push(base);
+            return Err(Unresolved::Invalid(format!(
+                "`extends` loops: {}",
+                names.join(" extends ")
+            )));
+        }
+        match bases.get(base) {
+            None => return Err(Unresolved::Missing(base.to_string())),
+            Some(None) => {
+                return Err(Unresolved::Invalid(format!(
+                "`extends` names `{base}`, whose file fails the plugin schema ({}); fix it first",
+                plugin_file(base)
+            )))
+            }
+            Some(Some(p)) => {
+                seen.push(base);
+                chain.push(p);
+            }
+        }
+    }
+    let mut layers = chain.into_iter().rev();
+    let mut out = match layers.next() {
+        Some(root) => root.clone(),
+        None => return Err(Unresolved::Invalid("no plugin".into())),
+    };
+    for layer in layers {
+        if out.machine.is_none() {
+            return Err(Unresolved::Invalid(format!(
+                "`extends` names `{}`, a library (a plugin with no machine), which cannot be extended: other plugins source its scripts by its folder name, so a copy under another name would never be used",
+                out.name
+            )));
+        }
+        out = overlay(out, layer)?;
+    }
+    if let Some(machine) = out.machine.as_mut() {
+        map_needs(machine, &out.need_map);
+    }
+    Ok(out)
+}
+
+/// Why a plugin cannot be resolved: its chain of `extends` is wrong (P1), or names a plugin
+/// not in `plugins/` (P2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unresolved {
+    Invalid(String),
+    Missing(String),
+}
+
+/// `layer` installed over `base`, path by path.
+fn overlay(base: Plugin, layer: &Plugin) -> Result<Plugin, Unresolved> {
+    let mut out = Plugin {
+        name: layer.name.clone(),
+        extends: None,
+        source: layer.source.clone(),
+        machine: layer.machine.clone().or(base.machine),
+        scripts: base.scripts,
+        cron: base.cron,
+        state: base.state,
+        order: base.order,
+        needs: base.needs,
+        need_map: base.need_map,
+        removed: BTreeMap::new(),
+        extensions: layer.extensions.clone(),
+        body: layer.body.clone(),
+    };
+    for key in FILE_KEYS {
+        let (files, add) = match key {
+            "scripts" => (&mut out.scripts, &layer.scripts),
+            "cron" => (&mut out.cron, &layer.cron),
+            "state" => (&mut out.state, &layer.state),
+            _ => (&mut out.order, &layer.order),
+        };
+        for path in layer.removed.get(key).into_iter().flatten() {
+            if files.remove(path).is_none() {
+                return Err(Unresolved::Invalid(format!(
+                    "`{key}` maps `{path}` to `null`, but `{}` has no file there to remove",
+                    layer.extends.as_deref().unwrap_or_default()
+                )));
+            }
+        }
+        files.extend(add.iter().map(|(p, t)| (p.clone(), t.clone())));
+    }
+    for need in &layer.needs {
+        if !out.needs.contains(need) {
+            out.needs.push(need.clone());
+        }
+    }
+    out.need_map
+        .extend(layer.need_map.iter().map(|(k, v)| (k.clone(), v.clone())));
+    out.needs.retain(|n| *n != out.name);
+    Ok(out)
+}
+
+/// Rename, in `machine`, each plugin a `needs` map covers to the plugin that meets it: a
+/// `machine:` invoke's child, a `model` invoke's `router` (the default router too, when the
+/// map covers it), and each machine of an `emits` list.
+pub fn map_needs(machine: &mut Mapping, map: &BTreeMap<String, String>) {
+    if map.is_empty() {
+        return;
+    }
+    fn rename(value: &mut Value, map: &BTreeMap<String, String>) {
+        if let Value::String(s) = value {
+            if let Some(to) = map.get(s.as_str()) {
+                *s = to.clone();
+            }
+        }
+    }
+    fn walk(value: &mut Value, map: &BTreeMap<String, String>) {
+        match value {
+            Value::Mapping(m) => {
+                if let Some(Value::Mapping(invoke)) = m.get_mut("invoke") {
+                    if let Some(child) = invoke.get_mut("machine") {
+                        match child {
+                            Value::Mapping(c) => {
+                                if let Some(name) = c.get_mut("name") {
+                                    rename(name, map);
+                                }
+                            }
+                            other => rename(other, map),
+                        }
+                    }
+                    if let Some(Value::Mapping(model)) = invoke.get_mut("model") {
+                        match model.get_mut("router") {
+                            Some(router) => rename(router, map),
+                            None => {
+                                if let Some(to) = map.get(machine::ROUTER_MACHINE) {
+                                    model.insert("router".into(), to.as_str().into());
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(Value::Sequence(emits)) = m.get_mut("emits") {
+                    emits.iter_mut().for_each(|e| rename(e, map));
+                }
+                for (_, v) in m.iter_mut() {
+                    walk(v, map);
+                }
+            }
+            Value::Sequence(list) => list.iter_mut().for_each(|v| walk(v, map)),
+            _ => {}
+        }
+    }
+    if let Some(states) = machine.get_mut("states") {
+        walk(states, map);
+    }
+}
+
+/// `DECREE_NEED_<NEED>` for each need of plugin `name`'s file, resolved through its chain of
+/// `extends`: the plugin that meets it, the need itself unless a `needs` map names another
+/// (docs/reference/scripts.md, Environment). None for a machine no plugin file installs.
+pub fn need_env(decree_dir: &Path, name: &str) -> Vec<(String, String)> {
+    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    let mut next = Some(name.to_string());
+    let mut seen = BTreeSet::new();
+    let mut layers = Vec::new();
+    while let Some(n) = next.take() {
+        if !seen.insert(n.clone()) {
+            break;
+        }
+        let Ok(found) = read_one(decree_dir, &n) else {
+            break;
+        };
+        let Ok(p) = found.parsed else { break };
+        next = p.extends.clone();
+        layers.push(p);
+    }
+    for p in layers.iter().rev() {
+        for need in &p.needs {
+            out.insert(need.clone(), need.clone());
+        }
+        for (need, by) in &p.need_map {
+            out.insert(need.clone(), by.clone());
+        }
+    }
+    out.into_iter()
+        .map(|(need, by)| (format!("DECREE_NEED_{}", need.to_uppercase()), by))
+        .collect()
+}
+
 /// The frontmatter of `text` with every line end, as `\n`: the lines between the opening and
 /// the closing `---` (docs/reference/messages.md, Parsing and writing). `None` without both.
 fn frontmatter_yaml(text: &str) -> Option<String> {
@@ -358,25 +677,28 @@ fn frontmatter_yaml(text: &str) -> Option<String> {
 /// one file name; with `md` it ends in `.md` and does not start with `.`, which decree skips
 /// in `cron/` and `order/`. A path that is both a file and a folder is a
 /// problem.
+#[allow(clippy::too_many_arguments)]
 fn file_map(
     value: Option<&Value>,
     key: &str,
     what: &str,
     folders: bool,
     md: bool,
+    nulls: bool,
     line: usize,
     problems: &mut Vec<Problem>,
-) -> BTreeMap<String, String> {
+) -> (BTreeMap<String, String>, BTreeSet<String>) {
     let mut out = BTreeMap::new();
+    let mut removed = BTreeSet::new();
     let map = match value {
-        None => return out,
+        None => return (out, removed),
         Some(Value::Mapping(map)) => map,
         Some(_) => {
             problems.push(Problem::at(
                 line,
                 format!("`{key}` must be a mapping of paths to their text"),
             ));
-            return out;
+            return (out, removed);
         }
     };
     for (path, text) in map {
@@ -410,11 +732,20 @@ fn file_map(
             ));
             continue;
         }
-        match text.as_str() {
-            Some(text) => {
+        match text {
+            Value::String(text) => {
                 out.insert(path.to_string(), text.to_string());
             }
-            None => problems.push(Problem::at(
+            Value::Null if nulls => {
+                removed.insert(path.to_string());
+            }
+            Value::Null => problems.push(Problem::at(
+                line,
+                format!(
+                    "{what} `{path}` is `null`: only a plugin that `extends` another removes a file of its base that way"
+                ),
+            )),
+            _ => problems.push(Problem::at(
                 line,
                 format!("{what} `{path}` must be a string, the file's text"),
             )),
@@ -429,7 +760,28 @@ fn file_map(
             ));
         }
     }
-    out
+    (out, removed)
+}
+
+/// Why `name` may not be a plugin's name, if it may not: it has the official prefix but
+/// names no plugin this decree ships.
+pub fn reserved_name(name: &str) -> Option<String> {
+    if name.starts_with(OFFICIAL_PREFIX) && crate::official::get(name).is_none() {
+        Some(format!(
+            "`name` `{name}` starts with `{OFFICIAL_PREFIX}`, which is reserved for the official plugins this decree ships: {}. Name the project's own plugin without it",
+            crate::official::names().join(", ")
+        ))
+    } else {
+        None
+    }
+}
+
+/// Whether `url` is an `https://` URL with a host: the only `source` a plugin takes.
+pub fn is_https_url(url: &str) -> bool {
+    url.strip_prefix("https://").is_some_and(|rest| {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        !host.is_empty() && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+    })
 }
 
 /// `machines/<name>.yml`, relative to `.decree/`.
@@ -495,11 +847,6 @@ impl Copy {
             && !self.cron_is_file
     }
 
-    /// Whether this is exactly what `plugin` installs.
-    fn matches(&self, plugin: &Plugin) -> bool {
-        self.matches_with(plugin, true)
-    }
-
     /// Whether this is what `plugin` installs, its cron files only with `cron`.
     fn matches_with(&self, plugin: &Plugin, cron: bool) -> bool {
         self.machine_matches(plugin)
@@ -510,6 +857,37 @@ impl Copy {
 
     fn cron_matches(&self, plugin: &Plugin) -> bool {
         !self.cron_is_file && same_files(self.cron.as_ref(), &plugin.cron)
+    }
+
+    /// The paths of installed copy `name`, relative to `.decree/`, that are not what `plugin`
+    /// installs (its cron files only with `cron`), in path order: what an edit changed.
+    fn differing_paths(&self, name: &str, plugin: &Plugin, cron: bool) -> Vec<String> {
+        let dir = layout::machine_dir_rel(name);
+        let mut out = Vec::new();
+        if !self.machine_matches(plugin) {
+            out.push(machine_file(name));
+        }
+        if self.scripts_is_file {
+            out.push(format!("{dir}/{SCRIPTS_DIR}"));
+        } else {
+            out.extend(
+                differing_files(self.scripts.as_ref(), &plugin.scripts)
+                    .into_iter()
+                    .map(|p| format!("{dir}/{SCRIPTS_DIR}/{p}")),
+            );
+        }
+        if cron {
+            if self.cron_is_file {
+                out.push(format!("{dir}/{CRON_DIR}"));
+            } else {
+                out.extend(
+                    differing_files(self.cron.as_ref(), &plugin.cron)
+                        .into_iter()
+                        .map(|p| format!("{dir}/{CRON_DIR}/{p}")),
+                );
+            }
+        }
+        out
     }
 
     fn machine_matches(&self, plugin: &Plugin) -> bool {
@@ -531,6 +909,24 @@ fn same_files(have: Option<&BTreeMap<String, Vec<u8>>>, want: &BTreeMap<String, 
         && want
             .iter()
             .all(|(path, text)| have.get(path).map(Vec::as_slice) == Some(text.as_bytes()))
+}
+
+/// The paths of a folder (`None`: no folder) that are not `want`'s byte for byte: changed,
+/// added or missing, in path order.
+fn differing_files(
+    have: Option<&BTreeMap<String, Vec<u8>>>,
+    want: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let empty = BTreeMap::new();
+    let have = have.unwrap_or(&empty);
+    let mut paths: Vec<&String> = have.keys().chain(want.keys()).collect();
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .filter(|p| have.get(*p).map(Vec::as_slice) != want.get(*p).map(String::as_bytes))
+        .cloned()
+        .collect()
 }
 
 /// `.decree/cron/<name>/`.
@@ -587,7 +983,8 @@ fn read_tree(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, DecreeError> {
 /// `scripts/<name>/`, files the plugin does not ship are removed, and each file is written
 /// when its bytes differ. A file is executable when it starts with `#!`.
 pub fn install(decree_dir: &Path, plugin: &Plugin, text: &[u8]) -> Result<(), DecreeError> {
-    install_with(decree_dir, plugin, text, true)
+    install_with(decree_dir, plugin, text, true)?;
+    hold_cron(decree_dir, &plugin.name, false)
 }
 
 /// `install`, leaving `cron/<name>/` as it is unless `cron`.
@@ -773,6 +1170,7 @@ fn uninstall(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
 
 /// Remove plugin `name`'s record.
 fn forget(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
+    hold_cron(decree_dir, name, false)?;
     let path = record_path(decree_dir, name);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
@@ -813,6 +1211,126 @@ pub fn read_one(decree_dir: &Path, name: &str) -> Result<Found, DecreeError> {
     })
 }
 
+/// One plugin file of `plugins/` and what installing it means (`plan`).
+pub struct Planned {
+    pub name: String,
+    pub text: Vec<u8>,
+    /// The file, parsed, or why it fails: the schema, or its chain of `extends` (P1).
+    pub parsed: Result<Plugin, Vec<Problem>>,
+    /// What it installs, unless it fails or its base is not in `plugins/`.
+    pub target: Option<Target>,
+    /// Its base and the plugins that meet its needs, when not in `plugins/` (P2).
+    pub missing: Vec<String>,
+}
+
+/// Every plugin file of `plugins/`, by name, resolved (docs/reference/plugins.md, `extends`):
+/// what each installs, and which are held, their cron files left to an overlay.
+pub fn plan(decree_dir: &Path) -> Result<Vec<Planned>, DecreeError> {
+    Ok(plan_found(read_all(decree_dir)?))
+}
+
+/// `plan`, for plugin files already read.
+pub fn plan_found(found: Vec<Found>) -> Vec<Planned> {
+    let files: BTreeMap<String, Option<Plugin>> = found
+        .iter()
+        .map(|f| (f.name.clone(), f.parsed.as_ref().ok().cloned()))
+        .collect();
+    let mut out: Vec<Planned> = found
+        .into_iter()
+        .map(|f| {
+            let mut missing = Vec::new();
+            let (parsed, target) = match f.parsed {
+                Err(problems) => (Err(problems), None),
+                Ok(plugin) => match resolve(&plugin, &files) {
+                    Err(Unresolved::Invalid(message)) => (
+                        Err(vec![Problem {
+                            line: None,
+                            message,
+                        }]),
+                        None,
+                    ),
+                    Err(Unresolved::Missing(base)) => {
+                        missing.push(base);
+                        (Ok(plugin), None)
+                    }
+                    Ok(resolved) => {
+                        for need in &resolved.needs {
+                            let by = resolved.need_map.get(need).unwrap_or(need);
+                            if !files.contains_key(by) && !missing.contains(by) {
+                                missing.push(by.clone());
+                            }
+                        }
+                        let record = if plugin.extends.is_none() && plugin.need_map.is_empty() {
+                            f.text.clone()
+                        } else {
+                            resolved.to_bytes()
+                        };
+                        let target = Target {
+                            plugin: resolved,
+                            record,
+                            held: false,
+                        };
+                        (Ok(plugin), Some(target))
+                    }
+                },
+            };
+            Planned {
+                name: f.name,
+                text: f.text,
+                parsed,
+                target,
+                missing,
+            }
+        })
+        .collect();
+    // A base of an installed plugin is held: its cron files are the overlay's.
+    let mut held = BTreeSet::new();
+    for p in out.iter().filter(|p| p.target.is_some()) {
+        let mut base = p.parsed.as_ref().ok().and_then(|p| p.extends.clone());
+        while let Some(b) = base {
+            if !held.insert(b.clone()) {
+                break;
+            }
+            base = files.get(&b).cloned().flatten().and_then(|p| p.extends);
+        }
+    }
+    for p in &mut out {
+        if let Some(t) = p.target.as_mut().filter(|_| held.contains(&p.name)) {
+            t.held = true;
+            t.plugin.cron.clear();
+            t.record = t.plugin.to_bytes();
+        }
+    }
+    out
+}
+
+/// The plugins in `plan` that extend `name`, directly or through a chain.
+pub fn extenders(plan: &[Planned], name: &str) -> Vec<String> {
+    let base_of = |n: &str| -> Option<String> {
+        plan.iter()
+            .find(|p| p.name == n)
+            .and_then(|p| p.parsed.as_ref().ok())
+            .and_then(|p| p.extends.clone())
+    };
+    let mut out = Vec::new();
+    for p in plan {
+        let mut base = base_of(&p.name);
+        let mut hops = 0;
+        while let Some(b) = base {
+            hops += 1;
+            if b == name {
+                out.push(p.name.clone());
+                break;
+            }
+            if hops > plan.len() {
+                break;
+            }
+            base = base_of(&b);
+        }
+    }
+    out
+}
+
 /// What `sync` did and found, or what `status` found `sync` would do.
 #[derive(Debug, Default)]
 pub struct Synced {
@@ -836,6 +1354,37 @@ pub struct Synced {
     pub invalid: Vec<(String, Vec<Problem>)>,
     /// `needs` that are not in `plugins/` (P2): (plugin, missing).
     pub missing_needs: Vec<(String, Vec<String>)>,
+    /// Bases (`extends`) that are not in `plugins/` (P2): (plugin, base). Not installed.
+    pub missing_bases: Vec<(String, String)>,
+    /// Official plugins whose file or installed copy is not this decree's (P3): for `status`.
+    /// With the paths, relative to `.decree/`, that are not.
+    pub official_edited: Vec<(String, RestoredWhat, Vec<String>)>,
+    /// Official plugins whose file or installed copy was not this decree's, archived and
+    /// replaced with it: for `sync`.
+    pub restored: Vec<Restored>,
+}
+
+/// Which part of an official plugin was not this decree's copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoredWhat {
+    /// Its file in `plugins/`.
+    File,
+    /// Its installed copy under `machines/`.
+    Copy,
+}
+
+/// An official plugin's file or installed copy that `decree install` archived and replaced
+/// with this decree's.
+#[derive(Debug, Clone)]
+pub struct Restored {
+    pub name: String,
+    pub what: RestoredWhat,
+    /// What was there, as a plugin, when it can be one.
+    pub old: Option<Plugin>,
+    /// For `File`: the file that was there, byte for byte.
+    pub old_text: Vec<u8>,
+    /// Where it was archived, relative to `.decree/`.
+    pub archive: String,
 }
 
 /// Install every plugin in `plugins/`, whether or not its installed copy already matches,
@@ -855,7 +1404,9 @@ pub fn status(decree_dir: &Path) -> Result<Synced, DecreeError> {
 }
 
 /// `write`: `Some(cron)` installs, taking the cron files of plugins already installed only
-/// with `cron`; `None` writes nothing.
+/// with `cron`; `None` writes nothing. An official plugin's file that is not this decree's
+/// copy is archived and replaced with it first, and an installed copy of one that is not
+/// this decree's is archived and restored (docs/reference/plugins.md, Official plugins).
 fn reconcile(decree_dir: &Path, write: Option<bool>) -> Result<Synced, DecreeError> {
     let with_cron = write;
     let write = write.is_some();
@@ -864,44 +1415,104 @@ fn reconcile(decree_dir: &Path, write: Option<bool>) -> Result<Synced, DecreeErr
         ..Synced::default()
     };
     let mut recorded = records(decree_dir)?;
-    let found = read_all(decree_dir)?;
-    let names: BTreeSet<String> = found.iter().map(|f| f.name.clone()).collect();
-    for f in found {
-        let plugin = match f.parsed {
-            Ok(plugin) => plugin,
-            Err(problems) => {
-                // The file is there: its installed copy and record stay as they were.
-                recorded.remove(&f.name);
-                out.invalid.push((f.name, problems));
-                continue;
-            }
+    let mut found = read_all(decree_dir)?;
+    for f in found.iter_mut() {
+        let Some(o) = crate::official::get(&f.name) else {
+            continue;
         };
-        let missing: Vec<String> = plugin
-            .needs
-            .iter()
-            .filter(|n| !names.contains(*n))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            out.missing_needs.push((plugin.name.clone(), missing));
-        }
-        recorded.remove(&plugin.name);
-        if let Some(cron) = with_cron {
-            if let Some(dir) = install_archiving(decree_dir, &plugin, &f.text, None, cron)? {
-                out.archived.push((plugin.name.clone(), dir));
-            }
-            out.installed.push(plugin.name);
+        if f.text == o.text.as_bytes() {
             continue;
         }
-        let cron = takes_cron(decree_dir, &plugin.name, false);
-        let copy = Copy::read(decree_dir, &plugin.name)?;
-        if !cron && !copy.cron_matches(&plugin) {
-            out.cron_differs.push(plugin.name.clone());
+        if write {
+            let dir = archive_file(decree_dir, &f.name, &f.text)?;
+            let path = decree_dir.join(plugin_file(&f.name));
+            write_replace(&path, o.text.as_bytes()).map_err(|(path, e)| io_error(&path, e))?;
+            let old_text = std::mem::replace(&mut f.text, o.text.as_bytes().to_vec());
+            let old = std::str::from_utf8(&old_text)
+                .ok()
+                .and_then(|t| Plugin::parse(t, None).ok());
+            out.restored.push(Restored {
+                name: f.name.clone(),
+                what: RestoredWhat::File,
+                old,
+                old_text,
+                archive: dir,
+            });
+            f.parsed = o.plugin().map_err(|m| {
+                vec![Problem {
+                    line: None,
+                    message: m,
+                }]
+            });
+        } else {
+            out.official_edited.push((
+                f.name.clone(),
+                RestoredWhat::File,
+                vec![plugin_file(&f.name)],
+            ));
         }
-        if would_lose(decree_dir, &plugin.name, &copy, Some(&plugin), cron)? {
-            out.archived.push((plugin.name, String::new()));
-        } else if !copy.matches_with(&plugin, cron) {
-            out.installed.push(plugin.name);
+    }
+    for p in plan_found(found) {
+        recorded.remove(&p.name);
+        let target = match (p.parsed, p.target) {
+            (Err(problems), _) => {
+                // The file is there: its installed copy and record stay as they were.
+                out.invalid.push((p.name, problems));
+                continue;
+            }
+            (Ok(_), None) => {
+                out.missing_bases
+                    .extend(p.missing.into_iter().map(|b| (p.name.clone(), b)));
+                continue;
+            }
+            (Ok(_), Some(target)) => target,
+        };
+        if !p.missing.is_empty() {
+            out.missing_needs.push((p.name.clone(), p.missing));
+        }
+        let official = crate::official::get(&p.name).is_some();
+        if let Some(cron) = with_cron {
+            let old = if official {
+                let copy = Copy::read(decree_dir, &p.name)?;
+                let cron = target.held || takes_cron(decree_dir, &p.name, cron);
+                if !copy.is_absent() && !copy.matches_with(&target.plugin, cron) {
+                    Some(export_lenient(decree_dir, &p.name).ok())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let dir = install_archiving(decree_dir, &target, &p.text, None, cron)?;
+            if let Some(dir) = dir {
+                if let Some(old) = old {
+                    out.restored.push(Restored {
+                        name: p.name.clone(),
+                        what: RestoredWhat::Copy,
+                        old,
+                        old_text: Vec::new(),
+                        archive: dir.clone(),
+                    });
+                }
+                out.archived.push((p.name.clone(), dir));
+            }
+            out.installed.push(p.name);
+            continue;
+        }
+        let cron = target.held || takes_cron(decree_dir, &p.name, false);
+        let copy = Copy::read(decree_dir, &p.name)?;
+        if !cron && !copy.cron_matches(&target.plugin) {
+            out.cron_differs.push(p.name.clone());
+        }
+        if official && !copy.is_absent() && !copy.matches_with(&target.plugin, cron) {
+            let paths = copy.differing_paths(&p.name, &target.plugin, cron);
+            out.official_edited
+                .push((p.name.clone(), RestoredWhat::Copy, paths));
+        }
+        if would_lose(decree_dir, &p.name, &copy, Some(&target.plugin), cron)? {
+            out.archived.push((p.name, String::new()));
+        } else if !copy.matches_with(&target.plugin, cron) {
+            out.installed.push(p.name);
         }
     }
     // What is left was recorded, but its plugin file is gone.
@@ -956,7 +1567,45 @@ fn would_lose(
 /// clone or a new plugin gets them. Once installed, its cron files are the project's: an edit
 /// or a deleted file stays.
 fn takes_cron(decree_dir: &Path, name: &str, cron: bool) -> bool {
-    cron || !record_path(decree_dir, name).exists()
+    cron || !record_path(decree_dir, name).exists() || held_path(decree_dir, name).exists()
+}
+
+/// `.decree/cache/plugins/<name>.cron-held`: plugin `name` was installed without its cron
+/// files, because another installed plugin extends it and carries them (docs/reference/plugins.md,
+/// `extends`). Its next install without that overlay takes them, as a plugin decree has no
+/// record of installing.
+fn held_path(decree_dir: &Path, name: &str) -> PathBuf {
+    decree_dir
+        .join(CACHE_DIR)
+        .join(RECORDS_DIR)
+        .join(format!("{name}.cron-held"))
+}
+
+/// Mark plugin `name` as installed without its cron files (`held`), or not.
+fn hold_cron(decree_dir: &Path, name: &str, held: bool) -> Result<(), DecreeError> {
+    let path = held_path(decree_dir, name);
+    if held {
+        create_dir(path.parent())?;
+        write_replace(&path, b"").map_err(|(path, e)| io_error(&path, e))
+    } else {
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(io_error(&path, e)),
+        }
+    }
+}
+
+/// What one plugin file installs (`plan`): the plugin resolved through its `extends` and
+/// `needs` maps, without its cron files while it is `held`, and the bytes its record keeps.
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub plugin: Plugin,
+    /// What `.decree/cache/plugins/<name>.md` records: the plugin file itself when it
+    /// installs as written (no `extends`, no `needs` map, not held), else the resolved plugin.
+    pub record: Vec<u8>,
+    /// Another installed plugin extends this one: its cron files are that one's to run.
+    pub held: bool,
 }
 
 /// Install `plugin` from `text`, first archiving the installed copy when installing would
@@ -965,12 +1614,13 @@ fn takes_cron(decree_dir: &Path, name: &str, cron: bool) -> bool {
 /// `cron` (`takes_cron`). Returns the archive file relative to `.decree/`, if one was written.
 pub fn install_archiving(
     decree_dir: &Path,
-    plugin: &Plugin,
+    target: &Target,
     text: &[u8],
     replaced: Option<&[u8]>,
     cron: bool,
 ) -> Result<Option<String>, DecreeError> {
-    let cron = takes_cron(decree_dir, &plugin.name, cron);
+    let plugin = &target.plugin;
+    let cron = target.held || takes_cron(decree_dir, &plugin.name, cron);
     let copy = Copy::read(decree_dir, &plugin.name)?;
     let lose = would_lose(decree_dir, &plugin.name, &copy, Some(plugin), cron)?;
     let replaced = replaced.filter(|old| *old != text);
@@ -979,11 +1629,12 @@ pub fn install_archiving(
     } else {
         None
     };
-    install_with(decree_dir, plugin, text, cron)?;
+    install_with(decree_dir, plugin, &target.record, cron)?;
+    hold_cron(decree_dir, &plugin.name, target.held)?;
     Ok(dir)
 }
 
-/// Archive `text`, plugin `name`'s file, which `decree install --official` is about to
+/// Archive `text`, plugin `name`'s file, which `decree install` is about to
 /// replace, as `archive/<name>/<time>.md`. Returns that file relative to `.decree/`.
 pub fn archive_file(decree_dir: &Path, name: &str, text: &[u8]) -> Result<String, DecreeError> {
     archive(decree_dir, name, false, Some(text))
@@ -1095,6 +1746,12 @@ impl Synced {
                 out.push(format!("{}: {} (P1)", problem_at(name, p.line), p.message));
             }
         }
+        for (name, base) in &self.missing_bases {
+            out.push(format!(
+                "{}: `extends` names `{base}`, not in {PLUGINS_DIR}/, so it is not installed (P2)",
+                plugin_file(name)
+            ));
+        }
         out
     }
 }
@@ -1107,8 +1764,18 @@ pub fn cron_message(name: &str) -> String {
     )
 }
 
-/// What an edited installed copy means for `decree install`, and how to keep the edit.
+/// What an edited installed copy means for `decree install`, and how to keep the edit: by
+/// exporting it, or, for an official plugin, which is never edited, in a plugin of the
+/// project's own that extends it.
 pub fn edited_message(name: &str) -> String {
+    if name.starts_with(OFFICIAL_PREFIX) {
+        return format!(
+            "its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place: `decree install` archives it as a plugin file in {}/{ARCHIVE_DIR}/{name}/ and restores this decree's copy; official plugins are never edited, so put the change in a plugin of the project's own that extends it (`name: <your name>`, `extends: {name}`)",
+            machine_file(name),
+            layout::DECREE_DIR,
+            dir = layout::machine_dir_rel(name)
+        );
+    }
     format!(
         "its installed copy ({}, or a file in {dir}/{SCRIPTS_DIR}/ or {dir}/{CRON_DIR}/) was edited in place, or written by hand: `decree install` archives it as a plugin file in {}/{ARCHIVE_DIR}/{name}/ and installs the plugin; `decree export {name}` keeps the edit",
         machine_file(name),
@@ -1213,7 +1880,7 @@ fn export_copy(decree_dir: &Path, name: &str, strict: bool) -> Result<Plugin, De
         Ok(out)
     };
     let scripts = text_files(&sdir, SCRIPTS_DIR)?;
-    let cron = text_files(&cdir, CRON_DIR)?;
+    let mut cron = text_files(&cdir, CRON_DIR)?;
     let mut needs = BTreeSet::new();
     if let Some(loaded) = &loaded {
         for (_, child) in loaded.invoked_machines() {
@@ -1226,6 +1893,16 @@ fn export_copy(decree_dir: &Path, name: &str, strict: bool) -> Result<Plugin, De
 
     let existing = read_one(decree_dir, name).ok();
     let old = existing.as_ref().and_then(|f| f.parsed.as_ref().ok());
+    // A plugin another installed plugin extends is installed without its cron files: they
+    // are its file's, not the copy's.
+    let held = old.is_some() && held_path(decree_dir, name).exists();
+    if let (true, Some(old)) = (held, old) {
+        cron = old.cron.clone();
+    }
+    if let Some(base) = old.and_then(|o| o.extends.clone()) {
+        let old = old.cloned().unwrap_or_else(|| empty_plugin(name));
+        return export_overlay(decree_dir, old, base, machine, scripts, cron, held);
+    }
     // An existing plugin file keeps its `needs`: a plugin may rely on another in a way the
     // machine does not show (develop's precheck runs infra's run.sh).
     if let Some(old) = old {
@@ -1251,22 +1928,121 @@ fn export_copy(decree_dir: &Path, name: &str, strict: bool) -> Result<Plugin, De
     });
     Ok(Plugin {
         name: name.to_string(),
+        extends: None,
+        source: old.and_then(|o| o.source.clone()),
         machine,
         scripts,
         cron,
         state,
         order,
         needs: needs.into_iter().collect(),
+        need_map: old.map(|o| o.need_map.clone()).unwrap_or_default(),
+        removed: BTreeMap::new(),
         extensions,
         body,
     })
 }
 
+/// A plugin named `name` with nothing in it.
+fn empty_plugin(name: &str) -> Plugin {
+    Plugin {
+        name: name.to_string(),
+        extends: None,
+        source: None,
+        machine: None,
+        scripts: BTreeMap::new(),
+        cron: BTreeMap::new(),
+        state: BTreeMap::new(),
+        order: BTreeMap::new(),
+        needs: Vec::new(),
+        need_map: BTreeMap::new(),
+        removed: BTreeMap::new(),
+        extensions: Mapping::new(),
+        body: String::new(),
+    }
+}
+
+/// Export of a plugin whose file `old` extends `base` (docs/reference/plugins.md, Export):
+/// only what differs from what its base installs, with its `needs` maps applied. Each installed
+/// file that is not the base's byte for byte, `null` for each of the base's it lacks, and
+/// `machine` when it is not the base's. The file keeps its `extends`, `source`, `needs`,
+/// state and order seeds, body and `x-` keys; a `held` one keeps its cron files.
+fn export_overlay(
+    decree_dir: &Path,
+    old: Plugin,
+    base: String,
+    machine: Option<Mapping>,
+    scripts: BTreeMap<String, String>,
+    cron: BTreeMap<String, String>,
+    held: bool,
+) -> Result<Plugin, DecreeError> {
+    let files: BTreeMap<String, Option<Plugin>> = read_all(decree_dir)?
+        .into_iter()
+        .map(|f| (f.name, f.parsed.ok()))
+        .collect();
+    let bare = Plugin {
+        extends: Some(base.clone()),
+        needs: old.needs.clone(),
+        need_map: old.need_map.clone(),
+        ..empty_plugin(&old.name)
+    };
+    let inherited = resolve(&bare, &files).map_err(|e| {
+        DecreeError::Other(match e {
+            Unresolved::Invalid(m) => format!("{}: {m} (P1)", plugin_file(&old.name)),
+            Unresolved::Missing(b) => format!(
+                "{}: `extends` names `{b}`, not in {PLUGINS_DIR}/ (P2)",
+                plugin_file(&old.name)
+            ),
+        })
+    })?;
+    let mut out = Plugin {
+        machine: machine.filter(|m| inherited.machine.as_ref() != Some(m)),
+        scripts: BTreeMap::new(),
+        cron: BTreeMap::new(),
+        removed: BTreeMap::new(),
+        ..old.clone()
+    };
+    let mut diff = |key: &str,
+                    have: &BTreeMap<String, String>,
+                    base: &BTreeMap<String, String>|
+     -> BTreeMap<String, String> {
+        let gone: BTreeSet<String> = base
+            .keys()
+            .filter(|p| !have.contains_key(*p))
+            .cloned()
+            .collect();
+        if !gone.is_empty() {
+            out.removed.insert(key.to_string(), gone);
+        }
+        have.iter()
+            .filter(|(p, t)| base.get(*p) != Some(t))
+            .map(|(p, t)| (p.clone(), t.clone()))
+            .collect()
+    };
+    let scripts = diff("scripts", &scripts, &inherited.scripts);
+    let cron = if held {
+        if let Some(r) = old.removed.get("cron") {
+            out.removed.insert("cron".into(), r.clone());
+        }
+        old.cron.clone()
+    } else {
+        diff("cron", &cron, &inherited.cron)
+    };
+    for key in ["state", "order"] {
+        if let Some(r) = old.removed.get(key) {
+            out.removed.insert(key.into(), r.clone());
+        }
+    }
+    out.scripts = scripts;
+    out.cron = cron;
+    Ok(out)
+}
+
 /// Whether `plugin`'s installed copy exists and differs from what the plugin installs: it was
 /// edited in place, or the plugin changed while it was (a conflict).
-pub fn edited(decree_dir: &Path, plugin: &Plugin) -> Result<bool, DecreeError> {
-    let copy = Copy::read(decree_dir, &plugin.name)?;
-    Ok(!copy.is_absent() && !copy.matches(plugin))
+pub fn edited(decree_dir: &Path, target: &Target) -> Result<bool, DecreeError> {
+    let copy = Copy::read(decree_dir, &target.plugin.name)?;
+    Ok(!copy.is_absent() && !copy.matches_with(&target.plugin, true))
 }
 
 /// Whether plugin file `text` is not the one plugin `name` was installed from: changed
@@ -1289,8 +2065,27 @@ pub fn write_and_install(decree_dir: &Path, plugin: &Plugin) -> Result<PathBuf, 
     create_dir(path.parent())?;
     let bytes = plugin.to_bytes();
     write_replace(&path, &bytes).map_err(|(path, e)| io_error(&path, e))?;
-    install(decree_dir, plugin, &bytes)?;
+    let planned = plan(decree_dir)?
+        .into_iter()
+        .find(|p| p.name == plugin.name)
+        .and_then(|p| p.target);
+    match planned {
+        Some(target) => {
+            install_with(decree_dir, &target.plugin, &target.record, true)?;
+            hold_cron(decree_dir, &plugin.name, target.held)?;
+        }
+        None => install(decree_dir, plugin, &bytes)?,
+    }
     Ok(path)
+}
+
+/// What plugin `name` installs now, resolved through `plugins/`, or `None` when its file
+/// fails, or its base is not there.
+pub fn target(decree_dir: &Path, name: &str) -> Result<Option<Target>, DecreeError> {
+    Ok(plan(decree_dir)?
+        .into_iter()
+        .find(|p| p.name == name)
+        .and_then(|p| p.target))
 }
 
 /// The machines in `machines/` that no plugin file names, for `decree check`'s warning.
@@ -1400,7 +2195,7 @@ Says hello.
         assert_eq!(
             problems("---\nname: hello\nmachine: { name: hello }\nwhen: x\nx-exist: y\n---\n"),
             [
-                "Some(4): unknown key `when`: a plugin has `name`, `machine`, `scripts`, `cron`, `state`, `order`, `needs` and `x-` keys",
+                "Some(4): unknown key `when`: a plugin has `name`, `extends`, `source`, `machine`, `scripts`, `cron`, `state`, `order`, `needs` and `x-` keys",
                 "Some(3): `machine` has `name`: the plugin's `name` names the machine",
             ]
         );
@@ -1412,7 +2207,7 @@ Says hello.
             problems("---\nname: hello\nmachine: {}\nneeds: [a, a, B]\n---\n"),
             [
                 "Some(4): `needs` lists `a` twice",
-                "Some(4): each `needs` entry is a plugin name matching ^[a-z][a-z0-9_]*$",
+                "Some(4): each `needs` entry is a plugin name matching ^[a-z][a-z0-9_]*$, or a one-key map `{<need>: <plugin>}` naming the plugin that meets it",
             ]
         );
         assert_eq!(
@@ -1434,6 +2229,178 @@ Says hello.
                 "Some(4): order file `c.txt` must end in `.md` and not start with `.`",
             ]
         );
+    }
+
+    fn problems_of(stem: &str, text: &str) -> Vec<String> {
+        Plugin::parse(text, Some(stem))
+            .unwrap_err()
+            .into_iter()
+            .map(|p| p.message)
+            .collect()
+    }
+
+    #[test]
+    fn rejects_misused_extends_source_needs_and_the_prefix() {
+        let reserved = problems_of("decree_mine", "---\nname: decree_mine\nmachine: {}\n---\n");
+        assert_eq!(reserved.len(), 1, "{reserved:?}");
+        assert!(reserved[0].contains("starts with `decree_`, which is reserved"));
+        assert!(reserved[0].contains(crate::official::names()[0]));
+        let same = problems_of("x", "---\nname: x\nextends: x\n---\n");
+        assert!(same[0].contains("names `x`, the plugin itself"), "{same:?}");
+        for bad in [
+            "http://example.com/x.md",
+            "official",
+            "https://",
+            "https://a b/x",
+        ] {
+            let p = problems_of("x", &format!("---\nname: x\nsource: '{bad}'\n---\n"));
+            assert!(p[0].contains("it must be the https:// URL"), "{bad}: {p:?}");
+        }
+        let null = problems_of("x", "---\nname: x\nscripts: {a.sh: null}\n---\n");
+        assert!(null[0].contains("only a plugin that `extends`"), "{null:?}");
+        let map = problems_of("x", "---\nname: x\nneeds: [{a: b, c: d}, {e: e}]\n---\n");
+        assert_eq!(map.len(), 2, "{map:?}");
+        assert!(map[0].contains("one-key map"));
+    }
+
+    #[test]
+    fn extends_source_and_needs_maps_round_trip() {
+        let text = "---\nname: x\nextends: base\nsource: https://example.com/x.md\nneeds:\n- a\n- b: c\nscripts:\n  gate.sh: |\n    #!/bin/sh\n    true\n  gone.sh: null\ncron:\n  daily.md: null\n---\n# x\n";
+        let p = Plugin::parse(text, Some("x")).unwrap();
+        assert_eq!(p.extends.as_deref(), Some("base"));
+        assert_eq!(p.source.as_deref(), Some("https://example.com/x.md"));
+        assert_eq!(p.needs, ["a", "b"]);
+        assert_eq!(p.need_map["b"], "c");
+        assert!(p.removed["scripts"].contains("gone.sh"));
+        assert!(p.removed["cron"].contains("daily.md"));
+        assert_eq!(String::from_utf8(p.to_bytes()).unwrap(), text);
+    }
+
+    fn files_of(list: &[&str]) -> BTreeMap<String, Option<Plugin>> {
+        list.iter()
+            .map(|t| {
+                let p = Plugin::parse(t, None).unwrap();
+                (p.name.clone(), Some(p))
+            })
+            .collect()
+    }
+
+    const BASE: &str = "---\nname: base\nneeds: [infra]\nmachine:\n  description: Base.\n  initial: a\n  states:\n    a:\n      invoke:\n        machine: infra\n      transitions:\n        done: b\n      emits: [infra, other]\n    b:\n      final: true\nscripts:\n  a.sh: base a\n  b.sh: base b\ncron:\n  daily.md: |\n    ---\n    cron: 0 9 * * *\n    ---\n---\n# base\n";
+
+    #[test]
+    fn resolve_installs_an_overlay_path_by_path_and_maps_needs() {
+        let overlay = "---\nname: mine\nextends: base\nneeds:\n- infra: my_infra\nscripts:\n  a.sh: mine a\n  b.sh: null\n  c.sh: mine c\n---\n# mine\n";
+        let files = files_of(&[BASE, overlay]);
+        let mine = files["mine"].clone().unwrap();
+        let r = resolve(&mine, &files).unwrap();
+        assert_eq!(r.name, "mine");
+        assert_eq!(r.extends, None);
+        assert_eq!(r.scripts.keys().collect::<Vec<_>>(), ["a.sh", "c.sh"]);
+        assert_eq!(r.scripts["a.sh"], "mine a");
+        assert!(r.cron.contains_key("daily.md"));
+        assert_eq!(r.needs, ["infra"]);
+        assert_eq!(r.need_map["infra"], "my_infra");
+        let text = serde_norway::to_string(&r.machine).unwrap();
+        assert!(text.contains("machine: my_infra"), "{text}");
+        assert!(text.contains("- my_infra\n"), "{text}");
+        assert!(text.contains("- other\n"), "{text}");
+        assert_eq!(r.body, "# mine\n");
+    }
+
+    #[test]
+    fn resolve_refuses_a_loop_a_library_and_a_missing_base() {
+        let a = "---\nname: a\nextends: b\n---\n";
+        let b = "---\nname: b\nextends: a\n---\n";
+        let lib = "---\nname: lib\nscripts: {x.sh: x}\n---\n";
+        let on_lib = "---\nname: on_lib\nextends: lib\n---\n";
+        let orphan = "---\nname: orphan\nextends: nowhere\n---\n";
+        let files = files_of(&[a, b, lib, on_lib, orphan]);
+        let get = |n: &str| files[n].clone().unwrap();
+        assert_eq!(
+            resolve(&get("a"), &files),
+            Err(Unresolved::Invalid(
+                "`extends` loops: a extends b extends a".into()
+            ))
+        );
+        match resolve(&get("on_lib"), &files) {
+            Err(Unresolved::Invalid(m)) => assert!(m.contains("a library"), "{m}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            resolve(&get("orphan"), &files),
+            Err(Unresolved::Missing("nowhere".into()))
+        );
+    }
+
+    #[test]
+    fn a_base_is_installed_without_its_cron_while_an_overlay_carries_it() {
+        let tmp = project();
+        let d = tmp.path();
+        put(d, "plugins/base.md", BASE);
+        put(d, "plugins/infra.md", "---\nname: infra\nmachine:\n  description: Infra.\n  initial: a\n  states:\n    a:\n      final: true\n---\n");
+        sync(d, false).unwrap();
+        assert!(d.join("machines/base/cron/daily.md").exists());
+        put(
+            d,
+            "plugins/mine.md",
+            "---\nname: mine\nextends: base\nscripts:\n  a.sh: mine a\n---\n# mine\n",
+        );
+        assert!(status(d).unwrap().installed.contains(&"base".to_string()));
+        let s = sync(d, false).unwrap();
+        assert!(s.archived.is_empty(), "{:?}", s.archived);
+        assert!(!d.join("machines/base/cron").exists());
+        assert_eq!(get(d, "machines/base/scripts/a.sh").unwrap(), "base a");
+        assert_eq!(get(d, "machines/mine/scripts/a.sh").unwrap(), "mine a");
+        assert_eq!(get(d, "machines/mine/scripts/b.sh").unwrap(), "base b");
+        assert!(d.join("machines/mine/cron/daily.md").exists());
+        let checked = status(d).unwrap();
+        assert!(
+            checked.installed.is_empty() && checked.cron_differs.is_empty(),
+            "{checked:?}"
+        );
+
+        // Export of the unedited overlay is the overlay; an edit in place is all it adds.
+        let out = export(d, "mine").unwrap();
+        assert_eq!(out.scripts.keys().collect::<Vec<_>>(), ["a.sh"]);
+        assert!(out.machine.is_none() && out.cron.is_empty());
+        put(d, "machines/mine/scripts/b.sh", "edited b");
+        std::fs::remove_file(d.join("machines/mine/cron/daily.md")).unwrap();
+        let out = export(d, "mine").unwrap();
+        assert_eq!(out.scripts["b.sh"], "edited b");
+        assert!(out.removed["cron"].contains("daily.md"));
+        write_and_install(d, &out).unwrap();
+        let again = export(d, "mine").unwrap();
+        assert_eq!(again.to_bytes(), out.to_bytes());
+
+        // Without the overlay the base takes its cron files back.
+        std::fs::remove_file(d.join("plugins/mine.md")).unwrap();
+        sync(d, false).unwrap();
+        assert!(d.join("machines/base/cron/daily.md").exists());
+        assert!(!d.join("machines/mine/scripts").exists());
+    }
+
+    #[test]
+    fn need_env_names_the_plugin_meeting_each_need() {
+        let tmp = project();
+        let d = tmp.path();
+        put(d, "plugins/base.md", BASE);
+        put(
+            d,
+            "plugins/mine.md",
+            "---\nname: mine\nextends: base\nneeds:\n- infra: my_infra\n- ai\n---\n",
+        );
+        assert_eq!(
+            need_env(d, "mine"),
+            [
+                ("DECREE_NEED_AI".to_string(), "ai".to_string()),
+                ("DECREE_NEED_INFRA".to_string(), "my_infra".to_string())
+            ]
+        );
+        assert_eq!(
+            need_env(d, "base"),
+            [("DECREE_NEED_INFRA".to_string(), "infra".to_string())]
+        );
+        assert!(need_env(d, "nothing").is_empty());
     }
 
     #[test]

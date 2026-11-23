@@ -1,14 +1,16 @@
 //! `decree install` and `decree list|export` (docs/reference/plugins.md): share a
 //! machine as one file, `.decree/plugins/<name>.md`, committed; what it installs into
 //! `.decree/machines/<name>/` is ignored by git. `decree install` with no argument installs every
-//! plugin as its file says (the step after a checkout); `decree install <name>` installs that
-//! plugin, seeding its file from the official copy built into decree when the project has none;
-//! `decree install <file>`, or `-` for stdin, copies it into `plugins/` and installs
-//! it. decree fetches nothing: `curl -fsSL <url> | decree install -` installs from a URL. `list`
-//! shows the official plugins, and `export` writes a plugin file from the installed copy.
+//! plugin as its file says (the step after a checkout or an upgrade, which also makes every
+//! official plugin this decree's copy); `decree install <name>` installs that plugin, seeding
+//! its file from the official copy built into decree when the project has none;
+//! `decree install <file>`, or `-` for stdin, copies it into `plugins/` and installs it.
+//! decree fetches only with `decree install --update`, from a plugin's `source`, and writes
+//! what it fetched only after a person says `y`. `list` shows the plugins, and `export`
+//! writes a plugin file from the installed copy.
 
-use std::collections::BTreeMap;
-use std::io::Read;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{BufRead, IsTerminal, Read, Write};
 use std::path::Path;
 
 use serde_json::{json, Value as Json};
@@ -18,10 +20,41 @@ use crate::commands::print_json;
 use crate::error::DecreeError;
 use crate::layout::DECREE_DIR;
 use crate::official;
-use crate::plugin::{self, Plugin, PLUGINS_DIR};
+use crate::plugin::{self, Planned, Plugin, OFFICIAL_PREFIX, PLUGINS_DIR};
 
-/// `decree export <name>`: write `plugins/<name>.md` from the installed copy.
+/// Whether `name` is an official plugin's: it has the prefix (docs/reference/plugins.md,
+/// Official plugins).
+pub fn is_official(name: &str) -> bool {
+    name.starts_with(OFFICIAL_PREFIX)
+}
+
+/// How to change what official plugin `name` does: never by editing it.
+pub fn overlay_advice(name: &str) -> String {
+    format!(
+        "official plugins are never edited in a project: `decree install` restores this decree's copy (archiving the change); put the change in a plugin of the project's own that extends it (`name: <your name>`, `extends: {name}`), holding only the files it changes"
+    )
+}
+
+fn io_other(path: &Path, e: std::io::Error) -> DecreeError {
+    DecreeError::Other(format!("{}: {e}", path.display()))
+}
+
+fn write_file(path: &Path, bytes: &[u8]) -> Result<(), DecreeError> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| io_other(dir, e))?;
+    }
+    crate::message::write_replace(path, bytes).map_err(|(path, e)| io_other(&path, e))
+}
+
+/// `decree export <name>`: write `plugins/<name>.md` from the installed copy. An official
+/// plugin is never exported: a project changes one with a plugin that extends it.
 pub fn export(project_root: &Path, name: &str, format: Format) -> Result<(), DecreeError> {
+    if is_official(name) {
+        return Err(DecreeError::Other(format!(
+            "`{name}` is an official plugin: {}; nothing was written",
+            overlay_advice(name)
+        )));
+    }
     let decree_dir = project_root.join(DECREE_DIR);
     let plugin = plugin::export(&decree_dir, name)?;
     plugin::write_and_install(&decree_dir, &plugin)?;
@@ -41,11 +74,199 @@ pub fn export(project_root: &Path, name: &str, format: Format) -> Result<(), Dec
     }
 }
 
-/// `decree install <file|->`: check the plugin, copy it to
-/// `plugins/<name>.md` and install it, seeding each official plugin it needs that `plugins/`
-/// lacks. A plugin file of that name is replaced, and it and an installed copy that installing
-/// would lose are moved to `archive/` first. Refuses, writing nothing, a plugin that fails the
-/// schema or that needs a plugin neither in `plugins/` nor official.
+/// An official plugin `closure` seeds: its name, and the plugins that need it.
+type Seeded = (String, Vec<String>);
+
+/// The plugins `roots` rely on that `plugins/` lacks (each `extends` base and each plugin
+/// that meets a need), seeded from decree's official copies with what they rely on in turn:
+/// (name, the plugins that need it). `Err` lists each that is neither in `plugins/` nor
+/// official, with what needs it.
+fn closure(
+    roots: &[Plugin],
+    present: &dyn Fn(&str) -> bool,
+) -> Result<Vec<Seeded>, Vec<(String, String)>> {
+    fn wants(p: &Plugin) -> Vec<String> {
+        let mut out: Vec<String> = p.extends.iter().cloned().collect();
+        for need in &p.needs {
+            out.push(p.need_map.get(need).unwrap_or(need).clone());
+        }
+        out
+    }
+    let root_names: BTreeSet<&str> = roots.iter().map(|p| p.name.as_str()).collect();
+    let mut seed: Vec<(String, Vec<String>)> = Vec::new();
+    let mut missing: Vec<(String, String)> = Vec::new();
+    let mut queue: Vec<(String, String)> = roots
+        .iter()
+        .flat_map(|p| wants(p).into_iter().map(|n| (n, p.name.clone())))
+        .collect();
+    let mut i = 0;
+    while i < queue.len() {
+        let (n, by) = queue[i].clone();
+        i += 1;
+        if root_names.contains(n.as_str()) || present(&n) {
+            continue;
+        }
+        if let Some(entry) = seed.iter_mut().find(|(s, _)| *s == n) {
+            if !entry.1.contains(&by) {
+                entry.1.push(by);
+            }
+            continue;
+        }
+        match official::get(&n).map(|o| o.plugin()) {
+            Some(Ok(p)) => {
+                queue.extend(wants(&p).into_iter().map(|w| (w, n.clone())));
+                seed.push((n, vec![by]));
+            }
+            _ => {
+                if !missing.iter().any(|(m, _)| *m == n) {
+                    missing.push((n, by));
+                }
+            }
+        }
+    }
+    if missing.is_empty() {
+        Ok(seed)
+    } else {
+        missing.sort();
+        Err(missing)
+    }
+}
+
+/// The message for what `closure` found missing.
+fn missing_message(missing: &[(String, String)]) -> String {
+    let lines: Vec<String> = missing
+        .iter()
+        .map(|(n, by)| {
+            format!(
+                "plugin `{by}` needs `{n}`, which is not in {DECREE_DIR}/{PLUGINS_DIR}/ and not an official plugin"
+            )
+        })
+        .collect();
+    format!(
+        "{}: install it first (`decree install <file>`); nothing was installed",
+        lines.join("; ")
+    )
+}
+
+/// The plan of `plugins/` with `writes` (name, bytes) in place of, or beside, its files:
+/// what installing would do, before anything is written.
+fn simulate(decree_dir: &Path, writes: &[(String, Vec<u8>)]) -> Result<Vec<Planned>, DecreeError> {
+    let mut found = plugin::read_all(decree_dir)?;
+    for (name, bytes) in writes {
+        let parsed = match std::str::from_utf8(bytes) {
+            Ok(t) => Plugin::parse(t, Some(name)),
+            Err(_) => Err(vec![]),
+        };
+        let f = plugin::Found {
+            name: name.clone(),
+            text: bytes.clone(),
+            parsed,
+        };
+        match found.iter_mut().find(|x| x.name == *name) {
+            Some(x) => *x = f,
+            None => found.push(f),
+        }
+    }
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(plugin::plan_found(found))
+}
+
+/// The errors that keep `names` from installing in `planned`: P1 (the schema, or the chain
+/// of `extends`) and a base not in `plugins/` (P2).
+fn plan_errors(planned: &[Planned], names: &BTreeSet<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for p in planned.iter().filter(|p| names.contains(&p.name)) {
+        let file = plugin::plugin_file(&p.name);
+        match (&p.parsed, &p.target) {
+            (Err(ps), _) => out.extend(ps.iter().map(|q| match q.line {
+                Some(line) => format!("{file}: line {line}: {} (P1)", q.message),
+                None => format!("{file}: {} (P1)", q.message),
+            })),
+            (Ok(_), None) => out.push(format!(
+                "{file}: `extends` names {}, not in {PLUGINS_DIR}/ (P2)",
+                p.missing
+                    .iter()
+                    .map(|m| format!("`{m}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// `names`, with every plugin that extends one of them (installed again on the new base)
+/// and every base of those (installed with or without its cron files, as they are extended).
+fn affected(planned: &[Planned], names: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut out = names.clone();
+    for n in names {
+        out.extend(plugin::extenders(planned, n));
+    }
+    let mut bases = BTreeSet::new();
+    for n in &out {
+        let mut base = planned
+            .iter()
+            .find(|p| p.name == *n)
+            .and_then(|p| p.parsed.as_ref().ok())
+            .and_then(|p| p.extends.clone());
+        while let Some(b) = base {
+            if !bases.insert(b.clone()) {
+                break;
+            }
+            base = planned
+                .iter()
+                .find(|p| p.name == b)
+                .and_then(|p| p.parsed.as_ref().ok())
+                .and_then(|p| p.extends.clone());
+        }
+    }
+    out.extend(bases);
+    out
+}
+
+/// Install each plugin of `plan` that `names` holds, as `plan` resolves it, archiving what it
+/// would lose and, from `replaced`, the plugin file it replaces. Returns each name with its
+/// archive, in plan order.
+fn install_set(
+    decree_dir: &Path,
+    plan: &[Planned],
+    names: &BTreeSet<String>,
+    replaced: &BTreeMap<String, Vec<u8>>,
+    cron: bool,
+) -> Result<Vec<(String, Option<String>)>, DecreeError> {
+    let mut out = Vec::new();
+    for p in plan.iter().filter(|p| names.contains(&p.name)) {
+        let Some(target) = &p.target else { continue };
+        let archived = plugin::install_archiving(
+            decree_dir,
+            target,
+            &p.text,
+            replaced.get(&p.name).map(Vec::as_slice),
+            cron,
+        )?;
+        out.push((p.name.clone(), archived));
+    }
+    Ok(out)
+}
+
+/// Draw the machines installed, so their graphs stay current. The plugins are installed
+/// either way: a project whose own machines do not load yet is told, not refused.
+fn redraw(decree_dir: &Path) {
+    let Some(project_root) = decree_dir.parent() else {
+        return;
+    };
+    if let Err(e) = crate::commands::graph::write(project_root) {
+        eprintln!("warning: graphs not redrawn ({e}); run `decree check`, then `decree graph`");
+    }
+}
+
+/// `decree install <file|->`: check the plugin, copy it to `plugins/<name>.md` and install
+/// it, seeding each official plugin it extends or needs that `plugins/` lacks. A plugin file
+/// of that name is replaced, and it and an installed copy that installing would lose are
+/// moved to `archive/` first. Refuses, writing nothing, a plugin that fails the schema (a
+/// `decree_` name decree does not ship is one), an official plugin that is not this decree's
+/// copy (P3), or one that relies on a plugin neither in `plugins/` nor official.
 fn import(
     decree_dir: &Path,
     shown: &str,
@@ -55,7 +276,7 @@ fn import(
 ) -> Result<(), DecreeError> {
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| DecreeError::Other(format!("{shown}: not valid UTF-8")))?;
-    let plugin = Plugin::parse(text, None).map_err(|problems| {
+    let p1 = |problems: Vec<plugin::Problem>| {
         let lines: Vec<String> = problems
             .iter()
             .map(|p| match p.line {
@@ -67,43 +288,20 @@ fn import(
             "{}\nnot a valid plugin; nothing was installed",
             lines.join("\n")
         ))
-    })?;
+    };
+    let plugin = Plugin::parse(text, None).map_err(p1)?;
     let name = plugin.name.clone();
-
-    // Each need not in plugins/ that decree ships is seeded from its official copy, with the
-    // official plugins it needs in turn, as `decree install <name>` does; any other is missing.
-    let mut seed: Vec<String> = Vec::new();
-    let mut missing: Vec<String> = Vec::new();
-    let mut queue: Vec<String> = plugin.needs.clone();
-    while let Some(n) = queue.pop() {
-        if n == name || seed.contains(&n) || decree_dir.join(plugin::plugin_file(&n)).is_file() {
-            continue;
-        }
-        match official::get(&n).map(|o| o.plugin()) {
-            Some(Ok(p)) => {
-                queue.extend(p.needs.iter().cloned());
-                seed.push(n);
-            }
-            _ => {
-                if !missing.contains(&n) {
-                    missing.push(n);
-                }
-            }
+    if let Some(o) = official::get(&name) {
+        if o.text.as_bytes() != bytes.as_slice() {
+            return Err(DecreeError::Other(format!(
+                "{shown}: `{name}` is an official plugin, and this is not this decree's copy of it (P3): {}; nothing was installed",
+                overlay_advice(&name)
+            )));
         }
     }
-    if !missing.is_empty() {
-        missing.sort();
-        let list = missing
-            .iter()
-            .map(|n| format!("`{n}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(DecreeError::Other(format!(
-            "plugin `{name}` needs {list}, not in {DECREE_DIR}/{PLUGINS_DIR}/ and not an official plugin: install {} first; nothing was installed",
-            if missing.len() == 1 { "it" } else { "them" }
-        )));
-    }
-    seed.sort();
+    let present = |n: &str| decree_dir.join(plugin::plugin_file(n)).is_file();
+    let seed = closure(std::slice::from_ref(&plugin), &present)
+        .map_err(|m| DecreeError::Other(missing_message(&m)))?;
 
     let target = decree_dir.join(plugin::plugin_file(&name));
     let old = if target.is_file() {
@@ -112,6 +310,22 @@ fn import(
     } else {
         None
     };
+    let mut writes = vec![(name.clone(), bytes.clone())];
+    for (n, _) in &seed {
+        if let Some(o) = official::get(n) {
+            writes.push((n.clone(), o.text.as_bytes().to_vec()));
+        }
+    }
+    let plan = simulate(decree_dir, &writes)?;
+    let mut names: BTreeSet<String> = writes.iter().map(|(n, _)| n.clone()).collect();
+    let errors = plan_errors(&plan, &names);
+    if !errors.is_empty() {
+        return Err(DecreeError::Other(format!(
+            "{}\nnothing was installed",
+            errors.join("\n")
+        )));
+    }
+    names = affected(&plan, &names);
 
     let changes = old
         .as_ref()
@@ -119,7 +333,7 @@ fn import(
     let summary = summary(&plugin);
     let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(&name));
     if format == Format::Text {
-        println!("plugin `{name}`: {}", plugin.description().trim());
+        println!("plugin `{name}`: {}", described(&plan, &name, &plugin));
         print_summary(&summary);
         if let Some(changes) = &changes {
             println!("replaces {file}:");
@@ -135,36 +349,28 @@ fn import(
             }
         }
     }
-
-    if let Some(dir) = target.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| DecreeError::Other(format!("{}: {e}", dir.display())))?;
+    let mut replaced = BTreeMap::new();
+    if let Some((_, text)) = &old {
+        replaced.insert(name.clone(), text.clone());
     }
-    for n in &seed {
-        let o = official::get(n).ok_or_else(|| {
-            DecreeError::Other(format!("official plugin `{n}` is not built into decree"))
-        })?;
-        let p = o.plugin().map_err(DecreeError::Other)?;
-        let path = decree_dir.join(plugin::plugin_file(n));
-        crate::message::write_replace(&path, o.text.as_bytes())
-            .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
-        plugin::install(decree_dir, &p, o.text.as_bytes())?;
-        if format == Format::Text {
+    let installed = install_set(decree_dir, &plan, &names, &replaced, cron)?;
+    for (n, b) in &writes {
+        write_file(&decree_dir.join(plugin::plugin_file(n)), b)?;
+    }
+    redraw(decree_dir);
+    if format == Format::Text {
+        for (n, by) in &seed {
             println!(
-                "added {DECREE_DIR}/{}, needed by {name}",
-                plugin::plugin_file(n)
+                "added {DECREE_DIR}/{}, needed by {}",
+                plugin::plugin_file(n),
+                by.join(", ")
             );
         }
     }
-    let archived = plugin::install_archiving(
-        decree_dir,
-        &plugin,
-        &bytes,
-        old.as_ref().map(|(_, text)| text.as_slice()),
-        cron,
-    )?;
-    crate::message::write_replace(&target, &bytes)
-        .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
+    let archived = installed
+        .iter()
+        .find(|(n, _)| *n == name)
+        .and_then(|(_, a)| a.clone());
 
     match format {
         Format::Json => {
@@ -172,18 +378,20 @@ fn import(
                 "action": "import",
                 "plugin": name,
                 "file": file,
-                "description": plugin.description(),
+                "description": described(&plan, &name, &plugin),
                 "replaced": changes.is_some(),
                 "changes": changes.unwrap_or_default(),
-                "added": seed,
+                "added": seed.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
                 "archived": archived.as_ref().map(|d| format!("{DECREE_DIR}/{d}")),
             });
             merge(&mut doc, summary);
             print_json(&doc)
         }
         Format::Text => {
-            if let Some(dir) = &archived {
-                println!("{}", archived_line(&name, dir));
+            for (n, dir) in &installed {
+                if let Some(dir) = dir {
+                    println!("{}", archived_line(n, dir));
+                }
             }
             println!("installed {file}");
             Ok(())
@@ -191,12 +399,25 @@ fn import(
     }
 }
 
+/// The one-line description of plugin `name`: its resolved machine's, so a plugin that
+/// extends another without a machine of its own shows its base's.
+fn described(plan: &[Planned], name: &str, plugin: &Plugin) -> String {
+    plan.iter()
+        .find(|p| p.name == name)
+        .and_then(|p| p.target.as_ref())
+        .map_or_else(
+            || plugin.description().trim().to_string(),
+            |t| t.plugin.description().trim().to_string(),
+        )
+}
+
 /// `decree install [<name>...|<file>|-]` (docs/reference/plugins.md, Installing). No argument:
-/// every plugin is installed as its file says (`plugin::sync`); stdin is never read, so a
-/// script or a loop can run it safely. A name is a plugin, installed from `plugins/<name>.md`, or from
-/// decree's official copy when `plugins/` has none or with `take_official`. Anything else is a plugin
-/// file, or `-` for stdin, imported alone. Nothing an install replaces is lost: what it would
-/// lose is moved to `.decree/archive/` first.
+/// every plugin is installed as its file says (`plugin::sync`), every official plugin's file
+/// and installed copy made this decree's first; stdin is never read, so a script or a loop can
+/// run it safely. A name is a plugin, installed from `plugins/<name>.md`, or from decree's
+/// official copy when `plugins/` has none. Anything else is a plugin file, or `-` for stdin,
+/// imported alone. Nothing an install replaces is lost: what it would lose is moved to
+/// `.decree/archive/` first.
 ///
 /// An install that succeeds, or one with no argument that installed what it could, also
 /// writes `.decree/schema/`, quietly (it is generated, like a graph), so the step after a clone, a pull or an upgrade leaves the
@@ -204,11 +425,10 @@ fn import(
 pub fn install(
     project_root: &Path,
     sources: &[String],
-    take_official: bool,
     cron: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
-    let result = install_plugins(project_root, sources, take_official, cron, format);
+    let result = install_plugins(project_root, sources, cron, format);
     // With no argument, plugins that installed stay installed when another fails its schema,
     // so the schemas are written then too; a refused install by name or file writes nothing.
     if result.is_ok() || sources.is_empty() {
@@ -224,7 +444,6 @@ pub fn install(
 fn install_plugins(
     project_root: &Path,
     sources: &[String],
-    take_official: bool,
     cron: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
@@ -237,20 +456,10 @@ fn install_plugins(
         Ok(bytes)
     };
     if sources.is_empty() {
-        let official = if take_official {
-            Some(take_official_files(&decree_dir, format)?)
-        } else {
-            None
-        };
-        return install_all(&decree_dir, cron, official, format);
+        return install_all(&decree_dir, cron, format);
     }
     if sources.iter().all(|s| crate::machine::is_ident(s)) {
-        return install_named(project_root, sources, take_official, cron, format);
-    }
-    if take_official {
-        return Err(DecreeError::Other(
-            "--official takes this decree's copy of official plugins, by name or, with no argument, all of them; not a plugin file".into(),
-        ));
+        return install_named(project_root, sources, cron, format);
     }
     let [source] = sources else {
         return Err(DecreeError::Other(
@@ -267,84 +476,80 @@ fn install_plugins(
     import(&decree_dir, &shown, bytes, cron, format)
 }
 
-/// `decree install --official` with no argument: make the file of each official plugin
-/// already in `plugins/` this decree's copy, archiving each file it replaces, before
-/// `install_all` installs them. It adds no plugin: an official one that a new copy `needs`
-/// and `plugins/` lacks is P2, which `decree install <name>` settles. Prints what it
-/// replaced (text); returns it, as `install --format json` gives each plugin.
-fn take_official_files(decree_dir: &Path, format: Format) -> Result<Vec<Json>, DecreeError> {
-    let mut out = Vec::new();
-    for found in plugin::read_all(decree_dir)? {
-        let Some(o) = official::get(&found.name) else {
-            continue;
-        };
-        if found.text == o.text.as_bytes() {
-            continue;
-        }
-        let new = o.plugin().map_err(DecreeError::Other)?;
-        let changes = changes(found.parsed.as_ref().ok(), &new, true);
-        let archived = plugin::archive_file(decree_dir, &found.name, &found.text)?;
-        let target = decree_dir.join(plugin::plugin_file(&found.name));
-        crate::message::write_replace(&target, o.text.as_bytes())
-            .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
-        out.push(json!({
-            "plugin": found.name,
-            "file": format!("{DECREE_DIR}/{}", plugin::plugin_file(&found.name)),
-            "status": "replaced",
-            "needed_by": [],
-            "changes": changes,
-            "archived": format!("{DECREE_DIR}/{archived}"),
-        }));
-    }
-    if format == Format::Text {
-        for e in &out {
-            let file = e["file"].as_str().unwrap_or("");
-            println!("replaced {file} with this decree's copy:");
-            print_line_changes(e["changes"].as_array().map_or(&[][..], Vec::as_slice));
-            let name = e["plugin"].as_str().unwrap_or("");
-            let archived = e["archived"].as_str().unwrap_or("");
-            let rel = archived
-                .strip_prefix(&format!("{DECREE_DIR}/"))
-                .unwrap_or(archived);
-            println!("{}", archived_line(name, rel));
-        }
-        if out.is_empty() {
-            println!("every official plugin in {DECREE_DIR}/{PLUGINS_DIR}/ is this decree's copy");
-        }
-    }
-    Ok(out)
+/// What `decree install` restored of an official plugin, with the lines that change, as the
+/// JSON document gives it.
+fn restored_json(decree_dir: &Path, r: &plugin::Restored) -> Result<Json, DecreeError> {
+    let new = plugin::target(decree_dir, &r.name)?.map(|t| t.plugin);
+    let new = match (r.what, new) {
+        (plugin::RestoredWhat::Copy, Some(new)) => Some(new),
+        _ => official::get(&r.name).and_then(|o| o.plugin().ok()),
+    };
+    let changes = match (r.what, &new) {
+        (plugin::RestoredWhat::File, _) => file_changes(&r.name, &r.old_text),
+        (_, Some(new)) => changes(r.old.as_ref(), new, true),
+        _ => Vec::new(),
+    };
+    Ok(json!({
+        "plugin": r.name,
+        "what": match r.what {
+            plugin::RestoredWhat::File => "file",
+            plugin::RestoredWhat::Copy => "installed copy",
+        },
+        "file": format!("{DECREE_DIR}/{}", plugin::plugin_file(&r.name)),
+        "changes": changes,
+        "archived": format!("{DECREE_DIR}/{}", r.archive),
+    }))
 }
 
 /// `decree install` with no argument: `plugin::sync`, taking the cron files of plugins
-/// already installed only with `cron`. `official` is what `--official` replaced and added
-/// first, which the JSON document includes.
-fn install_all(
-    decree_dir: &Path,
-    cron: bool,
-    official: Option<Vec<Json>>,
-    format: Format,
-) -> Result<(), DecreeError> {
+/// already installed only with `cron`.
+fn install_all(decree_dir: &Path, cron: bool, format: Format) -> Result<(), DecreeError> {
     let synced = plugin::sync(decree_dir, cron)?;
+    let restored: Vec<Json> = synced
+        .restored
+        .iter()
+        .map(|r| restored_json(decree_dir, r))
+        .collect::<Result<_, _>>()?;
     match format {
-        Format::Json => {
-            let mut doc = json!({
-                "action": "sync",
-                "installed": synced.installed,
-                "removed": synced.removed,
-                "archived": synced
-                    .archived
-                    .iter()
-                    .map(|(name, dir)| json!({ "plugin": name, "archive": format!("{DECREE_DIR}/{dir}") }))
-                    .collect::<Vec<_>>(),
-            });
-            if let Some(official) = official {
-                doc["official"] = Json::Array(official);
-            }
-            print_json(&doc)?
-        }
+        Format::Json => print_json(&json!({
+            "action": "sync",
+            "installed": synced.installed,
+            "removed": synced.removed,
+            "archived": synced
+                .archived
+                .iter()
+                .map(|(name, dir)| json!({ "plugin": name, "archive": format!("{DECREE_DIR}/{dir}") }))
+                .collect::<Vec<_>>(),
+            "restored": restored,
+        }))?,
         Format::Text => {
+            for r in &restored {
+                let file = r["file"].as_str().unwrap_or("");
+                if r["what"] == "file" {
+                    println!("replaced {file} with this decree's copy:");
+                } else {
+                    println!(
+                        "restored the installed copy of {file} to this decree's (official plugins are not edited):"
+                    );
+                }
+                print_line_changes(r["changes"].as_array().map_or(&[][..], Vec::as_slice));
+                let name = r["plugin"].as_str().unwrap_or("");
+                let archived = r["archived"].as_str().unwrap_or("");
+                let rel = archived
+                    .strip_prefix(&format!("{DECREE_DIR}/"))
+                    .unwrap_or(archived);
+                println!("{}", archived_line(name, rel));
+            }
+            let restored_copies: BTreeSet<&str> = synced
+                .restored
+                .iter()
+                .filter(|r| r.what == plugin::RestoredWhat::Copy)
+                .map(|r| r.name.as_str())
+                .collect();
             for (name, dir) in &synced.archived {
-                println!("{}", archived_line(name, dir));
+                if !restored_copies.contains(name.as_str()) {
+                    println!("{}", archived_line(name, dir));
+                }
             }
             for name in &synced.removed {
                 println!(
@@ -355,7 +560,11 @@ fn install_all(
             for name in &synced.installed {
                 println!("installed {DECREE_DIR}/{}", plugin::plugin_file(name));
             }
-            if synced.installed.is_empty() && synced.removed.is_empty() && synced.invalid.is_empty()
+            if synced.installed.is_empty()
+                && synced.removed.is_empty()
+                && synced.invalid.is_empty()
+                && synced.missing_needs.is_empty()
+                && synced.missing_bases.is_empty()
             {
                 println!("no plugins in {DECREE_DIR}/{PLUGINS_DIR}/: nothing to install");
             }
@@ -435,7 +644,9 @@ fn merge(doc: &mut Json, extra: Json) {
 /// runs it before it commits. A plugin that fails the schema, or is not installed, is skipped,
 /// and so is a conflict (its file changed since it was installed): exporting would write the
 /// old installed version over the new file, so it is named and left for a person to merge.
-/// With `dry_run`, it names them and writes nothing: `keep` holds the queue on them.
+/// An official plugin is never exported: one whose installed copy was edited is named, with
+/// the plugin to write instead. With `dry_run`, it names them and writes nothing: `keep`
+/// holds the queue on them.
 pub fn export_edited(
     project_root: &Path,
     dry_run: bool,
@@ -444,12 +655,17 @@ pub fn export_edited(
     let decree_dir = project_root.join(DECREE_DIR);
     let mut exported = Vec::new();
     let mut conflicts = Vec::new();
-    for found in plugin::read_all(&decree_dir)? {
-        let Ok(p) = found.parsed else { continue };
-        if !plugin::edited(&decree_dir, &p)? {
+    let mut official_edited = Vec::new();
+    for p in plugin::plan(&decree_dir)? {
+        let Some(target) = &p.target else { continue };
+        if !plugin::edited(&decree_dir, target)? {
             continue;
         }
-        if plugin::conflicted(&decree_dir, &p.name, &found.text)? {
+        if is_official(&p.name) {
+            official_edited.push(p.name);
+            continue;
+        }
+        if plugin::conflicted(&decree_dir, &p.name, &target.record)? {
             conflicts.push(p.name);
             continue;
         }
@@ -464,9 +680,16 @@ pub fn export_edited(
             "action": "export",
             "exported": exported,
             "conflicts": conflicts,
+            "official": official_edited,
             "dry_run": dry_run,
         })),
         Format::Text => {
+            for name in &official_edited {
+                println!(
+                    "not exported: the installed copy of official plugin `{name}` was edited; {}",
+                    overlay_advice(name)
+                );
+            }
             for name in &conflicts {
                 println!(
                     "not exported: {} changed since `{name}` was installed, and its installed copy was edited; merge by hand (`decree export {name}` writes the copy; `decree install {name}` takes the file, moving the copy to {DECREE_DIR}/{ARCHIVE}/{name}/)",
@@ -474,7 +697,7 @@ pub fn export_edited(
                     ARCHIVE = plugin::ARCHIVE_DIR
                 );
             }
-            if exported.is_empty() && conflicts.is_empty() {
+            if exported.is_empty() && conflicts.is_empty() && official_edited.is_empty() {
                 println!("no plugin's installed copy differs from its file: nothing to export");
             }
             let verb = if dry_run { "would write" } else { "wrote" };
@@ -491,27 +714,34 @@ pub fn export_edited(
 fn listing(decree_dir: &Path) -> Result<Json, DecreeError> {
     let status = plugin::status(decree_dir)?;
     let mut plugins = Vec::new();
-    for found in plugin::read_all(decree_dir)? {
-        let o = official::get(&found.name);
-        let differs = o.is_some_and(|o| found.text != o.text.as_bytes());
-        let (description, state) = match &found.parsed {
-            Err(_) => (String::new(), "invalid"),
-            Ok(p) => {
-                let state = if status.archived.iter().any(|(n, _)| *n == p.name) {
+    for p in plugin::plan(decree_dir)? {
+        let official = is_official(&p.name);
+        let differs = status.official_edited.iter().any(|(n, _, _)| *n == p.name);
+        let (description, state, extends) = match &p.parsed {
+            Err(_) => (String::new(), "invalid", None),
+            Ok(parsed) => {
+                let state = if p.target.is_none() {
+                    "missing base"
+                } else if status.archived.iter().any(|(n, _)| *n == p.name) {
                     "edited"
                 } else if status.installed.contains(&p.name) {
                     "not installed"
                 } else {
                     "installed"
                 };
-                (p.description().trim().to_string(), state)
+                let description = p.target.as_ref().map_or_else(
+                    || parsed.description().trim().to_string(),
+                    |t| t.plugin.description().trim().to_string(),
+                );
+                (description, state, parsed.extends.clone())
             }
         };
         plugins.push(json!({
-            "name": found.name,
+            "name": p.name,
             "description": description,
-            "official": o.is_some(),
+            "official": official,
             "differs": differs,
+            "extends": extends,
             "state": state,
         }));
     }
@@ -587,10 +817,11 @@ fn print_available_from(doc: &Json) {
     print_rows(&rows);
 }
 
-/// `decree list`: the plugins in `plugins/`, each marked `official` when decree ships one of
-/// that name (and `differs` when the file is not decree's copy) or `own`, and with its install
-/// state when it is not `installed`; the machines no plugin installed; then the official
-/// plugins the project does not have.
+/// `decree list`: the plugins in `plugins/`, each marked `official` when its name has the
+/// `decree_` prefix (and `differs` when its file or installed copy is not this decree's) or
+/// `own`, `extends <base>` for one that extends another, and its install state when it is
+/// not `installed`; the machines no plugin installed; then the official plugins the project
+/// does not have.
 pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
     let decree_dir = project_root.join(DECREE_DIR);
     let doc = listing(&decree_dir)?;
@@ -608,6 +839,9 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
                 "own"
             }
             .to_string()];
+            if let Some(base) = p["extends"].as_str() {
+                marks.push(format!("extends {base}"));
+            }
             if p["differs"] == true {
                 marks.push("differs".into());
             }
@@ -656,13 +890,18 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
         .collect();
     let mut notes = Vec::new();
     if marks.contains(&"differs") {
-        notes.push("`differs`: not this decree's copy; `decree install --official <name>` takes it, printing the edits it replaces and archiving the old file.");
+        notes.push("`differs`: an official plugin whose file or installed copy is not this decree's; `decree install` restores it, archiving the change. Official plugins are never edited: a plugin of your own that extends one holds your changes.");
     }
     if marks.contains(&"not installed") {
         notes.push("`not installed`: new or changed since it was installed; run `decree install`.");
     }
     if marks.contains(&"edited") {
-        notes.push("`edited`: the installed copy was edited in place or written by hand; `decree export <name>` keeps the edit, `decree install` archives it as a plugin file in .decree/archive/.");
+        notes.push("`edited`: the installed copy was edited in place or written by hand; `decree export <name>` keeps the edit (an official plugin's goes in a plugin of your own that extends it), `decree install` archives it as a plugin file in .decree/archive/.");
+    }
+    if marks.contains(&"missing base") {
+        notes.push(
+            "`missing base`: it extends a plugin not in .decree/plugins/; `decree check` names it.",
+        );
     }
     if marks.contains(&"invalid") {
         notes.push("`invalid`: fails the plugin schema; `decree check` names the problem.");
@@ -676,33 +915,17 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
     Ok(())
 }
 
-/// What `decree install <name>` did with one plugin.
-struct Installed {
-    name: String,
-    /// `installed` (from its file in `plugins/`), `added` (seeded from the official copy),
-    /// `needed` (seeded because a plugin needs it) or `replaced` (--official: the file replaced
-    /// with the official copy).
-    status: &'static str,
-    /// For `needed`: the plugins that need it.
-    needed_by: Vec<String>,
-    plugin: Plugin,
-    text: Vec<u8>,
-    /// For `replaced`: each file added, changed or removed, with the lines it drops and adds.
-    changes: Vec<Json>,
-    /// The folder under `.decree/` the install moved what it replaced to, if any.
-    archived: Option<String>,
-}
-
 /// `decree install <name>...`: install each named plugin from `plugins/<name>.md`, moving an
-/// installed copy edited in place, or a machine no plugin installed, to `archive/` first. A name `plugins/` lacks is seeded from the official plugin of
-/// that name, and so is each official plugin a seeded or installed one needs that `plugins/`
-/// lacks; `take_official` replaces a file in `plugins/` with the official copy, printing what changes
-/// and moving the old file to `archive/`. A name that is neither, or a plugin file that fails the schema, fails before anything is
-/// written.
+/// installed copy edited in place, or a machine no plugin installed, to `archive/` first. A
+/// name `plugins/` lacks is seeded from the official plugin of that name (only a `decree_`
+/// name is one), and so is each official plugin a seeded or installed one extends or needs
+/// that `plugins/` lacks. An official plugin's file that is not this decree's copy is replaced
+/// with it, printing what changes and moving the old file to `archive/`. Each plugin that
+/// extends one installed is installed again on it. A name that is neither, or a plugin file
+/// that fails, fails before anything is written.
 fn install_named(
     project_root: &Path,
     names: &[String],
-    take_official: bool,
     cron: bool,
     format: Format,
 ) -> Result<(), DecreeError> {
@@ -724,84 +947,44 @@ fn install_named(
         )));
     }
 
-    if take_official {
-        let own: Vec<String> = names
-            .iter()
-            .filter(|n| official::get(n).is_none())
-            .map(|n| format!("`{n}`"))
-            .collect();
-        if !own.is_empty() {
-            return Err(DecreeError::Other(format!(
-                "--official: {} not an official plugin, so this decree has no copy to take; nothing was installed. The official plugins are: {}",
-                if own.len() == 1 { format!("{} is", own[0]) } else { format!("{} are", own.join(", ")) },
-                official::names().join(", ")
-            )));
-        }
-    }
-
-    // The named plugins first, then each need not yet in plugins/, breadth first.
-    let mut plan: Vec<Installed> = Vec::new();
+    // (name, status, needed_by): `installed` from its file, `added` from the official copy,
+    // `replaced` (an official file that was not this decree's copy), `needed`.
+    let mut plan_rows: Vec<(String, &'static str, Vec<String>)> = Vec::new();
+    let mut roots = Vec::new();
+    let mut writes: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut replaced: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut problems = Vec::new();
-    let mut queue: Vec<(String, Option<String>)> =
-        names.iter().map(|n| (n.clone(), None)).collect();
-    let mut i = 0;
-    while i < queue.len() {
-        let (name, needed_by) = queue[i].clone();
-        i += 1;
-        if let Some(existing) = plan.iter_mut().find(|a| a.name == name) {
-            if let Some(by) = needed_by {
-                if existing.status == "needed" && !existing.needed_by.contains(&by) {
-                    existing.needed_by.push(by);
-                }
-            }
+    for name in names {
+        if plan_rows.iter().any(|(n, _, _)| n == name) {
             continue;
         }
-        let o = official::get(&name);
-        let status = match (needed_by.is_some(), present(&name), take_official) {
-            // A need already in plugins/ is the project's: left as it is, without a word.
-            (true, true, _) => continue,
-            (true, false, _) => "needed",
-            (false, true, false) => "installed",
-            (false, true, true) => "replaced",
-            (false, false, _) => "added",
-        };
-        let (plugin, text) = if status == "installed" {
-            let found = plugin::read_one(&decree_dir, &name)?;
-            match found.parsed {
-                Ok(p) => (p, found.text),
-                Err(ps) => {
-                    let file = plugin::plugin_file(&name);
+        let o = official::get(name);
+        if present(name) {
+            let found = plugin::read_one(&decree_dir, name)?;
+            match (o, found.parsed) {
+                (Some(o), _) if found.text != o.text.as_bytes() => {
+                    replaced.insert(name.clone(), found.text);
+                    writes.push((name.clone(), o.text.as_bytes().to_vec()));
+                    roots.push(o.plugin().map_err(DecreeError::Other)?);
+                    plan_rows.push((name.clone(), "replaced", Vec::new()));
+                }
+                (_, Ok(p)) => {
+                    roots.push(p);
+                    plan_rows.push((name.clone(), "installed", Vec::new()));
+                }
+                (_, Err(ps)) => {
+                    let file = plugin::plugin_file(name);
                     problems.extend(ps.into_iter().map(|p| match p.line {
                         Some(line) => format!("{file}: line {line}: {} (P1)", p.message),
                         None => format!("{file}: {} (P1)", p.message),
                     }));
-                    continue;
                 }
             }
-        } else {
-            let Some(o) = o else {
-                return Err(DecreeError::Other(format!(
-                    "plugin `{}` needs `{name}`, which is not in {DECREE_DIR}/{PLUGINS_DIR}/ and not an official plugin: install it first (`decree install <file>`); nothing was installed",
-                    needed_by.unwrap_or_default()
-                )));
-            };
-            (
-                o.plugin().map_err(DecreeError::Other)?,
-                o.text.as_bytes().to_vec(),
-            )
-        };
-        for need in &plugin.needs {
-            queue.push((need.clone(), Some(name.clone())));
+        } else if let Some(o) = o {
+            writes.push((name.clone(), o.text.as_bytes().to_vec()));
+            roots.push(o.plugin().map_err(DecreeError::Other)?);
+            plan_rows.push((name.clone(), "added", Vec::new()));
         }
-        plan.push(Installed {
-            name,
-            status,
-            needed_by: needed_by.into_iter().collect(),
-            plugin,
-            text,
-            changes: Vec::new(),
-            archived: None,
-        });
     }
     if !problems.is_empty() {
         return Err(DecreeError::Other(format!(
@@ -809,70 +992,393 @@ fn install_named(
             problems.join("\n")
         )));
     }
-
-    for a in plan.iter_mut() {
-        let mut replaced = None;
-        if a.status == "replaced" {
-            let old = plugin::read_one(&decree_dir, &a.name)?;
-            a.changes = changes(old.parsed.as_ref().ok(), &a.plugin, true);
-            replaced = Some(old.text);
+    let seed = closure(&roots, &present).map_err(|m| DecreeError::Other(missing_message(&m)))?;
+    for (n, by) in seed {
+        if let Some(o) = official::get(&n) {
+            writes.push((n.clone(), o.text.as_bytes().to_vec()));
         }
-        a.archived =
-            plugin::install_archiving(&decree_dir, &a.plugin, &a.text, replaced.as_deref(), cron)?;
-        if a.status != "installed" {
-            let target = decree_dir.join(plugin::plugin_file(&a.name));
-            if let Some(dir) = target.parent() {
-                std::fs::create_dir_all(dir)
-                    .map_err(|e| DecreeError::Other(format!("{}: {e}", dir.display())))?;
-            }
-            crate::message::write_replace(&target, &a.text)
-                .map_err(|(path, e)| DecreeError::Other(format!("{}: {e}", path.display())))?;
-        }
+        plan_rows.push((n, "needed", by));
     }
-    // Draw the machines installed, so their graphs stay current. The plugins are installed
-    // either way: a project whose own machines do not load yet is told, not refused.
-    if let Err(e) = crate::commands::graph::write(project_root) {
-        eprintln!("warning: graphs not redrawn ({e}); run `decree check`, then `decree graph`");
+    let plan = simulate(&decree_dir, &writes)?;
+    let wanted: BTreeSet<String> = plan_rows.iter().map(|(n, _, _)| n.clone()).collect();
+    let errors = plan_errors(&plan, &wanted);
+    if !errors.is_empty() {
+        return Err(DecreeError::Other(format!(
+            "{}\nnothing was installed",
+            errors.join("\n")
+        )));
     }
+    let set = affected(&plan, &wanted);
+    let installed = install_set(&decree_dir, &plan, &set, &replaced, cron)?;
+    for (n, b) in &writes {
+        write_file(&decree_dir.join(plugin::plugin_file(n)), b)?;
+    }
+    redraw(&decree_dir);
 
+    let archive_of = |n: &str| -> Option<String> {
+        installed
+            .iter()
+            .find(|(m, _)| m == n)
+            .and_then(|(_, a)| a.clone())
+    };
+    let change_rows: BTreeMap<String, Vec<Json>> = plan_rows
+        .iter()
+        .filter(|(_, status, _)| *status == "replaced")
+        .map(|(n, _, _)| (n.clone(), file_changes(n, &replaced[n])))
+        .collect();
+    let also: Vec<&String> = installed
+        .iter()
+        .map(|(n, _)| n)
+        .filter(|n| !wanted.contains(*n))
+        .collect();
     match format {
         Format::Json => {
-            let plugins: Vec<Json> = plan
+            let mut plugins: Vec<Json> = plan_rows
                 .iter()
-                .map(|a| {
+                .map(|(n, status, by)| {
                     json!({
-                        "plugin": a.name,
-                        "file": format!("{DECREE_DIR}/{}", plugin::plugin_file(&a.name)),
-                        "status": a.status,
-                        "needed_by": a.needed_by,
-                        "changes": a.changes,
-                        "archived": a.archived.as_ref().map(|d| format!("{DECREE_DIR}/{d}")),
+                        "plugin": n,
+                        "file": format!("{DECREE_DIR}/{}", plugin::plugin_file(n)),
+                        "status": status,
+                        "needed_by": by,
+                        "changes": change_rows.get(n).cloned().unwrap_or_default(),
+                        "archived": archive_of(n).map(|d| format!("{DECREE_DIR}/{d}")),
                     })
                 })
                 .collect();
+            for n in &also {
+                plugins.push(json!({
+                    "plugin": n,
+                    "file": format!("{DECREE_DIR}/{}", plugin::plugin_file(n)),
+                    "status": "reinstalled",
+                    "needed_by": [],
+                    "changes": [],
+                    "archived": archive_of(n).map(|d| format!("{DECREE_DIR}/{d}")),
+                }));
+            }
             print_json(&json!({ "action": "install", "plugins": plugins }))
         }
         Format::Text => {
-            for a in &plan {
-                let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(&a.name));
-                match a.status {
+            for (n, status, by) in &plan_rows {
+                let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(n));
+                match *status {
                     "added" => println!("added {file}"),
-                    "needed" => println!("added {file}, needed by {}", a.needed_by.join(", ")),
+                    "needed" => println!("added {file}, needed by {}", by.join(", ")),
                     "replaced" => {
                         println!("replaced {file} with this decree's copy:");
-                        print_line_changes(&a.changes);
+                        print_line_changes(&change_rows[n]);
                     }
                     _ => {}
                 }
-                if let Some(dir) = &a.archived {
-                    println!("{}", archived_line(&a.name, dir));
+                if let Some(dir) = archive_of(n) {
+                    println!("{}", archived_line(n, &dir));
                 }
             }
-            let names: Vec<&str> = plan.iter().map(|a| a.name.as_str()).collect();
+            for n in &also {
+                if let Some(dir) = archive_of(n) {
+                    println!("{}", archived_line(n, &dir));
+                }
+            }
+            let names: Vec<&str> = installed.iter().map(|(n, _)| n.as_str()).collect();
             println!("installed {}", names.join(", "));
             Ok(())
         }
     }
+}
+
+/// The program `decree install --update` fetches with: `DECREE_CURL`, else the system `curl`.
+const CURL_VAR: &str = "DECREE_CURL";
+
+/// What `--write-out` prints to stderr after a fetch: the URL the body came from, after
+/// any redirect.
+const EFFECTIVE_URL: &str = "decree-effective-url: ";
+
+/// Fetch `url` with curl: HTTPS only, redirects only to HTTPS (and, checked after, only on
+/// the same host), with a timeout. Returns the body, or curl's error.
+fn fetch(url: &str) -> Result<Vec<u8>, String> {
+    let program = std::env::var_os(CURL_VAR)
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "curl".into());
+    let out = std::process::Command::new(&program)
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--max-redirs",
+            "5",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            "60",
+            "--write-out",
+            &format!("%{{stderr}}{EFFECTIVE_URL}%{{url_effective}}\n"),
+            "--",
+            url,
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", program.to_string_lossy()))?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let effective = stderr
+        .lines()
+        .rev()
+        .find_map(|l| l.strip_prefix(EFFECTIVE_URL))
+        .map(str::trim)
+        .filter(|u| !u.is_empty());
+    let error: Vec<&str> = stderr
+        .lines()
+        .filter(|l| !l.starts_with(EFFECTIVE_URL) && !l.trim().is_empty())
+        .collect();
+    if !out.status.success() {
+        return Err(if error.is_empty() {
+            format!("curl exited with {}", out.status)
+        } else {
+            error.join("; ")
+        });
+    }
+    if let Some(effective) = effective {
+        if !plugin::is_https_url(effective) || host(effective) != host(url) {
+            return Err(format!(
+                "redirected to {effective}: a plugin is fetched only from HTTPS on its source's host"
+            ));
+        }
+    }
+    Ok(out.stdout)
+}
+
+/// The host of an `https://` URL.
+fn host(url: &str) -> &str {
+    let rest = url.strip_prefix("https://").unwrap_or(url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    authority.rsplit('@').next().unwrap_or(authority)
+}
+
+/// Every line of `a` and `b`, in order: `  ` common, `- ` only in `a`, `+ ` only in `b`.
+fn diff_full(a: &str, b: &str) -> Vec<String> {
+    let a: Vec<&str> = a.lines().collect();
+    let b: Vec<&str> = b.lines().collect();
+    let (n, m) = (a.len(), b.len());
+    let mut lcs = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if a[i] == b[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < n || j < m {
+        if i < n && j < m && a[i] == b[j] {
+            out.push(format!("  {}", a[i]));
+            i += 1;
+            j += 1;
+        } else if i < n && (j == m || lcs[i + 1][j] >= lcs[i][j + 1]) {
+            out.push(format!("- {}", a[i]));
+            i += 1;
+        } else {
+            out.push(format!("+ {}", b[j]));
+            j += 1;
+        }
+    }
+    out
+}
+
+/// `decree install --update [<name>...]` (docs/reference/plugins.md, `source`): fetch each
+/// named plugin, or with no name each in `plugins/` with a `source`, from its source; refuse
+/// one that fails the schema or whose `name` or `source` is not the file's; print the whole
+/// diff against the committed file and ask before writing it. Only `y` on a terminal takes
+/// it: the old file is archived, the new one written and installed, with every plugin that
+/// extends it. Without a terminal it writes nothing. Exit 1 if a fetch failed or an update
+/// was refused.
+pub fn update(project_root: &Path, names: &[String], format: Format) -> Result<(), DecreeError> {
+    let decree_dir = project_root.join(DECREE_DIR);
+    let found = plugin::read_all(&decree_dir)?;
+    let sourced = |f: &plugin::Found| -> Option<String> {
+        f.parsed.as_ref().ok().and_then(|p| p.source.clone())
+    };
+    let mut todo: Vec<(String, String, Vec<u8>)> = Vec::new();
+    if names.is_empty() {
+        for f in &found {
+            if let Some(url) = sourced(f) {
+                todo.push((f.name.clone(), url, f.text.clone()));
+            }
+        }
+    } else {
+        let mut bad = Vec::new();
+        for n in names {
+            match found.iter().find(|f| f.name == *n) {
+                Some(f) => match sourced(f) {
+                    Some(url) => todo.push((n.clone(), url, f.text.clone())),
+                    None => bad.push(format!(
+                        "{DECREE_DIR}/{} has no `source`: nothing updates it",
+                        plugin::plugin_file(n)
+                    )),
+                },
+                None => bad.push(format!("no plugin `{n}` in {DECREE_DIR}/{PLUGINS_DIR}/")),
+            }
+        }
+        if !bad.is_empty() {
+            return Err(DecreeError::Other(format!(
+                "{}; nothing was updated",
+                bad.join("; ")
+            )));
+        }
+    }
+    let terminal = std::io::stdin().is_terminal();
+    let mut results = Vec::new();
+    let mut failed = 0;
+    for (name, url, old) in todo {
+        let file = format!("{DECREE_DIR}/{}", plugin::plugin_file(&name));
+        let mut result = json!({ "plugin": name, "file": file, "source": url });
+        let refuse = |why: String| -> Json { json!(why) };
+        let fetched = match fetch(&url) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                failed += 1;
+                result["status"] = "failed".into();
+                result["error"] = refuse(format!("fetching {url}: {e}"));
+                if format == Format::Text {
+                    eprintln!("{file}: fetching {url} failed: {e}; left as it is");
+                }
+                results.push(result);
+                continue;
+            }
+        };
+        let problem = match std::str::from_utf8(&fetched) {
+            Err(_) => Some("it is not valid UTF-8".to_string()),
+            Ok(text) => match Plugin::parse(text, None) {
+                Err(ps) => Some(format!(
+                    "it fails the plugin schema: {}",
+                    ps.iter()
+                        .map(|p| match p.line {
+                            Some(l) => format!("line {l}: {}", p.message),
+                            None => p.message.clone(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )),
+                Ok(p) if p.name != name => {
+                    Some(format!("its `name` is `{}`, not `{name}`", p.name))
+                }
+                Ok(p) if p.source.as_deref() != Some(url.as_str()) => Some(format!(
+                    "its `source` is {}, not `{url}`",
+                    p.source
+                        .as_deref()
+                        .map_or_else(|| "missing".to_string(), |s| format!("`{s}`"))
+                )),
+                Ok(_) => None,
+            },
+        };
+        if let Some(problem) = problem {
+            failed += 1;
+            result["status"] = "refused".into();
+            result["error"] = refuse(problem.clone());
+            if format == Format::Text {
+                eprintln!("{file}: refused the copy at {url}: {problem}; nothing was written");
+            }
+            results.push(result);
+            continue;
+        }
+        if fetched == old {
+            result["status"] = "up to date".into();
+            if format == Format::Text {
+                println!("{file}: up to date");
+            }
+            results.push(result);
+            continue;
+        }
+        let diff = diff_full(
+            &String::from_utf8_lossy(&old),
+            &String::from_utf8_lossy(&fetched),
+        );
+        // The diff is always shown on the terminal a person answers on.
+        println!("--- {file}");
+        println!("+++ {url}");
+        for line in &diff {
+            println!("{line}");
+        }
+        if !terminal {
+            result["status"] = "not updated".into();
+            println!("not updated: run decree install --update {name} in a terminal to review it");
+            results.push(result);
+            continue;
+        }
+        print!("Take this update to {file}? [y/N] ");
+        std::io::stdout()
+            .flush()
+            .map_err(|e| DecreeError::Other(format!("stdout: {e}")))?;
+        let mut answer = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut answer)
+            .map_err(|e| DecreeError::Other(format!("cannot read stdin: {e}")))?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes" | "Yes") {
+            result["status"] = "not updated".into();
+            println!("not updated: {file} is unchanged");
+            results.push(result);
+            continue;
+        }
+        let writes = vec![(name.clone(), fetched.clone())];
+        let plan = simulate(&decree_dir, &writes)?;
+        let one: BTreeSet<String> = [name.clone()].into();
+        let errors = plan_errors(&plan, &one);
+        if !errors.is_empty() {
+            failed += 1;
+            result["status"] = "refused".into();
+            result["error"] = refuse(errors.join("; "));
+            eprintln!("{}; nothing was written", errors.join("\n"));
+            results.push(result);
+            continue;
+        }
+        let set = affected(&plan, &one);
+        let mut replaced = BTreeMap::new();
+        replaced.insert(name.clone(), old.clone());
+        let installed = install_set(&decree_dir, &plan, &set, &replaced, false)?;
+        write_file(&decree_dir.join(plugin::plugin_file(&name)), &fetched)?;
+        redraw(&decree_dir);
+        for (n, dir) in &installed {
+            if let Some(dir) = dir {
+                println!("{}", archived_line(n, dir));
+            }
+        }
+        let names: Vec<&str> = installed.iter().map(|(n, _)| n.as_str()).collect();
+        println!("updated {file}; installed {}", names.join(", "));
+        result["status"] = "updated".into();
+        results.push(result);
+    }
+    if format == Format::Json {
+        print_json(&json!({ "action": "update", "plugins": results }))?;
+    } else if results.is_empty() {
+        println!("no plugin in {DECREE_DIR}/{PLUGINS_DIR}/ has a `source`: nothing to update");
+    }
+    if failed > 0 {
+        return Err(DecreeError::Other(format!(
+            "{failed} plugin(s) not updated: a fetch failed or the copy was refused; see above"
+        )));
+    }
+    Ok(())
+}
+
+/// What replacing official plugin `name`'s file, `old`, with this decree's copy changes: the
+/// file, with the lines it drops and adds (its body and frontmatter alike).
+fn file_changes(name: &str, old: &[u8]) -> Vec<Json> {
+    let new = official::get(name).map_or("", |o| o.text);
+    let old = String::from_utf8_lossy(old);
+    if old == new {
+        return Vec::new();
+    }
+    vec![json!({
+        "path": format!("{DECREE_DIR}/{}", plugin::plugin_file(name)),
+        "change": "changed",
+        "lines": diff_lines(&old, new),
+    })]
 }
 
 /// What replacing `old` with `new` changes, file by file in path order: each file added,
@@ -907,13 +1413,17 @@ fn changes(old: Option<&Plugin>, new: &Plugin, lines: bool) -> Vec<Json> {
         }
         out.push(entry);
     }
-    let old_needs = old.map(|o| o.needs.clone()).unwrap_or_default();
-    if old_needs != new.needs {
+    let mut old_needs = old.map(|o| o.needs.clone()).unwrap_or_default();
+    let mut new_needs = new.needs.clone();
+    old_needs.sort();
+    new_needs.sort();
+    // Only a need added or dropped is a change; their order is not.
+    if old_needs != new_needs {
         let mut entry = json!({ "path": "needs", "change": "changed" });
         if lines {
             entry["lines"] = json!([
                 format!("- {}", old_needs.join(", ")),
-                format!("+ {}", new.needs.join(", "))
+                format!("+ {}", new_needs.join(", "))
             ]);
         }
         out.push(entry);
@@ -994,7 +1504,7 @@ mod tests {
 
     #[test]
     fn changes_with_lines_shows_a_dropped_edit_and_needs() {
-        let text = official::get("develop").unwrap().text;
+        let text = official::get("decree_develop").unwrap().text;
         let new = Plugin::parse(text, None).unwrap();
         let mut old = new.clone();
         old.scripts
@@ -1004,7 +1514,7 @@ mod tests {
         assert_eq!(changes.len(), 2, "{changes:?}");
         assert_eq!(
             changes[0]["path"],
-            ".decree/machines/develop/scripts/gate.sh"
+            ".decree/machines/decree_develop/scripts/gate.sh"
         );
         assert_eq!(changes[0]["change"], "changed");
         let lines = changes[0]["lines"].as_array().unwrap();
@@ -1019,11 +1529,12 @@ mod tests {
         let decree_dir = root.join(DECREE_DIR);
         let plugins = decree_dir.join(plugin::PLUGINS_DIR);
         std::fs::create_dir_all(&plugins).unwrap();
-        let text = official::get("develop").unwrap().text;
-        let file = plugins.join("develop.md");
+        // A plugin of the project's own: an official one is never exported.
+        let text = "---\nname: mine\nmachine:\n  description: Mine.\n  initial: gate\n  states:\n    gate:\n      invoke: gate\n      transitions:\n        done: done\n    done:\n      final: true\nscripts:\n  gate.sh: |\n    #!/usr/bin/env bash\n    true\n---\n# mine\n";
+        let file = plugins.join("mine.md");
         std::fs::write(&file, text).unwrap();
         plugin::sync(&decree_dir, false).unwrap();
-        let gate = decree_dir.join("machines/develop/scripts/gate.sh");
+        let gate = decree_dir.join("machines/mine/scripts/gate.sh");
         std::fs::write(&gate, "#!/usr/bin/env bash\ncargo test\n").unwrap();
         // A pull changes the plugin file under the edit.
         let pulled = format!("{text}\nA teammate's note.\n");
@@ -1040,5 +1551,36 @@ mod tests {
         assert!(std::fs::read_to_string(&file)
             .unwrap()
             .contains("cargo test"));
+    }
+
+    #[test]
+    fn export_edited_names_an_edited_official_plugin_and_writes_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let decree_dir = root.join(DECREE_DIR);
+        let plugins = decree_dir.join(plugin::PLUGINS_DIR);
+        std::fs::create_dir_all(&plugins).unwrap();
+        let text = official::get("decree_prune").unwrap().text;
+        std::fs::write(plugins.join("decree_prune.md"), text).unwrap();
+        plugin::sync(&decree_dir, false).unwrap();
+        let script = decree_dir.join("machines/decree_prune/scripts/prune.sh");
+        assert!(script.is_file());
+        std::fs::write(&script, "#!/usr/bin/env bash\necho edited\n").unwrap();
+        export_edited(root, false, Format::Json).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(plugins.join("decree_prune.md")).unwrap(),
+            official::get("decree_prune").unwrap().text
+        );
+        assert!(export(root, "decree_prune", Format::Json)
+            .unwrap_err()
+            .to_string()
+            .contains("extends: decree_prune"));
+    }
+
+    #[test]
+    fn host_and_full_diff() {
+        assert_eq!(host("https://example.com/x.md"), "example.com");
+        assert_eq!(host("https://u@h.io:8443/a?b"), "h.io:8443");
+        assert_eq!(diff_full("a\nb\n", "a\nc\n"), ["  a", "- b", "+ c"]);
     }
 }

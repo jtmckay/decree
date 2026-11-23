@@ -70,8 +70,10 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         install.clone(),
         format!("{install} -s -- <tag>"),
         "cargo install --git https://github.com/jtmckay/decree --tag <tag> --force".into(),
-        "decree install  (always: it writes this version's .decree/schema/ and installs \
-         every plugin as its file says)"
+        "decree install  (always: it writes this version's .decree/schema/, takes this \
+         version's copy of every official plugin you have (adding none; it prints what changes \
+         and archives the old files), and installs every plugin as its file says, each that \
+         extends one on its new base)"
             .into(),
     ] {
         assert!(
@@ -80,8 +82,8 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         );
     }
     assert!(stdout.contains("`which -a decree`"), "{stdout}");
-    // AC (A10): the after-steps say `list` shows which plugins the new version changed,
-    // and `decree install --official [<name>...]` takes the new copies.
+    // AC (A10, A14): the after-steps say `list` shows which plugins the new version changed,
+    // and `decree install` takes the new copies of the official plugins.
     assert!(
         lines.iter().any(|l| l.starts_with("decree list")
             && l.contains("`differs`")
@@ -89,12 +91,11 @@ fn prints_how_to_upgrade_in_an_empty_directory() {
         "{stdout}"
     );
     assert!(
-        lines
-            .iter()
-            .any(|l| l.starts_with("decree install --official [<name>...]")
-                && l.contains("new version's copies")),
+        lines.iter().any(|l| l.starts_with("decree install")
+            && l.contains("this version's copy of every official plugin")),
         "{stdout}"
     );
+    assert!(!stdout.contains("--official"), "{stdout}");
     assert!(stdout.contains("`cargo uninstall decree`"), "{stdout}");
     assert!(
         lines
@@ -149,14 +150,7 @@ fn json_output_matches_its_schema() {
             .iter()
             .map(|a| a["command"].as_str().unwrap())
             .collect();
-        assert_eq!(
-            after,
-            [
-                "decree install",
-                "decree list",
-                "decree install --official [<name>...]"
-            ]
-        );
+        assert_eq!(after, ["decree install", "decree list"]);
     }
 }
 

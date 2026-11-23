@@ -6,8 +6,10 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 
 ### Added
 
-- `cli/plugin.schema.json`: `sync`'s `official`, with `--official`: each official plugin whose file was replaced by this decree's copy, with its changes and archived file.
-- `cli/plugin.schema.json`: `archived`, the plugin file (or, for a copy that cannot be one, the folder) an install archived what it replaced as: `sync` lists `{ "plugin", "archive" }` in place of `conflicts`; `install` gives each plugin's folder or `null` in place of `dropped_edits_in_place`; `import` gives its folder or `null`. `list`'s `state` loses `conflict`. `cli/check.schema.json`: the rule `P3` is gone.
+- `plugin.schema.json`: `extends` (the plugin this one is installed on top of), `source` (the https URL it is published at), a `needs` entry may be a one-key map `{<need>: <plugin>}`, and a `scripts`, `cron`, `state` or `order` path may be `null` in a plugin that extends another. A `name` starting with `decree_` is an official plugin's.
+- `cli/plugin.schema.json`: `sync`'s `restored`: each official plugin whose file or installed copy was not this decree's, archived and replaced with it, with its changes. `list`'s plugins give `extends`, and `state` may be `missing base`. `install`'s status may be `reinstalled`. `export` with no name gives `official`, the official plugins whose installed copy was edited, never exported. The `update` action, what `decree install --update --format json` prints.
+- `cli/check.schema.json`: the rule `P3`, an official plugin that is not this decree's copy.
+- `cli/plugin.schema.json`: `archived`, the plugin file (or, for a copy that cannot be one, the folder) an install archived what it replaced as: `sync` lists `{ "plugin", "archive" }` in place of `conflicts`; `install` gives each plugin's folder or `null` in place of `dropped_edits_in_place`; `import` gives its folder or `null`. `list`'s `state` loses `conflict`.
 - `cli/status.schema.json`: `queued.held`, the inbox files a hold keeps queued, and a run's `held: true` for a `waiting` or `pending` run of a held machine.
 - `cli/cancel.schema.json`: what `decree cancel --format json` prints, `{ "cancelled": [id] }`. `events.schema.json`: the `cancel` source of a `transition` (with its `note`), and `run_finished`'s `cancelled`. `cli/status.schema.json`: cancelled runs are under `finished.cancelled`.
 - `cli/retry.schema.json`: what `decree retry --format json` prints, `{ "id", "state" }`.
@@ -20,7 +22,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 - `message.schema.json`: a message other than a reply may leave out `machine`, as a cron file or order file does; `decree check` (M2) still requires it in `inbox/`.
 - `plugin.schema.json`: the frontmatter of a plugin, `.decree/plugins/<name>.md`: `name`, `machine` (without `name`; optional), `scripts` and `cron` (plain relative paths to their text), `state` and `order` (seeds, written once), `needs` and any `x-` key ([plugins.md](../../docs/reference/plugins.md)).
 - `cli/plugin.schema.json`: what `decree install`, `decree list` and `decree export --format json` print, one shape per `action`; `export` with no name prints the plugins it exported and `conflicts`, the edited plugins it left to merge by hand; `sync` prints `installed`, `removed` and `archived`; `import` prints `added`, the official plugins it seeded.
-- `cli/check.schema.json`: `rule` may be `P1`, `P2` or `P3`, the plugin checks.
+- `cli/check.schema.json`: `rule` may be `P1` or `P2`, the plugin checks.
 - `machine.schema.json`: a `reply` invoke's `attention` (default `true`); `false` marks a wait that needs no person. `events.schema.json`: a reply `waiting` event's `attention: false`, from that invoke.
 - `cli/status.schema.json`: a `--cron` entry's `file` may be `<plugin>/<file>.md`, a cron file a plugin installed; `executing` gives a machine in a group its `group` and `group_running`.
 

@@ -1,6 +1,6 @@
 # infra
 
-Add to the environment the project needs, the first time and every time after; the AI declares each resource in machines/infra/scripts/requirements, then apply installs what is missing and checks every line.
+Add to the environment the project needs, the first time and every time after; the AI declares each resource in the machine's scripts/requirements (a project's plugin that extends decree_infra), then apply installs what is missing and checks every line.
 
 Machine: [machines/infra/machine.yml](machine.yml)
 

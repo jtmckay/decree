@@ -21,7 +21,7 @@ const HELP_URI: &str =
 
 /// Every rule of docs/reference/machines.md (Validation) with its check, as the table
 /// states it (a test holds the two equal).
-pub(crate) const RULES: [(&str, &str); 26] = [
+pub(crate) const RULES: [(&str, &str); 27] = [
     (
         "V1",
         "`name` equals the file stem and matches `^[a-z][a-z0-9_]*$`.",
@@ -84,7 +84,7 @@ pub(crate) const RULES: [(&str, &str); 26] = [
     ),
     (
         "V16",
-        "Every `router` and `machine` names an existing machine, and a machine named `router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); a `reply` has at most one of `timeout` and `timeout_at`, whose file is a plain path in the run's folder and whose part after `#`, if any, is a JSON Pointer; `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `reply`), which the parser enforces with V19.",
+        "Every `router` and `machine` names an existing machine, and a machine named `decree_router` exists if any `model` names no router; `params` are valid for the child's `data`; `min_confidence` is between 0 and 1; every `timeout` is a [duration](#durations); a `reply` has at most one of `timeout` and `timeout_at`, whose file is a plain path in the run's folder and whose part after `#`, if any, is a JSON Pointer; `attempts` is a positive integer or a non-empty list of values that match `^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`; `attempts` and `timeout` appear only inside a `script` invoke (and `timeout` inside a `reply`), which the parser enforces with V19.",
     ),
     (
         "V17",
@@ -120,11 +120,15 @@ pub(crate) const RULES: [(&str, &str); 26] = [
     ),
     (
         "P1",
-        "Every `plugins/*.md` follows the plugin schema: `name` equals the file stem and matches `^[a-z][a-z0-9_]*$`; `machine` is a mapping without `name`; each `scripts` path is a plain relative path (no `..`, `.`, empty parts or leading `/`) to the file's text; `needs` lists distinct plugin names; no other key.",
+        "Every `plugins/*.md` follows the plugin schema: `name` equals the file stem and matches `^[a-z][a-z0-9_]*$`, and starts with `decree_` only for an official plugin this decree ships; `extends` names another plugin, not itself, not a library, with no loop; `source` is an https:// URL; `machine` is a mapping without `name`; each `scripts` path is a plain relative path (no `..`, `.`, empty parts or leading `/`) to the file's text, or `null` in a plugin that extends another; `needs` lists distinct plugin names, or one-key maps `{<need>: <plugin>}`; no other key.",
     ),
     (
         "P2",
-        "Every plugin a plugin `needs` is in `plugins/`.",
+        "Every plugin a plugin `needs` or `extends` is in `plugins/`.",
+    ),
+    (
+        "P3",
+        "An official plugin (`decree_*`) is this decree's copy, in `plugins/` and installed under `machines/`: it is never edited; a plugin of the project's own extends it.",
     ),
 ];
 

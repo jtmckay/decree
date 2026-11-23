@@ -197,14 +197,14 @@ pub enum Command {
         format: Format,
     },
 
-    /// Install plugins: every plugin in .decree/plugins/ as its file says (after a checkout), the named ones (an official one is seeded into .decree/plugins/ first), or a plugin file or - for stdin (`curl -fsSL <url> | decree install -`); an edited installed copy, or a replaced plugin file, is first archived as a plugin file in .decree/archive/
+    /// Install plugins: every plugin in .decree/plugins/ as its file says (after a checkout or an upgrade: official plugins become this decree's copy), the named ones (an official decree_* one is seeded into .decree/plugins/ first), or a plugin file or - for stdin (`curl -fsSL <url> | decree install -`); an edited installed copy, or a replaced plugin file, is first archived as a plugin file in .decree/archive/
     Install {
         /// Plugin names, or one plugin file, or - for stdin [default: every plugin in .decree/plugins/; stdin is never read]
         sources: Vec<String>,
 
-        /// Install decree's built-in copy of each named official plugin, or with no name of every official plugin in .decree/plugins/, replacing its file (archived) and printing what changes: how a project takes a new decree version's plugins
+        /// Update each named plugin, or with no name every plugin in .decree/plugins/ with a `source`, from its source URL: prints the diff and asks before writing (a terminal is required)
         #[arg(long)]
-        official: bool,
+        update: bool,
 
         /// Also install the cron files of plugins already installed, archiving edited ones; otherwise only a plugin installed for the first time gets its cron files
         #[arg(long)]

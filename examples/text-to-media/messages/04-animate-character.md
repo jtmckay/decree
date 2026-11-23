@@ -1,5 +1,5 @@
 ---
-machine: comfy
+machine: decree_comfy
 params:
   method: video_i2v_wan2.2_14B_long
   output: output/lily_waving

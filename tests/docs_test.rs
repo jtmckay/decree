@@ -34,7 +34,7 @@ fn files_under(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) {
 }
 
 /// The Markdown files whose links must resolve: `README.md`, `SECURITY.md`, `docs/`,
-/// `examples/*/README.md`. (The decree skill's files are in `plugins/skill.md`; its links are
+/// `examples/*/README.md`. (The decree skill's files are in `plugins/decree_skill.md`; its links are
 /// to the repository on GitHub.)
 fn markdown_files() -> Vec<PathBuf> {
     let root = repo();
@@ -445,7 +445,7 @@ fn the_security_policy_matches_the_claude_script() {
         assert!(policy.contains(dir), "{dir}");
     }
 
-    let script = common::plugin_script("plugins/ai.md", "ai.sh");
+    let script = common::plugin_script("plugins/decree_ai.md", "ai.sh");
     assert_eq!(
         shell_default(&script, "CLAUDE_PERMISSION_MODE").as_deref(),
         Some("auto"),
@@ -566,7 +566,7 @@ fn lib_is_gone_from_the_repository_and_the_docs() {
     }
     assert_eq!(
         found,
-        ["docs/reference/scripts.md:137: A project may keep code its machines share in any folder \
+        ["docs/reference/scripts.md:141: A project may keep code its machines share in any folder \
           it likes (`lib/`, `tools/`); decree does not look at it. To share it as decree files, \
           make it a library machine ([Resolution](#resolution))."],
         "{}",

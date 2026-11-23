@@ -855,13 +855,13 @@ states:
     // V16
     Case {
         rule: "V16",
-        name: "a model with a machine named router",
+        name: "a model with a machine named decree_router",
         files: &[
             ("machines/m/machine.yml", V16_MACHINE.0),
             (
-                "machines/router/machine.yml",
+                "machines/decree_router/machine.yml",
                 "\
-name: router
+name: decree_router
 description: Answers a model request.
 initial: ask
 states:
@@ -878,7 +878,7 @@ states:
     },
     Case {
         rule: "V16",
-        name: "no machine named router, min_confidence out of range",
+        name: "no machine named decree_router, min_confidence out of range",
         files: &[
             ("machines/m/machine.yml", V16_MACHINE.1),
             (
@@ -898,7 +898,7 @@ states:
         ],
         scripts: &[],
         expected: "\
-machines/m/machine.yml: triage: `model` names no `router`, and there is no machine named `router` (V16)
+machines/m/machine.yml: triage: `model` names no `router`, and there is no machine named `decree_router` (V16)
 machines/m/machine.yml: triage: min_confidence 80 is not between 0 and 1 (V16)
 ",
     },
@@ -1683,6 +1683,37 @@ machines/m/cron/b.md: line 3: unknown machine `nope` (M3)
         scripts: &[],
         expected: "plugins/m.md: `needs` names `r`, not in `plugins/`: install it with `decree install <name>` or `decree install <file>` (P2)\n",
     },
+    Case {
+        rule: "P2",
+        name: "extends a plugin that is not there",
+        files: &[(
+            "plugins/m.md",
+            "---\nname: m\nextends: decree_prune\n---\n# m\n",
+        )],
+        scripts: &[],
+        expected: "plugins/m.md: `extends` names `decree_prune`, not in `plugins/`, so it is not installed: install it with `decree install <name>` or `decree install <file>` (P2)\n",
+    },
+    // P3
+    Case {
+        rule: "P3",
+        name: "an official plugin as this decree ships it",
+        files: &[(
+            "plugins/decree_prune.md",
+            include_str!("../plugins/decree_prune.md"),
+        )],
+        scripts: &[],
+        expected: PASSES,
+    },
+    Case {
+        rule: "P3",
+        name: "an official plugin edited",
+        files: &[(
+            "plugins/decree_prune.md",
+            concat!(include_str!("../plugins/decree_prune.md"), "\nMine.\n"),
+        )],
+        scripts: &[],
+        expected: "plugins/decree_prune.md: `decree_prune` is an official plugin, and this file is not this decree's copy: official plugins are never edited in a project: `decree install` restores this decree's copy (archiving the change); put the change in a plugin of the project's own that extends it (`name: <your name>`, `extends: decree_prune`), holding only the files it changes (P3)\n",
+    },
 ];
 
 /// Root and state `onentry`/`onexit` scripts (V12).
@@ -1705,7 +1736,7 @@ states:
 const V16_MACHINE: (&str, &str) = (
     "\
 name: m
-description: A model picks one option, through the machine named router.
+description: A model picks one option, through the machine named decree_router.
 initial: work
 states:
   work:
@@ -1725,7 +1756,7 @@ states:
 ",
     "\
 name: m
-description: A model picks one option, through the machine named router.
+description: A model picks one option, through the machine named decree_router.
 initial: work
 states:
   work:
@@ -2073,9 +2104,9 @@ fn run_rule(rule: &str) {
     }
 }
 
-const RULES: [&str; 26] = [
+const RULES: [&str; 27] = [
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15",
-    "V16", "V17", "V18", "V19", "V20", "V21", "M2", "M3", "E1", "P1", "P2",
+    "V16", "V17", "V18", "V19", "V20", "V21", "M2", "M3", "E1", "P1", "P2", "P3",
 ];
 
 #[test]
@@ -2125,6 +2156,7 @@ rule_tests! {
     m3_cron => "M3",
     p1_plugin_schema => "P1",
     p2_plugin_needs => "P2",
+    p3_official_plugins => "P3",
 }
 
 /// Files of failing cases that the schemas accept: what is wrong is beyond what a JSON Schema
@@ -2147,6 +2179,18 @@ const CHECK_ONLY: &[(&str, &str, &str, &str)] = &[
         "needs a plugin that is not there",
         "plugins/m.md",
         "which plugins exist depends on other files",
+    ),
+    (
+        "P2",
+        "extends a plugin that is not there",
+        "plugins/m.md",
+        "which plugins exist depends on other files",
+    ),
+    (
+        "P3",
+        "an official plugin edited",
+        "plugins/decree_prune.md",
+        "which bytes an official plugin has is this decree's, not the file's",
     ),
     (
         "V1",

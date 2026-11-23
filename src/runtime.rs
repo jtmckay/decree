@@ -661,6 +661,13 @@ impl Executor {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.into())),
         );
+        // `DECREE_NEED_<NEED>`: the plugin that meets each need of the machine's plugin.
+        let decree_dir = info.project_root.join(crate::layout::DECREE_DIR);
+        vars.extend(
+            crate::plugin::need_env(&decree_dir, &info.machine)
+                .into_iter()
+                .map(|(name, value)| (name, value.into())),
+        );
         let traceparent = TraceParent::format(self.events.trace_id(), span_id);
         vars.push((TRACEPARENT_ENV.to_string(), traceparent.into()));
         if let Some(tracestate) = self.events.tracestate() {

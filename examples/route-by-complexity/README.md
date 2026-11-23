@@ -9,11 +9,11 @@ This example sends each change to the cheapest model that can do it. A local cla
 
 ## Which router
 
-Use [`gliner_router`](../../plugins/gliner_router.md) when the answer shows in the wording and there are a few options: it costs milliseconds of CPU, but it is poor at judging ([Where GLiNER fits](../../docs/routers.md#where-gliner-fits)). Use [`llm_router`](../../plugins/llm_router.md), a local model held to the request's `reply_schema` by Ollama's `format`, when the decision needs judging, at seconds of GPU per decision; point `size_up`'s `router:` at it to switch.
+Use [`decree_gliner_router`](../../plugins/decree_gliner_router.md) when the answer shows in the wording and there are a few options: it costs milliseconds of CPU, but it is poor at judging ([Where GLiNER fits](../../docs/routers.md#where-gliner-fits)). Use [`decree_llm_router`](../../plugins/decree_llm_router.md), a local model held to the request's `reply_schema` by Ollama's `format`, when the decision needs judging, at seconds of GPU per decision; point `size_up`'s `router:` at it to switch.
 
 ## The machine
 
-The machine and the two routers are official plugins, built into decree: [`develop_by_size`](../../plugins/develop_by_size.md), [`gliner_router`](../../plugins/gliner_router.md) and [`llm_router`](../../plugins/llm_router.md). `decree install develop_by_size` adds the first with `gliner_router`, which it needs; `decree graph` draws it:
+The machine and the two routers are official plugins, built into decree: [`decree_develop_by_size`](../../plugins/decree_develop_by_size.md), [`decree_gliner_router`](../../plugins/decree_gliner_router.md) and [`decree_llm_router`](../../plugins/decree_llm_router.md). `decree install decree_develop_by_size` adds the first with `decree_gliner_router`, which it needs; `decree graph` draws it:
 
 ```mermaid
 stateDiagram-v2
@@ -27,9 +27,9 @@ stateDiagram-v2
     local_first --> failed: error (implicit)
     local_first --> failed: stop
     size_up --> claude_only: error
-    size_up --> claude_only: large (model: gliner_router)
-    size_up --> local_first: small (model: gliner_router)
-    size_up --> claude_only: unsure (model: gliner_router)
+    size_up --> claude_only: large (model: decree_gliner_router)
+    size_up --> local_first: small (model: decree_gliner_router)
+    size_up --> claude_only: unsure (model: decree_gliner_router)
     done --> [*]
     failed --> [*]
     note right of claude_only
@@ -39,12 +39,12 @@ stateDiagram-v2
         attempts: local → local → claude
     end note
     note right of size_up
-        model: gliner_router, min_confidence 0.7
+        model: decree_gliner_router, min_confidence 0.7
     end note
 ```
 
 1. `describe` prints what the classifier reads: the message's title, its acceptance criteria, and the files it names that exist, with their line counts, so the classifier sees a size and not only prose.
-2. `size_up` asks `gliner_router` "How much reasoning does this change need?", with two options: `small` ("A local, mechanical change: a typo, a rename, a config value, one small function with a clear spec.") and `large` ("Design, several files, unclear requirements, concurrency or security."). Below `min_confidence: 0.7` the event is `unsure`, and `unsure` goes to Claude: when in doubt, use the stronger model. So does `error`, when the classifier is not running.
+2. `size_up` asks `decree_gliner_router` "How much reasoning does this change need?", with two options: `small` ("A local, mechanical change: a typo, a rename, a config value, one small function with a clear spec.") and `large` ("Design, several files, unclear requirements, concurrency or security."). Below `min_confidence: 0.7` the event is `unsure`, and `unsure` goes to Claude: when in doubt, use the stronger model. So does `error`, when the classifier is not running.
 3. `local_first` and `claude_only` run one script, `implement`, once per entry of their attempt list until an attempt succeeds. The entry, in `$DECREE_ATTEMPT_VALUE`, names the tool, and both ask through `ai.sh`'s `ai`, beside it ([The AI helper](../../docs/reference/scripts.md#the-ai-helper)): `local` with `AI_CLI=opencode` and `OPENCODE_MODEL=ollama/<model>`, `claude` with `AI_CLI=claude`, which waits out a usage limit. Every call is logged in `.decree/ai-use.md`. The `claude` prompt logs each step in the run's `progress.md` and writes `STOP` instead of guessing, as `develop` does. A `STOP` from any attempt is the `stop` event, which ends the run in `failed` until a person answers it.
 4. Each attempt then runs `$TEST_CMD` (`cargo test` by default), and fails if the tests fail. `local_first` tries `local`, `local`, then `claude`; `claude_only` tries `claude` twice. If every attempt fails, the event is `error`, and the run ends in `failed`.
 
@@ -57,9 +57,9 @@ From a clone of decree, in a new project beside `examples/`, add the plugins and
 ```bash
 mkdir -p sized && cd sized
 decree init
-decree install develop_by_size llm_router
-mkdir -p .decree/machines/develop_by_size/order
-cp ../examples/route-by-complexity/messages/01-raise-upload-limit.md .decree/machines/develop_by_size/order/
+decree install decree_develop_by_size decree_llm_router
+mkdir -p .decree/machines/decree_develop_by_size/order
+cp ../examples/route-by-complexity/messages/01-raise-upload-limit.md .decree/machines/decree_develop_by_size/order/
 decree check
 decree graph
 ```
@@ -76,7 +76,7 @@ python gliner/decide_server.py         # the first start downloads the model, ab
 curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does this change need?", "labels": {"small": "A typo or a config value", "large": "Design across several files"}, "text": "Fix a typo in README.md"}'
 ```
 
-The `curl` prints the reply as `gliner_router` writes it, `{"event": "small", "confidence": ...}`.
+The `curl` prints the reply as `decree_gliner_router` writes it, `{"event": "small", "confidence": ...}`.
 
 Install pitfall: `pip install gliner2` alone is only the cloud API client, and the server fails to load the model. Running it locally needs `gliner2[local,train]`: `[local]` adds local inference, and the local runtime imports the training modules too.
 
@@ -112,10 +112,10 @@ OpenCode's docs suggest raising Ollama's `num_ctx` (16k to 32k) if tool calls do
 
 ```logql
 # what the classifier picked, and how sure it was
-{job="decree", type="decision", machine="develop_by_size"} | json | state="size_up" | line_format "{{.run_id}} {{.pick}} {{.confidence}} {{.event}}"
+{job="decree", type="decision", machine="decree_develop_by_size"} | json | state="size_up" | line_format "{{.run_id}} {{.pick}} {{.confidence}} {{.event}}"
 
 # local attempts that failed the tests: each starts the next attempt, and "claude" means both failed
-{job="decree", type="transition", machine="develop_by_size"} | json | source="attempt" and from="local_first" | line_format "{{.run_id}} next: {{.attempt_value}}"
+{job="decree", type="transition", machine="decree_develop_by_size"} | json | source="attempt" and from="local_first" | line_format "{{.run_id}} next: {{.attempt_value}}"
 ```
 
 If `small` picks above the threshold often fail the tests, raise it; if `unsure` changes that Claude then did were mostly small, lower it.
@@ -127,7 +127,7 @@ examples/route-by-complexity/
   gliner/decide_server.py              the classifier server (the one copy of it in the repository)
   messages/01-raise-upload-limit.md    a small change to try it with, as an order file
 plugins/
-  develop_by_size.md                   size up, then implement and test: locally first, or with Claude only
-  gliner_router.md                     a typed router: asks the classifier server
-  llm_router.md                        a typed router: asks a local model through Ollama, held to reply_schema
+  decree_develop_by_size.md                   size up, then implement and test: locally first, or with Claude only
+  decree_gliner_router.md                     a typed router: asks the classifier server
+  decree_llm_router.md                        a typed router: asks a local model through Ollama, held to reply_schema
 ```

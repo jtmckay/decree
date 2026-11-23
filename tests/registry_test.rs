@@ -1,4 +1,4 @@
-//! The official `registry` plugin (plugins/registry.md): a table of servers, their services
+//! The official `registry` plugin (plugins/decree_registry.md): a table of servers, their services
 //! and addresses in `state/services.git.txt`; `check` probes each address and records which
 //! answered; `registry.sh` looks addresses up, live ones first. Each test is a fresh project
 //! with `registry` installed.
@@ -35,7 +35,7 @@ fn registry(root: &Path, args: &[&str]) -> (i32, String, String) {
     clean(&mut cmd);
     let out = cmd
         .current_dir(root)
-        .arg(".decree/machines/registry/scripts/registry.sh")
+        .arg(".decree/machines/decree_registry/scripts/registry.sh")
         .args(args)
         .output()
         .unwrap();
@@ -51,13 +51,15 @@ fn project(table: &str) -> (TempDir, PathBuf) {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path().to_path_buf();
     decree(&root, &["init"]).assert().success();
-    decree(&root, &["install", "registry"]).assert().success();
+    decree(&root, &["install", "decree_registry"])
+        .assert()
+        .success();
     fs::write(state(&root).join("services.git.txt"), table).unwrap();
     (tmp, root)
 }
 
 fn state(root: &Path) -> PathBuf {
-    root.join(".decree/machines/registry/state")
+    root.join(".decree/machines/decree_registry/state")
 }
 
 /// An address that answers every request with HTTP 404 (an answer: up), for the test's life.
@@ -105,7 +107,9 @@ fn installs_with_an_empty_table_that_installs_keep() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
     decree(root, &["init"]).assert().success();
-    decree(root, &["install", "registry"]).assert().success();
+    decree(root, &["install", "decree_registry"])
+        .assert()
+        .success();
     decree(root, &["check"]).assert().success();
     let table = state(root).join("services.git.txt");
     assert!(fs::read_to_string(&table)
@@ -113,7 +117,7 @@ fn installs_with_an_empty_table_that_installs_keep() {
         .contains("# box1    render"));
     assert_eq!(registry(root, &["list"]).1, "");
     fs::write(&table, "a ollama http://127.0.0.1:9\n").unwrap();
-    decree(root, &["install", "--official", "registry"])
+    decree(root, &["install", "decree_registry"])
         .assert()
         .success();
     assert_eq!(
@@ -165,7 +169,10 @@ fn resolves_where_to_go_and_which_lease_to_get() {
     let out = std::process::Command::new("bash")
         .current_dir(&root)
         .env("RENDER_URL", "http://mine")
-        .args([".decree/machines/registry/scripts/registry.sh", "env"])
+        .args([
+            ".decree/machines/decree_registry/scripts/registry.sh",
+            "env",
+        ])
         .output()
         .unwrap();
     let env = String::from_utf8(out.stdout).unwrap();

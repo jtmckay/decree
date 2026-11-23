@@ -140,12 +140,19 @@ fn synopsis_steps_run_as_written() {
     // 1. Set up a project, list the official plugins and add one.
     assert_eq!(
         steps[&1],
-        ["decree init", "decree list", "decree install develop"]
+        [
+            "decree init",
+            "decree list",
+            "decree install decree_develop_rust"
+        ]
     );
     for line in &steps[&1] {
         decree(line);
     }
-    assert!(dir.path().join(".decree/plugins/develop.md").is_file());
+    assert!(dir
+        .path()
+        .join(".decree/plugins/decree_develop_rust.md")
+        .is_file());
 
     // 2. A script: exit 0 is `done`.
     let script = step_file(&steps[&2]);

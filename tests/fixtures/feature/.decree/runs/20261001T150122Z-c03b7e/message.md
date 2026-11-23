@@ -1,5 +1,5 @@
 ---
-machine: router
+machine: decree_router
 id: 20261001T150122Z-c03b7e
 parent: 20261001T145120.000000Z-9c2e57
 depth: 1

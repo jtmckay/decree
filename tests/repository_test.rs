@@ -54,16 +54,16 @@ fn no_installed_copy_is_tracked_and_the_examples_machines_are_official_plugins()
         .collect();
     assert!(tracked.is_empty(), "installed copies in git: {tracked:?}");
     for name in [
-        "newsletter",
-        "comfy",
-        "develop_by_size",
-        "gliner_router",
-        "llm_router",
-        "lease",
-        "develop",
-        "infra",
-        "qa",
-        "router",
+        "decree_newsletter",
+        "decree_comfy",
+        "decree_develop_by_size",
+        "decree_gliner_router",
+        "decree_llm_router",
+        "decree_lease",
+        "decree_develop",
+        "decree_infra",
+        "decree_qa",
+        "decree_router",
     ] {
         let file = format!("plugins/{name}.md");
         assert!(files.contains(&file), "{file} is not in git");
@@ -141,4 +141,28 @@ fn check_passes_in_a_fresh_clone() {
             project.display()
         );
     }
+    // AC (A14): this repository's own `develop` is its own plugin, extending `decree_develop`,
+    // and its order files and `run-queue.sh` are where they were.
+    let root = clone.path();
+    let out = Command::new(env!("CARGO_BIN_EXE_decree"))
+        .arg("list")
+        .current_dir(root)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let list = String::from_utf8_lossy(&out.stdout);
+    let develop = list
+        .lines()
+        .find(|l| l.trim_start().starts_with("develop "))
+        .unwrap_or_else(|| panic!("{list}"));
+    assert!(develop.ends_with("[own, extends decree_develop]"), "{list}");
+    assert!(root
+        .join(".decree/machines/develop/order/A14-extends.md")
+        .is_file());
+    assert!(root
+        .join(".decree/machines/develop/scripts/run-queue.sh")
+        .is_file());
+    assert!(root
+        .join(".decree/machines/develop/state/order.git.txt")
+        .is_file());
 }

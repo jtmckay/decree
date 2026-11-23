@@ -30,7 +30,7 @@ states:
     invoke:
       model:
         question: Which kind of document is this?
-        router: gliner_router
+        router: decree_gliner_router
         min_confidence: 0.9
         output: read_text
     transitions:

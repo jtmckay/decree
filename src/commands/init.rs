@@ -148,7 +148,7 @@ pub fn run(ai: Option<AiBackend>, permissions: bool) -> Result<(), DecreeError> 
     println!("Decree initialized successfully.");
     println!();
     plugin::print_available(decree_dir)?;
-    println!("Edit or delete any file in .decree/plugins/, then run `decree install`; add an official plugin with `decree install <name>`, such as `decree install develop`.");
+    println!("Delete a file in .decree/plugins/ to drop that plugin, then run `decree install`. Official plugins (decree_*) are never edited: a plugin of your own that extends one holds your changes. Add an official plugin with `decree install <name>`, such as `decree install decree_develop`.");
     Ok(())
 }
 
@@ -393,20 +393,20 @@ mod tests {
         );
     }
 
-    /// This repository's installed copies are the `skill` plugin's, byte for byte.
+    /// This repository's installed copies are the `decree_skill` plugin's, byte for byte.
     #[test]
     fn test_repository_skill_copies_are_the_templates() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        // The repository's skill folders link to its installed `skill` plugin, which git
+        // The repository's skill folders link to its installed `decree_skill` plugin, which git
         // ignores: the plugin file it installs from is the copy to compare. Once installed
         // (`decree install`), the folders themselves are compared too.
-        let found = crate::plugin::read_one(&root.join(".decree"), "skill").unwrap();
+        let found = crate::plugin::read_one(&root.join(".decree"), "decree_skill").unwrap();
         let plugin = found.parsed.unwrap();
         for (name, content) in skill_files() {
             assert_eq!(
                 plugin.scripts.get(&format!("skill/{name}")),
                 Some(&content),
-                ".decree/plugins/skill.md: skill/{name}"
+                ".decree/plugins/decree_skill.md: skill/{name}"
             );
         }
         for b in AI_BACKENDS {
@@ -416,7 +416,7 @@ mod tests {
             let dir = root.join(skill_dir);
             assert_eq!(
                 std::fs::read_link(&dir).unwrap(),
-                Path::new("../../.decree/machines/skill/scripts/skill"),
+                Path::new("../../.decree/machines/decree_skill/scripts/skill"),
                 "{skill_dir}"
             );
             if !dir.exists() {

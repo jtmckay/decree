@@ -8,7 +8,7 @@ Install or update:
 1. Set up a project, then see the official plugins and add one:
        decree init
        decree list
-       decree install develop
+       decree install decree_develop_rust
 
 2. Write a script (chmod +x it):
        `.decree/machines/hello/scripts/greet.sh`

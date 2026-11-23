@@ -70,7 +70,7 @@ states:
 
 /// The default router: its script writes `reply.json` from the project root.
 const ROUTER: &str = "\
-name: router
+name: decree_router
 description: Reply with the project's reply.json.
 initial: ask
 states:
@@ -389,7 +389,10 @@ fn two_processes_at_once_the_second_skips_the_active_run() {
 /// Run `pick` with the router replying `reply`; returns the `decision` event and the run's
 /// last `transition`.
 fn pick_with(reply: Value) -> (Project, Value, Value) {
-    let p = Project::new(&[("pick", PICK), ("router", ROUTER)], &[("reply", REPLY)]);
+    let p = Project::new(
+        &[("pick", PICK), ("decree_router", ROUTER)],
+        &[("reply", REPLY)],
+    );
     fs::write(p.root().join("reply.json"), reply.to_string()).unwrap();
     p.queue(
         "20260101T000000.000000Z-000000.md",
@@ -504,7 +507,10 @@ fn machine_invoke_past_max_depth_gives_error_without_a_child() {
 
 #[test]
 fn model_past_max_depth_gives_error_without_a_router_run() {
-    let p = Project::new(&[("pick", PICK), ("router", ROUTER)], &[("reply", REPLY)]);
+    let p = Project::new(
+        &[("pick", PICK), ("decree_router", ROUTER)],
+        &[("reply", REPLY)],
+    );
     fs::write(p.root().join("reply.json"), r#"{"event":"ship"}"#).unwrap();
     p.queue(
         "20260101T000000.000000Z-000000.md",

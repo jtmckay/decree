@@ -6,7 +6,7 @@
 //!
 //! The documents are `docs/reference/`, `README.md`, `docs/routers.md`, `docs/services.md`,
 //! `SECURITY.md`, `tests/README.md`, every `examples/*/README.md`, the decree skill
-//! (`plugins/skill.md/skill/`) and `src/templates/help.txt`. `CHANGELOG.md`,
+//! (`plugins/decree_skill.md/skill/`) and `src/templates/help.txt`. `CHANGELOG.md`,
 //! `docs/decisions.md` and `docs/code-review.md` are history and are not checked.
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -81,9 +81,9 @@ fn documents() -> Vec<String> {
     docs
 }
 
-/// The decree skill's files live in the `skill` plugin: `plugins/skill.md/skill/<name>` names
+/// The decree skill's files live in the `skill` plugin: `plugins/decree_skill.md/skill/<name>` names
 /// one, its `scripts` entry `skill/<name>`.
-const SKILL: &str = "plugins/skill.md/skill/";
+const SKILL: &str = "plugins/decree_skill.md/skill/";
 const SKILL_FILES: [&str; 5] = [
     "SKILL.md",
     "reference/machines.md",
@@ -94,7 +94,7 @@ const SKILL_FILES: [&str; 5] = [
 
 fn read(rel: &str) -> String {
     if let Some(name) = rel.strip_prefix(SKILL) {
-        return common::plugin_script("plugins/skill.md", &format!("skill/{name}"));
+        return common::plugin_script("plugins/decree_skill.md", &format!("skill/{name}"));
     }
     fs::read_to_string(repo().join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
 }
@@ -742,7 +742,10 @@ fn collect_needs(states: &serde_norway::Mapping, needs: &mut Needs) {
                         .insert(p["notify"].as_str().unwrap().to_string());
                 }
                 if let Some(m) = invoke.get("model") {
-                    let router = m.get("router").and_then(|r| r.as_str()).unwrap_or("router");
+                    let router = m
+                        .get("router")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("decree_router");
                     needs.machines.entry(router.to_string()).or_default();
                 }
                 if let Some(m) = invoke.get("machine") {
@@ -1164,6 +1167,8 @@ fn a_wrong_event_example_fails() {
 fn normalized(name: &str) -> String {
     if name == "DECREE_DATA" || name.starts_with("DECREE_DATA_") {
         "DECREE_DATA_<NAME>".to_string()
+    } else if name == "DECREE_NEED" || name.starts_with("DECREE_NEED_") {
+        "DECREE_NEED_<NEED>".to_string()
     } else {
         name.to_string()
     }
@@ -1204,6 +1209,12 @@ fn runtime_environment() -> BTreeSet<String> {
         .collect();
     if runtime.contains("format!(\"DECREE_DATA_{}\"") {
         vars.insert("DECREE_DATA_<NAME>".to_string());
+    }
+    // `DECREE_NEED_<NEED>`, one per need of the machine's plugin, from plugin.rs.
+    if runtime.contains("crate::plugin::need_env(")
+        && read("src/plugin.rs").contains("format!(\"DECREE_NEED_{}\"")
+    {
+        vars.insert("DECREE_NEED_<NEED>".to_string());
     }
     let pushed = Regex::new(r"vars\.push\(\(([A-Z_]+)\.to_string\(\)").unwrap();
     let mut sources = read("src/trace.rs");
@@ -1277,6 +1288,15 @@ fn the_environment_table_matches_what_decree_sets() {
             .map(|c| c[1].to_string())
             .collect();
     assert_eq!(read_by_decree.len(), 2, "{read_by_decree:?}");
+    // And the program `decree install --update` fetches with (docs/reference/cli.md, Environment).
+    let mut read_by_decree = read_by_decree;
+    let plugin = read("src/commands/plugin.rs");
+    let curl = Regex::new(r#"const CURL_VAR: &str = "([A-Z_]+)";"#)
+        .unwrap()
+        .captures(&plugin)
+        .expect("CURL_VAR in src/commands/plugin.rs")[1]
+        .to_string();
+    read_by_decree.insert(curl);
     let unknown: Vec<String> = named_environment()
         .into_iter()
         .filter(|(name, _)| !table.contains(name) && !read_by_decree.contains(name))
@@ -1294,7 +1314,7 @@ fn the_environment_table_matches_what_decree_sets() {
 /// states in a straight line, ending in `done`; what it grows into is shown as a fragment.
 #[test]
 fn the_skill_writes_the_simplest_machine_first() {
-    let skill = read("plugins/skill.md/skill/SKILL.md");
+    let skill = read("plugins/decree_skill.md/skill/SKILL.md");
     let first_rule = skill
         .lines()
         .skip_while(|l| *l != "## Rules")
@@ -1345,15 +1365,15 @@ fn the_skill_writes_the_simplest_machine_first() {
 /// environment without `sudo` (D61), boundaries checked by a script, re-runs after a failure.
 #[test]
 fn the_skill_has_the_files_env_runs_and_timeout_rules() {
-    let skill = read("plugins/skill.md/skill/SKILL.md");
+    let skill = read("plugins/decree_skill.md/skill/SKILL.md");
     let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
     for rule in [
         "A machine's helpers, config and data go in `machines/<machine>/scripts/`**, beside the scripts its states invoke",
         "What a machine keeps between runs goes in `$DECREE_STATE_DIR`**",
         "Variables and secrets go in `.decree/.env` (every script) or a machine's `env_file: .env.<name>` (that machine's scripts only); both are gitignored,",
-        "Never delete run folders to clean up**; they are the record. The official `prune` plugin deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.",
+        "Never delete run folders to clean up**; they are the record. The official `decree_prune` plugin deletes finished ones older than `PRUNE_OLDER_THAN` (30d) each week.",
         "A step that waits for a shared resource is an invoked state with a `timeout`**",
-        "Declare the environment.** A command, package or tool the project needs is a line in `.decree/machines/infra/scripts/requirements`,",
+        "Declare the environment.** A command, package or tool the project needs is a line in the `scripts/requirements` of the project's plugin that extends `decree_infra` (`app_infra`),",
         "Nothing runs `sudo`: a step only a person can do prints the exact command and fails,",
         "Check a boundary with a script, not only a prompt.**",
         "Check that the result works (`pip --version` runs), not that a file exists.",
@@ -1369,7 +1389,7 @@ fn the_skill_has_the_files_env_runs_and_timeout_rules() {
 fn the_escalate_fragment_is_a_machine_that_passes_decree_check() {
     for rel in [
         "docs/reference/machines.md",
-        "plugins/skill.md/skill/reference/machines.md",
+        "plugins/decree_skill.md/skill/reference/machines.md",
     ] {
         let text = read(rel);
         let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -1408,7 +1428,7 @@ fn the_escalate_fragment_is_a_machine_that_passes_decree_check() {
         );
         assert_eq!(check_machine(&machine), None, "{rel}:\n{machine}");
     }
-    let skill = read("plugins/skill.md/skill/SKILL.md");
+    let skill = read("plugins/decree_skill.md/skill/SKILL.md");
     let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
     let line = "`attempts` retries after `error` only; to have a stronger model answer a weaker one's `STOP`, transition to a child machine.";
     assert!(skill.contains(line), "the skill lacks: {line}");

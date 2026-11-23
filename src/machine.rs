@@ -930,7 +930,7 @@ fn locate_state_error(states: &serde_norway::Value, prefix: &str) -> Option<(Str
 }
 
 /// The router of a `model` invoke that names none (docs/reference/runs.md, The default router).
-pub const ROUTER_MACHINE: &str = "router";
+pub const ROUTER_MACHINE: &str = "decree_router";
 
 impl DataType {
     pub fn as_str(self) -> &'static str {

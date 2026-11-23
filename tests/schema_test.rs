@@ -257,16 +257,23 @@ fn every_machine_of_a_fresh_init_and_added_plugins_validates_for_each_ai() {
                 .success();
         };
         decree(&["init", "--ai", ai]);
-        decree(&["install", "develop", "qa", "router"]);
-        let paths: Vec<PathBuf> = ["develop", "infra", "qa", "router", "order", "prune"]
-            .iter()
-            .map(|m| {
-                tmp.path()
-                    .join(".decree/machines")
-                    .join(m)
-                    .join("machine.yml")
-            })
-            .collect();
+        decree(&["install", "decree_develop", "decree_qa", "decree_router"]);
+        let paths: Vec<PathBuf> = [
+            "decree_develop",
+            "decree_infra",
+            "decree_qa",
+            "decree_router",
+            "decree_order",
+            "decree_prune",
+        ]
+        .iter()
+        .map(|m| {
+            tmp.path()
+                .join(".decree/machines")
+                .join(m)
+                .join("machine.yml")
+        })
+        .collect();
         assert!(paths.iter().all(|p| p.is_file()), "{ai}");
         for path in &paths {
             let text = fs::read_to_string(path).unwrap();
@@ -929,8 +936,8 @@ fn a_model_run_writes_files_that_validate() {
          \x20 failed: { final: true }\n",
     );
     common::write_file(
-        &decree_dir.join("machines/router/machine.yml"),
-        "name: router\n\
+        &decree_dir.join("machines/decree_router/machine.yml"),
+        "name: decree_router\n\
          description: Always go left.\n\
          initial: answer\n\
          states:\n\

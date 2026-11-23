@@ -1,5 +1,5 @@
 ---
-machine: develop_by_size
+machine: decree_develop_by_size
 ---
 # Raise the upload limit to 25 MB
 

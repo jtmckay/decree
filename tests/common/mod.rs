@@ -63,7 +63,7 @@ pub fn is_time_id(id: &str) -> bool {
 }
 
 /// The file `path` of `scripts/<name>/` that the plugin file `plugin` (a path from the
-/// repository root, such as `plugins/develop.md`) installs: its text, as installed.
+/// repository root, such as `plugins/decree_develop.md`) installs: its text, as installed.
 #[allow(dead_code)]
 pub fn plugin_script(plugin: &str, path: &str) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -192,7 +192,9 @@ fn copy_tree(from: &Path, to: &Path) {
 pub fn decree_at(root: impl AsRef<Path>) -> assert_cmd::Command {
     share_scripts(root.as_ref());
     let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("decree");
-    cmd.current_dir(root.as_ref());
+    // The caller's own order limit (run-queue.sh sets one for its daemon) is not the test
+    // project's.
+    cmd.current_dir(root.as_ref()).env_remove("ORDER_MAX");
     cmd
 }
 
@@ -211,7 +213,7 @@ pub fn write_file(path: &Path, text: impl AsRef<[u8]>) {
 pub fn std_decree_at(root: impl AsRef<Path>) -> std::process::Command {
     share_scripts(root.as_ref());
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_decree"));
-    cmd.current_dir(root.as_ref());
+    cmd.current_dir(root.as_ref()).env_remove("ORDER_MAX");
     cmd
 }
 
@@ -221,7 +223,7 @@ pub fn std_decree_at(root: impl AsRef<Path>) -> std::process::Command {
 /// the documented way: delete their files, `decree install`, `decree graph`. For a test
 /// whose runs and machines are its own.
 pub fn drop_default_plugins(root: &Path) {
-    for name in ["ai", "order", "prune", "skill"] {
+    for name in ["decree_ai", "decree_order", "decree_prune", "decree_skill"] {
         let file = root.join(format!(".decree/plugins/{name}.md"));
         if file.exists() {
             std::fs::remove_file(&file).unwrap();

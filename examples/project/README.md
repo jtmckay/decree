@@ -25,7 +25,8 @@ examples/project/.decree/
     hello.md                  one script
     develop.md                implement (a local model, then Claude), then test; and a nightly cron file
     deploy.md                 build, a person approves, ship
-    order.md                  the official plugin that runs each machine's order/ at start
+    decree_order.md           the official plugin that runs each machine's order/ at start (decree's copy)
+    decree_ai.md              the official library develop's implement.sh sources (decree's copy)
   machines/<name>/          one folder per machine, installed from plugins/ by `decree install`
     machine.yml               control flow, no code; git ignores it
     scripts/                  the work: develop's implement.sh picks the model from $DECREE_ATTEMPT_VALUE and

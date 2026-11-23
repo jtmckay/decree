@@ -16,39 +16,46 @@ machine declares, in a state that invokes `model` or `reply`.
 
 Commands:
   decree init [--ai AI] [--permissions]
-                              Create .decree/, add the plugins ai, order,
-                              prune and skill, and list the others; --ai
+                              Create .decree/, add the plugins decree_ai,
+                              decree_order, decree_prune and decree_skill,
+                              and list the others; --ai
                               (claude, copilot or opencode) sets AI_CLI in
                               .env.example. claude and copilot get the skill
   decree check                Validate machines and pending messages
                               (--format sarif: a SARIF 2.1.0 log for code
                               scanning)
   decree graph                Write each machines/<name>/graph.md and system.md: Mermaid diagrams in Markdown
-  decree install [--official] [--cron]
-                              Install every plugin in .decree/plugins/ as its
-                              file says (after a clone or a pull). An edited
-                              installed copy, or a replaced plugin file, goes
-                              to .decree/archive/ first. --official first
-                              takes decree's copy of each official plugin
-                              there. Nothing else installs plugins
-  decree install NAME... [--official] [--cron]
+  decree install [--cron]     Install every plugin in .decree/plugins/ as its
+                              file says (after a clone, a pull or an upgrade):
+                              each official plugin (decree_*) becomes this
+                              decree's copy. An edited installed copy, or a
+                              replaced plugin file, goes to .decree/archive/
+                              first. Nothing else installs plugins
+  decree install NAME... [--cron]
                               Install these plugins; an official one not in
                               .decree/plugins/ is copied there first, with
-                              those it needs. --official takes decree's
-                              built-in copy. Cron files are installed the
-                              first time only; --cron installs them again
+                              those it extends or needs. Cron files are
+                              installed the first time only; --cron installs
+                              them again
+  decree install --update [NAME...]
+                              Fetch each plugin with a `source` (https) with
+                              curl, show the diff and ask before writing it;
+                              needs a terminal
   decree install FILE|-       Check a plugin, copy it to .decree/plugins/
                               and install it; - reads it from stdin
                               (curl -fsSL URL | decree install -)
   decree list                 The plugins in .decree/plugins/ (official or
-                              own, differs, not installed, edited), machines
+                              own, extends, differs, not installed, edited),
+                              machines
                               no plugin installed, and the official plugins
                               not yet in .decree/plugins/
   decree export [NAME] [--dry-run]
                               Share a machine as one file: write
-                              .decree/plugins/NAME.md from machines/NAME/;
-                              no NAME: every plugin whose installed copy
-                              was edited
+                              .decree/plugins/NAME.md from machines/NAME/ (a
+                              plugin that extends another: only what differs
+                              from its base); no NAME: every plugin whose
+                              installed copy was edited. Never an official
+                              plugin: extend it under your own name
   decree daemon --once [--quiet]
                               Start (firing @reboot cron files, so the order
                               plugin runs each machine's order/), deliver
@@ -107,7 +114,10 @@ Commands:
 
 Files (.decree/):
   plugins/<name>.md           A machine's folder as one file: machine, scripts,
-                              cron files, state and order seeds; committed
+                              cron files, state and order seeds; committed.
+                              decree_<name>.md is an official plugin, never
+                              edited; `extends: <base>` holds only what a
+                              plugin adds to or replaces in its base
   machines/<name>/            One folder per machine, installed from plugins/:
     machine.yml               The machine
     scripts/                  Its scripts, and its helpers, config and data,
@@ -141,7 +151,7 @@ Messages:
   decree adds `id` and `trigger` when it claims a message, and mirrors
   the run's `state` into runs/<id>/message.md. runs/<id>/events.jsonl is the
   record. A machine's order files, machines/<name>/order/*.md, are messages
-  the order plugin runs at each daemon start, in filename order, each once
+  the decree_order plugin runs at each daemon start, in filename order, each once
   and again when it changes; a failed one stops the ones after it.
 
 Machines:
@@ -192,14 +202,15 @@ Scripts:
   DECREE_MACHINE, DECREE_STATE, DECREE_PHASE, DECREE_VISITS, DECREE_RUN_DIR,
   DECREE_MAX_DEPTH, DECREE_STATE_DIR, DECREE_ATTEMPT, DECREE_MAX_ATTEMPTS,
   DECREE_FINAL_ATTEMPT, DECREE_TRIGGER, DECREE_EVENTS, DECREE_EVENT_FILE,
-  DECREE_PARENT, DECREE_RECEIVED, DECREE_DATA_<NAME>; with an attempts list DECREE_ATTEMPT_VALUE and
+  DECREE_PARENT, DECREE_RECEIVED, DECREE_DATA_<NAME>, DECREE_NEED_<NEED> (the
+  plugin that meets each need of the machine's plugin); with an attempts list DECREE_ATTEMPT_VALUE and
   DECREE_ATTEMPT_VALUES; in a router run DECREE_REQUEST and DECREE_REPLY; for a
   notify script DECREE_WAIT_ID, DECREE_QUESTION and DECREE_CHOICES; and TRACEPARENT
   (W3C Trace Context: the run's trace and the script's span), with TRACESTATE
   when the message carried one.
 
 No configuration file; conventions, fixed limits and variables instead:
-  machines/router/machine.yml     # answers every model invoke that names no router:
+  machines/decree_router/machine.yml # answers every model invoke that names no router:
   attempts: 3, or [local, claude] # inside a script invoke; default 1
                                   # (no retry); a list sets DECREE_ATTEMPT_VALUE
   DECREE_MAX_DEPTH=20             # max_depth, default 10: deepest chain of emits
@@ -218,8 +229,8 @@ Cron (.decree/machines/<machine>/cron/<name>.md, run by `decree daemon`):
 
 Getting started:
   1. decree init                  Set up the project
-     decree install develop       Add an official plugin (decree list)
-  2. Write .decree/machines/<name>/order/01-<what>.md (the order plugin runs it)
+     decree install decree_develop_rust   Add an official plugin (decree list)
+  2. Write .decree/machines/<name>/order/01-<what>.md (decree_order runs it)
   3. decree check                 Validate machines and queued messages
   4. decree daemon --once         Run it; `decree status` shows what happened
 

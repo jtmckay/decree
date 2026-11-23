@@ -1,4 +1,4 @@
-//! The official `order` plugin (plugins/order.md, D86): at each daemon start (here `decree
+//! The official `order` plugin (plugins/decree_order.md, D86): at each daemon start (here `decree
 //! daemon --once`), each machine's `order/` files run one at a time in file-name order, the
 //! next only once the inbox is empty; each runs once, and again when it changes; a failing
 //! file stops the ones after it. And its `emit_if_changed` scripts. Skipped without `jq`.
@@ -49,7 +49,7 @@ impl Project {
             tmp: TempDir::new().unwrap(),
         };
         p.ok(&["init"]);
-        p.ok(&["install", "order"]);
+        p.ok(&["install", "decree_order"]);
         for m in ["alpha", "beta"] {
             common::write_file(&p.decree(&format!("machines/{m}/machine.yml")), machine(m));
             common::write_script(&p.decree(&format!("machines/{m}/scripts/work.sh")), WORK);
@@ -64,6 +64,7 @@ impl Project {
     fn ok(&self, args: &[&str]) {
         common::decree_at(self.tmp.path())
             .env("NO_COLOR", "1")
+            .env_remove("ORDER_MAX")
             .args(args)
             .assert()
             .success();
@@ -80,6 +81,8 @@ impl Project {
     fn start(&self) -> (i32, String) {
         let out = common::decree_at(self.tmp.path())
             .env("NO_COLOR", "1")
+            // The caller's own order limit (run-queue.sh sets one) is not this project's.
+            .env_remove("ORDER_MAX")
             .args(["daemon", "--once", "-q"])
             .output()
             .unwrap();
@@ -189,8 +192,8 @@ fn git_keeps_order_graph_and_git_txt_files() {
     for rel in [
         "machines/alpha/machine.yml",
         "machines/alpha/scripts/work.sh",
-        "machines/order/scripts/next.sh",
-        "machines/order/state/running",
+        "machines/decree_order/scripts/next.sh",
+        "machines/decree_order/state/running",
     ] {
         assert!(ignored(rel), "{rel} is not ignored");
     }
@@ -201,7 +204,7 @@ fn git_keeps_order_graph_and_git_txt_files() {
 #[test]
 fn emit_if_changed_queues_a_message_only_when_it_changed() {
     let Some(p) = Project::new() else { return };
-    let script = p.decree("machines/order/scripts/emit_if_changed.sh");
+    let script = p.decree("machines/decree_order/scripts/emit_if_changed.sh");
     let state = p.decree("machines/alpha/state");
     let emit = |script: &Path, key: &str, text: &str| {
         let out = Command::new(script)
@@ -231,7 +234,7 @@ fn emit_if_changed_queues_a_message_only_when_it_changed() {
     assert_eq!(inbox(), 2);
     assert!(state.join("weekly.txt").is_file());
 
-    let git = p.decree("machines/order/scripts/emit_if_changed_git.sh");
+    let git = p.decree("machines/decree_order/scripts/emit_if_changed_git.sh");
     emit(&git, "release", "# v1\n");
     emit(&git, "release", "# v1\n");
     assert_eq!(inbox(), 3);

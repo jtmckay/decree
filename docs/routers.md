@@ -9,7 +9,7 @@ Routers come in two kinds:
 | Kind | How the reply is constrained | What its confidence means | How it can fail | Cost | Use it for |
 | --- | --- | --- | --- | --- | --- |
 | **Typed**: a classifier ([GLiNER2.5-Decide](#fastino-gliner25-decide-run-locally)), constrained decoding ([Ollama's `format`](#ollama-with-format), vLLM's guided choice, SGLang's `select`), [TypeSafe Jev](#typesafe-jev) | By the model: it cannot answer outside the options. A classifier picks one of the labels it is given; a decoder is held to the request's `reply_schema`; Jev picks among its criteria. | A classifier's score for its pick, or Jev's figure from its probability distribution: measured. A constrained language model's number is still its own estimate. | Its service is down or times out: the router run fails, and the event is `error`. | A classifier on CPU: milliseconds, no fee. A local model: seconds of GPU. Jev: per call. | **Routing**: the cheap, frequent, bounded decisions, such as which model does the work or which path a message takes. |
-| **Untyped**: a chat model or coding agent ([`claude -p`, Copilot, OpenCode](#claude-opencode-and-copilot-the-official-router-plugin)) | Not at all: the script asks for JSON in the prompt, finds it in free text and checks it. | Self-reported: the least reliable kind. | No JSON, or a pick that is not an option: the script fails, and the event is `error` once its attempts run out. | Tokens and seconds per call, and a subscription or a bill. | **The work** itself, and judgments that need reasoning over a lot of context. |
+| **Untyped**: a chat model or coding agent ([`claude -p`, Copilot, OpenCode](#claude-opencode-and-copilot-the-official-decree_router-plugin)) | Not at all: the script asks for JSON in the prompt, finds it in free text and checks it. | Self-reported: the least reliable kind. | No JSON, or a pick that is not an option: the script fails, and the event is `error` once its attempts run out. | Tokens and seconds per call, and a subscription or a bill. | **The work** itself, and judgments that need reasoning over a lot of context. |
 
 Use a typed router to decide, and an untyped model to do. A routing decision runs on every message, so it should be cheap, and its answer must be one of the options, so it should not be able to say anything else: a classifier such as GLiNER2.5-Decide is the one to reach for, and its score is a real one to set `min_confidence` against. Claude, Copilot and OpenCode are for writing the code and for questions that need the whole message and the codebase to answer; asked to route, they cost more, can reply off the options, and report a confidence that means little. [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) puts both together: GLiNER decides whether a change is small enough for a local model, or needs Claude.
 
@@ -17,15 +17,15 @@ Running a model server is outside decree: these routers only talk to one (see [`
 
 ## The contract
 
-A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `router` is used, such as the official plugin `decree install router` adds (`decree check` fails V16 if a `model` names no router and there is no `machines/router/machine.yml`):
+A router is any machine. A `model` invoke picks one with `router: <machine>`; without it, the machine named `decree_router` is used, the official plugin `decree install decree_router` adds (`decree check` fails V16 if a `model` names no router and there is no `machines/decree_router/machine.yml`):
 
 ```yaml
-# the machine of the official develop_by_size plugin (plugins/develop_by_size.md)
+# the machine of the official decree_develop_by_size plugin (plugins/decree_develop_by_size.md)
 size_up:
   invoke:
     model:
       question: How much reasoning does this change need?
-      router: gliner_router
+      router: decree_gliner_router
       min_confidence: 0.7
       output: describe
   transitions:
@@ -95,7 +95,7 @@ The `decision` event records the router, the router's run id (`child_run`), the 
 | GLiNER2.5-Decide | The classifier's score for the label it picks (`include_confidence=True`). |
 | A language model constrained by `format` | Still the model's own estimate: the decoder constrains the shape of the reply, not how honest its number is. |
 
-So a threshold only means something for the router it was set with. When a `model` invoke switches to another router, or `machines/router/machine.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, [Observability](reference/observability.md)) before trusting it.
+So a threshold only means something for the router it was set with. When a `model` invoke switches to another router, or `machines/decree_router/machine.yml` changes, revisit every `min_confidence` that uses it. Every `decision` event records `router`, `pick`, `confidence` and the outcome that followed, so you can check a threshold against what actually happened (for example in Grafana, [Observability](reference/observability.md)) before trusting it.
 
 ## Typed routers
 
@@ -114,7 +114,7 @@ To keep it running, use the `decide` systemd user unit in [`docs/services.md`](s
 `machines/gliner_router/machine.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md)):
 
 ```yaml
-name: gliner_router
+name: decree_gliner_router
 description: Ask the local GLiNER2.5-Decide classifier to pick one of the options in the request.
 initial: ask
 states:
@@ -137,7 +137,7 @@ printf '%s\n' "$reply" > "$DECREE_REPLY"
 jq -r '"picked \(.event)"' "$DECREE_REPLY"   # for the log only, as in the router's ask
 ```
 
-`classify_text` takes the labels with their descriptions, and no separate instructions, so the server puts the question in front of the text. The pages document a score for the picked label only, so the reply has no `probabilities`. If the server is down, `curl` fails, the router run ends in `failed`, and the state's event is `error`: give the state an `error` transition (to a bigger model, or to a person) if a missing classifier should not fail the run, as `develop_by_size` does.
+`classify_text` takes the labels with their descriptions, and no separate instructions, so the server puts the question in front of the text. The pages document a score for the picked label only, so the reply has no `probabilities`. If the server is down, `curl` fails, the router run ends in `failed`, and the state's event is `error`: give the state an `error` transition (to a bigger model, or to a person) if a missing classifier should not fail the run, as `decree_develop_by_size` does.
 
 #### Where GLiNER fits
 
@@ -154,7 +154,7 @@ So keep each decision to a few options, and settle anything the params already a
 
 A language model served by [Ollama](https://docs.ollama.com/capabilities/structured-outputs) is a typed router when its call passes the request's `reply_schema` as `format`: Ollama constrains the model's output to the JSON Schema it is given, and the schema's `event` enum holds the pick to the options. Ollama's docs suggest also putting the schema in the prompt, and a temperature of 0, and say the same works through its OpenAI-compatible API's `response_format`. vLLM's guided decoding takes a JSON Schema too; SGLang's `select` picks among the option names directly. The confidence is still the model's own estimate.
 
-`machines/ollama_router/machine.yml` is `gliner_router` with `invoke: ask_ollama`; `machines/ollama_router/scripts/ask_ollama.sh`:
+`machines/ollama_router/machine.yml` is `decree_gliner_router` with `invoke: ask_ollama`; `machines/ollama_router/scripts/ask_ollama.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -177,7 +177,7 @@ jq '.message.content | fromjson' <<<"$answer" > "$DECREE_REPLY"
 jq -r '"picked \(.event)"' "$DECREE_REPLY"
 ```
 
-The reply is in the response's `message.content`. A constrained decoder emits properties in the schema's order, so when a schema-constrained model routes, put the reasoning field first: decree's `reply_schema` lists `reason` before `event`, so the model reasons before it commits to a pick. With `event` first, a local model (Qwen, through Ollama's `format`) picked the first option for every request, and its reason then argued for another. [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) has this router as `llm_router`. Ollama's docs do not list which JSON Schema keywords `format` supports, so check that your version honours `enum` before relying on it; decree validates the reply either way.
+The reply is in the response's `message.content`. A constrained decoder emits properties in the schema's order, so when a schema-constrained model routes, put the reasoning field first: decree's `reply_schema` lists `reason` before `event`, so the model reasons before it commits to a pick. With `event` first, a local model (Qwen, through Ollama's `format`) picked the first option for every request, and its reason then argued for another. [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md) has this router as `decree_llm_router`. Ollama's docs do not list which JSON Schema keywords `format` supports, so check that your version honours `enum` before relying on it; decree validates the reply either way.
 
 ### TypeSafe Jev
 
@@ -239,12 +239,12 @@ OpenAI's Decisions API would be a typed router: it takes context and questions w
 
 ## Untyped routers
 
-### Claude, OpenCode and Copilot (the official `router` plugin)
+### Claude, OpenCode and Copilot (the official `decree_router` plugin)
 
-The default `router` is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree install router` installs [`plugins/router.md`](../plugins/router.md): `machines/router/machine.yml` and its script `machines/router/scripts/ask.sh`:
+The default router, `decree_router`, is untyped: it asks a chat model or coding agent for free text and looks for the reply in it. `decree install decree_router` installs [`plugins/decree_router.md`](../plugins/decree_router.md): `machines/decree_router/machine.yml` and its script `machines/decree_router/scripts/ask.sh`:
 
 ```yaml
-name: router
+name: decree_router
 description: Ask an AI CLI (claude, opencode or copilot) to pick one of the options in the request.
 initial: ask
 states:
@@ -295,7 +295,7 @@ The `0.85` belongs to the cheap model, and the `min_confidence` on the deciding 
 ```yaml
 small_model:                       # a typed classifier: trusted at 0.9 or more
   invoke:
-    model: { question: Which kind of document is this?, router: gliner_router, min_confidence: 0.9, output: read_text }
+    model: { question: Which kind of document is this?, router: decree_gliner_router, min_confidence: 0.9, output: read_text }
   transitions:
     invoice: { target: file_invoice, description: A bill asking for payment. }
     receipt: { target: file_receipt, description: Proof of a payment already made. }
@@ -328,10 +328,10 @@ data:
 initial: gliner
 states:
   gliner:                          # each router reads this run's request.json and writes its own reply.json
-    invoke: { machine: gliner_router }
+    invoke: { machine: decree_gliner_router }
     transitions: { done: llm }
   llm:
-    invoke: { machine: llm_router }
+    invoke: { machine: decree_llm_router }
     transitions: { done: jev }
   jev:
     invoke: { machine: jev_router }
@@ -403,4 +403,4 @@ size_up:
 
 ### Where it does not apply
 
-A script step that wants a second opinion, such as a `verify` that reads `VERDICT:` from an agent, is not a `model` decision and has no router. Its second opinion stays in the script: it calls `ai` twice, with a different `ai_cli` or model for each call, and names `pass` only if both replies say `VERDICT: pass`. Which agents to ask, and how to combine them, is a choice of how that one step does its job, not of which step runs next ([Scripts choose how](../plugins/skill.md)).
+A script step that wants a second opinion, such as a `verify` that reads `VERDICT:` from an agent, is not a `model` decision and has no router. Its second opinion stays in the script: it calls `ai` twice, with a different `ai_cli` or model for each call, and names `pass` only if both replies say `VERDICT: pass`. Which agents to ask, and how to combine them, is a choice of how that one step does its job, not of which step runs next ([Scripts choose how](../plugins/decree_skill.md)).

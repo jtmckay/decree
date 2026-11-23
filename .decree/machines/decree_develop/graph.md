@@ -1,0 +1,39 @@
+# decree_develop
+
+Implement a message with the AI in small, logged steps, run the project's gate, have the AI fix failures only if the gate fails, then have the AI check the acceptance criteria.
+
+Machine: [machines/decree_develop/machine.yml](machine.yml)
+
+```mermaid
+stateDiagram-v2
+    [*] --> precheck
+    final_gate --> failed: error (implicit)
+    final_gate --> failed: fail
+    final_gate --> verify: pass
+    fix --> final_gate: done
+    fix --> failed: error (implicit)
+    fix --> failed: stop
+    gate --> failed: error (implicit)
+    gate --> fix: fail
+    gate --> verify: pass
+    implement --> gate: done
+    implement --> failed: error (implicit)
+    implement --> failed: stop
+    precheck --> implement: done
+    precheck --> failed: error (implicit)
+    verify --> failed: error (implicit)
+    verify --> failed: fail
+    verify --> done: pass
+    verify --> failed: stop
+    done --> [*]
+    failed --> [*]
+    note left of precheck
+        machine onentry: clean_tree
+    end note
+    note right of done
+        onentry: commit
+    end note
+    note right of failed
+        onentry: keep
+    end note
+```

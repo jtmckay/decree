@@ -1,6 +1,6 @@
-//! The official `comfy` plugin (`plugins/comfy.md`, the machine of `examples/text-to-media/`)
+//! The official `comfy` plugin (`plugins/decree_comfy.md`, the machine of `examples/text-to-media/`)
 //! run through the binary against a stub ComfyUI. A temp project runs `decree init` and
-//! `decree install comfy`, which installs its workflows in `machines/comfy/scripts/`, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
+//! `decree install decree_comfy`, which installs its workflows in `machines/decree_comfy/scripts/`, with a stub `curl` first on `PATH` that answers ComfyUI's `/upload/image`,
 //! `/prompt`, `/history/<id>` and `/view` from files under `stub/`, and logs each request. No
 //! ComfyUI, no network.
 
@@ -78,14 +78,14 @@ struct Project {
 }
 
 impl Project {
-    /// A project with the `comfy` plugin (its workflows in `machines/comfy/scripts/`), a stub ComfyUI that
+    /// A project with the `comfy` plugin (its workflows in `machines/decree_comfy/scripts/`), a stub ComfyUI that
     /// finishes the prompt after `polls_before_done` empty answers with `status`, and an
     /// image in `images/ref.png`.
     fn new(polls_before_done: u32, status: &str) -> Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
-        add_plugins(p.root(), &["comfy"]);
+        add_plugins(p.root(), &["decree_comfy"]);
         fs::create_dir(p.root().join("images")).unwrap();
         fs::write(p.root().join("images/ref.png"), PNG).unwrap();
         fs::create_dir(p.stub()).unwrap();
@@ -123,7 +123,7 @@ impl Project {
         .unwrap();
         let mut emit = cargo_bin_cmd!("decree");
         emit.current_dir(self.root())
-            .args(["emit", "--machine", "comfy"])
+            .args(["emit", "--machine", "decree_comfy"])
             .write_stdin(body);
         for param in params {
             emit.args(["--param", param]);
@@ -267,16 +267,16 @@ fn an_image_method_uploads_input_image() {
 
 /// A `build_*` script names the method and runs `build`, as in the README's "When messages
 /// stop naming a method": `build` reads `$METHOD` before the `method` param, from
-/// `.decree/machines/comfy/scripts/`.
+/// `.decree/machines/decree_comfy/scripts/`.
 #[test]
 fn a_wrapper_script_names_the_method_built_from_its_scripts() {
     let p = Project::new(0, "success");
-    let scripts = p.root().join(".decree/scripts/comfy");
+    let scripts = p.root().join(".decree/scripts/decree_comfy");
     write_script(
         &scripts.join("build_text.sh"),
         "#!/usr/bin/env bash\nMETHOD=image_flux2_text_landscape exec \"$(dirname \"$0\")/build.sh\"\n",
     );
-    let machine = p.root().join(".decree/machines/comfy/machine.yml");
+    let machine = p.root().join(".decree/machines/decree_comfy/machine.yml");
     let text = fs::read_to_string(&machine).unwrap();
     let text = text.replacen("    invoke: build\n", "    invoke: build_text\n", 1);
     assert!(text.contains("invoke: build_text"));
@@ -365,13 +365,13 @@ fn a_failed_render_fails_in_await() {
 #[test]
 fn comfy_is_one_machine_with_six_states() {
     let tmp = TempDir::new().unwrap();
-    add_plugins(tmp.path(), &["comfy"]);
+    add_plugins(tmp.path(), &["decree_comfy"]);
     let machines: Vec<String> = fs::read_dir(tmp.path().join(".decree/machines"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(machines, ["comfy"]);
-    let text = common::plugin_machine("plugins/comfy.md");
+    assert_eq!(machines, ["decree_comfy"]);
+    let text = common::plugin_machine("plugins/decree_comfy.md");
     let machine: serde_norway::Value = serde_norway::from_str(&text).unwrap();
     let states: Vec<&str> = machine["states"]
         .as_mapping()

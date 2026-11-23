@@ -115,13 +115,13 @@ fn graph_writes_one_file_per_machine_and_system_md() {
     let tmp = machines_project(&[
         "tests/fixtures/feature/.decree/machines/feature/machine.yml",
         "examples/project/.decree/plugins/hello.md",
-        "tests/fixtures/feature/.decree/machines/router/machine.yml",
+        "tests/fixtures/feature/.decree/machines/decree_router/machine.yml",
     ]);
     let (code, stdout, stderr) = graph(&tmp);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
         stdout,
-        ".decree/machines/feature/graph.md\n.decree/machines/hello/graph.md\n.decree/machines/router/graph.md\n.decree/system.md\n"
+        ".decree/machines/decree_router/graph.md\n.decree/machines/feature/graph.md\n.decree/machines/hello/graph.md\n.decree/system.md\n"
     );
     assert_eq!(
         written(&tmp, "machines/feature/graph.md"),

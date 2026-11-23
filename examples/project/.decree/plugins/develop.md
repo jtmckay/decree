@@ -1,7 +1,7 @@
 ---
 name: develop
 needs:
-- ai
+- decree_ai
 machine:
   description: Implement a message, then test it.
   initial: implement
@@ -33,7 +33,7 @@ scripts:
     # through ai.sh's `ai`, which AI_CLI points at a backend.
     # A non-zero exit is error; decree then runs the next attempt in place.
     set -euo pipefail
-    . .decree/machines/ai/scripts/ai.sh
+    . ".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh"
     prompt="Read $DECREE_MESSAGE and make the change it asks for."
     case "$DECREE_ATTEMPT_VALUE" in
       claude) AI_CLI=claude ai "$prompt" ;;

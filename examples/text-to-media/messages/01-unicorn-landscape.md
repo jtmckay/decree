@@ -1,5 +1,5 @@
 ---
-machine: comfy
+machine: decree_comfy
 params:
   method: image_flux2_text_landscape
   output: output/unicorn_landscape

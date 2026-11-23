@@ -2,7 +2,8 @@
 //! plugins): a file that several plugins carry (`clean_tree.sh`, `commit.sh`, `keep.sh`) is
 //! the same in every plugin file of this repository, the escalation fixture's
 //! `gliner_router` is the official one, and this repository's own `.decree/plugins/` are the
-//! official ones but for the edits it names. Reads this repository's files only.
+//! official ones byte for byte, plus its own plugins that extend them with only its edits.
+//! Reads this repository's files only.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -46,14 +47,14 @@ fn plugin_files() -> Vec<String> {
 }
 
 /// Every copy of `clean_tree.sh`, `commit.sh` and `keep.sh` in a plugin file is the official
-/// `develop`'s, byte for byte; `ai.sh` is only the `ai` library's, which every plugin whose
-/// scripts source it lists in `needs`.
+/// `decree_develop`'s, byte for byte; `ai.sh` is only the `decree_ai` library's, which every
+/// plugin whose scripts source it lists in `needs`.
 #[test]
 fn shared_files_are_the_official_ones_in_every_plugin() {
     let files = plugin_files();
     for must in [
-        "plugins/develop.md",
-        "plugins/develop_by_size.md",
+        "plugins/decree_develop.md",
+        "plugins/decree_develop_by_size.md",
         ".decree/plugins/develop.md",
         "examples/project/.decree/plugins/develop.md",
     ] {
@@ -61,13 +62,13 @@ fn shared_files_are_the_official_ones_in_every_plugin() {
     }
     let mut found: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for shared in ["clean_tree.sh", "commit.sh", "keep.sh"] {
-        let official = common::plugin_script("plugins/develop.md", shared);
+        let official = common::plugin_script("plugins/decree_develop.md", shared);
         for file in &files {
             let scripts = &frontmatter(&repo().join(file))["scripts"];
             if let Some(text) = scripts.get(shared).and_then(|v| v.as_str()) {
                 assert!(
                     text == official,
-                    "{file}: {shared} differs from plugins/develop.md's"
+                    "{file}: {shared} differs from plugins/decree_develop.md's"
                 );
                 found.entry(shared).or_default().push(file.clone());
             }
@@ -76,69 +77,50 @@ fn shared_files_are_the_official_ones_in_every_plugin() {
     for file in &files {
         let fm = frontmatter(&repo().join(file));
         let name = fm["name"].as_str().unwrap();
-        if name != "ai" {
+        if name != "decree_ai" {
             assert!(fm["scripts"].get("ai.sh").is_none(), "{file} carries ai.sh");
         }
         let sources = fs::read_to_string(repo().join(file))
             .unwrap()
-            .contains(". .decree/machines/ai/scripts/ai.sh");
+            .contains(". \".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh\"");
         let needs_ai = fm["needs"]
             .as_sequence()
-            .is_some_and(|n| n.iter().any(|v| v.as_str() == Some("ai")));
-        if name != "ai" {
+            .is_some_and(|n| n.iter().any(|v| v.as_str() == Some("decree_ai")));
+        if name != "decree_ai" {
             assert_eq!(sources, needs_ai, "{file}: sources ai.sh, needs ai");
         }
     }
     assert!(files
         .iter()
-        .any(|f| f == "examples/project/.decree/plugins/ai.md"));
-    assert!(found["commit.sh"].contains(&".decree/plugins/develop.md".to_string()));
+        .any(|f| f == "examples/project/.decree/plugins/decree_ai.md"));
+    assert!(found["commit.sh"].contains(&".decree/plugins/decree_develop.md".to_string()));
 }
 
-/// The escalation fixture's `gliner_router`, whose recorded runs `replay_test.rs` replays, is
+/// The escalation fixture's `decree_gliner_router`, whose recorded runs `replay_test.rs` replays, is
 /// the official plugin's: the same machine and the same script.
 #[test]
 fn the_escalation_fixtures_gliner_router_is_the_official_one() {
     let fixture = repo().join("tests/fixtures/escalation/.decree");
     let machine: serde_norway::Value = serde_norway::from_str(
-        &fs::read_to_string(fixture.join("machines/gliner_router/machine.yml")).unwrap(),
+        &fs::read_to_string(fixture.join("machines/decree_gliner_router/machine.yml")).unwrap(),
     )
     .unwrap();
     let official: serde_norway::Value =
-        serde_norway::from_str(&common::plugin_machine("plugins/gliner_router.md")).unwrap();
+        serde_norway::from_str(&common::plugin_machine("plugins/decree_gliner_router.md")).unwrap();
     assert_eq!(machine, official);
     assert_eq!(
-        fs::read_to_string(fixture.join("machines/gliner_router/scripts/ask_gliner.sh")).unwrap(),
-        common::plugin_script("plugins/gliner_router.md", "ask_gliner.sh")
+        fs::read_to_string(fixture.join("machines/decree_gliner_router/scripts/ask_gliner.sh"))
+            .unwrap(),
+        common::plugin_script("plugins/decree_gliner_router.md", "ask_gliner.sh")
     );
 }
 
-/// AC (A10): this repository's `.decree/plugins/` keeps its machine names, each started from
-/// the official plugin: the same files but for this repository's own edits, which are the
-/// cargo gate, the prompts that read `conventions.md`, `conventions.md` itself, done's
-/// `restart` with `restart.sh` and `run-queue.sh`, infra's requirements and qa's `QA_RUN`.
+/// AC (A14): this repository's `.decree/plugins/` holds each official plugin it runs as this
+/// decree's copy, byte for byte, and keeps its machine names `develop`, `infra` and `qa` as
+/// plugins of its own that extend the official ones and hold only this repository's edits:
+/// the cargo gate, `conventions.md` and `run-queue.sh`; infra's requirements; qa's `QA_RUN`.
 #[test]
-fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
-    let edits: &[(&str, &[&str])] = &[
-        (
-            "develop",
-            &[
-                "machine",
-                "conventions.md",
-                "fix.sh",
-                "gate.sh",
-                "implement.sh",
-                "run-queue.sh",
-                "verify.sh",
-            ],
-        ),
-        ("infra", &["requirements"]),
-        ("qa", &["qa.sh"]),
-        ("router", &[]),
-        ("order", &[]),
-        ("ai", &[]),
-        ("skill", &[]),
-    ];
+fn this_repositorys_plugins_are_the_official_ones_plus_its_overlays() {
     let mut names: Vec<String> = fs::read_dir(repo().join(".decree/plugins"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -147,41 +129,53 @@ fn this_repositorys_plugins_are_the_official_ones_plus_its_edits() {
     assert_eq!(
         names,
         [
-            "ai.md",
+            "decree_ai.md",
+            "decree_develop.md",
+            "decree_infra.md",
+            "decree_order.md",
+            "decree_qa.md",
+            "decree_router.md",
+            "decree_skill.md",
             "develop.md",
             "infra.md",
-            "order.md",
             "qa.md",
-            "router.md",
-            "skill.md"
         ]
     );
-    for (name, edited) in edits {
-        let ours = frontmatter(&repo().join(format!(".decree/plugins/{name}.md")));
-        let official = frontmatter(&repo().join(format!("plugins/{name}.md")));
-        assert_eq!(ours["needs"], official["needs"], "{name}: needs");
-        if !edited.contains(&"machine") {
-            assert_eq!(ours["machine"], official["machine"], "{name}: machine");
-        }
-        let scripts = |v: &serde_norway::Value| -> BTreeMap<String, String> {
-            v["scripts"]
-                .as_mapping()
-                .unwrap()
-                .iter()
-                .map(|(k, v)| (k.as_str().unwrap().into(), v.as_str().unwrap().into()))
-                .collect()
+    for name in names.iter().filter(|n| n.starts_with("decree_")) {
+        assert_eq!(
+            fs::read_to_string(repo().join(".decree/plugins").join(name)).unwrap(),
+            fs::read_to_string(repo().join("plugins").join(name)).unwrap(),
+            "{name} is not this decree's copy"
+        );
+    }
+    let overlays: &[(&str, &[&str], &str)] = &[
+        (
+            "develop",
+            &["conventions.md", "gate.sh", "run-queue.sh"],
+            "- decree_infra: infra\n",
+        ),
+        ("infra", &["requirements"], ""),
+        ("qa", &["qa.sh"], "- decree_develop: develop\n"),
+    ];
+    for (name, files, needs) in overlays {
+        let fm = frontmatter(&repo().join(format!(".decree/plugins/{name}.md")));
+        assert_eq!(
+            fm["extends"].as_str(),
+            Some(format!("decree_{name}").as_str())
+        );
+        assert!(fm.get("machine").is_none(), "{name}: machine");
+        let scripts: Vec<&str> = fm["scripts"]
+            .as_mapping()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str().unwrap())
+            .collect();
+        assert_eq!(&scripts, files, "{name}");
+        let needs = if needs.is_empty() {
+            serde_norway::Value::Null
+        } else {
+            serde_norway::from_str(needs).unwrap()
         };
-        let (ours, official) = (scripts(&ours), scripts(&official));
-        for (path, text) in &official {
-            if !edited.contains(&path.as_str()) {
-                assert_eq!(ours.get(path), Some(text), "{name}: {path}");
-            }
-        }
-        for path in ours.keys().filter(|p| !official.contains_key(*p)) {
-            assert!(
-                edited.contains(&path.as_str()),
-                "{name}: {path} is not an official file or a named edit"
-            );
-        }
+        assert_eq!(fm["needs"], needs, "{name}: needs");
     }
 }

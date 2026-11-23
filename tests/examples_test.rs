@@ -352,6 +352,8 @@ fn run_readme(name: &str, prepare: &str) -> tempfile::TempDir {
         .arg(&script)
         .current_dir(dir.path())
         .env("PATH", path)
+        // The caller's own order limit (run-queue.sh sets one) is not the example's.
+        .env_remove("ORDER_MAX")
         .output()
         .unwrap();
     assert!(
@@ -416,7 +418,7 @@ fn text_to_media_readme_commands_run() {
         "mkdir -p renders/images && echo picture > renders/images/reference.png",
     );
     let project = dir.path().join("renders");
-    assert_eq!(ordered(&project, "comfy").len(), 4);
+    assert_eq!(ordered(&project, "decree_comfy").len(), 4);
     // The four order files, the lighthouse, and the `order` and `skill` runs of each of the
     // two daemon starts.
     assert_eq!(all_runs_done(&project), 9);

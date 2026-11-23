@@ -94,10 +94,16 @@ fn dispatch(command: Option<Command>) -> Result<(), DecreeError> {
         },
         Command::Install {
             sources,
-            official,
+            update,
             cron,
             format,
-        } => commands::plugin::install(&root()?, &sources, official, cron, format),
+        } => {
+            if update {
+                commands::plugin::update(&root()?, &sources, format)
+            } else {
+                commands::plugin::install(&root()?, &sources, cron, format)
+            }
+        }
         Command::Retry { id, state, format } => {
             commands::retry::run(&root()?, &id, state.as_deref(), format)
         }

@@ -78,7 +78,7 @@ impl Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
-        add_plugins(p.root(), &["develop_by_size", "llm_router"]);
+        add_plugins(p.root(), &["decree_develop_by_size", "decree_llm_router"]);
         // As the README says: the demo message, queued.
         fs::copy(
             example().join("messages").join(MIGRATION),
@@ -94,7 +94,7 @@ impl Project {
         fs::write(p.root().join("stub/test_results"), results).unwrap();
         write_script(
             &p.root()
-                .join(".decree/machines/gliner_router/scripts/ask_gliner.sh"),
+                .join(".decree/machines/decree_gliner_router/scripts/ask_gliner.sh"),
             STUB_ASK_GLINER,
         );
         fs::create_dir(p.bin()).unwrap();
@@ -370,7 +370,7 @@ fn an_unknown_attempt_value_is_an_error_naming_it() {
     fs::create_dir(&run).unwrap();
     let out = Command::new(
         p.root()
-            .join(".decree/machines/develop_by_size/scripts/implement.sh"),
+            .join(".decree/machines/decree_develop_by_size/scripts/implement.sh"),
     )
     .current_dir(p.root())
     .env("DECREE_ATTEMPT_VALUE", "gpt")
@@ -579,7 +579,7 @@ fn the_llm_router_sends_reply_schema_as_format_and_writes_the_reply() {
     let script = tmp.path().join("ask_llm.sh");
     write_script(
         &script,
-        &common::plugin_script("plugins/llm_router.md", "ask_llm.sh"),
+        &common::plugin_script("plugins/decree_llm_router.md", "ask_llm.sh"),
     );
     let out = Command::new(&script)
         .env("PATH", path)

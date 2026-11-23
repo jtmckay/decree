@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn unknown_names_are_errors_built_ins_are_not() {
-        let f = MachineFilter::Only(set(&["a", "develop", "nope"]));
+        let f = MachineFilter::Only(set(&["a", "decree_develop", "nope"]));
         let err = f.check(|n| n == "a", "--machine").unwrap_err().to_string();
         assert_eq!(
             err,

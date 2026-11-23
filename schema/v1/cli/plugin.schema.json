@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/cli/plugin.schema.json",
   "title": "decree install / list / export --format json",
-  "description": "What `decree install`, `decree list` and `decree export --format json` print on stdout, one shape per `action`. On failure (a name neither in plugins/ nor official, a plugin that fails its schema, a missing `needs`) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. `decree install` with no argument is the exception: it installs every plugin it can, prints `sync`, names each invalid plugin on stderr and exits 1. An install never refuses over a change: what it would lose goes to .decree/archive/ first. Reference: docs/reference/plugins.md.",
+  "description": "What `decree install` (and `decree install --update`), `decree list` and `decree export --format json` print on stdout, one shape per `action`. On failure (a name neither in plugins/ nor official, a plugin that fails its schema, a missing `needs`) nothing is printed on stdout, nothing is written, the error goes to stderr and the exit code is 1. `decree install` with no argument is the exception: it installs every plugin it can, prints `sync`, names each invalid plugin on stderr and exits 1. An install never refuses over a change: what it would lose goes to .decree/archive/ first. Reference: docs/reference/plugins.md.",
   "oneOf": [
     {
       "type": "object",
@@ -33,6 +33,7 @@
               "description",
               "official",
               "differs",
+              "extends",
               "state"
             ],
             "additionalProperties": false,
@@ -44,24 +45,32 @@
               },
               "description": {
                 "type": "string",
-                "description": "Its machine's one-line `description`, or its body's first line for a library; empty when it fails its schema."
+                "description": "Its machine's one-line `description` (its base's, for a plugin that extends another without a machine of its own), or its body's first line for a library; empty when it fails its schema."
               },
               "official": {
                 "type": "boolean",
-                "description": "Whether decree ships an official plugin of this name."
+                "description": "Whether its name starts with `decree_`: an official plugin, this decree's or another's. Every other plugin is the project's own."
               },
               "differs": {
                 "type": "boolean",
-                "description": "With `official`: whether the file differs from this decree's copy, byte for byte (edited, or from another decree version); `decree install --official <name>` takes this decree's copy, archiving the old file. False otherwise."
+                "description": "With `official`: whether its file in plugins/ or its installed copy under machines/ is not this decree's copy (edited, or from another decree version), which `decree check` reports as P3; `decree install` restores this decree's copy, archiving the change. False otherwise."
+              },
+              "extends": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The plugin it extends (`extends`), or null."
               },
               "state": {
                 "enum": [
                   "installed",
                   "not installed",
                   "edited",
+                  "missing base",
                   "invalid"
                 ],
-                "description": "`installed`: installed as its file says; `not installed`: new or changed since it was installed, so `decree install` would install it; `edited`: its installed copy was edited in place or written by hand, and not exported, so `decree install` would move it to .decree/archive/; `invalid`: it fails its schema (P1)."
+                "description": "`installed`: installed as its file says; `not installed`: new or changed since it was installed, so `decree install` would install it; `edited`: its installed copy was edited in place or written by hand, and not exported, so `decree install` would move it to .decree/archive/; `invalid`: it fails its schema (P1). `missing base`: it extends a plugin not in plugins/ (P2), so it is not installed."
               }
             }
           }
@@ -92,7 +101,7 @@
               },
               "description": {
                 "type": "string",
-                "description": "Its machine's one-line `description`."
+                "description": "Its machine's one-line `description`, its base's for one that extends another."
               },
               "needs": {
                 "type": "array",
@@ -148,9 +157,10 @@
                   "installed",
                   "added",
                   "needed",
-                  "replaced"
+                  "replaced",
+                  "reinstalled"
                 ],
-                "description": "`installed`: named, and installed from its file in plugins/; `added`: named, not in plugins/, so seeded from the official copy and installed; `needed`: seeded and installed because a plugin needs it; `replaced`: named with --official, its file replaced with this decree's copy (the old one archived) and installed."
+                "description": "`installed`: named, and installed from its file in plugins/; `added`: named, not in plugins/, so seeded from the official copy and installed; `needed`: seeded and installed because a plugin extends or needs it; `replaced`: an official plugin named whose file was not this decree's copy, replaced with it (the old one archived) and installed; `reinstalled`: not named, but installed again because it extends one that was, or is the base of one."
               },
               "needed_by": {
                 "type": "array",
@@ -269,6 +279,7 @@
         "action",
         "exported",
         "conflicts",
+        "official",
         "dry_run"
       ],
       "additionalProperties": false,
@@ -292,6 +303,14 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "description": "Edited plugins not exported because their plugin file changed since they were installed: exporting would write the old version over the new file, so a person merges them (or `decree install` archives the edit)."
+        },
+        "official": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "Official plugins whose installed copy was edited: never exported, since official plugins are not edited; the text names the plugin to write instead, one that extends it."
         },
         "dry_run": {
           "type": "boolean",
@@ -416,13 +435,14 @@
         "action",
         "installed",
         "removed",
-        "archived"
+        "archived",
+        "restored"
       ],
       "additionalProperties": false,
       "properties": {
         "action": {
           "const": "sync",
-          "description": "`decree install` with no argument: every plugin installed and every deleted plugin's copy removed, each installed copy that would be lost archived first. A plugin installed already keeps its cron files unless --cron. With --official, the official plugins in plugins/ first become this decree's copies (`official`)."
+          "description": "`decree install` with no argument: every plugin installed and every deleted plugin's copy removed, each installed copy that would be lost archived first. A plugin installed already keeps its cron files unless --cron. Every official plugin's file and installed copy are made this decree's copy first (`restored`)."
         },
         "installed": {
           "type": "array",
@@ -462,16 +482,15 @@
             }
           }
         },
-        "official": {
+        "restored": {
           "type": "array",
-          "description": "With --official: each official plugin already in plugins/ whose file was not this decree's copy, replaced by it (the old file archived) before the install. It adds no plugin. Absent without --official.",
+          "description": "Each official plugin whose file in plugins/, or installed copy under machines/, was not this decree's copy: archived, then replaced with this decree's.",
           "items": {
             "type": "object",
             "required": [
               "plugin",
+              "what",
               "file",
-              "status",
-              "needed_by",
               "changes",
               "archived"
             ],
@@ -479,26 +498,18 @@
             "properties": {
               "plugin": {
                 "type": "string",
-                "pattern": "^[a-z][a-z0-9_]*$",
-                "description": "The plugin's name."
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "what": {
+                "enum": [
+                  "file",
+                  "installed copy"
+                ],
+                "description": "Which was not this decree's copy."
               },
               "file": {
                 "type": "string",
                 "description": "The plugin file, .decree/plugins/<name>.md, relative to the project root."
-              },
-              "status": {
-                "enum": [
-                  "replaced"
-                ],
-                "description": "Its file replaced with this decree's copy."
-              },
-              "needed_by": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_]*$"
-                },
-                "description": "For `needed`: the plugins that need it. Empty otherwise."
               },
               "changes": {
                 "type": "array",
@@ -536,7 +547,63 @@
               },
               "archived": {
                 "type": "string",
-                "description": "The archived plugin file it replaced, .decree/archive/<name>/<time>.md, relative to the project root."
+                "description": "Where what was there was archived, relative to the project root."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "plugins"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "const": "update",
+          "description": "`decree install --update [<name>...]`: each plugin with a `source`, fetched from it, its diff shown, and written only after a person answers `y` on a terminal."
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Each plugin looked at, in name order.",
+          "items": {
+            "type": "object",
+            "required": [
+              "plugin",
+              "file",
+              "source",
+              "status"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "plugin": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "file": {
+                "type": "string",
+                "description": "The plugin file, relative to the project root."
+              },
+              "source": {
+                "type": "string",
+                "description": "Its `source`, the https URL fetched."
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "up to date",
+                  "not updated",
+                  "failed",
+                  "refused"
+                ],
+                "description": "`updated`: taken, written and installed; `up to date`: the fetched file is the committed one; `not updated`: a person said no, or stdin is not a terminal; `failed`: the fetch failed; `refused`: the fetched file fails the schema, or names another `name` or `source`."
+              },
+              "error": {
+                "type": "string",
+                "description": "For `failed` and `refused`: why."
               }
             }
           }

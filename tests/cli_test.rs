@@ -1136,17 +1136,17 @@ fn a_named_event_picks_the_transition() {
 }
 
 /// AC (A08): `decree init` in an empty directory writes no `.decree/lib/`, `decree check`
-/// passes, and infra's `run.sh check`, once `infra` is added, runs from
-/// `.decree/machines/infra/scripts/`, reporting each line with the file it came from.
+/// passes, and infra's `run.sh check`, once `decree_infra` is added, runs from
+/// `.decree/machines/decree_infra/scripts/`, reporting each line with the file it came from.
 #[test]
 fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     let p = Project::init();
     assert!(!p.decree_dir().join("lib").exists());
     p.decree(&["check"]).assert().success().stderr("");
-    p.decree(&["install", "infra"]).assert().success();
+    p.decree(&["install", "decree_infra"]).assert().success();
     assert!(!p.decree_dir().join("lib").exists());
     p.decree(&["check"]).assert().success().stderr("");
-    let out = std::process::Command::new(".decree/machines/infra/scripts/run.sh")
+    let out = std::process::Command::new(".decree/machines/decree_infra/scripts/run.sh")
         .arg("check")
         .current_dir(p.root())
         .env("PATH", path_with_stubs(&p.root(), &["claude"]))
@@ -1156,7 +1156,7 @@ fn init_writes_no_lib_and_infra_runs_from_its_scripts() {
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         stdout,
-        "ok       command git (machines/infra/scripts/requirements)\n"
+        "ok       command git (machines/decree_infra/scripts/requirements)\n"
     );
 }
 
@@ -1200,18 +1200,28 @@ fn scripts_get_no_decree_lib() {
         ));
 }
 
-/// AC (A08): `machines/develop/scripts/` may hold `conventions.md` and `requirements` beside
-/// the scripts its states invoke; `decree check` passes with no warning about them.
+/// AC (A08): a develop machine's `scripts/` may hold `conventions.md` and `requirements` beside
+/// the scripts its states invoke; `decree check` passes with no warning about them. The
+/// project's own plugin that extends `decree_develop` holds them.
 #[test]
 fn check_ignores_the_files_beside_a_machines_scripts() {
     let p = Project::init();
-    p.decree(&["install", "develop"]).assert().success();
-    let develop = p.decree_dir().join("machines/develop/scripts");
+    p.decree(&["install", "decree_develop"]).assert().success();
+    let file = p.root().join("app_develop.md");
+    fs::write(
+        &file,
+        "---\nname: app_develop\nextends: decree_develop\n---\n# app_develop\n",
+    )
+    .unwrap();
+    p.decree(&["install", file.to_str().unwrap()])
+        .assert()
+        .success();
+    let develop = p.decree_dir().join("machines/app_develop/scripts");
     assert!(develop.join("commit.sh").is_file());
     fs::write(develop.join("conventions.md"), "# Conventions\n").unwrap();
     fs::write(develop.join("requirements"), "command   git\n").unwrap();
     // Kept in the plugin file, so `check` has no edit in place to warn about.
-    p.decree(&["export", "develop"]).assert().success();
+    p.decree(&["export", "app_develop"]).assert().success();
     p.decree(&["check"])
         .assert()
         .success()

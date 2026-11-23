@@ -1,9 +1,9 @@
-//! The official `newsletter` plugin (`plugins/newsletter.md`) run through the binary, with no
+//! The official `newsletter` plugin (`plugins/decree_newsletter.md`) run through the binary, with no
 //! network and no model. A temp project runs `decree init` and `decree install newsletter`,
 //! with the `.env` the plugin's file names, and its `feeds.txt` lists local `file://` fixtures (`tests/fixtures/newsletter/`: one RSS 2.0, one Atom, one broken),
 //! and a stub `curl` first on `PATH` stands in for Ollama's `/api/chat` and for ntfy. Covers:
 //! a first run writes `newsletter/<today>.md` with the stub's picks and records the five links
-//! in the machine's store, `.decree/machines/newsletter/state/seen.tsv`; a second run writes the "nothing new" issue without calling the model; a
+//! in the machine's store, `.decree/machines/decree_newsletter/state/seen.tsv`; a second run writes the "nothing new" issue without calling the model; a
 //! broken feed is skipped, and all feeds broken fails `gather`; `deliver` posts to ntfy once
 //! with `NTFY_URL` set, and skips the ping, saying so, without it. Skipped without `python3`
 //! or `jq`, which the plugin's scripts need.
@@ -65,7 +65,7 @@ fn has_tools() -> bool {
 }
 
 /// The official plugin's file.
-const PLUGIN: &str = "plugins/newsletter.md";
+const PLUGIN: &str = "plugins/decree_newsletter.md";
 
 /// The `.env` the plugin's file says to write.
 const DOTENV: &str = "OLLAMA_URL=http://127.0.0.1:11434\nOLLAMA_MODEL=gemma4:e4b\nNEWSLETTER_DIR=newsletter\nNEWSLETTER_MAX_ITEMS=60\n";
@@ -90,7 +90,7 @@ impl Project {
         let p = Project {
             tmp: TempDir::new().unwrap(),
         };
-        for args in [&["init"][..], &["install", "newsletter"]] {
+        for args in [&["init"][..], &["install", "decree_newsletter"]] {
             cargo_bin_cmd!("decree")
                 .current_dir(p.root())
                 .args(args)
@@ -102,7 +102,7 @@ impl Project {
         let list: String = feeds.iter().map(|f| fixture(f) + "\n").collect();
         fs::write(
             p.root()
-                .join(".decree/machines/newsletter/scripts/feeds.txt"),
+                .join(".decree/machines/decree_newsletter/scripts/feeds.txt"),
             format!("# fixtures\n{list}"),
         )
         .unwrap();
@@ -125,7 +125,7 @@ impl Project {
     fn emit(&self) -> String {
         let out = cargo_bin_cmd!("decree")
             .current_dir(self.root())
-            .args(["emit", "--machine", "newsletter", "--format", "json"])
+            .args(["emit", "--machine", "decree_newsletter", "--format", "json"])
             .write_stdin("This week")
             .output()
             .unwrap();
@@ -213,7 +213,7 @@ impl Project {
     fn seen_tsv(&self) -> String {
         fs::read_to_string(
             self.root()
-                .join(".decree/machines/newsletter/state/seen.tsv"),
+                .join(".decree/machines/decree_newsletter/state/seen.tsv"),
         )
         .unwrap()
     }
@@ -390,13 +390,13 @@ fn deliver_is_safe_to_re_run() {
     let id = p.run(None);
     let script = p
         .root()
-        .join(".decree/machines/newsletter/scripts/deliver.sh");
+        .join(".decree/machines/decree_newsletter/scripts/deliver.sh");
     let out = Command::new(script)
         .current_dir(p.root())
         .env("DECREE_RUN_DIR", p.run_dir(&id))
         .env(
             "DECREE_STATE_DIR",
-            p.root().join(".decree/machines/newsletter/state"),
+            p.root().join(".decree/machines/decree_newsletter/state"),
         )
         .env("NEWSLETTER_DIR", "newsletter")
         .env_remove("NTFY_URL")
@@ -412,14 +412,14 @@ fn deliver_is_safe_to_re_run() {
     assert_eq!(p.seen(), LINKS);
 }
 
-/// The plugin is one machine, `newsletter`, with the states gather, write, deliver, done and
+/// The plugin is one machine, `decree_newsletter`, with the states gather, write, deliver, done and
 /// failed, `seen.tsv` declared in its store, and its file shows the weekly cron file to write
 /// and the `.env` it reads.
 #[test]
 fn newsletter_has_five_states_and_documents_its_cron_file() {
     let machine: serde_norway::Value =
         serde_norway::from_str(&common::plugin_machine(PLUGIN)).unwrap();
-    assert_eq!(machine["name"], "newsletter");
+    assert_eq!(machine["name"], "decree_newsletter");
     let states: Vec<&str> = machine["states"]
         .as_mapping()
         .unwrap()
@@ -449,7 +449,8 @@ fn newsletter_has_five_states_and_documents_its_cron_file() {
 #[test]
 fn seen_tsv_is_in_the_state_folder() {
     let p = Project::new(&[]);
-    let graph = fs::read_to_string(p.root().join(".decree/machines/newsletter/graph.md")).unwrap();
+    let graph =
+        fs::read_to_string(p.root().join(".decree/machines/decree_newsletter/graph.md")).unwrap();
     assert!(
         graph.contains("    note left of gather\n        state_files: seen.tsv\n    end note\n"),
         "{graph}"

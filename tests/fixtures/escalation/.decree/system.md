@@ -2,15 +2,15 @@
 
 Every machine, the `emits` and `invokes` edges between them, and cron entry points.
 
+- [decree_gliner_router](machines/decree_gliner_router/graph.md): Ask the local GLiNER2.5-Decide classifier to pick one of the options in the request.
+- [decree_router](machines/decree_router/graph.md): Ask Claude to pick one of the options in the request.
 - [file_document](machines/file_document/graph.md): File one scanned document as an invoice, a receipt or other paperwork.
-- [gliner_router](machines/gliner_router/graph.md): Ask the local GLiNER2.5-Decide classifier to pick one of the options in the request.
-- [router](machines/router/graph.md): Ask Claude to pick one of the options in the request.
 
 ```mermaid
 flowchart LR
+    decree_gliner_router["decree_gliner_router"]
+    decree_router["decree_router"]
     file_document["file_document"]
-    gliner_router["gliner_router"]
-    router["router"]
-    file_document -->|invokes| gliner_router
-    file_document -->|invokes| router
+    file_document -->|invokes| decree_gliner_router
+    file_document -->|invokes| decree_router
 ```

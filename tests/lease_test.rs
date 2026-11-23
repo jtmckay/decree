@@ -1,8 +1,9 @@
-//! The official `lease` plugin (plugins/lease.md, migration A12): one holder per resource,
-//! batched by mode, with linger and max_wait. Each test is a fresh project with `lease`
-//! added, the resource `gpu` at `max_lease 3s`, `linger 1s` and `max_wait 4s`, a stub swap
-//! script that records each call in `swaps.log` (and fails for mode `z`, and sleeps for mode
-//! `slow`), and `decree daemon --interval 1s` running. A lease is held exactly while its
+//! The official `decree_lease` plugin (plugins/decree_lease.md, migrations A12 and A14): one
+//! holder per resource, batched by mode, with linger and max_wait. Each test is a fresh project
+//! with its own plugin `gpu_lease`, which extends `decree_lease` with the rules (`scripts/resources`:
+//! the resource `gpu` at `max_lease 3s`, `linger 1s` and `max_wait 4s`) and a stub swap script
+//! (`scripts/swap/gpu.sh`) that records each call in its state folder's `swaps.log` (and fails
+//! for mode `z`, and sleeps for mode `slow`), and `decree daemon --interval 1s` running. A lease is held exactly while its
 //! run's state is `held`; every wait polls, and checks that no two leases are ever `held`.
 
 use assert_cmd::Command;
@@ -20,8 +21,28 @@ use tempfile::TempDir;
 
 const RULES: &str = "# test rules\ngpu 3s 1s 4s\n";
 
+/// The project's plugin that extends `decree_lease` with `rules` and `swap` (gpu's swap script).
+fn gpu_lease(rules: &str, swap: &str) -> String {
+    let block = |text: &str| -> String {
+        text.lines()
+            .map(|l| {
+                if l.is_empty() {
+                    "\n".to_string()
+                } else {
+                    format!("    {l}\n")
+                }
+            })
+            .collect()
+    };
+    format!(
+        "---\nname: gpu_lease\nextends: decree_lease\nscripts:\n  resources: |\n{}  swap/gpu.sh: |\n{}---\n# gpu_lease\n",
+        block(rules),
+        block(swap)
+    )
+}
+
 const STUB: &str = "#!/usr/bin/env bash\n\
-printf '\"%s\" -> %s\\n' \"$1\" \"$2\" >> swaps.log\n\
+printf '\"%s\" -> %s\\n' \"$1\" \"$2\" >> \"$DECREE_STATE_DIR/swaps.log\"\n\
 [ \"$2\" != slow ] || sleep 60\n\
 [ \"$2\" != z ]\n";
 
@@ -45,7 +66,8 @@ fn clean(cmd: &mut std::process::Command) {
 }
 
 impl Project {
-    /// `decree init`, `decree install lease`, the test rules and the stub swap script.
+    /// `decree init`, and `gpu_lease`, extending `decree_lease` with the test rules and the
+    /// stub swap script, installed.
     fn new() -> Project {
         Project::with_rules(RULES)
     }
@@ -59,13 +81,11 @@ impl Project {
             holders: std::cell::Cell::new(1),
         };
         p.decree(&["init"]).assert().success();
-        p.decree(&["install", "lease"]).assert().success();
-        fs::write(p.lease_dir().join("resources.git.txt"), rules).unwrap();
-        let stub = p.lease_dir().join("swap/gpu.git.sh");
-        fs::create_dir_all(stub.parent().unwrap()).unwrap();
-        fs::write(&stub, STUB).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+        let file = p.root().join("gpu_lease.md");
+        fs::write(&file, gpu_lease(rules, STUB)).unwrap();
+        p.decree(&["install", file.to_str().unwrap()])
+            .assert()
+            .success();
         p
     }
 
@@ -74,7 +94,7 @@ impl Project {
     }
 
     fn lease_dir(&self) -> PathBuf {
-        self.root().join(".decree/machines/lease/state")
+        self.root().join(".decree/machines/gpu_lease/state")
     }
 
     fn decree(&self, args: &[&str]) -> Command {
@@ -114,7 +134,7 @@ impl Project {
 
     /// Asks for a lease; returns its id.
     fn ask(&self, params: &[&str]) -> String {
-        let mut args = vec!["emit", "--machine", "lease"];
+        let mut args = vec!["emit", "--machine", "gpu_lease"];
         for p in params {
             args.push("--param");
             args.push(p);
@@ -263,7 +283,7 @@ impl Project {
     }
 
     fn swaps(&self) -> Vec<String> {
-        fs::read_to_string(self.root().join("swaps.log"))
+        fs::read_to_string(self.lease_dir().join("swaps.log"))
             .unwrap_or_default()
             .lines()
             .map(str::to_string)
@@ -906,26 +926,31 @@ fn lease_is_listed_and_adds_cleanly() {
     let list = String::from_utf8(run(&["list"])).unwrap();
     let line = list
         .lines()
-        .find(|l| l.trim_start().starts_with("lease "))
+        .find(|l| l.trim_start().starts_with("decree_lease "))
         .unwrap_or_else(|| panic!("{list}"));
     assert!(line.contains("One mode per resource at a time"), "{line}");
-    run(&["install", "lease"]);
+    run(&["install", "decree_lease"]);
     run(&["check"]);
-    let req = tmp
-        .path()
-        .join(".decree/machines/lease/scripts/requirements");
+    let scripts = tmp.path().join(".decree/machines/decree_lease/scripts");
     for tool in ["flock", "jq"] {
-        assert!(path_has(&req, &format!("command   {tool}")), "{tool}");
+        assert!(
+            path_has(&scripts.join("requirements"), &format!("command   {tool}")),
+            "{tool}"
+        );
     }
-    // The seeded rules name no resource, and no file of the plugin names one.
-    let state = tmp.path().join(".decree/machines/lease/state");
-    assert!(path_has(
-        &state.join("resources.git.txt"),
-        "# box1  15m  5s  30m"
-    ));
-    assert!(!state.join("swap").exists());
-    let plugin = fs::read_to_string(tmp.path().join(".decree/plugins/lease.md")).unwrap();
-    assert!(!plugin.to_lowercase().contains("gpu"), "lease names a GPU");
+    // Its rules name no resource, it ships no swap script, and nothing in state/ is code.
+    assert!(path_has(&scripts.join("resources"), "# box1  15m  5s  30m"));
+    assert!(!scripts.join("swap").exists());
+    assert!(!tmp
+        .path()
+        .join(".decree/machines/decree_lease/state")
+        .exists());
+    let plugin = fs::read_to_string(tmp.path().join(".decree/plugins/decree_lease.md")).unwrap();
+    assert!(!plugin.contains("\nstate:\n"), "decree_lease seeds state/");
+    assert!(
+        !plugin.to_lowercase().contains("gpu") || plugin.contains("gpu_lease"),
+        "decree_lease names a GPU of its own"
+    );
 }
 
 /// AC: with `holders` 2, two x leases hold gpu together after one swap; a third x waits for
@@ -1197,7 +1222,7 @@ fn a_wake_for_a_lease_that_ends_is_taken_back() {
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|r| r["machine"] != "lease")
+        .filter(|r| r["machine"] != "gpu_lease")
         .collect();
     assert!(rejected.is_empty(), "{rejected:?}");
     assert!(
@@ -1256,4 +1281,107 @@ fn an_old_status_that_never_ended_does_not_fail_a_release() {
     p.wait_finished(&a, "done");
     assert!(old.exists(), "an unended status was removed");
     p.stop();
+}
+
+/// Every file under `dir`, relative to it, with its bytes, `skip` (a folder under `dir`) left
+/// out.
+fn tree(dir: &Path, skip: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in fs::read_dir(&d).unwrap() {
+            let path = e.unwrap().path();
+            if path.starts_with(skip) {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push((
+                    path.strip_prefix(dir).unwrap().to_path_buf(),
+                    fs::read(&path).unwrap(),
+                ));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Make every folder and file under `dir` read-only, but under `keep`.
+fn read_only(dir: &Path, keep: &Path, writable: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    for e in fs::read_dir(dir).unwrap() {
+        let path = e.unwrap().path();
+        if path.starts_with(keep) {
+            continue;
+        }
+        if path.is_dir() {
+            read_only(&path, keep, writable);
+        }
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        let mode = if writable {
+            mode | 0o200
+        } else {
+            mode & !0o222
+        };
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+}
+
+/// AC (A14): `gpu_lease` extends `decree_lease` with `scripts/resources` (`gpu 3s 1s 4s`) and a
+/// stub `scripts/swap/gpu.sh`; with `machines/` read-only after the install, two leases for
+/// different modes on `gpu_lease` are granted in turn, the stub records `"" -> x` then
+/// `x -> y`, and nothing is written under `machines/` outside `machines/gpu_lease/state/`. A
+/// lease on `decree_lease` itself fails at once, naming the resource and saying to extend it.
+#[test]
+fn a_projects_lease_plugin_runs_with_machines_read_only() {
+    let p = Project::with_rules("gpu 3s 1s 4s\n");
+    let machines = p.root().join(".decree/machines");
+
+    // On decree_lease itself: no resources, and it says to extend it.
+    let mut args = vec!["emit", "--machine", "decree_lease"];
+    args.extend(["--param", "resource=gpu", "--param", "mode=x"]);
+    let out = p.decree(&args).write_stdin("A lease.\n").assert().success();
+    let own = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let own = own.trim().to_string();
+    // The run fails, so `daemon --once` exits 1.
+    p.decree(&["daemon", "--once"]).assert().code(1);
+    let log = fs::read_to_string(
+        fs::read_dir(p.root().join(".decree/runs").join(&own))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.extension().is_some_and(|x| x == "log") && p.to_string_lossy().contains("turn")
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        log.contains("a lease on decree_lease itself (resource `gpu`)"),
+        "{log}"
+    );
+    assert!(log.contains("`extends: decree_lease`"), "{log}");
+    assert_eq!(
+        p.state(&own),
+        ("finished".to_string(), "failed".to_string())
+    );
+
+    let state = machines.join("gpu_lease/state");
+    fs::create_dir_all(&state).unwrap();
+    let before = tree(&machines, &state);
+    read_only(&machines, &state, false);
+    p.start();
+    let a = p.ask_mode("x");
+    p.wait_state(&a, "held");
+    let b = p.ask_mode("y");
+    p.send(&a, "release");
+    p.wait_finished(&a, "done");
+    p.wait_state(&b, "held");
+    p.send(&b, "release");
+    p.wait_finished(&b, "done");
+    p.stop();
+    assert_eq!(p.swaps(), vec!["\"\" -> x", "\"x\" -> y"]);
+    read_only(&machines, &state, true);
+    assert_eq!(tree(&machines, &state), before);
 }

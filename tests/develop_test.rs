@@ -69,9 +69,34 @@ echo "checks ran"
 exit "$status"
 "#;
 
-/// The line of the gate `init` writes that stands in for the project's checks.
-const UNCONFIGURED: &str =
-    "  echo \"gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with \\`decree export develop\\`\"\n";
+/// The line of `decree_develop`'s gate that stands in for the project's checks.
+const UNCONFIGURED: &str = "  echo \"gate: decree_develop runs no checks; extend it with a plugin of your own holding scripts/gate.sh (\\`name: app_develop\\`, \\`extends: decree_develop\\`), or use decree_develop_rust, decree_develop_node or decree_develop_react\"\n";
+
+/// The project's own plugins, each extending an official one: `develop`, whose gate the test
+/// writes, meeting its need of `decree_infra` with the project's `infra`; `infra`; and `qa`,
+/// handing its bugs to the project's `develop`.
+const OWN_PLUGINS: [(&str, &str); 3] = [
+    (
+        "develop",
+        "---\nname: develop\nextends: decree_develop\nneeds:\n- decree_infra: infra\n---\n# develop\n",
+    ),
+    (
+        "infra",
+        "---\nname: infra\nextends: decree_infra\n---\n# infra\n",
+    ),
+    (
+        "qa",
+        "---\nname: qa\nextends: decree_qa\nneeds:\n- decree_develop: develop\n---\n# qa\n",
+    ),
+];
+
+/// What decree sets for a script of the project's `develop`, for a script run on its own.
+const DEVELOP_ENV: [(&str, &str); 4] = [
+    ("DECREE_MACHINE", "develop"),
+    ("DECREE_NEED_DECREE_AI", "decree_ai"),
+    ("DECREE_NEED_DECREE_INFRA", "infra"),
+    ("DECREE_NEED_DECREE_ORDER", "decree_order"),
+];
 
 /// The local time is always `STUB_NOW`.
 const STUB_DATE: &str = "#!/usr/bin/env bash\necho \"$STUB_NOW\"\n";
@@ -94,9 +119,9 @@ struct Project {
 }
 
 impl Project {
-    /// `decree init --ai claude` and `decree install develop qa router`, plus a `bin/`
-    /// holding a stub `claude`, and the gate `develop` installed with its checks replaced by
-    /// the stub `check`, exported.
+    /// `decree init --ai claude`, `decree install decree_develop decree_qa decree_router`, and
+    /// the project's own `develop`, `infra` and `qa` that extend them (`OWN_PLUGINS`), plus a
+    /// `bin/` holding a stub `claude`; `develop`'s gate runs the stub `check`, exported.
     fn init() -> Project {
         Project::init_in("")
     }
@@ -116,9 +141,13 @@ impl Project {
         fs::create_dir_all(&root).unwrap();
         let p = Project { tmp, root };
         p.decree(&["init", "--ai", "claude"]).assert().success();
-        p.decree(&["install", "develop", "qa", "router"])
+        p.decree(&["install", "decree_develop", "decree_qa", "decree_router"])
             .assert()
             .success();
+        for (name, text) in OWN_PLUGINS {
+            fs::write(p.root().join(format!(".decree/plugins/{name}.md")), text).unwrap();
+        }
+        p.decree(&["install"]).assert().success();
         fs::create_dir(p.bin()).unwrap();
         p.stub("claude", STUB_CLAUDE);
         p.stub("check", STUB_CHECK);
@@ -339,8 +368,9 @@ fn files_under(dir: &Path) -> Vec<String> {
     out
 }
 
-/// AC (A10): `decree init` installs only its default plugins (D86); `decree install develop qa router` adds
-/// `develop`, `infra` (which `develop` needs), `qa` and `router`, each with its helpers, config
+/// AC (A10): `decree init` installs only its default plugins (D86); `decree install decree_develop
+/// decree_qa decree_router` adds them, with `decree_infra`, `decree_ai` and `decree_order`,
+/// which `decree_develop` needs, each with its helpers, config
 /// and data beside its scripts (`ai.sh` for each that asks AI, the git scripts, infra's declared
 /// environment, qa's settings), and no `lib/`; no script but `ai.sh` defines `ai()`; everything
 /// passes `decree check`, whichever backend `init` was given, since no file names it.
@@ -353,7 +383,12 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
         let decree = p.root().join(".decree");
         assert_eq!(
             files_under(&decree.join("plugins")),
-            ["ai.md", "order.md", "prune.md", "skill.md"]
+            [
+                "decree_ai.md",
+                "decree_order.md",
+                "decree_prune.md",
+                "decree_skill.md"
+            ]
         );
         common::drop_default_plugins(p.root());
         assert_eq!(
@@ -362,12 +397,19 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             "{ai}"
         );
         assert!(!decree.join("scripts").exists(), "{ai}");
-        p.decree(&["install", "develop", "qa", "router"])
+        p.decree(&["install", "decree_develop", "decree_qa", "decree_router"])
             .assert()
             .success();
         assert_eq!(
             files_under(&decree.join("plugins")),
-            ["ai.md", "develop.md", "infra.md", "qa.md", "router.md"],
+            [
+                "decree_ai.md",
+                "decree_develop.md",
+                "decree_infra.md",
+                "decree_order.md",
+                "decree_qa.md",
+                "decree_router.md"
+            ],
             "{ai}"
         );
         let machines: Vec<String> = files_under(&decree.join("machines"))
@@ -377,10 +419,11 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
         assert_eq!(
             machines,
             [
-                "develop/machine.yml",
-                "infra/machine.yml",
-                "qa/machine.yml",
-                "router/machine.yml"
+                "decree_develop/machine.yml",
+                "decree_infra/machine.yml",
+                "decree_order/machine.yml",
+                "decree_qa/machine.yml",
+                "decree_router/machine.yml"
             ],
             "{ai}"
         );
@@ -391,40 +434,46 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
         assert_eq!(
             scripts,
             [
-                "ai/ai.sh",
-                "develop/clean_tree.sh",
-                "develop/commit.sh",
-                "develop/fix.sh",
-                "develop/gate.sh",
-                "develop/implement.sh",
-                "develop/keep.sh",
-                "develop/precheck.sh",
-                "develop/verify.sh",
-                "infra/apply.sh",
-                "infra/clean_tree.sh",
-                "infra/commit.sh",
-                "infra/declare.sh",
-                "infra/keep.sh",
-                "infra/kinds/command.sh",
-                "infra/requirements",
-                "infra/run.sh",
-                "qa/attack.sh",
-                "qa/clean_tree.sh",
-                "qa/commit.sh",
-                "qa/invariants.md",
-                "qa/keep.sh",
-                "qa/qa.sh",
-                "qa/recon.sh",
-                "qa/report.sh",
-                "qa/run.sh",
-                "qa/triage.sh",
-                "qa/wrenches.md",
-                "router/ask.sh",
+                "decree_ai/ai.sh",
+                "decree_develop/clean_tree.sh",
+                "decree_develop/commit.sh",
+                "decree_develop/fix.sh",
+                "decree_develop/gate.sh",
+                "decree_develop/implement.sh",
+                "decree_develop/keep.sh",
+                "decree_develop/precheck.sh",
+                "decree_develop/verify.sh",
+                "decree_infra/apply.sh",
+                "decree_infra/clean_tree.sh",
+                "decree_infra/commit.sh",
+                "decree_infra/declare.sh",
+                "decree_infra/keep.sh",
+                "decree_infra/kinds/command.sh",
+                "decree_infra/requirements",
+                "decree_infra/run.sh",
+                "decree_order/emit_if_changed.sh",
+                "decree_order/emit_if_changed_git.sh",
+                "decree_order/idle.sh",
+                "decree_order/next.sh",
+                "decree_order/record.sh",
+                "decree_order/wait.sh",
+                "decree_qa/attack.sh",
+                "decree_qa/clean_tree.sh",
+                "decree_qa/commit.sh",
+                "decree_qa/invariants.md",
+                "decree_qa/keep.sh",
+                "decree_qa/qa.sh",
+                "decree_qa/recon.sh",
+                "decree_qa/report.sh",
+                "decree_qa/run.sh",
+                "decree_qa/triage.sh",
+                "decree_qa/wrenches.md",
+                "decree_router/ask.sh",
             ],
             "{ai}"
         );
         assert!(!decree.join("lib").exists(), "{ai}");
-        let helper = fs::read_to_string(decree.join("machines/ai/scripts/ai.sh")).unwrap();
+        let helper = fs::read_to_string(decree.join("machines/decree_ai/scripts/ai.sh")).unwrap();
         assert!(helper.contains("\nai() {\n"), "{ai}");
         let mut texts = Vec::new();
         for script in &scripts {
@@ -437,9 +486,12 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             texts.push(text);
         }
         installed.push(texts);
-        assert!(decree.join("machines/develop/graph.md").is_file(), "{ai}");
+        assert!(
+            decree.join("machines/decree_develop/graph.md").is_file(),
+            "{ai}"
+        );
         let develop: serde_norway::Value = serde_norway::from_str(
-            &fs::read_to_string(decree.join("machines/develop/machine.yml")).unwrap(),
+            &fs::read_to_string(decree.join("machines/decree_develop/machine.yml")).unwrap(),
         )
         .unwrap();
         assert_eq!(develop["states"]["gate"]["transitions"]["fail"], "fix");
@@ -447,7 +499,8 @@ fn plugin_add_writes_develop_infra_qa_router_and_they_pass_check() {
             develop["states"]["final_gate"]["transitions"]["fail"],
             "failed"
         );
-        let gate = fs::read_to_string(decree.join("machines/develop/scripts/gate.sh")).unwrap();
+        let gate =
+            fs::read_to_string(decree.join("machines/decree_develop/scripts/gate.sh")).unwrap();
         for event in ["echo pass > ", "echo fail > "] {
             assert!(gate.contains(event), "{ai}: {event}");
         }
@@ -466,6 +519,7 @@ fn gate_alone(p: &Project) -> (Option<i32>, String, String, String, String) {
     let event_file = run_dir.join("event");
     fs::write(&event_file, "").unwrap();
     let out = std::process::Command::new(p.script("gate"))
+        .envs(DEVELOP_ENV)
         .current_dir(p.root())
         .env("PATH", p.path())
         .env("DECREE_RUN_DIR", &run_dir)
@@ -482,32 +536,39 @@ fn gate_alone(p: &Project) -> (Option<i32>, String, String, String, String) {
     )
 }
 
-/// The gate `develop` installs runs no checks, says so in its output and in gate.log, and
-/// names `pass`. Its commented checks each have a `command -v` line.
+/// `decree_develop`'s own gate runs no checks, says so in its output and in gate.log, saying to
+/// extend it, and names `pass`. Its commented checks each have a `command -v` line.
 #[test]
-fn the_default_gate_says_it_is_unconfigured_and_names_pass() {
+fn the_default_gate_says_to_extend_it_and_names_pass() {
     let p = Project::empty();
     p.decree(&["init", "--ai", "claude"]).assert().success();
-    p.decree(&["install", "develop"]).assert().success();
-    let said = "gate: no checks configured; edit .decree/machines/develop/scripts/gate.sh, then keep it with `decree export develop`\n";
-    assert_eq!(
-        gate_alone(&p),
-        (
-            Some(0),
-            said.to_string(),
-            String::new(),
-            said.to_string(),
-            "pass\n".to_string()
-        )
-    );
-    let text = fs::read_to_string(p.script("gate")).unwrap();
+    p.decree(&["install", "decree_develop"]).assert().success();
+    let gate = p
+        .root()
+        .join(".decree/machines/decree_develop/scripts/gate.sh");
+    let run_dir = p.root().join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let event_file = run_dir.join("event");
+    fs::write(&event_file, "").unwrap();
+    let out = std::process::Command::new(&gate)
+        .current_dir(p.root())
+        .env("DECREE_MACHINE", "decree_develop")
+        .env("DECREE_RUN_DIR", &run_dir)
+        .env("DECREE_ROOT_RUN_DIR", &run_dir)
+        .env("DECREE_EVENT_FILE", &event_file)
+        .output()
+        .unwrap();
+    let said = "gate: decree_develop runs no checks; extend it with a plugin of your own holding scripts/gate.sh (`name: app_develop`, `extends: decree_develop`), or use decree_develop_rust, decree_develop_node or decree_develop_react\n";
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), said);
+    assert_eq!(fs::read_to_string(run_dir.join("gate.log")).unwrap(), said);
+    assert_eq!(fs::read_to_string(&event_file).unwrap(), "pass\n");
+    let text = fs::read_to_string(&gate).unwrap();
     for check in [
         "# command -v cargo >/dev/null || missing cargo\n",
-        "# cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test\n",
-        "# command -v npm >/dev/null || missing npm\n",
-        "# npm ci && npm run lint && npm test\n",
-        "# command -v go >/dev/null || missing go\n",
-        "# gofmt -l . | (! grep .) && go vet ./... && go test ./...\n",
+        "#   cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test\n",
+        "#   npm ci && npm run lint && npm test\n",
+        "#   gofmt -l . | (! grep .) && go vet ./... && go test ./...\n",
     ] {
         assert!(text.contains(check), "{check}");
     }
@@ -555,6 +616,7 @@ fn verify_alone(reply: &str) -> (Option<i32>, String) {
     let event_file = run_dir.join("event");
     fs::write(&event_file, "").unwrap();
     let out = std::process::Command::new(p.script("verify"))
+        .envs(DEVELOP_ENV)
         .current_dir(p.root())
         .env("PATH", p.path())
         .env("DECREE_RUN_DIR", &run_dir)
@@ -622,6 +684,7 @@ fn verify_leaves_gaps_on_fail_and_keeps_the_last_through_a_dead_attempt() {
         let event_file = run_dir.join("event");
         fs::write(&event_file, "").unwrap();
         let out = std::process::Command::new(p.script("verify"))
+            .envs(DEVELOP_ENV)
             .current_dir(p.root())
             .env("PATH", p.path())
             .env("DECREE_RUN_DIR", &run_dir)
@@ -1097,7 +1160,10 @@ fn ai_without_ai_cli_uses_the_first_cli_on_path() {
     let ask = |clis: &[&str]| {
         let path = path_with_only(&p, clis);
         let out = std::process::Command::new(path.join("bash"))
-            .args(["-c", ". .decree/machines/ai/scripts/ai.sh && ai 'Say hi.'"])
+            .args([
+                "-c",
+                ". .decree/machines/decree_ai/scripts/ai.sh && ai 'Say hi.'",
+            ])
             .current_dir(p.root())
             .env_clear()
             .env("PATH", &path)
@@ -1154,7 +1220,7 @@ fn ai_without_ai_cli_uses_the_first_cli_on_path() {
     )
     .unwrap();
     let out = std::process::Command::new(path.join("bash"))
-        .arg(".decree/machines/router/scripts/ask.sh")
+        .arg(".decree/machines/decree_router/scripts/ask.sh")
         .current_dir(p.root())
         .env_clear()
         .env("PATH", &path)
@@ -1195,7 +1261,7 @@ fn a_runs_ai_cli_wins_over_the_projects() {
     );
     write_script(
         &decree.join("scripts/say.sh"),
-        "#!/usr/bin/env bash\nset -euo pipefail\n. .decree/machines/ai/scripts/ai.sh\nai \"Say hi from $DECREE_MACHINE.\"\n",
+        "#!/usr/bin/env bash\nset -euo pipefail\n. .decree/machines/decree_ai/scripts/ai.sh\nai \"Say hi from $DECREE_MACHINE.\"\n",
     );
     p.stub(
         "opencode",
@@ -1753,7 +1819,7 @@ fn a_failed_run_exports_nothing_and_keeps_its_edit_installed() {
 #[test]
 fn an_order_files_commit_names_it_and_holds_its_record() {
     let p = Project::init();
-    p.decree(&["install", "order"]).assert().success();
+    p.decree(&["install", "decree_order"]).assert().success();
     let order = p.root().join(".decree/machines/develop/order");
     fs::create_dir_all(&order).unwrap();
     fs::write(order.join("01-greet.md"), MESSAGE).unwrap();
@@ -2221,4 +2287,124 @@ fn the_documented_release_kind_checks_its_sha256() {
     let (ok, out) = apply(&url);
     assert!(!ok, "{out}");
     assert!(out.contains("mytool: no #sha256= in its source\n"), "{out}");
+}
+
+/// Every file under `dir` with its bytes, for "writes nothing here" checks.
+fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    if !dir.exists() {
+        return Vec::new();
+    }
+    files_under(dir)
+        .into_iter()
+        .map(|f| {
+            let bytes = fs::read(dir.join(&f)).unwrap();
+            (f, bytes)
+        })
+        .collect()
+}
+
+/// AC (A14): a project with its own `develop` (no prefix), `app_develop` extending
+/// `decree_develop` with `needs: [{decree_infra: app_infra}]`, and `app_infra` extending
+/// `decree_infra`: a message for `app_develop`, with a stub AI and a stub gate, runs `precheck`
+/// through `machines/app_infra/scripts/run.sh`, writes nothing under `machines/develop/`,
+/// `machines/decree_develop/` or `machines/decree_infra/`, and `decree check` passes.
+#[test]
+fn a_needs_map_sends_precheck_to_the_projects_infra() {
+    let p = Project::init();
+    let plugins = p.root().join(".decree/plugins");
+    let gate = "#!/usr/bin/env bash\nset -euo pipefail\nlog=\"${DECREE_ROOT_RUN_DIR}/gate.log\"\nif check 2>&1 | tee \"${log}\"; then\n  echo pass > \"${DECREE_EVENT_FILE}\"\nelse\n  echo fail > \"${DECREE_EVENT_FILE}\"\nfi\n";
+    let mut app = String::from("---\nname: app_develop\nextends: decree_develop\nneeds:\n- decree_infra: app_infra\nscripts:\n  gate.sh: |\n");
+    for line in gate.lines() {
+        app.push_str(&format!("    {line}\n"));
+    }
+    app.push_str("---\n# app_develop\n");
+    fs::write(plugins.join("app_develop.md"), app).unwrap();
+    fs::write(
+        plugins.join("app_infra.md"),
+        "---\nname: app_infra\nextends: decree_infra\n---\n# app_infra\n",
+    )
+    .unwrap();
+    p.decree(&["install"]).assert().success();
+    p.decree(&["graph"]).assert().success();
+    let out = p.decree(&["check"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    p.commit_all("app plugins");
+    let machines = p.root().join(".decree/machines");
+    let before: Vec<_> = ["develop", "decree_develop", "decree_infra"]
+        .iter()
+        .map(|m| snapshot(&machines.join(m)))
+        .collect();
+    let id = p.run_on("app_develop", &[]);
+    assert_eq!(p.outcome(&id), "done", "{:?}", path(&p, &id));
+    let precheck = p.log(&id, "precheck");
+    assert!(
+        precheck.starts_with("ok       command git (machines/app_infra/scripts/requirements)\n"),
+        "{precheck}"
+    );
+    let after: Vec<_> = ["develop", "decree_develop", "decree_infra"]
+        .iter()
+        .map(|m| snapshot(&machines.join(m)))
+        .collect();
+    assert_eq!(before, after);
+    let out = p.decree(&["check"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+}
+
+/// AC (A14): `qa` extending `decree_qa` with `needs: [{decree_develop: develop}]`, installed,
+/// exported, installed and exported again, gives the same bytes twice with no `machine` key,
+/// archives nothing, and `decree list` shows neither `edited` nor `differs`; its installed
+/// machine emits to `develop` (and qa's bugs go there: `qa_hands_each_bug_to_develop_as_a_failing_test`).
+#[test]
+fn an_overlay_with_a_needs_map_exports_the_same_bytes_without_a_machine() {
+    let p = Project::init();
+    let file = p.root().join(".decree/plugins/qa.md");
+    p.decree(&["export", "qa"]).assert().success();
+    let first = fs::read_to_string(&file).unwrap();
+    p.decree(&["install"]).assert().success();
+    p.decree(&["export", "qa"]).assert().success();
+    let second = fs::read_to_string(&file).unwrap();
+    assert_eq!(first, second);
+    assert!(!first.contains("\nmachine:"), "{first}");
+    assert!(
+        first.contains("needs:\n- decree_develop: develop\n"),
+        "{first}"
+    );
+    assert!(!p.root().join(".decree/archive/qa").exists());
+    let list = p.decree(&["list"]).output().unwrap();
+    let list = String::from_utf8(list.stdout).unwrap();
+    for name in ["qa", "decree_qa", "develop", "decree_develop"] {
+        let line = list
+            .lines()
+            .find(|l| l.trim_start().starts_with(&format!("{name} ")))
+            .unwrap();
+        assert!(
+            !line.contains("edited") && !line.contains("differs"),
+            "{list}"
+        );
+    }
+    let machine = fs::read_to_string(p.root().join(".decree/machines/qa/machine.yml")).unwrap();
+    let machine: serde_norway::Value = serde_norway::from_str(&machine).unwrap();
+    assert_eq!(
+        machine["states"]["report"]["emits"],
+        serde_norway::from_str::<serde_norway::Value>("[develop]").unwrap()
+    );
+}
+
+/// AC (A14): a message for `decree_infra` itself fails at once, saying to extend it, and
+/// nothing under `machines/decree_infra/` changes.
+#[test]
+fn a_message_for_decree_infra_itself_fails_at_once() {
+    let p = Project::init();
+    let dir = p.root().join(".decree/machines/decree_infra");
+    let before = snapshot(&dir);
+    let id = p.run_on("decree_infra", &[("CLAUDE_DECLARE", "command   ls")]);
+    assert_eq!(p.outcome(&id), "failed", "{:?}", path(&p, &id));
+    let log = p.log(&id, "declare");
+    assert!(
+        log.contains("decree_infra is an official plugin and is never edited"),
+        "{log}"
+    );
+    assert!(log.contains("`extends: decree_infra`"), "{log}");
+    assert!(p.calls().is_empty(), "{:?}", p.calls());
+    assert_eq!(snapshot(&dir), before);
 }

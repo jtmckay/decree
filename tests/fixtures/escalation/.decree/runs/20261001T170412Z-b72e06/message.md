@@ -1,5 +1,5 @@
 ---
-machine: gliner_router
+machine: decree_gliner_router
 id: 20261001T170412Z-b72e06
 parent: 20261001T170412Z-3f9a51
 depth: 1

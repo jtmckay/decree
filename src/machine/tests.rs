@@ -7,7 +7,14 @@ use tempfile::TempDir;
 /// `examples/project`'s `hello`, `develop` and `deploy` (as docs/reference/machines.md shows them), and from `tests/fixtures/feature/`: `ship`, which
 /// invokes `feature` and `deploy`, `feature` (nesting, a check, a model, a reply, `data`,
 /// `emits`, `onentry` and `onexit`) and the router `feature` names by default.
-const EXAMPLES: [&str; 6] = ["hello", "develop", "deploy", "ship", "feature", "router"];
+const EXAMPLES: [&str; 6] = [
+    "hello",
+    "develop",
+    "deploy",
+    "ship",
+    "feature",
+    "decree_router",
+];
 
 fn fixture(name: &str) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -73,7 +80,14 @@ fn reference_examples_load() {
     let machines = load_machines(&tmp.path().join(".decree")).unwrap();
     assert_eq!(
         machines.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["deploy", "develop", "feature", "hello", "router", "ship"]
+        [
+            "decree_router",
+            "deploy",
+            "develop",
+            "feature",
+            "hello",
+            "ship"
+        ]
     );
     for (id, m) in &machines {
         assert_eq!(&m.root().id, id);
@@ -444,12 +458,12 @@ fn problems_with(text: &str, others: &[(&str, &str)]) -> Vec<String> {
 }
 
 fn problems(text: &str) -> Vec<String> {
-    problems_with(text, &[("router", ROUTER)])
+    problems_with(text, &[("decree_router", ROUTER)])
 }
 
 const HEAD: &str = "name: m\ndescription: d\ninitial: a\nstates:\n";
 
-const ROUTER: &str = "name: router\ndescription: d\ninitial: a\nstates:\n  \
+const ROUTER: &str = "name: decree_router\ndescription: d\ninitial: a\nstates:\n  \
                       a: { invoke: x, transitions: { done: done } }\n  \
                       done: { final: true }\n  failed: { final: true }\n";
 
@@ -794,7 +808,7 @@ fn model_without_router_needs_a_machine_named_router() {
     assert!(problems(&text).is_empty(), "{:?}", problems(&text));
     assert_eq!(
         problems_with(&text, &[]),
-        ["a: `model` names no `router`, and there is no machine named `router` (V16)"]
+        ["a: `model` names no `router`, and there is no machine named `decree_router` (V16)"]
     );
 }
 
@@ -1015,7 +1029,7 @@ fn a_machine_that_invokes_itself() {
 
 #[test]
 fn a_machine_that_invokes_itself_through_its_router() {
-    let router = "name: router\ndescription: d\ninitial: a\nstates:\n  \
+    let router = "name: decree_router\ndescription: d\ninitial: a\nstates:\n  \
                   a: { invoke: { machine: m }, transitions: { done: done } }\n  \
                   done: { final: true }\n  failed: { final: true }\n";
     let text = format!(
@@ -1024,8 +1038,8 @@ fn a_machine_that_invokes_itself_through_its_router() {
          done: {{ final: true }}\n  failed: {{ final: true }}\n"
     );
     assert_eq!(
-        problems_with(&text, &[("router", router)]),
-        ["a: machine `m` invokes itself: m -> router -> m; a machine never invokes itself, directly or through others (V20)"]
+        problems_with(&text, &[("decree_router", router)]),
+        ["a: machine `m` invokes itself: m -> decree_router -> m; a machine never invokes itself, directly or through others (V20)"]
     );
 }
 

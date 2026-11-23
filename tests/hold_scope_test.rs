@@ -320,7 +320,7 @@ fn a_daemon_runs_the_others_and_goes_on_when_the_hold_goes() {
 #[test]
 fn order_does_not_wait_for_a_held_message() {
     let p = Project::new();
-    p.cmd(&["install", "order"]).assert().success();
+    p.cmd(&["install", "decree_order"]).assert().success();
     let held = p.hold_tree();
     let a = p.queue("a");
     let out = p.cmd(&["status", "--format", "json"]).output().unwrap();

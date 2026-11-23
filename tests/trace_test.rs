@@ -63,7 +63,7 @@ states:
 ";
 
 const ROUTER: &str = "\
-name: router
+name: decree_router
 description: Always ship.
 initial: ask
 states:
@@ -117,7 +117,7 @@ impl Project {
             fs::create_dir_all(decree.join(dir)).unwrap();
         }
         fs::write(decree.join("processed.md"), "").unwrap();
-        for (name, text) in [("flow", FLOW), ("leaf", LEAF), ("router", ROUTER)] {
+        for (name, text) in [("flow", FLOW), ("leaf", LEAF), ("decree_router", ROUTER)] {
             common::write_file(&decree.join(format!("machines/{name}/machine.yml")), text);
         }
         write_script(&decree.join("scripts/work"), WORK);
@@ -261,7 +261,7 @@ fn a_run_its_router_run_and_its_child_run_share_one_trace_with_the_documented_pa
     );
     assert_eq!(router[0]["parent_span_id"], decision_span);
     let router_run = run_span(&router_spans);
-    assert_eq!(router_run["name"], "run router");
+    assert_eq!(router_run["name"], "run decree_router");
     assert_eq!(router_run["parentSpanId"], decision_span);
     let reply = router_spans
         .values()

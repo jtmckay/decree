@@ -1,7 +1,7 @@
-//! The official `develop` variants (docs/reference/plugins.md, Official plugins):
-//! `develop_rust`, `develop_node` and `develop_react` are `develop`'s machine under their own
-//! names, with `develop`'s scripts but for the gate, the conventions the prompts read and the
-//! tools they declare. Each gate runs with stub `cargo`, `npm`, `pnpm` and `yarn` on a `PATH`
+//! The official `decree_develop` variants (docs/reference/plugins.md, Official plugins):
+//! `decree_develop_rust`, `decree_develop_node` and `decree_develop_react` extend
+//! `decree_develop`, holding only the gate, the conventions the prompts read and the tools
+//! they declare; installed, each is `decree_develop`'s machine under its own name. Each gate runs with stub `cargo`, `npm`, `pnpm` and `yarn` on a `PATH`
 //! of one folder, so no test needs Rust's or Node's real tools, or the network.
 
 use std::collections::BTreeMap;
@@ -12,15 +12,15 @@ use tempfile::TempDir;
 mod common;
 use common::write_script;
 
-const VARIANTS: [&str; 3] = ["develop_rust", "develop_node", "develop_react"];
+const VARIANTS: [&str; 3] = [
+    "decree_develop_rust",
+    "decree_develop_node",
+    "decree_develop_react",
+];
 
 /// The files each variant has of its own: the gate, the conventions its prompts read and the
 /// tools it declares.
 const OWN: [&str; 3] = ["conventions.md", "gate.sh", "requirements"];
-
-/// The prompts that read the variant's conventions: develop's, but for that one line and the
-/// variant's own script paths.
-const PROMPTS: [&str; 3] = ["fix.sh", "implement.sh", "verify.sh"];
 
 /// Records `<name> <args>` in `calls` beside it, then exits 1 if that line starts with
 /// `STUB_FAIL`, else 0.
@@ -171,12 +171,13 @@ fn mermaid(graph: &str) -> String {
         .unwrap_or_else(|| panic!("no mermaid block:\n{graph}"))
 }
 
-/// AC: after a fresh `init` (which adds `order` and `prune`), `decree install develop_rust
-/// develop_react` adds both with `infra`, which they need; `decree check` passes, and `decree graph` draws both machines with
-/// `develop`'s states and transitions.
+/// AC: after a fresh `init` (which adds `decree_order` and `decree_prune`), `decree install
+/// decree_develop_rust decree_develop_react` adds both with `decree_develop`, which they extend,
+/// and what it needs; `decree check` passes, and `decree graph` draws both machines with
+/// `decree_develop`'s states and transitions.
 #[test]
-fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
-    let p = project(&["develop_rust", "develop_react"]);
+fn add_rust_and_react_adds_their_base_passes_check_and_graphs_develops_states() {
+    let p = project(&["decree_develop_rust", "decree_develop_react"]);
     let dot = p.path().join(".decree");
     let mut files: Vec<String> = fs::read_dir(dot.join("plugins"))
         .unwrap()
@@ -186,24 +187,21 @@ fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
     assert_eq!(
         files,
         [
-            "ai.md",
-            "develop_react.md",
-            "develop_rust.md",
-            "infra.md",
-            "order.md",
-            "prune.md",
-            "skill.md"
+            "decree_ai.md",
+            "decree_develop.md",
+            "decree_develop_react.md",
+            "decree_develop_rust.md",
+            "decree_infra.md",
+            "decree_order.md",
+            "decree_prune.md",
+            "decree_skill.md"
         ]
     );
     let (code, stdout, stderr) = decree(p.path(), &["check"]);
     assert_eq!((code, stdout.as_str(), stderr.as_str()), (0, "", ""));
     ok(p.path(), &["graph"]);
-
-    let reference = project(&["develop"]);
-    ok(reference.path(), &["graph"]);
-    let develop =
-        fs::read_to_string(reference.path().join(".decree/machines/develop/graph.md")).unwrap();
-    for variant in ["develop_rust", "develop_react"] {
+    let develop = fs::read_to_string(dot.join("machines/decree_develop/graph.md")).unwrap();
+    for variant in ["decree_develop_rust", "decree_develop_react"] {
         let graph = fs::read_to_string(dot.join(format!("machines/{variant}/graph.md"))).unwrap();
         assert!(graph.starts_with(&format!("# {variant}\n")), "{graph}");
         assert_eq!(mermaid(&graph), mermaid(&develop), "{variant}");
@@ -223,25 +221,40 @@ fn add_rust_and_react_adds_infra_passes_check_and_graphs_develops_states() {
     }
 }
 
-/// Each variant is `develop`'s machine but for its description, which names its ecosystem,
-/// needs `infra` as `develop` does, and `decree list` shows it with that description.
+/// Each variant extends `decree_develop` with only its own files and no machine, so its
+/// installed machine is `decree_develop`'s, description included; `decree list` shows it with
+/// that description.
 #[test]
-fn each_variant_is_develops_machine_and_list_names_its_ecosystem() {
-    let develop = frontmatter("develop");
+fn each_variant_is_decree_develops_machine() {
+    let develop = frontmatter("decree_develop");
     let tmp = TempDir::new().unwrap();
     ok(tmp.path(), &["init", "--ai", "claude"]);
     let list = ok(tmp.path(), &["list"]);
-    for (variant, ecosystem) in VARIANTS.iter().zip(["Rust", "Node", "React"]) {
+    let description = develop["machine"]["description"].as_str().unwrap();
+    for variant in VARIANTS {
         let ours = frontmatter(variant);
-        assert_eq!(ours["needs"], develop["needs"], "{variant}");
-        let description = ours["machine"]["description"].as_str().unwrap();
-        assert!(
-            description.starts_with(&format!("develop for a {ecosystem} project. ")),
-            "{variant}: {description}"
+        assert_eq!(
+            ours["extends"].as_str(),
+            Some("decree_develop"),
+            "{variant}"
         );
-        let mut machine = ours["machine"].clone();
-        machine["description"] = develop["machine"]["description"].clone();
-        assert_eq!(machine, develop["machine"], "{variant}");
+        assert!(ours.get("machine").is_none(), "{variant}");
+        assert!(ours.get("needs").is_none(), "{variant}");
+        assert_eq!(
+            scripts(variant)
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            OWN,
+            "{variant}"
+        );
+        assert!(
+            scripts(variant)["conventions.md"].contains(&format!(
+                "{}'s implement, fix and verify",
+                variant.trim_start_matches("decree_")
+            )),
+            "{variant}"
+        );
         let line = list
             .lines()
             .find(|l| l.trim_start().starts_with(&format!("{variant} ")))
@@ -250,49 +263,9 @@ fn each_variant_is_develops_machine_and_list_names_its_ecosystem() {
     }
 }
 
-/// AC: the scripts the variants share with `develop` are the same in each. `ai.sh`,
-/// `clean_tree.sh`, `commit.sh`, `keep.sh` and `precheck.sh` byte for byte; `implement.sh`,
-/// `fix.sh` and `verify.sh` but for their own scripts' paths and the one line naming their
-/// conventions. Each variant has no other file than those, its gate, conventions and
-/// requirements; `develop_react`'s gate is `develop_node`'s but for its comment and `build`.
+/// `decree_develop_react`'s gate is `decree_develop_node`'s but for its comment and `build`.
 #[test]
-fn shared_scripts_are_develops_in_every_variant() {
-    let develop = scripts("develop");
-    for variant in VARIANTS {
-        let ours = scripts(variant);
-        let mut expected: Vec<&str> = develop.keys().map(String::as_str).collect();
-        expected.extend(OWN);
-        expected.sort();
-        expected.dedup();
-        assert_eq!(
-            ours.keys().map(String::as_str).collect::<Vec<_>>(),
-            expected,
-            "{variant}"
-        );
-        for (path, text) in &develop {
-            if OWN.contains(&path.as_str()) {
-                continue;
-            }
-            let theirs = &ours[path];
-            if PROMPTS.contains(&path.as_str()) {
-                let line = format!(
-                    "Follow the conventions in .decree/machines/{variant}/scripts/conventions.md.\n"
-                );
-                assert_eq!(theirs.matches(&line).count(), 1, "{variant}: {path}");
-                let back = theirs.replacen(&line, "", 1).replace(
-                    &format!(".decree/machines/{variant}/scripts/"),
-                    ".decree/machines/develop/scripts/",
-                );
-                assert_eq!(&back, text, "{variant}: {path} differs from develop's");
-            } else {
-                assert_eq!(theirs, text, "{variant}: {path} differs from develop's");
-            }
-        }
-        assert!(
-            ours["conventions.md"].contains(&format!("{variant}'s implement, fix and verify")),
-            "{variant}"
-        );
-    }
+fn the_react_gate_is_the_node_gate_with_build() {
     let body = |gate: &str| -> String {
         gate.lines()
             .filter(|l| !l.starts_with('#') && !l.starts_with("required="))
@@ -300,8 +273,8 @@ fn shared_scripts_are_develops_in_every_variant() {
             .join("\n")
     };
     let (node, react) = (
-        &scripts("develop_node")["gate.sh"],
-        &scripts("develop_react")["gate.sh"],
+        &scripts("decree_develop_node")["gate.sh"],
+        &scripts("decree_develop_react")["gate.sh"],
     );
     assert_eq!(body(node), body(react));
     assert!(node.contains("\nrequired=()\n"));
@@ -313,7 +286,7 @@ fn shared_scripts_are_develops_in_every_variant() {
 #[test]
 fn rust_gate_runs_fmt_clippy_test_in_order_and_names_fail() {
     let work = TempDir::new().unwrap();
-    let gate = run_gate("develop_rust", work.path(), &["cargo"], "cargo test");
+    let gate = run_gate("decree_develop_rust", work.path(), &["cargo"], "cargo test");
     assert_eq!(gate.code, Some(0), "{gate:?}");
     assert_eq!(gate.event, "fail\n");
     assert_eq!(
@@ -327,13 +300,13 @@ fn rust_gate_runs_fmt_clippy_test_in_order_and_names_fail() {
     assert_eq!(gate.log, gate.stdout);
 
     let work = TempDir::new().unwrap();
-    let gate = run_gate("develop_rust", work.path(), &["cargo"], "");
+    let gate = run_gate("decree_develop_rust", work.path(), &["cargo"], "");
     assert_eq!((gate.code, gate.event.as_str()), (Some(0), "pass\n"));
     assert_eq!(gate.calls.len(), 3);
 
     // The first that fails ends the chain.
     let work = TempDir::new().unwrap();
-    let gate = run_gate("develop_rust", work.path(), &["cargo"], "cargo fmt");
+    let gate = run_gate("decree_develop_rust", work.path(), &["cargo"], "cargo fmt");
     assert_eq!((gate.code, gate.event.as_str()), (Some(0), "fail\n"));
     assert_eq!(gate.calls, ["cargo fmt --check"]);
 }
@@ -343,7 +316,7 @@ fn rust_gate_runs_fmt_clippy_test_in_order_and_names_fail() {
 #[test]
 fn rust_gate_without_cargo_exits_non_zero_naming_it() {
     let work = TempDir::new().unwrap();
-    let gate = run_gate("develop_rust", work.path(), &[], "");
+    let gate = run_gate("decree_develop_rust", work.path(), &[], "");
     assert_eq!(gate.code, Some(1), "{gate:?}");
     assert_eq!(
         gate.stderr,
@@ -361,7 +334,12 @@ fn node_gate_uses_pnpm_from_its_lockfile_and_skips_undefined_scripts() {
         r#"{ "name": "app", "scripts": { "test": "vitest run" } }"#,
         &["pnpm-lock.yaml"],
     );
-    let gate = run_gate("develop_node", work.path(), &["pnpm", "npm", "yarn"], "");
+    let gate = run_gate(
+        "decree_develop_node",
+        work.path(),
+        &["pnpm", "npm", "yarn"],
+        "",
+    );
     assert_eq!(
         (gate.code, gate.event.as_str()),
         (Some(0), "pass\n"),
@@ -409,7 +387,12 @@ fn node_gate_picks_the_manager_and_install_from_the_lockfile() {
         ),
     ] {
         let work = node_project(all, files);
-        let gate = run_gate("develop_node", work.path(), &["pnpm", "npm", "yarn"], "");
+        let gate = run_gate(
+            "decree_develop_node",
+            work.path(),
+            &["pnpm", "npm", "yarn"],
+            "",
+        );
         assert_eq!(gate.event, "pass\n", "{files:?}: {gate:?}");
         assert_eq!(
             gate.calls,
@@ -425,13 +408,18 @@ fn node_gate_picks_the_manager_and_install_from_the_lockfile() {
     }
 
     let work = node_project(all, &["package-lock.json"]);
-    let gate = run_gate("develop_node", work.path(), &["npm"], "npm run typecheck");
+    let gate = run_gate(
+        "decree_develop_node",
+        work.path(),
+        &["npm"],
+        "npm run typecheck",
+    );
     assert_eq!((gate.code, gate.event.as_str()), (Some(0), "fail\n"));
     assert_eq!(gate.calls, ["npm ci", "npm run lint", "npm run typecheck"]);
 
     // An install that fails is a failing check, as in `npm ci && npm test`.
     let work = node_project(all, &["package-lock.json"]);
-    let gate = run_gate("develop_node", work.path(), &["npm"], "npm ci");
+    let gate = run_gate("decree_develop_node", work.path(), &["npm"], "npm ci");
     assert_eq!((gate.code, gate.event.as_str()), (Some(0), "fail\n"));
     assert_eq!(gate.calls, ["npm ci"]);
 }
@@ -445,7 +433,7 @@ fn node_gate_with_no_scripts_passes_and_says_it_checked_nothing() {
         r#"{ "name": "app", "scripts": {} }"#,
     ] {
         let work = node_project(package_json, &["package-lock.json"]);
-        let gate = run_gate("develop_node", work.path(), &["npm"], "");
+        let gate = run_gate("decree_develop_node", work.path(), &["npm"], "");
         assert_eq!(
             (gate.code, gate.event.as_str()),
             (Some(0), "pass\n"),
@@ -465,12 +453,12 @@ fn node_gate_with_no_scripts_passes_and_says_it_checked_nothing() {
 #[test]
 fn node_gate_without_package_json_or_its_manager_exits_non_zero() {
     let work = TempDir::new().unwrap();
-    let gate = run_gate("develop_node", work.path(), &["npm"], "");
+    let gate = run_gate("decree_develop_node", work.path(), &["npm"], "");
     assert_eq!((gate.code, gate.event.as_str()), (Some(1), ""), "{gate:?}");
     assert!(gate.stderr.contains("no package.json"), "{}", gate.stderr);
 
     let work = node_project(r#"{ "scripts": { "test": "x" } }"#, &["yarn.lock"]);
-    let gate = run_gate("develop_node", work.path(), &["npm"], "");
+    let gate = run_gate("decree_develop_node", work.path(), &["npm"], "");
     assert_eq!((gate.code, gate.event.as_str()), (Some(1), ""), "{gate:?}");
     assert_eq!(
         gate.stderr,
@@ -485,7 +473,12 @@ fn node_gate_without_package_json_or_its_manager_exits_non_zero() {
 fn react_gate_builds_after_node_checks_and_names_fail_when_build_fails() {
     let app = r#"{ "scripts": { "test": "vitest run", "build": "vite build" } }"#;
     let work = node_project(app, &["package-lock.json"]);
-    let gate = run_gate("develop_react", work.path(), &["npm"], "npm run build");
+    let gate = run_gate(
+        "decree_develop_react",
+        work.path(),
+        &["npm"],
+        "npm run build",
+    );
     assert_eq!(
         (gate.code, gate.event.as_str()),
         (Some(0), "fail\n"),
@@ -495,11 +488,11 @@ fn react_gate_builds_after_node_checks_and_names_fail_when_build_fails() {
     assert!(gate.stdout.contains("gate: skipped lint, typecheck"));
 
     let work = node_project(app, &["package-lock.json"]);
-    let gate = run_gate("develop_react", work.path(), &["npm"], "");
+    let gate = run_gate("decree_develop_react", work.path(), &["npm"], "");
     assert_eq!((gate.code, gate.event.as_str()), (Some(0), "pass\n"));
 
     let work = node_project(r#"{ "scripts": {} }"#, &["package-lock.json"]);
-    let gate = run_gate("develop_react", work.path(), &["npm"], "");
+    let gate = run_gate("decree_develop_react", work.path(), &["npm"], "");
     assert_eq!(
         (gate.code, gate.event.as_str()),
         (Some(0), "fail\n"),
@@ -515,14 +508,14 @@ fn react_gate_builds_after_node_checks_and_names_fail_when_build_fails() {
 }
 
 /// AC: each variant declares its tools in its own `requirements` (`cargo`; `node` and `npm`),
-/// and with `develop_node` added, its `precheck` without `node` on `PATH` fails, reporting
-/// `node` missing from `machines/develop_node/scripts/requirements`.
+/// and with `decree_develop_node` added, its `precheck` without `node` on `PATH` fails,
+/// reporting `node` missing from `machines/decree_develop_node/scripts/requirements`.
 #[test]
 fn node_precheck_without_node_fails_naming_its_requirements() {
     for (variant, tools) in [
-        ("develop_rust", &["cargo"][..]),
-        ("develop_node", &["node", "npm"][..]),
-        ("develop_react", &["node", "npm"][..]),
+        ("decree_develop_rust", &["cargo"][..]),
+        ("decree_develop_node", &["node", "npm"][..]),
+        ("decree_develop_react", &["node", "npm"][..]),
     ] {
         let declared: Vec<String> = scripts(variant)["requirements"]
             .lines()
@@ -533,24 +526,25 @@ fn node_precheck_without_node_fails_naming_its_requirements() {
         assert_eq!(declared, expected, "{variant}");
     }
 
-    let p = project(&["develop_node"]);
+    let p = project(&["decree_develop_node"]);
     let run = p.path().join("run");
     let bin = path_with(&run, &["npm"]);
     let out = std::process::Command::new(
         p.path()
-            .join(".decree/machines/develop_node/scripts/precheck.sh"),
+            .join(".decree/machines/decree_develop_node/scripts/precheck.sh"),
     )
     .current_dir(p.path())
     .env_clear()
     .env("PATH", &bin)
+    .env("DECREE_NEED_DECREE_INFRA", "decree_infra")
     .output()
     .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_ne!(out.status.code(), Some(0), "{stdout}");
     assert_eq!(
         stdout,
-        "ok       command git (machines/infra/scripts/requirements)\n\
-         missing  command node (machines/develop_node/scripts/requirements)\n\
-         ok       command npm (machines/develop_node/scripts/requirements)\n"
+        "ok       command git (machines/decree_infra/scripts/requirements)\n\
+         missing  command node (machines/decree_develop_node/scripts/requirements)\n\
+         ok       command npm (machines/decree_develop_node/scripts/requirements)\n"
     );
 }

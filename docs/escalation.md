@@ -1,8 +1,8 @@
 # An escalation ladder for develop
 
-The official `develop` plugin gives a message one pass: implement, gate, fix, verify. When `verify` fails, or the gate still fails after `fix`, the run ends in `failed`. This recipe adds a ladder: rounds that close what is still missing, first with a cheap agent (a local model through OpenCode), then one round with Claude, then a person. It comes from a beta project where it worked well.
+The official `decree_develop` plugin gives a message one pass: implement, gate, fix, verify. When `verify` fails, or the gate still fails after `fix`, the run ends in `failed`. This recipe adds a ladder: rounds that close what is still missing, first with a cheap agent (a local model through OpenCode), then one round with Claude, then a person. It comes from a beta project where it worked well.
 
-It is more machinery than the simplest machine, which is where a project should start ([Start with the simplest machine](../plugins/skill.md)). Add it once plain `develop` runs show that failed verifies are worth more rounds.
+It is more machinery than the simplest machine, which is where a project should start ([Start with the simplest machine](../plugins/decree_skill.md)). Add it once plain develop runs show that failed verifies are worth more rounds.
 
 ## How it works
 
@@ -20,7 +20,7 @@ It is more machinery than the simplest machine, which is where a project should 
 
 ## The files
 
-Start from a project with `develop` added (`decree init`, then `decree install develop`). Replace the installed `.decree/machines/develop/machine.yml` with this one, and keep the edit with `decree export develop` (or let the next run's `commit` export it); it is the official machine with `data`, and the states from `final_gate` on changed or added.
+Start from a project with its own `develop`, a plugin that extends `decree_develop` with its gate (`decree init`, then `.decree/plugins/develop.md` holding `name: develop`, `extends: decree_develop` and its `scripts/gate.sh`, then `decree install`; [decree_develop](../plugins/decree_develop.md) shows one). `decree_develop` itself is never edited. Replace the installed `.decree/machines/develop/machine.yml` with this one, and keep the edit with `decree export develop` (or let the next run's `commit` export it); it is `decree_develop`'s machine with `data`, and the states from `final_gate` on changed or added, so the export writes it into `develop`'s plugin file, beside its gate.
 
 `.decree/machines/develop/machine.yml`:
 
@@ -132,7 +132,7 @@ for s in gate fix verify gate_gaps; do ln -s "../../develop/scripts/$s.sh" ".dec
 #!/usr/bin/env bash
 # gaps' fill: close each gap in gaps.md, test first, with the agent the round names.
 set -euo pipefail
-. .decree/machines/ai/scripts/ai.sh
+. .decree/machines/decree_ai/scripts/ai.sh
 
 dir=${DECREE_ROOT_RUN_DIR}
 gaps="${dir}/gaps.md"
@@ -198,7 +198,7 @@ for event in ${DECREE_EVENTS}; do
 done
 ```
 
-Then `chmod +x .decree/machines/gaps/scripts/fill.sh .decree/machines/develop/scripts/gate_gaps.sh .decree/machines/develop/scripts/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins: `decree export gaps` and `decree export develop` (export copies the files the symlinks point to, and `develop` then needs `gaps`).
+Then `chmod +x .decree/machines/gaps/scripts/fill.sh .decree/machines/develop/scripts/gate_gaps.sh .decree/machines/develop/scripts/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins of the project's own: `decree export gaps` and `decree export develop` (export copies the files the symlinks point to; `develop`'s file, which extends `decree_develop`, holds only its machine, its gate and the scripts this recipe adds, and then needs `gaps`).
 
 ## Tuning it
 

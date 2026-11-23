@@ -58,8 +58,16 @@ fn test_init_creates_directory_structure() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     plugins.sort();
-    assert_eq!(plugins, ["ai.md", "order.md", "prune.md", "skill.md"]);
-    for name in ["order", "prune", "skill"] {
+    assert_eq!(
+        plugins,
+        [
+            "decree_ai.md",
+            "decree_order.md",
+            "decree_prune.md",
+            "decree_skill.md"
+        ]
+    );
+    for name in ["decree_order", "decree_prune", "decree_skill"] {
         let dir = decree.join("machines").join(name);
         assert!(dir.join("machine.yml").is_file(), "{name}");
         assert!(dir.join("graph.md").is_file(), "{name}");
@@ -71,24 +79,24 @@ fn test_init_creates_directory_structure() {
 
 /// The official plugins `init` lists: every one, by name.
 const OFFICIAL: [&str; 18] = [
-    "ai",
-    "comfy",
-    "develop",
-    "develop_by_size",
-    "develop_node",
-    "develop_react",
-    "develop_rust",
-    "gliner_router",
-    "infra",
-    "lease",
-    "llm_router",
-    "newsletter",
-    "order",
-    "prune",
-    "qa",
-    "registry",
-    "router",
-    "skill",
+    "decree_ai",
+    "decree_comfy",
+    "decree_develop",
+    "decree_develop_by_size",
+    "decree_develop_node",
+    "decree_develop_react",
+    "decree_develop_rust",
+    "decree_gliner_router",
+    "decree_infra",
+    "decree_lease",
+    "decree_llm_router",
+    "decree_newsletter",
+    "decree_order",
+    "decree_prune",
+    "decree_qa",
+    "decree_registry",
+    "decree_router",
+    "decree_skill",
 ];
 
 /// Snapshot of every file under `root` with its contents, for "changes nothing" checks.
@@ -144,7 +152,7 @@ fn test_init_stdin_closed_asks_nothing() {
         .collect();
     let others: Vec<&str> = OFFICIAL
         .into_iter()
-        .filter(|n| !["ai", "order", "prune", "skill"].contains(n))
+        .filter(|n| !["decree_ai", "decree_order", "decree_prune", "decree_skill"].contains(n))
         .collect();
     assert_eq!(listed, others, "{stdout}");
     assert!(
@@ -152,7 +160,7 @@ fn test_init_stdin_closed_asks_nothing() {
             .lines()
             .last()
             .unwrap()
-            .contains("`decree install develop`"),
+            .contains("`decree install decree_develop`"),
         "{stdout}"
     );
     // Without --ai and with nothing on PATH, AI_CLI is left for the plugins to detect.
@@ -250,7 +258,7 @@ fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
         .assert()
         .success();
     decree_cmd(&dir)
-        .args(["install", "router"])
+        .args(["install", "decree_router"])
         .assert()
         .success();
     let bin = dir.path().join("bin");
@@ -279,15 +287,18 @@ fn run_ask_claude(stub_reply: &str) -> (i32, Option<String>, String) {
     });
     fs::write(run.join("request.json"), request.to_string()).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let out = std::process::Command::new(dir.path().join(".decree/machines/router/scripts/ask.sh"))
-        .current_dir(dir.path())
-        .env("PATH", path)
-        .env("AI_CLI", "claude")
-        .env_remove("DECREE_DATA_AI_CLI")
-        .env("DECREE_REQUEST", run.join("request.json"))
-        .env("DECREE_REPLY", run.join("reply.json"))
-        .output()
-        .unwrap();
+    let out = std::process::Command::new(
+        dir.path()
+            .join(".decree/machines/decree_router/scripts/ask.sh"),
+    )
+    .current_dir(dir.path())
+    .env("PATH", path)
+    .env("AI_CLI", "claude")
+    .env_remove("DECREE_DATA_AI_CLI")
+    .env("DECREE_REQUEST", run.join("request.json"))
+    .env("DECREE_REPLY", run.join("reply.json"))
+    .output()
+    .unwrap();
     let prompt = fs::read_to_string(bin.join("prompt.txt")).unwrap();
     assert!(prompt.contains("Question: Should we implement again or split the work?\n"));
     assert!(prompt.contains("- retry: Implement again.\n- split: Split the work."));
@@ -343,7 +354,7 @@ fn test_default_router_through_decree_takes_a_bare_json_reply() {
         .assert()
         .success();
     decree_cmd(&dir)
-        .args(["install", "router"])
+        .args(["install", "decree_router"])
         .assert()
         .success();
     common::write_file(
@@ -539,15 +550,15 @@ fn test_status_cron_lists_files_and_next_fire_time() {
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 4, "{out}");
     assert!(
-        lines[1].starts_with("order/boot.md") && lines[1].ends_with("daemon start"),
+        lines[1].starts_with("decree_order/boot.md") && lines[1].ends_with("daemon start"),
         "{out}"
     );
     assert!(
-        lines[2].starts_with("prune/weekly.md") && lines[2].contains("0 3 * * Sun"),
+        lines[2].starts_with("decree_prune/weekly.md") && lines[2].contains("0 3 * * Sun"),
         "{out}"
     );
     assert!(
-        lines[3].starts_with("skill/boot.md") && lines[3].ends_with("daemon start"),
+        lines[3].starts_with("decree_skill/boot.md") && lines[3].ends_with("daemon start"),
         "{out}"
     );
     common::drop_default_plugins(dir.path());
@@ -723,7 +734,7 @@ fn test_init_writes_skill_as_regular_files_matching_the_template() {
             assert!(kind.is_file(), "{ai}: {name} is not a regular file");
             assert_eq!(
                 fs::read_to_string(&written).unwrap(),
-                common::plugin_script("plugins/skill.md", &format!("skill/{name}")),
+                common::plugin_script("plugins/decree_skill.md", &format!("skill/{name}")),
                 "{ai}: {name}"
             );
         }

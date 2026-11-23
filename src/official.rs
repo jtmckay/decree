@@ -1,6 +1,8 @@
 //! The official plugins (docs/reference/plugins.md, Official plugins): the repository's
-//! `plugins/<name>.md`, built into the binary, so adding one needs no network and its version
-//! is this decree's. A project takes one with `decree install <name>`; `decree init` seeds `DEFAULTS`.
+//! `plugins/decree_<name>.md`, built into the binary, so adding one needs no network and its
+//! version is this decree's. Their names, and only theirs, start with `decree_`. A project takes
+//! one with `decree install <name>`; `decree init` seeds `DEFAULTS`. A project never edits one:
+//! it extends one under its own name.
 
 use crate::plugin::Plugin;
 
@@ -14,88 +16,88 @@ pub struct Official {
 /// Every official plugin, by name.
 pub const OFFICIAL: [Official; 18] = [
     Official {
-        name: "ai",
-        text: include_str!("../plugins/ai.md"),
+        name: "decree_ai",
+        text: include_str!("../plugins/decree_ai.md"),
     },
     Official {
-        name: "comfy",
-        text: include_str!("../plugins/comfy.md"),
+        name: "decree_comfy",
+        text: include_str!("../plugins/decree_comfy.md"),
     },
     Official {
-        name: "develop",
-        text: include_str!("../plugins/develop.md"),
+        name: "decree_develop",
+        text: include_str!("../plugins/decree_develop.md"),
     },
     Official {
-        name: "develop_by_size",
-        text: include_str!("../plugins/develop_by_size.md"),
+        name: "decree_develop_by_size",
+        text: include_str!("../plugins/decree_develop_by_size.md"),
     },
     Official {
-        name: "develop_node",
-        text: include_str!("../plugins/develop_node.md"),
+        name: "decree_develop_node",
+        text: include_str!("../plugins/decree_develop_node.md"),
     },
     Official {
-        name: "develop_react",
-        text: include_str!("../plugins/develop_react.md"),
+        name: "decree_develop_react",
+        text: include_str!("../plugins/decree_develop_react.md"),
     },
     Official {
-        name: "develop_rust",
-        text: include_str!("../plugins/develop_rust.md"),
+        name: "decree_develop_rust",
+        text: include_str!("../plugins/decree_develop_rust.md"),
     },
     Official {
-        name: "gliner_router",
-        text: include_str!("../plugins/gliner_router.md"),
+        name: "decree_gliner_router",
+        text: include_str!("../plugins/decree_gliner_router.md"),
     },
     Official {
-        name: "infra",
-        text: include_str!("../plugins/infra.md"),
+        name: "decree_infra",
+        text: include_str!("../plugins/decree_infra.md"),
     },
     Official {
-        name: "lease",
-        text: include_str!("../plugins/lease.md"),
+        name: "decree_lease",
+        text: include_str!("../plugins/decree_lease.md"),
     },
     Official {
-        name: "llm_router",
-        text: include_str!("../plugins/llm_router.md"),
+        name: "decree_llm_router",
+        text: include_str!("../plugins/decree_llm_router.md"),
     },
     Official {
-        name: "newsletter",
-        text: include_str!("../plugins/newsletter.md"),
+        name: "decree_newsletter",
+        text: include_str!("../plugins/decree_newsletter.md"),
     },
     Official {
-        name: "order",
-        text: include_str!("../plugins/order.md"),
+        name: "decree_order",
+        text: include_str!("../plugins/decree_order.md"),
     },
     Official {
-        name: "prune",
-        text: include_str!("../plugins/prune.md"),
+        name: "decree_prune",
+        text: include_str!("../plugins/decree_prune.md"),
     },
     Official {
-        name: "qa",
-        text: include_str!("../plugins/qa.md"),
+        name: "decree_qa",
+        text: include_str!("../plugins/decree_qa.md"),
     },
     Official {
-        name: "registry",
-        text: include_str!("../plugins/registry.md"),
+        name: "decree_registry",
+        text: include_str!("../plugins/decree_registry.md"),
     },
     Official {
-        name: "router",
-        text: include_str!("../plugins/router.md"),
+        name: "decree_router",
+        text: include_str!("../plugins/decree_router.md"),
     },
     Official {
-        name: "skill",
-        text: include_str!("../plugins/skill.md"),
+        name: "decree_skill",
+        text: include_str!("../plugins/decree_skill.md"),
     },
 ];
 
 /// The official plugin `name`.
 /// The official plugins `decree init` adds: a project removes one by deleting its file in
 /// `.decree/plugins/` (D86).
-pub const DEFAULTS: [&str; 4] = ["ai", "order", "prune", "skill"];
+pub const DEFAULTS: [&str; 4] = ["decree_ai", "decree_order", "decree_prune", "decree_skill"];
 
 /// The decree skill the official `skill` plugin installs: each file's path under the skill
 /// folder (`SKILL.md`, `reference/<file>.md`) and its text.
 pub fn skill_files() -> Vec<(String, String)> {
-    get("skill")
+    get("decree_skill")
         .and_then(|o| o.plugin().ok())
         .map(|p| {
             p.scripts
@@ -132,11 +134,17 @@ impl Official {
         })
     }
 
-    /// Its one-line description: the machine's `description`.
+    /// Its one-line description: the machine's `description`, its base's for one that
+    /// extends another without a machine of its own.
     pub fn description(&self) -> String {
-        self.plugin()
-            .map(|p| p.description().trim().to_string())
-            .unwrap_or_default()
+        match self.plugin() {
+            Ok(p) if p.machine.is_none() => match p.extends.as_deref().and_then(get) {
+                Some(base) => base.description(),
+                None => p.description().trim().to_string(),
+            },
+            Ok(p) => p.description().trim().to_string(),
+            Err(_) => String::new(),
+        }
     }
 }
 
@@ -196,7 +204,7 @@ mod tests {
     }
 
     /// A file that several plugins carry (`clean_tree.sh`, `commit.sh`, `keep.sh`, `ai.sh`) is
-    /// the same in each.
+    /// the same in each. The develop variants carry none: they extend `decree_develop`.
     #[test]
     fn shared_files_are_identical() {
         let mut copies: BTreeMap<&str, Vec<(&str, String)>> = BTreeMap::new();
@@ -215,24 +223,138 @@ mod tests {
             }
         }
         let carriers = |file: &str| -> Vec<&str> { copies[file].iter().map(|(n, _)| *n).collect() };
-        let develops = ["develop", "develop_node", "develop_react", "develop_rust"];
-        let with_infra_qa = [&develops[..], &["infra", "qa"]].concat();
+        let with_infra_qa = ["decree_develop", "decree_infra", "decree_qa"];
         assert_eq!(carriers("commit.sh"), with_infra_qa);
         assert_eq!(carriers("keep.sh"), with_infra_qa);
         assert_eq!(carriers("clean_tree.sh"), with_infra_qa);
-        // One `ai.sh`, the `ai` library's; every plugin that asks AI needs it.
-        assert_eq!(carriers("ai.sh"), ["ai"]);
-        for o in OFFICIAL.iter().filter(|o| o.name != "ai") {
+        // One `ai.sh`, the `decree_ai` library's; every plugin that asks AI needs it, and
+        // sources it through `DECREE_NEED_DECREE_AI`.
+        assert_eq!(carriers("ai.sh"), ["decree_ai"]);
+        for o in OFFICIAL.iter().filter(|o| o.name != "decree_ai") {
             let plugin = o.plugin().unwrap();
-            let sources = plugin
-                .scripts
-                .values()
-                .any(|t| t.contains(". .decree/machines/ai/scripts/ai.sh"));
+            let sources = plugin.scripts.values().any(|t| {
+                t.contains(
+                    ". \".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh\"",
+                )
+            });
             assert_eq!(
                 sources,
-                plugin.needs.iter().any(|n| n == "ai"),
+                plugin.needs.iter().any(|n| n == "decree_ai"),
                 "{}",
                 o.name
+            );
+        }
+    }
+
+    /// Every official plugin's name has the prefix, and its `extends` names an official one.
+    #[test]
+    fn every_name_has_the_prefix() {
+        for o in OFFICIAL {
+            assert!(
+                o.name.starts_with(crate::plugin::OFFICIAL_PREFIX),
+                "{}",
+                o.name
+            );
+            let plugin = o.plugin().unwrap();
+            if let Some(base) = &plugin.extends {
+                assert!(get(base).is_some(), "{} extends {base}", o.name);
+            }
+            assert!(plugin.source.is_none(), "{} has a source", o.name);
+        }
+    }
+
+    /// The lines of a script that run: not blank, not a comment.
+    fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+        text.lines()
+            .enumerate()
+            .map(|(i, l)| (i + 1, l.trim()))
+            .filter(|(_, l)| !l.is_empty() && !l.starts_with('#'))
+    }
+
+    /// Whether a plugin file path is a script decree or another script runs: a `.sh` file, or
+    /// one that starts with `#!`.
+    fn is_code(path: &str, text: &str) -> bool {
+        path.ends_with(".sh") || text.starts_with("#!")
+    }
+
+    /// An official plugin with a machine finds its own files under
+    /// `.decree/machines/${DECREE_MACHINE}/`, and another plugin's through `DECREE_NEED_*`: no
+    /// script names a plugin's folder, nor emits to a plugin by name (docs/reference/plugins.md,
+    /// Meeting a need with another plugin). So each works in a plugin that extends it.
+    #[test]
+    fn scripts_reach_plugins_only_through_the_variables() {
+        let names = names();
+        for o in OFFICIAL {
+            let plugin = o.plugin().unwrap();
+            if plugin.machine.is_none() && plugin.extends.is_none() {
+                continue;
+            }
+            for (path, text) in plugin.scripts.iter().filter(|(p, t)| is_code(p, t)) {
+                for (n, line) in code_lines(text) {
+                    for other in &names {
+                        let folder = format!(".decree/machines/{other}/");
+                        assert!(
+                            !line.contains(&folder),
+                            "{}: scripts/{path}: line {n} names {folder}: {line}",
+                            o.name
+                        );
+                        for emit in [format!("--machine {other}"), format!("emit {other}")] {
+                            assert!(
+                                !line.contains(&emit),
+                                "{}: scripts/{path}: line {n} emits to {other} by name: {line}",
+                                o.name
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether a script line runs or sources a path under `state/` (the heuristic `decree check`
+    /// warns with).
+    fn runs_state(line: &str) -> bool {
+        crate::commands::check::runs_state_path(line)
+    }
+
+    /// No official plugin seeds code in `state/` (a file with `#!`), or runs or sources a path
+    /// under it: `state/` holds data (docs/reference/scripts.md, State).
+    #[test]
+    fn no_code_in_state() {
+        for o in OFFICIAL {
+            let plugin = o.plugin().unwrap();
+            for (path, text) in &plugin.state {
+                assert!(!text.starts_with("#!"), "{}: state/{path} has #!", o.name);
+            }
+            for (path, text) in plugin.scripts.iter().filter(|(p, t)| is_code(p, t)) {
+                for (n, line) in code_lines(text) {
+                    assert!(
+                        !runs_state(line),
+                        "{}: scripts/{path}: line {n} runs a path under state/: {line}",
+                        o.name
+                    );
+                }
+            }
+        }
+    }
+
+    /// The develop variants extend `decree_develop` and hold only their gate, conventions and
+    /// requirements, with no machine: no copies of `decree_develop`'s scripts ship.
+    #[test]
+    fn the_develop_variants_extend_decree_develop() {
+        for name in [
+            "decree_develop_rust",
+            "decree_develop_node",
+            "decree_develop_react",
+        ] {
+            let plugin = get(name).unwrap().plugin().unwrap();
+            assert_eq!(plugin.extends.as_deref(), Some("decree_develop"), "{name}");
+            assert!(plugin.machine.is_none(), "{name}");
+            assert!(plugin.needs.is_empty(), "{name}");
+            assert_eq!(
+                plugin.scripts.keys().collect::<Vec<_>>(),
+                ["conventions.md", "gate.sh", "requirements"],
+                "{name}"
             );
         }
     }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/plugin.schema.json",
   "title": "decree plugin frontmatter",
-  "description": "The YAML frontmatter of a plugin, .decree/plugins/<name>.md: one machine's folder, .decree/machines/<name>/, shared as one file: its machine, its scripts, its cron files, and seeds for its state/ and order/. The markdown body below the frontmatter tells a person what the plugin is for; decree keeps it as written. `decree install` installs it: machine.yml, scripts/ and cron/ are the installed copy, which an install moves to .decree/archive/ before it writes over an edit in place; state/ and order/ are the project's, seeded once and never overwritten. `decree check` checks the rest: that every `needs` is in plugins/ (P2), the installed machine itself (V1-V21), and the cron files as messages (M3). Reference: docs/reference/plugins.md.",
+  "description": "The YAML frontmatter of a plugin, .decree/plugins/<name>.md: one machine's folder, .decree/machines/<name>/, shared as one file: its machine, its scripts, its cron files, and seeds for its state/ and order/. The markdown body below the frontmatter tells a person what the plugin is for; decree keeps it as written. `decree install` installs it: machine.yml, scripts/ and cron/ are the installed copy, which an install moves to .decree/archive/ before it writes over an edit in place; state/ and order/ are the project's, seeded once and never overwritten. A plugin may extend another (`extends`), holding only what it adds or replaces; an official plugin (`decree_*`) is never edited (P3). `decree check` checks the rest: that every `needs` and `extends` is in plugins/ (P2), the installed machine itself (V1-V21), and the cron files as messages (M3). Reference: docs/reference/plugins.md.",
   "type": "object",
   "required": [
     "name"
@@ -12,22 +12,58 @@
     "name": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$",
-      "description": "The plugin's name: equal to the file's stem, plugins/<name>.md, and the name of the folder it installs, .decree/machines/<name>/ (P1).",
+      "description": "The plugin's name: equal to the file's stem, plugins/<name>.md, and the name of the folder it installs, .decree/machines/<name>/ (P1). A name starting with `decree_` is an official plugin's, reserved for the plugins decree ships (P1); a plugin that extends another never takes its base's name.",
       "examples": [
-        "develop"
+        "app_develop"
+      ]
+    },
+    "extends": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "The plugin this one is installed on top of, in plugins/ (P2): official, from a URL, or the project's own, but not a library (a plugin with no machine), and with no loop (P1). The base is installed in full under its own name; this one installs the base's machine and files, then its own path by path: a file replaces the base's at that path or adds one, `machine` replaces the base's whole, `null` removes the base's file, and `needs` adds to the base's. While installed, it carries the base's cron files, which the base is installed without.",
+      "examples": [
+        "decree_develop"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^https://[^/?#\\s]+",
+      "description": "The https URL the plugin is published at: `decree install --update` fetches it, shows the diff and asks before writing it. No other value; an official plugin has none (P1).",
+      "examples": [
+        "https://example.com/plugins/gpu_lease.md"
       ]
     },
     "needs": {
       "type": "array",
       "uniqueItems": true,
       "items": {
-        "type": "string",
-        "pattern": "^[a-z][a-z0-9_]*$"
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "propertyNames": {
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "description": "`{<need>: <plugin>}`: the need met by another plugin, which install names in the machine in its place (a `machine:` invoke, a `router:`, an `emits` list) and scripts get as DECREE_NEED_<NEED>."
+          }
+        ]
       },
-      "description": "The other plugins this one relies on: each machine it invokes (`machine`), routes through (`router`, or the machine `router` a `model` state with no `router` uses) or emits to. Each must be in plugins/ (P2); `decree install` refuses a plugin whose needs are missing.",
+      "description": "The other plugins this one relies on: each machine it invokes (`machine`), routes through (`router`, or the machine `decree_router` a `model` state with no `router` uses) or emits to, and each library it sources. Each entry is a plugin name, or a one-key map `{<need>: <plugin>}` naming the plugin that meets it. The plugin meeting each must be in plugins/ (P2); `decree install` refuses a plugin whose needs are missing. Every script gets DECREE_NEED_<NEED>, the plugin that meets it.",
       "examples": [
         [
-          "router"
+          "decree_ai",
+          {
+            "decree_infra": "app_infra"
+          }
         ]
       ]
     },
@@ -66,9 +102,12 @@
         "pattern": "^(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)(?:/(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+))*$"
       },
       "additionalProperties": {
-        "type": "string"
+        "type": [
+          "string",
+          "null"
+        ]
       },
-      "description": "Every file of .decree/machines/<name>/scripts/, by its path there, to its text. A path is plain and relative: no `..`, `.`, empty parts or leading `/` (P1). An installed file is executable when its text starts with `#!`, and otherwise not. A file in scripts/ the plugin does not ship is removed when it is installed.",
+      "description": "Every file of .decree/machines/<name>/scripts/, by its path there, to its text. A path is plain and relative: no `..`, `.`, empty parts or leading `/` (P1). An installed file is executable when its text starts with `#!`, and otherwise not. A file in scripts/ the plugin does not ship is removed when it is installed. In a plugin that extends another, `null` removes the base's file at that path.",
       "examples": [
         {
           "greet.sh": "#!/usr/bin/env bash\necho hi\n",
@@ -85,12 +124,15 @@
         }
       },
       "additionalProperties": {
-        "type": "string"
+        "type": [
+          "string",
+          "null"
+        ]
       },
-      "description": "Every cron file of .decree/machines/<name>/cron/, by its file name there (`<file>.md`), to its text: a cron file as messages.md describes it, with `cron:`, and `machine:` unless it runs this machine. Part of the installed copy, like scripts: a file in cron/ the plugin does not ship is removed when it is installed, an edit in place counts as an edit, and the folder goes with the plugin.",
+      "description": "Every cron file of .decree/machines/<name>/cron/, by its file name there (`<file>.md`), to its text: a cron file as messages.md describes it, with `cron:`, and `machine:` unless it runs this machine. Part of the installed copy, like scripts: a file in cron/ the plugin does not ship is removed when it is installed, an edit in place counts as an edit, and the folder goes with the plugin. In a plugin that extends another, `null` removes the base's file at that path.",
       "examples": [
         {
-          "weekly.md": "---\ncron: 0 9 * * 1\nmachine: newsletter\n---\nThis week's issue.\n"
+          "weekly.md": "---\ncron: 0 9 * * 1\n---\nThis week's issue.\n"
         }
       ]
     },
@@ -100,9 +142,12 @@
         "pattern": "^(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)(?:/(?:[^/.\\\\][^/\\\\]*|\\.[^/.\\\\][^/\\\\]*|\\.\\.[^/\\\\]+))*$"
       },
       "additionalProperties": {
-        "type": "string"
+        "type": [
+          "string",
+          "null"
+        ]
       },
-      "description": "Seeds for .decree/machines/<name>/state/ ($DECREE_STATE_DIR), by path there, to its text. Each file is written only when absent and is never overwritten or removed: the state is the project's data. A file named `*.git.*` (`order.git.txt`, `swap/box1.git.sh`) is committed; any other is not.",
+      "description": "Seeds for .decree/machines/<name>/state/ ($DECREE_STATE_DIR), by path there, to its text. Each file is written only when absent and is never overwritten or removed: the state is the project's data. A file named `*.git.*` (`order.git.txt`) is committed; any other is not. state/ holds data, never code: nothing in it is run or sourced. In a plugin that extends another, `null` removes the base's file at that path.",
       "examples": [
         {
           "feeds.txt": "https://example.com/rss\n"
@@ -118,9 +163,12 @@
         }
       },
       "additionalProperties": {
-        "type": "string"
+        "type": [
+          "string",
+          "null"
+        ]
       },
-      "description": "Seeds for .decree/machines/<name>/order/, by file name there (`<file>.md`), to their text: messages the official `order` plugin runs in order at daemon start. Each is written only when absent and is never overwritten or removed: order/ is the project's, and committed.",
+      "description": "Seeds for .decree/machines/<name>/order/, by file name there (`<file>.md`), to their text: messages the official `order` plugin runs in order at daemon start. Each is written only when absent and is never overwritten or removed: order/ is the project's, and committed. In a plugin that extends another, `null` removes the base's file at that path.",
       "examples": [
         {
           "A01-newsletter-setup.md": "---\nmachine: newsletter\n---\nCreate the subscriber list.\n"

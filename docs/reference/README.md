@@ -33,7 +33,7 @@ Machines follow W3C SCXML 1.0 (the State Chart XML recommendation): its terms, i
 | Data | A machine's typed, read-only values (`data:`), set from a message's `params`: SCXML `<data>`, initialised the way `<invoke><param>` initialises an invoked session. |
 | Decision | A built-in function a state can invoke instead of a script: `check` (a deterministic condition), `model` (a router machine asks a model to pick an option) or `reply` (a reply, from a person or a program, picks an option). See [Invoke](machines.md#invoke-the-states-function). |
 | Sub-machine | A machine a state invokes, `invoke: { machine: <name> }`: SCXML's nested session. It runs as a child run with its own folder and a `parent` reference; the final state it reaches is the parent state's event. |
-| Router | A machine that answers a `model` request: it reads the request, asks a model however it likes, and writes a reply. Replaceable; the official plugin `router` is one named `router`. |
+| Router | A machine that answers a `model` request: it reads the request, asks a model however it likes, and writes a reply. Replaceable; the official plugin `decree_router` is the default one. |
 | Run | One message moving through one machine (an SCXML session), stored in `.decree/runs/<message id>/`. |
 
 ## Architecture
@@ -94,7 +94,7 @@ Each building block has its own directory in `.decree/`:
     scripts/*                       # also its helpers, config and data, which decree never runs (scripts.md, A machine's files)
     cron/*.md                       # cron templates; `machine:` defaults to this machine (messages.md, Cron files)
     state/                          # what the machine keeps between runs: $DECREE_STATE_DIR, declared under `state_files:`; never deleted by decree; *.git.* files committed (scripts.md, State)
-    order/*.md                      # messages run in order at each daemon start by the official `order` plugin; committed (messages.md, Order files)
+    order/*.md                      # messages run in order at each daemon start by the official `decree_order` plugin; committed (messages.md, Order files)
     graph.md                        # written by `decree graph`; committed, so graphs render on GitHub (graph.md)
   system.md                         # written by `decree graph`: how machines emit to and invoke each other; committed
   schema/v1/*.schema.json           # written by `init` and `decree install`, for agents and offline editors; ignored by git (Schemas, below)
@@ -115,7 +115,7 @@ A project is machines, scripts and messages; there is no configuration file for 
 
 | Setting | Instead |
 | --- | --- |
-| Router for `model` | A `model` with no `router:` uses the machine named `router` ([Model](runs.md#model)), such as the official plugin `decree install router` adds. |
+| Router for `model` | A `model` with no `router:` uses the machine named `decree_router` ([Model](runs.md#model)), the official plugin `decree install decree_router` adds. |
 | Default machine | None: every message names its machine with `machine:`. `decree emit`, cron files and `decree init`'s examples always do. |
 | Retries | `attempts` in the script invoke, a number or a list of values; default 1 (no retry), as a Step Functions task without `Retry`. |
 | Emit depth | `max_depth`, 10 unless `DECREE_MAX_DEPTH` sets it, from the shell or `.decree/.env` ([Environment](cli.md#environment)). |

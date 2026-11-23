@@ -277,7 +277,7 @@ fn an_unknown_machine_is_an_error_naming_it() {
     );
     assert!(p.runs().is_empty());
     fs::remove_file(p.decree().join(".env")).unwrap();
-    p.process(&["--exclude-machine", "develop"])
+    p.process(&["--exclude-machine", "decree_develop"])
         .assert()
         .success();
     assert_eq!(p.order(), ["a 20260101T000000.000000Z-000000"]);

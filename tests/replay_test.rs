@@ -145,7 +145,7 @@ impl Replay {
         // would be one the recording does not have.
         let has_plugins = recorded.join("plugins").is_dir();
         copy_dir(&recorded, &decree, &|p| {
-            p == recorded.join("plugins/order.md")
+            p == recorded.join("plugins/decree_order.md")
                 || p.parent() == Some(recorded.as_path())
                     && (["runs", "inbox", "cache"]
                         .iter()

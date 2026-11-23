@@ -399,3 +399,110 @@ fn check_outside_a_project_fails() {
     let out = common::decree_at(tmp.path()).arg("check").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
 }
+
+/// `decree <args>` in `dir`: (exit code, stdout, stderr).
+fn run_decree(dir: &Path, args: &[&str]) -> (i32, String, String) {
+    let out = assert_cmd::cargo::cargo_bin_cmd!("decree")
+        .current_dir(dir)
+        .env("NO_COLOR", "1")
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+/// AC (A14): a machine whose `state/` holds a file with `#!/bin/sh` and one with its execute
+/// bit set, and whose `scripts/run.sh` sources `$DECREE_STATE_DIR/hook.sh`: `decree check`
+/// exits 0 and warns about each of the three, naming the file (and the line, for the script).
+/// A project of only official plugins gets none of these warnings.
+#[test]
+fn check_warns_about_code_in_state() {
+    let tmp = TempDir::new().unwrap();
+    let d = tmp.path().join(".decree");
+    let m = d.join("machines/runner");
+    common::write_file(
+        &m.join("machine.yml"),
+        "name: runner\ndescription: d\ninitial: run\nstate_files:\n  hook.sh: a hook\n  tool: a tool\nstates:\n  run:\n    invoke: run\n    transitions:\n      done: done\n  done:\n    final: true\n  failed:\n    final: true\n",
+    );
+    common::write_file(
+        &m.join("scripts/run.sh"),
+        "#!/usr/bin/env bash\nset -euo pipefail\nsource \"$DECREE_STATE_DIR/hook.sh\"\n",
+    );
+    fs::set_permissions(m.join("scripts/run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_file(&m.join("state/hook.sh"), "#!/bin/sh\necho hi\n");
+    common::write_file(&m.join("state/tool"), "data\n");
+    fs::set_permissions(m.join("state/tool"), fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, out, err) = run_decree(tmp.path(), &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        err.contains("warning: machines/runner/state/hook.sh: starts with `#!`: state/ is for data, and code belongs in scripts/"),
+        "{err}"
+    );
+    assert!(
+        err.contains("warning: machines/runner/state/tool: has an execute bit: state/ is for data"),
+        "{err}"
+    );
+    assert!(
+        err.contains("warning: machines/runner/scripts/run.sh: line 3: runs or sources a path under state/ (`source \"$DECREE_STATE_DIR/hook.sh\"`)"),
+        "{err}"
+    );
+
+    // Only official plugins, run once (state written): no such warning.
+    let official = TempDir::new().unwrap();
+    fs::create_dir(official.path().join(".decree")).unwrap();
+    for name in [
+        "decree_lease",
+        "decree_registry",
+        "decree_develop",
+        "decree_skill",
+    ] {
+        let (code, out, err) = run_decree(official.path(), &["install", name]);
+        assert_eq!(code, 0, "{out}{err}");
+    }
+    let (code, out, err) = run_decree(official.path(), &["check"]);
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "", ""));
+}
+
+/// AC (A14): a project still holding rc.1's `machines/lease/state/swap/gpu.git.sh` and
+/// `state/resources.git.txt` is warned that nothing reads them, with a ready `local_lease`
+/// plugin file that extends `decree_lease` and holds them as scripts.
+#[test]
+fn check_warns_about_the_old_lease_files() {
+    let tmp = TempDir::new().unwrap();
+    let state = tmp.path().join(".decree/machines/lease/state");
+    common::write_file(&state.join("resources.git.txt"), "gpu 15m 5s 30m\n");
+    common::write_file(
+        &state.join("swap/gpu.git.sh"),
+        "#!/usr/bin/env bash\necho swap \"$1\" \"$2\"\n",
+    );
+    let (code, out, err) = run_decree(tmp.path(), &["check"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        err.contains("warning: machines/lease/state: holds state/resources.git.txt, state/swap/gpu.git.sh, which nothing reads now"),
+        "{err}"
+    );
+    assert!(
+        err.contains("lease requests then go to that plugin's name"),
+        "{err}"
+    );
+    let plugin = "---\nname: local_lease\nextends: decree_lease\nscripts:\n  resources: |\n    gpu 15m 5s 30m\n  swap/gpu.sh: |\n    #!/usr/bin/env bash\n    echo swap \"$1\" \"$2\"\n---\n# local_lease\n";
+    assert!(err.contains(plugin), "{err}");
+    // The quoted file is a plugin that installs on decree_lease.
+    let file = tmp.path().join("local_lease.md");
+    let start = err.find("---\nname: local_lease").unwrap();
+    fs::write(&file, &err[start..]).unwrap();
+    let (code, out, err) = run_decree(tmp.path(), &["install", file.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        fs::read_to_string(
+            tmp.path()
+                .join(".decree/machines/local_lease/scripts/swap/gpu.sh")
+        )
+        .unwrap(),
+        "#!/usr/bin/env bash\necho swap \"$1\" \"$2\"\n"
+    );
+}

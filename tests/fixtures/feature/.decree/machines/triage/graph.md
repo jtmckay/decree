@@ -19,6 +19,6 @@ stateDiagram-v2
     failed --> [*]
     rejected --> [*]
     note right of classify
-        model: router
+        model: decree_router
     end note
 ```

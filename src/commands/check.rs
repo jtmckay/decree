@@ -184,6 +184,57 @@ fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
             },
         ));
     }
+    for (name, base) in &synced.missing_bases {
+        out.push((
+            name.clone(),
+            CheckError {
+                rule: Some("P2".to_string()),
+                file: plugin::plugin_file(name),
+                line: None,
+                state: None,
+                message: format!(
+                    "`extends` names `{base}`, not in `{}/`, so it is not installed: install it with `decree install <name>` or `decree install <file>`",
+                    plugin::PLUGINS_DIR
+                ),
+            },
+        ));
+    }
+    for (name, what, paths) in &synced.official_edited {
+        let (file, message) = match what {
+            plugin::RestoredWhat::File => (
+                plugin::plugin_file(name),
+                format!(
+                    "`{name}` is an official plugin, and this file is not this decree's copy: {}",
+                    crate::commands::plugin::overlay_advice(name)
+                ),
+            ),
+            plugin::RestoredWhat::Copy => (
+                paths
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| layout::machine_file_rel(name)),
+                format!(
+                    "the installed copy of official plugin `{name}` is not this decree's copy ({}): {}",
+                    if paths.is_empty() {
+                        layout::machine_dir_rel(name)
+                    } else {
+                        paths.join(", ")
+                    },
+                    crate::commands::plugin::overlay_advice(name)
+                ),
+            ),
+        };
+        out.push((
+            name.clone(),
+            CheckError {
+                rule: Some("P3".to_string()),
+                file,
+                line: None,
+                state: None,
+                message,
+            },
+        ));
+    }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out.into_iter().map(|(_, e)| e).collect()
 }
@@ -210,6 +261,10 @@ fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
         });
     }
     for (name, _) in &synced.archived {
+        // An official plugin's edited copy is already a P3 error, with its advice.
+        if synced.official_edited.iter().any(|(n, _, _)| n == name) {
+            continue;
+        }
         out.push(CheckWarning {
             file: plugin::plugin_file(name),
             message: plugin::edited_message(name),
@@ -258,6 +313,7 @@ fn warnings(project_root: &Path, project: &Project) -> Result<Vec<CheckWarning>,
             }),
     );
     out.extend(state_warnings(&project_root.join(DECREE_DIR))?);
+    out.extend(code_in_state(&project_root.join(DECREE_DIR))?);
     out.extend(resolve_env(project)?.1);
     Ok(out)
 }
@@ -299,6 +355,216 @@ fn state_warnings(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
         );
     }
     Ok(out)
+}
+
+/// `state/` holds data, never code (docs/reference/scripts.md, State): a warning for each file
+/// under a machine's `state/` with an execute bit or a `#!` line, for each line of an installed
+/// machine's scripts that runs or sources a path under `state/` (`runs_state_path`, a
+/// heuristic over the text), and for the files rc.1 and rc.2 of `lease` kept in `state/`,
+/// which nothing reads now.
+fn code_in_state(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
+    let mut out = Vec::new();
+    let machines = decree_dir.join(layout::MACHINES_DIR);
+    let mut names: Vec<String> = match std::fs::read_dir(&machines) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+        Err(e) => return Err(e.into()),
+    };
+    names.sort();
+    for name in names {
+        let dir = layout::machine_dir(decree_dir, &name);
+        let state = dir.join(layout::STATE_DIR);
+        for (rel, path) in files_under(&state)? {
+            let file = format!(
+                "{}/{}/{rel}",
+                layout::machine_dir_rel(&name),
+                layout::STATE_DIR
+            );
+            let executable = std::fs::metadata(&path)
+                .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0)
+                .unwrap_or(false);
+            let shebang = std::fs::read(&path)
+                .map(|b| b.starts_with(b"#!"))
+                .unwrap_or(false);
+            if executable || shebang {
+                let what = match (executable, shebang) {
+                    (true, true) => "has an execute bit and a `#!` line",
+                    (true, false) => "has an execute bit",
+                    _ => "starts with `#!`",
+                };
+                out.push(CheckWarning {
+                    file,
+                    message: format!(
+                        "{what}: state/ is for data, and code belongs in scripts/ (a plugin's, read as its plugin file); nothing should run a file in state/"
+                    ),
+                });
+            }
+        }
+        for (rel, path) in files_under(&dir.join(layout::SCRIPTS_DIR))? {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if !(rel.ends_with(".sh") || text.starts_with("#!")) {
+                continue;
+            }
+            for (i, line) in text.lines().enumerate() {
+                let code = line.trim();
+                if !code.starts_with('#') && runs_state_path(code) {
+                    out.push(CheckWarning {
+                        file: format!(
+                            "{}/{}/{rel}",
+                            layout::machine_dir_rel(&name),
+                            layout::SCRIPTS_DIR
+                        ),
+                        message: format!(
+                            "line {}: runs or sources a path under state/ (`{code}`): state/ is for data, and code belongs in scripts/ (a heuristic over the script's text)",
+                            i + 1
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    out.extend(old_lease_files(decree_dir)?);
+    Ok(out)
+}
+
+/// Every file under `dir` (none when it does not exist), by its `/`-separated path there,
+/// with its full path, in path order. A symlinked folder is not followed.
+fn files_under(dir: &Path) -> Result<Vec<(String, PathBuf)>, DecreeError> {
+    let mut out = Vec::new();
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    let mut stack = vec![(dir.to_path_buf(), String::new())];
+    while let Some((path, prefix)) = stack.pop() {
+        for entry in std::fs::read_dir(&path)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let full = entry.path();
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                stack.push((full, format!("{prefix}{name}/")));
+            } else if !(kind.is_symlink() && full.is_dir()) {
+                out.push((format!("{prefix}{name}"), full));
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// The rules and swap scripts rc.1 and rc.2 of `lease` read from `machines/lease/state/`
+/// (`resources.git.txt`, `swap/<resource>.git.sh`): nothing reads them now. The warning
+/// names the move and quotes them as a plugin file that extends `decree_lease`.
+fn old_lease_files(decree_dir: &Path) -> Result<Vec<CheckWarning>, DecreeError> {
+    let state = layout::machine_dir(decree_dir, "lease").join(layout::STATE_DIR);
+    let rules = state.join("resources.git.txt");
+    let swaps: Vec<(String, PathBuf)> = files_under(&state.join("swap"))?
+        .into_iter()
+        .filter(|(rel, _)| !rel.contains('/'))
+        .collect();
+    if !rules.is_file() && swaps.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut scripts: Vec<(String, String)> = Vec::new();
+    let mut found = Vec::new();
+    if rules.is_file() {
+        found.push("state/resources.git.txt".to_string());
+        scripts.push((
+            "resources".to_string(),
+            std::fs::read_to_string(&rules).unwrap_or_default(),
+        ));
+    }
+    for (rel, path) in &swaps {
+        found.push(format!("state/swap/{rel}"));
+        let to = rel
+            .strip_suffix(".git.sh")
+            .or_else(|| rel.strip_suffix(".sh"))
+            .unwrap_or(rel);
+        scripts.push((
+            format!("swap/{to}.sh"),
+            std::fs::read_to_string(path).unwrap_or_default(),
+        ));
+    }
+    let mut plugin = String::from("---\nname: local_lease\nextends: decree_lease\nscripts:\n");
+    for (path, text) in &scripts {
+        plugin.push_str(&format!("  {path}: |\n"));
+        for line in text.lines() {
+            if line.is_empty() {
+                plugin.push('\n');
+            } else {
+                plugin.push_str(&format!("    {line}\n"));
+            }
+        }
+    }
+    plugin
+        .push_str("---\n# local_lease\n\nThis project's resources, leased through decree_lease.\n");
+    Ok(vec![CheckWarning {
+        file: format!("{}/{}", layout::machine_dir_rel("lease"), layout::STATE_DIR),
+        message: format!(
+            "holds {}, which nothing reads now: lease's rules and swap scripts are code, so they moved out of state/ into the scripts of a plugin of the project's own that extends decree_lease (scripts/resources, scripts/swap/<resource>.sh), and lease requests then go to that plugin's name. This plugin file holds them; save it as .decree/plugins/local_lease.md, run `decree install`, send leases to `local_lease`, and delete the old files:\n{plugin}",
+            found.join(", ")
+        ),
+    }])
+}
+
+/// Whether a script line runs or sources a path under a machine's `state/`: the path after
+/// `bash`, `sh`, `source`, `.` or `exec`, in `eval "$(cat …)"`, or as the command itself, is
+/// `$DECREE_STATE_DIR/…`, `state/…` or `.decree/machines/<name>/state/…`. A heuristic over the
+/// text, which `decree check` warns with (docs/reference/scripts.md, State).
+pub(crate) fn runs_state_path(line: &str) -> bool {
+    fn is_state(token: &str) -> bool {
+        let t = token.trim_matches(|c| matches!(c, '"' | '\'' | '`' | '(' | ')' | '{' | '}' | ';'));
+        t.starts_with("$DECREE_STATE_DIR")
+            || t.starts_with("${DECREE_STATE_DIR}")
+            || t.starts_with("state/")
+            || (t.contains(".decree/machines/") && t.contains("/state/"))
+    }
+    let mut segments = vec![line.to_string()];
+    for sep in ["&&", "||", ";", "|", "$(", "`", " then ", " do ", " else "] {
+        segments = segments
+            .iter()
+            .flat_map(|s| s.split(sep).map(str::to_string).collect::<Vec<_>>())
+            .collect();
+    }
+    if line.contains("eval") && line.contains("$(cat") {
+        let after = line.split("$(cat").nth(1).unwrap_or("");
+        if after.split_whitespace().next().is_some_and(is_state) {
+            return true;
+        }
+    }
+    for segment in segments {
+        let mut words = segment.split_whitespace().peekable();
+        // Leading keywords and assignments are not the command.
+        while let Some(w) = words.peek() {
+            if matches!(
+                *w,
+                "if" | "then" | "!" | "{" | "(" | "do" | "else" | "time" | "while" | "until"
+            ) || (w.contains('=') && !w.starts_with(['"', '\'', '$', '.', '/']))
+            {
+                words.next();
+            } else {
+                break;
+            }
+        }
+        let Some(command) = words.next() else {
+            continue;
+        };
+        let command = command.trim_start_matches(['(', '{']);
+        if matches!(command, "bash" | "sh" | "source" | "." | "exec") {
+            if words.find(|w| !w.starts_with('-')).is_some_and(is_state) {
+                return true;
+            }
+        } else if is_state(command) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The `--format json` document (`.decree/schema/v1/cli/check.schema.json`).
@@ -695,5 +961,39 @@ impl Project {
             errors.extend(e);
         }
         errors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runs_state_path;
+
+    #[test]
+    fn runs_state_path_finds_code_run_from_state() {
+        for yes in [
+            r#"source "$DECREE_STATE_DIR/hook.sh""#,
+            r#". "${DECREE_STATE_DIR}/lib.sh""#,
+            r#"bash "$DECREE_STATE_DIR/swap/box1.git.sh" "$from" "$to""#,
+            "sh state/run.sh",
+            r#"exec .decree/machines/lease/state/x.sh"#,
+            r#"eval "$(cat "$DECREE_STATE_DIR/env")""#,
+            r#""$DECREE_STATE_DIR/hook.sh" arg"#,
+            r#"X=1 bash -e "$DECREE_STATE_DIR/a.sh""#,
+            r#"if bash "$DECREE_STATE_DIR/a.sh"; then"#,
+            r#"true && . state/a.sh"#,
+        ] {
+            assert!(runs_state_path(yes), "{yes}");
+        }
+        for no in [
+            r#"cat "$DECREE_STATE_DIR/hook.sh""#,
+            r#"dir="${DECREE_STATE_DIR}/leases/${res}""#,
+            r#"echo x > "$DECREE_STATE_DIR/y""#,
+            r#"mkdir -p "$DECREE_STATE_DIR""#,
+            r#"[ -f state/x ] || exit 0"#,
+            r#"bash "$script" "$from" "$mode""#,
+            r#". ".decree/machines/${DECREE_MACHINE}/scripts/lease.sh""#,
+        ] {
+            assert!(!runs_state_path(no), "{no}");
+        }
     }
 }

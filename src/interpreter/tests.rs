@@ -963,21 +963,21 @@ fn confidence_project(decision: Value) -> Project {
                 transitions: { true: worth_asking, false: big_model }\n  \
                 worth_asking:\n    invoke:\n      check: { confidence: big_model, at_least: 0.4 }\n    \
                 transitions: { true: ask_person, false: set_aside }\n  \
-                big_model:\n    invoke:\n      model: { question: Which kind?, router: router, min_confidence: 0.7 }\n    \
+                big_model:\n    invoke:\n      model: { question: Which kind?, router: decree_router, min_confidence: 0.7 }\n    \
                 transitions:\n      \
                 invoice: { target: ask_person, description: A bill. }\n      \
                 receipt: { target: set_aside, description: A paid bill. }\n      \
                 unsure: worth_asking\n  \
                 ask_person: { final: true }\n  set_aside: { final: true }\n  failed: { final: true }\n";
-    let router = "name: router\ndescription: A router.\ninitial: ask\nstates:\n  \
+    let router = "name: decree_router\ndescription: A router.\ninitial: ask\nstates:\n  \
                   ask: { invoke: ask, transitions: { done: done } }\n  \
                   done: { final: true }\n  failed: { final: true }\n";
-    let p = Project::from_texts(&[("step_confidence", text), ("router", router)], &[]);
+    let p = Project::from_texts(&[("step_confidence", text), ("decree_router", router)], &[]);
     let mut event = json!({
         "v": 1, "seq": 1, "ts": "2026-10-01T17:04:12.000Z", "type": "decision",
         "run_id": RUN_ID, "machine": "step_confidence", "trigger": "inbox",
         "state": "big_model", "kind": "model", "event": "unsure",
-        "options": ["invoice", "receipt"], "router": "router",
+        "options": ["invoice", "receipt"], "router": "decree_router",
     });
     event
         .as_object_mut()
@@ -2281,19 +2281,19 @@ fn no_child_starts_after_a_signal() {
 // Model (docs/reference/runs.md)
 // ---------------------------------------------------------------
 
-/// `step_model`, whose `triage` state asks the machine named `router` (fixture
+/// `step_model`, whose `triage` state asks the machine named `decree_router` (fixture
 /// `step_router`, renamed);
 /// the router's `ask` script is `ask`, and `work` prints 60 lines. With `reply`, the
 /// project root holds it as `reply.json`, for the `router_reply` script.
 fn router_fixture() -> String {
-    fixture("step_router").replace("name: step_router", "name: router")
+    fixture("step_router").replace("name: step_router", "name: decree_router")
 }
 
 fn model_project(ask: &str, reply: Option<&str>) -> Project {
     let p = Project::from_texts(
         &[
             ("step_model", &fixture("step_model")),
-            ("router", &router_fixture()),
+            ("decree_router", &router_fixture()),
         ],
         &[("work", "print_lines"), ("ask", ask)],
     );
@@ -2329,7 +2329,7 @@ fn model_router_reply_is_the_event_and_the_request_matches_the_reference() {
     let message = fs::read_to_string(child_dir.join(MESSAGE_FILE)).unwrap();
     assert!(
         message.starts_with(&format!(
-            "---\nmachine: router\nid: {child}\nparent: {RUN_ID}\ndepth: 1\n\
+            "---\nmachine: decree_router\nid: {child}\nparent: {RUN_ID}\ndepth: 1\n\
              trigger: invoke\n"
         )),
         "{message}"
@@ -2403,7 +2403,7 @@ fn model_router_reply_is_the_event_and_the_request_matches_the_reference() {
     let decision = model_decision_of(&p);
     let mut want = json!({
         "state": "triage", "kind": "model", "event": "retry",
-        "options": ["retry", "split"], "router": "router",
+        "options": ["retry", "split"], "router": "decree_router",
         "child_run": child, "pick": "retry", "confidence": 0.9,
     });
     for (key, value) in want.as_object_mut().unwrap() {
@@ -2618,7 +2618,7 @@ fn model_past_max_depth_starts_no_router_and_is_error() {
     assert!(p.events_of("waiting").is_empty());
     let decision = model_decision_of(&p);
     assert_eq!(decision["router_error"], "max_depth 10 reached");
-    assert_eq!(decision["router"], "router");
+    assert_eq!(decision["router"], "decree_router");
     assert!(decision.get("child_run").is_none());
     assert_eq!(p.transitions()[2], "triage error failed model");
 }

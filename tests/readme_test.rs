@@ -171,6 +171,8 @@ fn test_every_readme_command_runs_as_written() {
         .arg(&script)
         .current_dir(dir.path())
         .env("PATH", path)
+        // The caller's own order limit (run-queue.sh sets one) is not this project's.
+        .env_remove("ORDER_MAX")
         .output()
         .unwrap();
     assert!(
