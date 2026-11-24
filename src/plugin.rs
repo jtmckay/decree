@@ -405,6 +405,16 @@ impl Plugin {
             .map(|v| serde_norway::to_string(&v).unwrap_or_default())
     }
 
+    /// The plugins this one needs, as written: its `extends` base, then each of its `needs`,
+    /// or the plugin a `needs` map meets it with (`{decree_infra: infra}` needs `infra`).
+    pub fn wants(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.extends.iter().cloned().collect();
+        for need in &self.needs {
+            out.push(self.need_map.get(need).unwrap_or(need).clone());
+        }
+        out
+    }
+
     /// The machine's `description`, or an empty string.
     pub fn description(&self) -> &str {
         self.machine
@@ -1171,6 +1181,7 @@ fn uninstall(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
 /// Remove plugin `name`'s record.
 fn forget(decree_dir: &Path, name: &str) -> Result<(), DecreeError> {
     hold_cron(decree_dir, name, false)?;
+    mark_needed(decree_dir, name, false)?;
     let path = record_path(decree_dir, name);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
@@ -1342,6 +1353,9 @@ pub struct Synced {
     pub installed: Vec<String>,
     /// Plugins whose file was deleted, whose installed copy was removed.
     pub removed: Vec<String>,
+    /// Plugins added for a need that nothing needs any more, whose file and installed copy
+    /// were removed: for `sync`.
+    pub unneeded: Vec<String>,
     /// Plugins whose installed copy held what installing (or removing) would lose, edited in
     /// place or never installed by decree, moved to `archive/` first: (plugin, the archive
     /// folder relative to `.decree/`, empty for `status`).
@@ -1394,7 +1408,124 @@ pub struct Restored {
 /// unless `cron`. A plugin file that fails its schema is not installed. A project without
 /// `plugins/` and without records is left as it is.
 pub fn sync(decree_dir: &Path, cron: bool) -> Result<Synced, DecreeError> {
-    reconcile(decree_dir, Some(cron))
+    let unneeded = remove_unneeded(decree_dir)?;
+    let mut out = reconcile(decree_dir, Some(cron))?;
+    out.removed.retain(|n| !unneeded.contains(n));
+    out.unneeded = unneeded;
+    Ok(out)
+}
+
+/// `.decree/cache/plugins/<name>.needed`: decree copied plugin `name` into `plugins/` because
+/// another plugin extends or needs it, and no person has asked for it by name since. Only the
+/// mark is kept: which plugins need it is worked out from `plugins/` each time (`needed_by`).
+fn needed_path(decree_dir: &Path, name: &str) -> PathBuf {
+    decree_dir
+        .join(CACHE_DIR)
+        .join(RECORDS_DIR)
+        .join(format!("{name}.needed"))
+}
+
+/// Mark plugin `name` as added for a need (`needed`), or as asked for.
+pub fn mark_needed(decree_dir: &Path, name: &str, needed: bool) -> Result<(), DecreeError> {
+    let path = needed_path(decree_dir, name);
+    if needed {
+        create_dir(path.parent())?;
+        write_replace(&path, b"").map_err(|(path, e)| io_error(&path, e))
+    } else {
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(io_error(&path, e)),
+        }
+    }
+}
+
+/// Whether plugin `name` was added for a need (`mark_needed`).
+pub fn is_needed_mark(decree_dir: &Path, name: &str) -> bool {
+    needed_path(decree_dir, name).is_file()
+}
+
+/// For each plugin that a plugin of `found` extends or lists in `needs` (through a `needs`
+/// map, the plugin that meets the need), the plugins of `found` that do, in name order.
+pub fn needed_by(found: &[Found]) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for f in found {
+        let Ok(p) = &f.parsed else { continue };
+        for w in p.wants() {
+            let by = out.entry(w).or_default();
+            if !by.contains(&f.name) {
+                by.push(f.name.clone());
+            }
+        }
+    }
+    for by in out.values_mut() {
+        by.sort();
+    }
+    out
+}
+
+/// The plugins of `found` added for a need (`marked`) that no plugin a person asked for needs,
+/// directly or through a chain (apt's autoremove): what `decree install` removes. Nothing,
+/// while a plugin file fails its schema, since what that one needs is not known.
+fn unneeded(found: &[Found], marked: &dyn Fn(&str) -> bool) -> Vec<String> {
+    if found.iter().any(|f| f.parsed.is_err()) {
+        return Vec::new();
+    }
+    let wants: BTreeMap<&str, Vec<String>> = found
+        .iter()
+        .filter_map(|f| f.parsed.as_ref().ok().map(|p| (f.name.as_str(), p.wants())))
+        .collect();
+    let mut kept: BTreeSet<&str> = BTreeSet::new();
+    let mut stack: Vec<&str> = found
+        .iter()
+        .map(|f| f.name.as_str())
+        .filter(|n| !marked(n))
+        .collect();
+    while let Some(n) = stack.pop() {
+        if !kept.insert(n) {
+            continue;
+        }
+        for w in wants.get(n).into_iter().flatten() {
+            if let Some((name, _)) = wants.get_key_value(w.as_str()) {
+                stack.push(name);
+            }
+        }
+    }
+    found
+        .iter()
+        .map(|f| f.name.clone())
+        .filter(|n| !kept.contains(n.as_str()))
+        .collect()
+}
+
+/// Delete the file of each plugin added for a need that nothing needs any more (`unneeded`),
+/// archiving one that is not this decree's official copy first, and drop each mark whose
+/// plugin file is gone. `reconcile` then removes their installed copies as it does any
+/// deleted plugin's, archiving one edited in place. Returns the plugins whose files it deleted.
+fn remove_unneeded(decree_dir: &Path) -> Result<Vec<String>, DecreeError> {
+    let dir = decree_dir.join(CACHE_DIR).join(RECORDS_DIR);
+    if dir.is_dir() {
+        let entries = std::fs::read_dir(&dir).map_err(|e| io_error(&dir, e))?;
+        for entry in entries {
+            let file = entry.map_err(|e| io_error(&dir, e))?.file_name();
+            let file = file.to_string_lossy();
+            if let Some(name) = file.strip_suffix(".needed") {
+                if !decree_dir.join(plugin_file(name)).is_file() {
+                    mark_needed(decree_dir, name, false)?;
+                }
+            }
+        }
+    }
+    let found = read_all(decree_dir)?;
+    let gone = unneeded(&found, &|n| is_needed_mark(decree_dir, n));
+    for f in found.iter().filter(|f| gone.contains(&f.name)) {
+        if crate::official::get(&f.name).is_none_or(|o| o.text.as_bytes() != f.text) {
+            archive_file(decree_dir, &f.name, &f.text)?;
+        }
+        let path = decree_dir.join(plugin_file(&f.name));
+        std::fs::remove_file(&path).map_err(|e| io_error(&path, e))?;
+    }
+    Ok(gone)
 }
 
 /// What `sync` would change, writing nothing: `check`, `process` and `daemon` report it, and
@@ -2789,5 +2920,35 @@ x-exist-services:
         let s = sync(d, false).unwrap();
         assert!(s.installed.is_empty() && s.removed.is_empty());
         assert!(!d.join(CACHE_DIR).exists());
+    }
+
+    fn found(name: &str, head: &str) -> Found {
+        let text = format!("---\nname: {name}\n{head}scripts:\n  x.sh: |\n    true\n---\n");
+        Found {
+            name: name.into(),
+            parsed: Plugin::parse(&text, Some(name)),
+            text: text.into_bytes(),
+        }
+    }
+
+    #[test]
+    fn unneeded_is_what_no_plugin_asked_for_reaches() {
+        let all = vec![
+            found("app", "needs: [{decree_infra: infra}]\n"),
+            found("infra", ""),
+            // Added for needs, needing each other only: they go together.
+            found("decree_infra", "needs: [decree_ai]\n"),
+            found("decree_ai", "needs: [decree_infra]\n"),
+            // Added for a need, extended by the project's plugin: it stays.
+            found("decree_order", ""),
+            found("mine", "extends: decree_order\n"),
+        ];
+        let marked = |n: &str| n.starts_with("decree_");
+        assert_eq!(unneeded(&all, &marked), ["decree_infra", "decree_ai"]);
+        assert_eq!(needed_by(&all)["decree_order"], ["mine"]);
+        assert_eq!(needed_by(&all)["decree_infra"], ["decree_ai"]);
+        assert_eq!(needed_by(&all)["infra"], ["app"]);
+        // Unmarked, nothing goes.
+        assert!(unneeded(&all, &|_| false).is_empty());
     }
 }

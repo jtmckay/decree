@@ -34,7 +34,8 @@
               "official",
               "differs",
               "extends",
-              "state"
+              "state",
+              "needed_by"
             ],
             "additionalProperties": false,
             "properties": {
@@ -71,6 +72,17 @@
                   "invalid"
                 ],
                 "description": "`installed`: installed as its file says; `not installed`: new or changed since it was installed, so `decree install` would install it; `edited`: its installed copy was edited in place or written by hand, and not exported, so `decree install` would move it to .decree/archive/; `invalid`: it fails its schema (P1). `missing base`: it extends a plugin not in plugins/ (P2), so it is not installed."
+              },
+              "needed_by": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "description": "For a plugin decree added because another extends or needs it (recorded in .decree/cache/plugins/), the plugins in plugins/ that extend it or list it in `needs` now, by name; empty when none does, so `decree install` removes it. Null for a plugin a person wrote or installed by name, which `decree install` never removes this way."
               }
             }
           }
@@ -435,6 +447,7 @@
         "action",
         "installed",
         "removed",
+        "no_longer_needed",
         "archived",
         "restored"
       ],
@@ -459,6 +472,14 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           },
           "description": "The plugins whose file was deleted, whose installed copy was removed."
+        },
+        "no_longer_needed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "The plugins decree added because another extended or needed them that no plugin in plugins/ needs any more, directly or through a chain: their file and installed copy removed (an installed copy edited in place archived first); their state/ and order/ stay. A plugin a person wrote or installed by name is never one."
         },
         "archived": {
           "type": "array",
@@ -642,6 +663,7 @@
         "infra"
       ],
       "removed": [],
+      "no_longer_needed": [],
       "archived": [
         {
           "plugin": "develop",

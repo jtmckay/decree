@@ -273,7 +273,12 @@ scripts:
       it (`decree check` warns while one is pending). `decree install` that file restores it.
       Cron files are the exception: installed with the plugin the first time, they are then the
       project's, and an install keeps them; `decree install --cron <name>` takes the plugin's.
-      Never edit `.decree/cache/plugins/`.
+      An official plugin decree copied in because another extends or needs it (`added <file>,
+      needed by <names>`) goes with the last plugin that needed it: after deleting a plugin,
+      `decree install` removes each such one nothing in `plugins/` needs any more (`removed
+      <file>, no longer needed`; its `state/` and `order/` stay). `decree install <name>` of one
+      keeps it for good; a plugin a person wrote or installed by name is never removed this way.
+      `decree list` shows `(needed by <names>)`. Never edit `.decree/cache/plugins/`.
     - **Official plugins are `decree_*`, and never edited.** Only an official plugin's name starts
       with `decree_`; never name a project's plugin `decree_*` (P1). Never edit an official
       plugin's file or its installed copy (`decree check` fails with P3; `decree install` restores
@@ -298,8 +303,8 @@ scripts:
     | Command | Use |
     | --- | --- |
     | `decree check [--format json\|sarif]` | Validate every machine, script name, inbox message and cron file. Exit 1 lists one error per line (`json`: one document; `sarif`: a SARIF 2.1.0 log for code scanning). |
-    | `decree install [--cron]` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone, a pull or an upgrade. Makes every official plugin (`decree_*`) this decree's copy, printing what changes; archives an installed copy edited in place first. A plugin already installed keeps its cron files (edited or deleted) unless `--cron`. |
-    | `decree install <name>... [--cron]` | Install these plugins, archiving an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it extends or needs. |
+    | `decree install [--cron]` | Install every plugin in `.decree/plugins/` as its file says: the step after a clone, a pull or an upgrade. Makes every official plugin (`decree_*`) this decree's copy, printing what changes; archives an installed copy edited in place first. Removes each plugin decree added for a need that nothing in `plugins/` needs any more (`removed <file>, no longer needed`). A plugin already installed keeps its cron files (edited or deleted) unless `--cron`. |
+    | `decree install <name>... [--cron]` | Install these plugins, archiving an edited installed copy; an official plugin not in `.decree/plugins/` is copied there first, with those it extends or needs, which go when nothing needs them. A name already added for a need is kept from then on. |
     | `decree install --update [<name>...]` | Fetch each plugin with a `source` from its https URL, print the diff and ask `y/N` on a terminal; only `y` takes it. |
     | `decree install <file\|->`, or `curl -fsSL <url> \| decree install -` | Check a plugin file, copy it to `.decree/plugins/` and install it. |
     | `decree list` / `decree export [<name>]` | List the project's plugins (`official` or `own`, `extends <base>`, `differs`, `not installed`, `edited`), the machines no plugin installed, and the official plugins it can add. Write `.decree/plugins/<name>.md` from the installed `machines/<name>/` (its `machine.yml`, `scripts/` and `cron/`; for a plugin that extends another, only what differs from its base); with no name, every plugin of the project's own whose installed copy was edited. Never an official plugin. |

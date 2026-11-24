@@ -85,13 +85,7 @@ fn closure(
     roots: &[Plugin],
     present: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<Seeded>, Vec<(String, String)>> {
-    fn wants(p: &Plugin) -> Vec<String> {
-        let mut out: Vec<String> = p.extends.iter().cloned().collect();
-        for need in &p.needs {
-            out.push(p.need_map.get(need).unwrap_or(need).clone());
-        }
-        out
-    }
+    let wants = Plugin::wants;
     let root_names: BTreeSet<&str> = roots.iter().map(|p| p.name.as_str()).collect();
     let mut seed: Vec<(String, Vec<String>)> = Vec::new();
     let mut missing: Vec<(String, String)> = Vec::new();
@@ -357,6 +351,11 @@ fn import(
     for (n, b) in &writes {
         write_file(&decree_dir.join(plugin::plugin_file(n)), b)?;
     }
+    // A plugin installed from a file is asked for; each seeded one is added for its need.
+    plugin::mark_needed(decree_dir, &name, false)?;
+    for (n, _) in &seed {
+        plugin::mark_needed(decree_dir, n, true)?;
+    }
     redraw(decree_dir);
     if format == Format::Text {
         for (n, by) in &seed {
@@ -515,6 +514,7 @@ fn install_all(decree_dir: &Path, cron: bool, format: Format) -> Result<(), Decr
             "action": "sync",
             "installed": synced.installed,
             "removed": synced.removed,
+            "no_longer_needed": synced.unneeded,
             "archived": synced
                 .archived
                 .iter()
@@ -557,11 +557,18 @@ fn install_all(decree_dir: &Path, cron: bool, format: Format) -> Result<(), Decr
                     plugin::plugin_file(name)
                 );
             }
+            for name in &synced.unneeded {
+                println!(
+                    "removed {DECREE_DIR}/{}, no longer needed",
+                    plugin::plugin_file(name)
+                );
+            }
             for name in &synced.installed {
                 println!("installed {DECREE_DIR}/{}", plugin::plugin_file(name));
             }
             if synced.installed.is_empty()
                 && synced.removed.is_empty()
+                && synced.unneeded.is_empty()
                 && synced.invalid.is_empty()
                 && synced.missing_needs.is_empty()
                 && synced.missing_bases.is_empty()
@@ -714,7 +721,12 @@ pub fn export_edited(
 fn listing(decree_dir: &Path) -> Result<Json, DecreeError> {
     let status = plugin::status(decree_dir)?;
     let mut plugins = Vec::new();
-    for p in plugin::plan(decree_dir)? {
+    let found = plugin::read_all(decree_dir)?;
+    let needers = plugin::needed_by(&found);
+    for p in plugin::plan_found(found) {
+        // Only a plugin added for a need has `needed_by`; null for one a person asked for.
+        let needed_by = plugin::is_needed_mark(decree_dir, &p.name)
+            .then(|| needers.get(&p.name).cloned().unwrap_or_default());
         let official = is_official(&p.name);
         let differs = status.official_edited.iter().any(|(n, _, _)| *n == p.name);
         let (description, state, extends) = match &p.parsed {
@@ -743,6 +755,7 @@ fn listing(decree_dir: &Path) -> Result<Json, DecreeError> {
             "differs": differs,
             "extends": extends,
             "state": state,
+            "needed_by": needed_by,
         }));
     }
     let ids: std::collections::BTreeSet<String> = crate::machine::machine_paths(decree_dir)?
@@ -849,9 +862,18 @@ pub fn list(project_root: &Path, format: Format) -> Result<(), DecreeError> {
             if state != "installed" {
                 marks.push(state.to_string());
             }
+            let mut description = p["description"].as_str().unwrap_or("").to_string();
+            if let Some(by) = p["needed_by"].as_array() {
+                let by: Vec<&str> = by.iter().filter_map(Json::as_str).collect();
+                if by.is_empty() {
+                    description.push_str(" (needed by nothing; `decree install` removes it)");
+                } else {
+                    description.push_str(&format!(" (needed by {})", by.join(", ")));
+                }
+            }
             (
                 p["name"].as_str().unwrap_or("").to_string(),
-                p["description"].as_str().unwrap_or("").to_string(),
+                description,
                 marks,
             )
         })
@@ -1012,6 +1034,11 @@ fn install_named(
     let installed = install_set(&decree_dir, &plan, &set, &replaced, cron)?;
     for (n, b) in &writes {
         write_file(&decree_dir.join(plugin::plugin_file(n)), b)?;
+    }
+    // A plugin named is asked for, as `apt install` of an automatic package marks it manual;
+    // each seeded for a need is marked so, and goes when nothing needs it (`plugin::sync`).
+    for (n, status, _) in &plan_rows {
+        plugin::mark_needed(&decree_dir, n, *status == "needed")?;
     }
     redraw(&decree_dir);
 
