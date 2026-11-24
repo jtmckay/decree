@@ -4,7 +4,7 @@
 
 Work arrives as a message, a YAML statechart decides what happens next, and scripts do the work. Every step is written to an append-only log, so a run survives crashes, restarts and week-long waits for a reply, and continues where it stopped: durable execution in the spirit of [Temporal](https://temporal.io) or AWS Step Functions, but local, with one binary and a folder of files instead of a server and a database.
 
-decree works with no AI at all. When you do use AI, decree is the harness around it: a model, or a person, only ever picks among the options a state declares, and the state machine stays in charge of what happens next.
+decree works with no AI at all. When you do use AI, decree is the orchestrator around it: a model, or a person, only ever picks among the options a state declares, and the state machine stays in charge of what happens next.
 
 decree is developed with itself: every change to this repository is an order file in `.decree/machines/develop/order/`, run by `decree daemon --once`.
 
