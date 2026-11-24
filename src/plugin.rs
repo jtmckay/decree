@@ -1531,7 +1531,15 @@ fn remove_unneeded(decree_dir: &Path) -> Result<Vec<String>, DecreeError> {
 /// What `sync` would change, writing nothing: `check`, `process` and `daemon` report it, and
 /// never install.
 pub fn status(decree_dir: &Path) -> Result<Synced, DecreeError> {
-    reconcile(decree_dir, None)
+    let mut out = reconcile(decree_dir, None)?;
+    let found = read_all(decree_dir)?;
+    out.unneeded = unneeded(&found, &|n| is_needed_mark(decree_dir, n));
+    Ok(out)
+}
+
+/// What `check` and `daemon` say of a plugin added for a need that nothing needs now.
+pub fn unneeded_message() -> &'static str {
+    "added for a need, and nothing needs it now: run `decree install` to remove it"
 }
 
 /// `write`: `Some(cron)` installs, taking the cron files of plugins already installed only
@@ -1864,6 +1872,9 @@ impl Synced {
                     "{}: deleted, but its installed copy is still there: run `decree install` to remove it",
                     plugin_file(name)
                 ));
+            }
+            for name in &self.unneeded {
+                out.push(format!("{}: {}", plugin_file(name), unneeded_message()));
             }
             for (name, _) in &self.archived {
                 out.push(format!("{}: {}", plugin_file(name), edited_message(name)));

@@ -240,7 +240,8 @@ fn plugin_problems(synced: &plugin::Synced) -> Vec<CheckError> {
 }
 
 /// Each machine no plugin installed, in a project with `plugins/`.
-/// A warning for each plugin `decree install` would install or remove, for each installed
+/// A warning for each plugin `decree install` would install or remove (a deleted one, or
+/// one added for a need that nothing needs now), for each installed
 /// copy it would archive, and for each plugin whose installed cron files are not its own: `check` installs nothing (docs/reference/plugins.md,
 /// Installing).
 fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
@@ -258,6 +259,12 @@ fn pending_plugins(synced: &plugin::Synced) -> Vec<CheckWarning> {
             message:
                 "deleted, but its installed copy is still there: run `decree install` to remove it"
                     .to_string(),
+        });
+    }
+    for name in &synced.unneeded {
+        out.push(CheckWarning {
+            file: plugin::plugin_file(name),
+            message: plugin::unneeded_message().to_string(),
         });
     }
     for (name, _) in &synced.archived {

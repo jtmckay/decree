@@ -276,7 +276,8 @@ scripts:
       An official plugin decree copied in because another extends or needs it (`added <file>,
       needed by <names>`) goes with the last plugin that needed it: after deleting a plugin,
       `decree install` removes each such one nothing in `plugins/` needs any more (`removed
-      <file>, no longer needed`; its `state/` and `order/` stay). `decree install <name>` of one
+      <file>, no longer needed`; its `state/` and `order/` stay; until then `check` and
+      `daemon` warn `added for a need, and nothing needs it now`). `decree install <name>` of one
       keeps it for good; a plugin a person wrote or installed by name is never removed this way.
       `decree list` shows `(needed by <names>)`. Never edit `.decree/cache/plugins/`.
     - **Official plugins are `decree_*`, and never edited.** Only an official plugin's name starts

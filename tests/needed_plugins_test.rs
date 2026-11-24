@@ -352,3 +352,86 @@ fn an_invalid_plugin_file_holds_removal() {
         );
     }
 }
+
+/// `decree check` and `decree daemon` say which plugins added for a need `decree install`
+/// would remove, here once a `needs` change, not a deleted file, leaves one unneeded, and
+/// remove nothing themselves.
+#[test]
+fn check_and_daemon_name_an_unneeded_plugin_and_remove_nothing() {
+    let tmp = empty();
+    let p = tmp.path();
+    import(p, "uses_infra", &own("uses_infra", "[decree_infra]"));
+    let (code, stdout, stderr) = decree(p, &["check"]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    assert!(!format!("{stdout}{stderr}").contains("nothing needs it now"));
+
+    fs::write(plugin_path(p, "uses_infra"), own("uses_infra", "[]")).unwrap();
+    let warning = "plugins/decree_infra.md: added for a need, and nothing needs it now: run `decree install` to remove it";
+    let (code, stdout, stderr) = decree(p, &["check"]);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    assert!(
+        format!("{stdout}{stderr}").contains(warning),
+        "{stdout}{stderr}"
+    );
+    let (_, stdout, stderr) = decree(p, &["daemon", "--once"]);
+    assert!(
+        format!("{stdout}{stderr}").contains(warning),
+        "{stdout}{stderr}"
+    );
+    assert!(has_plugin(p, "decree_infra"));
+    assert!(p
+        .join(".decree/machines/decree_infra/machine.yml")
+        .is_file());
+
+    let out = ok(p, &["install"]);
+    assert!(
+        out.contains("removed .decree/plugins/decree_infra.md, no longer needed"),
+        "{out}"
+    );
+    assert!(!has_plugin(p, "decree_infra"));
+    let (_, stdout, stderr) = decree(p, &["check"]);
+    assert!(!format!("{stdout}{stderr}").contains("nothing needs it now"));
+}
+
+/// The plugins `decree init` adds are asked for: a plugin installed later that needs them
+/// does not mark them, so when it goes only what it added goes with it.
+#[test]
+fn the_plugins_init_adds_are_asked_for() {
+    let tmp = TempDir::new().unwrap();
+    let p = tmp.path();
+    ok(p, &["init", "--ai", "claude"]);
+    let from_init: Vec<String> = fs::read_dir(p.join(".decree/plugins"))
+        .unwrap()
+        .map(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .trim_end_matches(".md")
+                .to_string()
+        })
+        .collect();
+    assert!(from_init.iter().any(|n| n == "decree_ai"), "{from_init:?}");
+    assert!(
+        from_init.iter().any(|n| n == "decree_order"),
+        "{from_init:?}"
+    );
+    let out = ok(p, &["install", "decree_develop"]);
+    assert!(
+        out.contains("added .decree/plugins/decree_infra.md, needed by decree_develop"),
+        "{out}"
+    );
+    for n in &from_init {
+        assert_eq!(needed_by(p, n), Value::Null, "{n}");
+    }
+
+    fs::remove_file(plugin_path(p, "decree_develop")).unwrap();
+    let out = ok(p, &["install"]);
+    assert!(
+        out.contains("removed .decree/plugins/decree_infra.md, no longer needed"),
+        "{out}"
+    );
+    assert!(!has_plugin(p, "decree_infra"));
+    for n in &from_init {
+        assert!(has_plugin(p, n), "{n}: {out}");
+    }
+}
