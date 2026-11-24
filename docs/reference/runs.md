@@ -71,8 +71,9 @@ A `model` invoke asks a **router**: an ordinary machine that answers the questio
 The official `decree_router` plugin ([plugins.md](plugins.md#official-plugins)), which `decree install decree_router` adds, installs `machines/decree_router/machine.yml` and its script, `machines/decree_router/scripts/ask.sh`. It is a normal machine, but an official one, never edited: extend it with a plugin of your own holding another `ask.sh`, or write another router, and point a `model` invoke's `router:` at it (or map `decree_router` to it with a `needs` map). Its machine:
 
 ```yaml
-name: router
+name: decree_router
 description: Ask an AI CLI (claude, opencode or copilot) to pick one of the options in the request.
+concurrency: 4
 initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs the AI CLI, writes $DECREE_REPLY
@@ -168,7 +169,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `run_attempt` | integer | `retry` | The run attempt this retry starts: 2 for the first retry ([Step loop](#step-loop), Run attempts). |
 | `span_id` | string | The claim (`claim` or `invalid_message`), and `retry` | The run span this event starts, 16 lowercase hex. `decree retry` starts a new run span, linked to the previous one. |
 | `parent_span_id` | string | The claim, when the message's `traceparent` is valid | The run span's parent: the span `traceparent` names. |
-| `decree_version` | string | The claim (`claim` or `invalid_message`), and `retry` | The version of the decree that started or retried the run, for example `0.5.0-beta.11`. Runs recorded before decree wrote it have none. `decree status <id>` shows it on these rows. |
+| `decree_version` | string | The claim (`claim` or `invalid_message`), and `retry` | The version of the decree that started or retried the run, for example `0.6.0`. Runs recorded before decree wrote it have none. `decree status <id>` shows it on these rows. |
 
 `source` meanings: `exit_code` is `done`/`error` from the exit code (or a pass-through `done`); `script` is an event the script named in `$DECREE_EVENT_FILE`; `check`, `model` and `reply` come from decision invokes (`reply` also with `error` when a `timeout_at` has no instant to read, so the run does not wait); `machine` is the final state of a child run from a `machine` invoke (`failed` as `error`), and also `error` when no child could start; `timeout` is a `reply` deadline that passed; `internal` is a `done.state.<id>` event decree raised; `retry` is written by `decree retry`; `cancel` is written by `decree cancel`: `event: "cancel"` to `failed`, with `note` when `-m` gave one, and no script ran ([Cancel](cli.md#cancel)).
 

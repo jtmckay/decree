@@ -119,7 +119,7 @@ states:
   failed: { final: true }
 ```
 
-`gaps` reuses `develop`'s `gate`, `fix` and `verify`, and the `gate_gaps` below, through symlinks in its own script folder ([Resolution](reference/scripts.md)):
+`gaps` reuses `develop`'s `gate`, `fix` and `verify`, and the `gate_gaps` below, through symlinks in its own script folder ([Resolution](reference/scripts.md#resolution)):
 
 ```bash
 mkdir -p .decree/machines/gaps/scripts
@@ -198,11 +198,11 @@ for event in ${DECREE_EVENTS}; do
 done
 ```
 
-Then `chmod +x .decree/machines/gaps/scripts/fill.sh .decree/machines/develop/scripts/gate_gaps.sh .decree/machines/develop/scripts/notify_human.sh`, `decree check` and `decree graph`. Git ignores `machines/` and `scripts/`, so keep both machines as plugins of the project's own: `decree export gaps` and `decree export develop` (export copies the files the symlinks point to; `develop`'s file, which extends `decree_develop`, holds only its machine, its gate and the scripts this recipe adds, and then needs `gaps`).
+Then `chmod +x .decree/machines/gaps/scripts/fill.sh .decree/machines/develop/scripts/gate_gaps.sh .decree/machines/develop/scripts/notify_human.sh`, `decree check` and `decree graph`. Git ignores what is installed in `machines/`, so keep both machines as plugins of the project's own: `decree export gaps` and `decree export develop` (export copies the files the symlinks point to; `develop`'s file, which extends `decree_develop`, holds only its machine, its gate and the scripts this recipe adds, and then needs `gaps`).
 
 ## Tuning it
 
 - **More or fewer cheap rounds**: `max_gap_rounds`, per message with `params: { max_gap_rounds: 3 }`.
 - **A different cheap agent**: `gaps`' `ai_cli` default. With OpenCode, set `OPENCODE_MODEL` in `.decree/.env` (for example `llama.cpp/qwen3`), and let `decree init --permissions` write `"external_directory": "deny"` into `opencode.json`.
 - **Claude's model for its round**: `CLAUDE_MODEL`. A round that meets Claude's usage limit waits for the reset, up to `AI_LIMIT_WAIT`, without using its attempts.
-- **No person**: point `claude_round`'s `unfilled` at `failed`. The run keeps its changes and holds the queue, as any failed run does.
+- **No person**: point `claude_round`'s `unfilled` at `failed`. The run keeps its changes and holds its group, as any failed run that leaves changes does.

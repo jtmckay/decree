@@ -16,7 +16,7 @@ machine:
 scripts:
   ask_gliner.sh: |
     #!/usr/bin/env bash
-    # gliner_router's only script: one classification per decision. Sends the
+    # decree_gliner_router's only script: one classification per decision. Sends the
     # request's question, its options with their descriptions, and its input and
     # message body to the GLiNER2.5-Decide server, and writes the server's answer,
     # {"event": ..., "confidence": ...}, as the reply. decree applies
@@ -53,6 +53,6 @@ Point a model state's `router:` at it:
     invoke:
       model:
         question: How much reasoning does this change need?
-        router: gliner_router
+        router: decree_gliner_router
         min_confidence: 0.7
 ```

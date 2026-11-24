@@ -3,7 +3,7 @@ name: decree_develop_react
 extends: decree_develop
 scripts:
   conventions.md: |
-    # React conventions (develop_react's implement, fix and verify prompts read this)
+    # React conventions (decree_develop_react's implement, fix and verify prompts read this)
 
     - Use the package manager the lockfile names (`package-lock.json`: npm, `pnpm-lock.yaml`:
       pnpm, `yarn.lock`: yarn; npm without one), and keep its lockfile in step with
@@ -22,7 +22,7 @@ scripts:
       test first while working.
   gate.sh: |
     #!/usr/bin/env bash
-    # develop_react's gate: develop_node's checks, then `build`, which a React project must
+    # decree_develop_react's gate: decree_develop_node's checks, then `build`, which a React project must
     # define; also kept in gate.log for fix. It uses the package manager the lockfile names
     # (package-lock.json: npm, pnpm-lock.yaml: pnpm, yarn.lock: yarn; npm without one),
     # installs the dependencies as that manager does for CI, then runs `lint`, `typecheck`
@@ -137,8 +137,8 @@ scripts:
       echo fail > "${DECREE_EVENT_FILE}"
     fi
   requirements: |
-    # What develop_react's gate needs, one resource per line, as in infra's requirements:
-    # infra's `run.sh check` (develop_react's precheck) reports each, and `run.sh apply`
+    # What decree_develop_react's gate needs, one resource per line, as in decree_infra's requirements:
+    # decree_infra's `run.sh check` (decree_develop_react's precheck) reports each, and `run.sh apply`
     # installs what is missing. A project using pnpm or yarn adds that line, such as
     # `command   pnpm`.
     #

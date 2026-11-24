@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gliner_router's only script: one classification per decision. Sends the
+# decree_gliner_router's only script: one classification per decision. Sends the
 # request's question, its options with their descriptions, and its input and
 # message body to the GLiNER2.5-Decide server, and writes the server's answer,
 # {"event": ..., "confidence": ...}, as the reply. decree applies

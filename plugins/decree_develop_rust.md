@@ -3,7 +3,7 @@ name: decree_develop_rust
 extends: decree_develop
 scripts:
   conventions.md: |
-    # Rust conventions (develop_rust's implement, fix and verify prompts read this)
+    # Rust conventions (decree_develop_rust's implement, fix and verify prompts read this)
 
     - Format with `cargo fmt`; keep `cargo clippy --all-targets -- -D warnings` clean.
     - Unit tests in a `#[cfg(test)] mod tests` beside the code; behaviour a user sees
@@ -14,7 +14,7 @@ scripts:
     - `cargo test` must pass before you end; run the narrowest test first while working.
   gate.sh: |
     #!/usr/bin/env bash
-    # develop_rust's gate: cargo's standard checks, also kept in gate.log for fix. It
+    # decree_develop_rust's gate: cargo's standard checks, also kept in gate.log for fix. It
     # names `pass` if they all pass and `fail` if one fails; a non-zero exit, such
     # as a missing tool, means they could not run, and ends the run without fix.
     # decree_develop_rust is never edited: to add your project\'s own checks, extend it
@@ -42,8 +42,8 @@ scripts:
       echo fail > "${DECREE_EVENT_FILE}"
     fi
   requirements: |
-    # What develop_rust's gate needs, one resource per line, as in infra's requirements:
-    # infra's `run.sh check` (develop_rust's precheck) reports each, and `run.sh apply`
+    # What decree_develop_rust's gate needs, one resource per line, as in decree_infra's requirements:
+    # decree_infra's `run.sh check` (decree_develop_rust's precheck) reports each, and `run.sh apply`
     # installs what is missing.
     #
     # kind    name   version   source

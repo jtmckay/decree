@@ -144,7 +144,7 @@ scripts:
     }
     locked mark_held
   lease.sh: |
-    # lease's shared code, sourced by its scripts (never run on its own). The rules are
+    # decree_lease's shared code, sourced by its scripts (never run on its own). The rules are
     # scripts/resources of the machine running (a project's plugin that extends decree_lease
     # writes them; decree_lease ships none). What the machine keeps between runs is in
     # $DECREE_STATE_DIR/leases/<resource>/, read and written only under flock on its lock
@@ -578,7 +578,7 @@ scripts:
     }
     locked decide
   requirements: |
-    # What lease's scripts need beyond decree, checked by infra's `run.sh check`.
+    # What decree_lease's scripts need beyond decree, checked by decree_infra's `run.sh check`.
     # kind    name    version   source
     command   bash
     command   flock
@@ -851,7 +851,7 @@ box2    15m        5s      30m       llm,image    4
 
 Durations are decree's: `15m`, `5s`, `2h`.
 
-To put a resource into a mode, add `scripts/swap/<name>.sh` to the same plugin. lease runs it with bash, with the current mode (empty when unknown) and the mode wanted, `swap/box1.sh <from> <to>`, and `LEASE_RESOURCE` set, as a step with a 30-minute timeout. With no script, there is nothing to do. If a swap fails, its lease fails, the mode becomes unknown, and the next lease swaps again. [docs/services.md](https://github.com/jtmckay/decree/blob/main/docs/services.md) shows swaps that unload one model server's models before another's load.
+To put a resource into a mode, add `scripts/swap/<name>.sh` to the same plugin. decree_lease runs it with bash, with the current mode (empty when unknown) and the mode wanted, `swap/box1.sh <from> <to>`, and `LEASE_RESOURCE` set, as a step with a 30-minute timeout. With no script, there is nothing to do. If a swap fails, its lease fails, the mode becomes unknown, and the next lease swaps again. [docs/services.md](https://github.com/jtmckay/decree/blob/main/docs/services.md) shows swaps that unload one model server's models before another's load.
 
 ## Asking for a lease
 

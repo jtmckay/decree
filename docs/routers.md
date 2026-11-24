@@ -90,7 +90,7 @@ The `decision` event records the router, the router's run id (`child_run`), the 
 
 | Router | Where its confidence comes from |
 | --- | --- |
-| Chat models (`router`, the official plugin) | The model's own estimate in its reply. The least reliable: chat models tend to report high numbers whatever they pick. |
+| Chat models (`decree_router`, the official plugin) | The model's own estimate in its reply. The least reliable: chat models tend to report high numbers whatever they pick. |
 | TypeSafe Jev | Computed from the shape of its probability distribution over the options. |
 | GLiNER2.5-Decide | The classifier's score for the label it picks (`include_confidence=True`). |
 | A language model constrained by `format` | Still the model's own estimate: the decoder constrains the shape of the reply, not how honest its number is. |
@@ -111,11 +111,12 @@ curl -s 127.0.0.1:8090/classify -d '{"instructions": "How much reasoning does th
 
 To keep it running, use the `decide` systemd user unit in [`docs/services.md`](services.md#systemd-user-units-only-one-of-these-at-a-time). The `gliner2` package's plain install is only its cloud API client; running the model locally needs `gliner2[local,train]`, since the local runtime imports its training modules too ([gliner2 README](https://github.com/fastino-ai/GLiNER2)).
 
-`machines/gliner_router/machine.yml` (in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md)):
+`machines/decree_gliner_router/machine.yml`, which `decree install decree_gliner_router` installs from [`plugins/decree_gliner_router.md`](../plugins/decree_gliner_router.md) (used in [`examples/route-by-complexity/`](../examples/route-by-complexity/README.md)):
 
 ```yaml
 name: decree_gliner_router
 description: Ask the local GLiNER2.5-Decide classifier to pick one of the options in the request.
+concurrency: 4
 initial: ask
 states:
   ask:                             # posts the question, options and input; writes $DECREE_REPLY
@@ -125,7 +126,7 @@ states:
   failed: { final: true }
 ```
 
-`machines/gliner_router/scripts/ask_gliner.sh` sends the question, the options with their descriptions as labels, and `input` and `message_body` as the text, and writes the server's answer as the reply:
+`machines/decree_gliner_router/scripts/ask_gliner.sh` sends the question, the options with their descriptions as labels, and `input` and `message_body` as the text, and writes the server's answer as the reply:
 
 ```bash
 url="${GLINER_URL:-http://127.0.0.1:8090/classify}"
@@ -154,7 +155,7 @@ So keep each decision to a few options, and settle anything the params already a
 
 A language model served by [Ollama](https://docs.ollama.com/capabilities/structured-outputs) is a typed router when its call passes the request's `reply_schema` as `format`: Ollama constrains the model's output to the JSON Schema it is given, and the schema's `event` enum holds the pick to the options. Ollama's docs suggest also putting the schema in the prompt, and a temperature of 0, and say the same works through its OpenAI-compatible API's `response_format`. vLLM's guided decoding takes a JSON Schema too; SGLang's `select` picks among the option names directly. The confidence is still the model's own estimate.
 
-`machines/ollama_router/machine.yml` is `decree_gliner_router` with `invoke: ask_ollama`; `machines/ollama_router/scripts/ask_ollama.sh`:
+`machines/ollama_router/machine.yml` is `decree_gliner_router`'s with `name: ollama_router` and `invoke: ask_ollama`; `machines/ollama_router/scripts/ask_ollama.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -246,6 +247,7 @@ The default router, `decree_router`, is untyped: it asks a chat model or coding 
 ```yaml
 name: decree_router
 description: Ask an AI CLI (claude, opencode or copilot) to pick one of the options in the request.
+concurrency: 4
 initial: ask
 states:
   ask:                             # renders the prompt from $DECREE_REQUEST, runs the AI CLI, writes $DECREE_REPLY

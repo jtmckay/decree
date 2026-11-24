@@ -6,7 +6,7 @@
 - **Timestamps.** Use the event's `ts` as the log timestamp, so back-filled and late-shipped events land at the right time.
 - **Labels** must stay low-cardinality: `machine`, `type`, and for script output `script`. `run_id`, `state` and `seq` are fields or structured metadata, never labels, because a label per run makes Loki slow. The one exception is `state` on `run_finished` lines, whose values are a machine's few final states, for [Metrics](#metrics).
 - **Script output files** carry their context in the path: `runs/<run_id>/<NNNN>-<state>-<script>.log`, or `runs/<run_id>/<NNNN>-<state>.log` when the script is named as its state. State and script names cannot contain `-`, so the regex `/runs/(?P<run_id>[^/]+)/(?P<n>\d{4,})-(?P<state>[^-/]+?)(?:-(?P<script>[^-/]+))?\.log$` is unambiguous; a missing `script` is the `state`.
-- **Retention.** Loki's retention is the history. The official [`prune`](plugins.md#official-plugins) plugin deletes finished run folders older than `PRUNE_OLDER_THAN`, and nothing else does, so the local `runs/` is a working copy: ship runs before pruning them, and prune with an age longer than the shipper's lag.
+- **Retention.** Loki's retention is the history. The official [`decree_prune`](plugins.md#official-plugins) plugin deletes finished run folders older than `PRUNE_OLDER_THAN`, and nothing else does, so the local `runs/` is a working copy: ship runs before pruning them, and prune with an age longer than the shipper's lag.
 - **Stability.** Field names and meanings in [events.jsonl](runs.md#eventsjsonl) are a public contract under `v: 1`. Dashboards may depend on them.
 
 Example LogQL, also in [`examples/observability/README.md`](../../examples/observability/README.md):
@@ -105,4 +105,4 @@ service:
       exporters: [otlp_http]
 ```
 
-Without a `storage` extension the receiver keeps its file offsets in memory, so a restarted Collector sends the files again from the beginning; add the `file_storage` extension and `storage: file_storage` to keep them. As with events, ship runs before the `prune` plugin removes them.
+Without a `storage` extension the receiver keeps its file offsets in memory, so a restarted Collector sends the files again from the beginning; add the `file_storage` extension and `storage: file_storage` to keep them. As with events, ship runs before the `decree_prune` plugin removes them.

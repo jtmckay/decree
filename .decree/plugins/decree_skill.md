@@ -16,7 +16,7 @@ machine:
 scripts:
   install.sh: |
     #!/usr/bin/env bash
-    # skill's install: copy the decree skill, this folder's skill/, into each folder this
+    # decree_skill's install: copy the decree skill, this folder's skill/, into each folder this
     # folder's `dirs` lists, one per line, relative to the project root or absolute, `#` for
     # comments (a plugin of the project's own that extends decree_skill ships `dirs`; an empty
     # one writes nowhere). Without `dirs`: into each AI CLI's skill folder the project has,
@@ -267,7 +267,7 @@ scripts:
       `decree export <name>`, or let the next run's `commit` export it, and commit the
       plugin file. A machine written by hand in `machines/<name>/` is not committed until it is exported
       (`decree check` warns about it). A project's settings for a plugin (`gate.sh`,
-      `requirements`, `QA_RUN`, lease's resources) are such edits: they live in its plugin file. Export an edit
+      `requirements`, `QA_RUN`, decree_lease's resources) are such edits: they live in its plugin file. Export an edit
       before the next `decree install`: an install never stops over one, it archives the edited
       copy as a plugin file, `.decree/archive/<name>/<time>.md`, and installs the plugin over
       it (`decree check` warns while one is pending). `decree install` that file restores it.
@@ -383,7 +383,7 @@ scripts:
     expected-failure marker and writes one report per root cause (the broken invariant and the
     expected behaviour, no fix), and `report` emits each as a message for the plugin that meets its `decree_develop` need. A guard (`scripts/qa.sh`) fails any step whose AI changed a file outside
     `QA_DIR`. It does not start until `QA_RUN` in `scripts/qa.sh` of the project's plugin that extends it names the suite's command; once
-    qa finds bugs, the gate should run it too.
+    decree_qa finds bugs, the gate should run it too.
 
     ## Worked example
 
@@ -1120,7 +1120,7 @@ scripts:
     `machines/decree_infra/scripts/` holds the project's declared environment. `requirements` lists one resource
     per line (`kind name version source`), in dependency order; any other machine may keep a
     `requirements` beside its scripts, and every `.decree/machines/*/scripts/requirements` is one list,
-    infra's first; `kinds/<kind>.sh` defines `check` and
+    decree_infra's first; `kinds/<kind>.sh` defines `check` and
     `install` for a kind, each called with the line's name, version and source; `run.sh check`
     reports each line `ok` or `missing`, with the file it came from, and `run.sh apply` installs what is missing and checks it
     again. A kind installs into the project (a venv, `node_modules`, `.tools/bin`), never with
@@ -1200,7 +1200,7 @@ scripts:
 
     Scripts hand work to one another, and to a person, through files in `$DECREE_ROOT_RUN_DIR`
     (the run's own folder, or in a child run the top run's, so a child machine whose steps are
-    develop's scripts shares them). decree reads none of them but `hold`, and quotes `STOP` and
+    decree_develop's scripts shares them). decree reads none of them but `hold`, and quotes `STOP` and
     `leftovers` in the run's attention file; the official `decree_develop` plugin's scripts follow this convention:
 
     - `progress.md`: the step log, one line per step, what is done and what is next. A retry
@@ -1211,7 +1211,7 @@ scripts:
     - `gate.log`: the output of the project's checks (`machines/decree_develop/scripts/gate.sh`), for the step that
       fixes them. The gate names `pass` or `fail`; a non-zero exit (`error`) means the checks could
       not run, such as a missing tool, and its message is here.
-    - `plan.md`: a plan for later steps, and a person's answer to a `STOP`. develop's AI steps read it.
+    - `plan.md`: a plan for later steps, and a person's answer to a `STOP`. decree_develop's AI steps read it.
     - `gaps.md`: what `verify` found missing on `fail`; a retry's `implement` closes each first.
       `verify` keeps the last one if an attempt dies.
     - `hold`, in the run's own `$DECREE_RUN_DIR`: written by a step whose failure must stop the

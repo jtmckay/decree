@@ -93,7 +93,7 @@ scripts:
     EMIT_IF_CHANGED_SUFFIX=.git.txt exec "$(dirname "${BASH_SOURCE[0]}")/emit_if_changed.sh" "$@"
   idle.sh: |
     #!/usr/bin/env bash
-    # order's idle: `idle` when inbox/ is empty and no other run is executing or about to
+    # decree_order's idle: `idle` when inbox/ is empty and no other run is executing or about to
     # (active or pending: machines run at once), so the next file starts only once
     # everything before it has been processed, its follow-ups included; `busy` otherwise. A
     # run waiting for a reply or a timer does not count. One order run works at a time: if
@@ -145,7 +145,7 @@ scripts:
     fi
   next.sh: |
     #!/usr/bin/env bash
-    # order's next: the first file, across every .decree/machines/<machine>/order/, that has
+    # decree_order's next: the first file, across every .decree/machines/<machine>/order/, that has
     # not run, or changed since it ran: by file name, the machine's name breaking a tie. What
     # ran is in that machine's state/order.git.txt, a line `<file> <sha256>` each. Writes the
     # file to $DECREE_RUN_DIR/next.md, its `machine` the folder's unless it names one, with
@@ -199,10 +199,10 @@ scripts:
     echo none > "${DECREE_EVENT_FILE}"
   record.sh: |
     #!/usr/bin/env bash
-    # order's record: the file next found ran; put `<file> <sha256>` in its machine's
+    # decree_order's record: the file next found ran; put `<file> <sha256>` in its machine's
     # state/order.git.txt, in place of any line for that file, sorted. Commit that file:
     # a fresh clone then runs nothing that already ran.
-    #   record.sh                  the file in $DECREE_RUN_DIR/next (order's own state)
+    #   record.sh                  the file in $DECREE_RUN_DIR/next (decree_order's own state)
     #   record.sh <machine> <file> that order file, hashed now: a `commit` script calls it for a
     #                              run with `order:` so the line is in the run's one commit
     set -euo pipefail
@@ -225,7 +225,7 @@ scripts:
     echo "recorded ${machine}/order/${file}"
   wait.sh: |
     #!/usr/bin/env bash
-    # order's pause needs no answer: its timeout is the timer.
+    # decree_order's pause needs no answer: its timeout is the timer.
     true
 cron:
   boot.md: |
@@ -236,7 +236,7 @@ cron:
 ---
 # decree_order
 
-Ordered work for every machine, run when the daemon starts. A machine's `order/` folder, `.decree/machines/<machine>/order/`, holds messages to run in file-name order, one at a time: the declared state of that machine's domain ("this is how things should be"), not commands. `decree init` adds this plugin; delete `.decree/plugins/order.md` to go without it.
+Ordered work for every machine, run when the daemon starts. A machine's `order/` folder, `.decree/machines/<machine>/order/`, holds messages to run in file-name order, one at a time: the declared state of what that machine manages ("this is how things should be"), not commands. `decree init` adds this plugin; delete `.decree/plugins/order.md` to go without it.
 
 Each time `decree daemon` starts (and `decree daemon --once`, which CI and a system crontab run), its cron file `boot.md` (`@reboot`) starts this machine, which:
 
@@ -263,4 +263,4 @@ Two scripts here let any machine reconcile rather than repeat: give a message a 
 - `emit_if_changed.sh <key> [decree emit options] < message` keeps the latest hash in the calling machine's `$DECREE_STATE_DIR/<key>.txt`, which git ignores.
 - `emit_if_changed_git.sh` keeps it in `<key>.git.txt`, which git tracks: commit it with the change that made the message, and a fresh clone queues nothing that already ran.
 
-A plugin that uses them lists `order` in its `needs`.
+A plugin that uses them lists `decree_order` in its `needs`.

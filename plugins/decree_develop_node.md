@@ -3,7 +3,7 @@ name: decree_develop_node
 extends: decree_develop
 scripts:
   conventions.md: |
-    # Node conventions (develop_node's implement, fix and verify prompts read this)
+    # Node conventions (decree_develop_node's implement, fix and verify prompts read this)
 
     - Use the package manager the lockfile names (`package-lock.json`: npm, `pnpm-lock.yaml`:
       pnpm, `yarn.lock`: yarn; npm without one), and keep its lockfile in step with
@@ -18,7 +18,7 @@ scripts:
       while working.
   gate.sh: |
     #!/usr/bin/env bash
-    # develop_node's gate: the package.json scripts a Node project checks with, also kept in
+    # decree_develop_node's gate: the package.json scripts a Node project checks with, also kept in
     # gate.log for fix. It uses the package manager the lockfile names (package-lock.json:
     # npm, pnpm-lock.yaml: pnpm, yarn.lock: yarn; npm without one), installs the
     # dependencies as that manager does for CI, then runs `lint`, `typecheck` and `test`,
@@ -133,8 +133,8 @@ scripts:
       echo fail > "${DECREE_EVENT_FILE}"
     fi
   requirements: |
-    # What develop_node's gate needs, one resource per line, as in infra's requirements:
-    # infra's `run.sh check` (develop_node's precheck) reports each, and `run.sh apply`
+    # What decree_develop_node's gate needs, one resource per line, as in decree_infra's requirements:
+    # decree_infra's `run.sh check` (decree_develop_node's precheck) reports each, and `run.sh apply`
     # installs what is missing. A project using pnpm or yarn adds that line, such as
     # `command   pnpm`.
     #

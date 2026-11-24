@@ -1,7 +1,7 @@
 ---
 name: decree_registry
 machine:
-  description: Where each service is, and which lease to get before using it. The table is state/services.git.txt; every five minutes (and at each daemon start) check probes each address and writes state/health.json, so registry.sh hands out live addresses first. It only says where to go; leasing is the lease plugin's.
+  description: Where each service is, and which lease to get before using it. The table is state/services.git.txt; every five minutes (and at each daemon start) check probes each address and writes state/health.json, so registry.sh hands out live addresses first. It only says where to go; leasing is decree_lease's.
   state_files:
     services.git.txt: 'The table the project''s owner writes: <server> <service> <url> [lease], one line per service. check reads it; registry.sh reads it for every lookup. Committed.'
     health.json: 'The last check, one entry per line of the table: [{server, service, url, lease, state, http, checked}], state up or down, http the status code (absent with no answer), checked an RFC 3339 instant. check writes it whole, through a rename; registry.sh reads it, and anyone may. Not committed: it is this computer''s view.'
@@ -19,7 +19,7 @@ machine:
 scripts:
   check.sh: |
     #!/usr/bin/env bash
-    # registry's check: every address in state/services.git.txt gets one GET with a 5s limit
+    # decree_registry's check: every address in state/services.git.txt gets one GET with a 5s limit
     # (REGISTRY_TIMEOUT, in seconds). An HTTP answer below 500, even a 404, counts as up,
     # since the server is there and serving; a 5xx or no answer is down. Writes
     # state/health.json whole, through a rename, then logs one line per service.
@@ -48,7 +48,7 @@ scripts:
     mv "$out.json" "$DECREE_STATE_DIR/health.json"
   registry.sh: |
     #!/usr/bin/env bash
-    # The registry's lookups, for any script of any machine (list `needs: [registry]`). It
+    # The decree_registry's lookups, for any script of any machine (list `needs: [decree_registry]`). It
     # only says where to go: it never takes a lease, and reads no other plugin's files.
     #   registry.sh resolve <service> [<server>]
     #       one line per place the service is: <server> <url> <lease>, the ones the last
@@ -163,7 +163,7 @@ scripts:
       *) echo "registry: usage: registry.sh resolve <service> [<server>] | url <service> [<server>] | env | list [--json] | rows | check" >&2; exit 2 ;;
     esac
   requirements: |
-    # What registry's scripts need beyond decree, checked by infra's `run.sh check`.
+    # What decree_registry's scripts need beyond decree, checked by decree_infra's `run.sh check`.
     # kind    name    version   source
     command   bash
     command   curl
@@ -185,7 +185,7 @@ state:
     #   server    a name for the computer that serves it: one word
     #   service   what it serves: one word
     #   url       its base address; check probes it, and any HTTP answer counts as up
-    #   lease     optional: the lease to get before using it, from the lease plugin:
+    #   lease     optional: the lease to get before using it, from the decree_lease plugin:
     #             <resource> for this project's lease machine, or <resource>@<address> for
     #             the lease machine of the decree at that address (its decree-go-rest).
     # A service on several servers is listed once per server; `registry.sh resolve
@@ -233,7 +233,7 @@ Lookups put live addresses first, then unchecked ones, then the down ones, each 
 
 ## Looking things up
 
-From any script (list `needs: [registry]` in the plugin that uses it):
+From any script (list `needs: [decree_registry]` in the plugin that uses it):
 
 ```bash
 reg=.decree/machines/decree_registry/scripts/registry.sh

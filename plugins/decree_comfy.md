@@ -59,7 +59,7 @@ machine:
 scripts:
   await.sh: |
     #!/usr/bin/env bash
-    # comfy's await: poll GET /history/<prompt id> every COMFY_POLL_S seconds until
+    # decree_comfy's await: poll GET /history/<prompt id> every COMFY_POLL_S seconds until
     # ComfyUI lists the prompt there, which it does once the prompt finishes; keep
     # the entry in runs/<id>/comfy-history.json for fetch, and fail if the prompt
     # did not succeed. The state's timeout bounds the wait.
@@ -82,7 +82,7 @@ scripts:
     echo "prompt ${id} finished"
   build.sh: |
     #!/usr/bin/env bash
-    # comfy's build: patch .decree/machines/decree_comfy/scripts/<method>.json with the message and its
+    # decree_comfy's build: patch .decree/machines/decree_comfy/scripts/<method>.json with the message and its
     # params, and save it as runs/<id>/comfy-payload.json for submit. The method is
     # $METHOD when a wrapper script sets it, else the `method` param. Every workflow is
     # patched the same way, by node type, so a new method is a new workflow file:
@@ -162,7 +162,7 @@ scripts:
     echo "wrote comfy-payload.json"
   fetch.sh: |
     #!/usr/bin/env bash
-    # comfy's fetch: download each file the prompt saved (GET /view) to `output`
+    # decree_comfy's fetch: download each file the prompt saved (GET /view) to `output`
     # plus the file's extension, or `output`-<n> plus its extension when there are
     # several. Safe to repeat: each download goes to a .part file, then moves.
     set -euo pipefail
@@ -1823,7 +1823,7 @@ scripts:
     }
   precheck.sh: |
     #!/usr/bin/env bash
-    # comfy's root onentry: fail fast if a tool the scripts need is missing.
+    # decree_comfy's root onentry: fail fast if a tool the scripts need is missing.
     set -euo pipefail
     for tool in curl jq; do
       command -v "$tool" >/dev/null || { echo "$tool not found" >&2; exit 1; }
@@ -1831,7 +1831,7 @@ scripts:
     echo "tools ok"
   submit.sh: |
     #!/usr/bin/env bash
-    # comfy's submit: upload input_image, if any, and point every LoadImage node at
+    # decree_comfy's submit: upload input_image, if any, and point every LoadImage node at
     # it (POST /upload/image); queue the payload (POST /prompt), and keep the
     # prompt id in runs/<id>/comfy-prompt-id for await. Safe to repeat: the upload
     # overwrites, and a repeat queues the same payload.

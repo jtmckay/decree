@@ -14,7 +14,7 @@ decree is a local automation tool, and it trusts its project directory.
 
 - **Plugins are code.** A plugin file (`.decree/plugins/<name>.md`) holds scripts that decree installs and runs; `decree install` prints what a plugin runs before it installs it. The official plugins are built into the decree binary, so `decree install` reads nothing from the network.
 - **Scripts run as you.** decree runs every script directly, as the user who runs decree, with that user's environment and permissions. There is no sandbox and no isolation between runs ([Execution](docs/reference/scripts.md#execution)).
-- **Messages are instructions.** A message's body becomes the prompt of the official plugins' AI calls (`develop`, `infra`, `qa`, `develop_by_size`).
+- **Messages are instructions.** A message's body becomes the prompt of the official plugins' AI calls (`decree_develop` and its variants, `decree_infra`, `decree_qa`, `decree_develop_by_size`), and of the project's own plugins that extend them.
 - **The official plugins let Claude act.** They call Claude with `--permission-mode auto` by default (`CLAUDE_PERMISSION_MODE` changes it), so a message can lead to file edits and commands.
 
 So anyone who can write to `.decree/inbox/` or a machine's `cron/` or `order/`, or run `decree emit`, can direct work on that machine.
@@ -26,11 +26,11 @@ So anyone who can write to `.decree/inbox/` or a machine's `cron/` or `order/`, 
 - Review order files and plugins like code.
 - Where commands should not run without review, set `CLAUDE_PERMISSION_MODE` to `acceptEdits` or a stricter mode.
 - Keep secrets out of message bodies and script output: both are logged in `.decree/runs/` and `events.jsonl`, and may be shipped to Loki ([observability.md](docs/reference/observability.md)).
-- Remove old runs with the official `prune` plugin, which `decree init` adds ([plugins.md](docs/reference/plugins.md#official-plugins)).
+- Remove old runs with the official `decree_prune` plugin, which `decree init` adds ([plugins.md](docs/reference/plugins.md#official-plugins)).
 
 ## What decree does do
 
-- Rejects what does not validate before anything runs: `decree check` fails on unknown machine keys (V19) and on invalid messages (M1–M3), `daemon` refuse to start with an invalid machine, and a message with an unknown machine or param runs nothing ([Validation](docs/reference/machines.md#validation), [Lifecycle](docs/reference/messages.md#lifecycle)).
+- Rejects what does not validate before anything runs: `decree check` fails on unknown machine keys (V19) and on invalid messages (M2–M3), `daemon` refuses to start with an invalid machine, and a message with an unknown machine or param runs nothing ([Validation](docs/reference/machines.md#validation), [Lifecycle](docs/reference/messages.md#lifecycle)).
 - Limits which machines a state's scripts may emit to, with the state's `emits`, enforced by `decree emit`. A script can still write to `inbox/` directly, so this guards against mistakes, not against a hostile script.
 - Takes a [run lock](docs/reference/messages.md#run-lock), so two processes never step one run.
 - Bounds emitted and child chains with `max_depth`.

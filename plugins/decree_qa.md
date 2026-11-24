@@ -5,7 +5,7 @@ needs:
 - decree_develop
 - decree_order
 machine:
-  description: Attack the project to make it misbehave, and hand each real bug to develop as a failing test; the AI writes tests only and never fixes code.
+  description: Attack the project to make it misbehave, and hand each real bug to decree_develop as a failing test; the AI writes tests only and never fixes code.
   concurrency_group: worktree
   onentry:
   - clean_tree
@@ -45,7 +45,7 @@ machine:
 scripts:
   attack.sh: |
     #!/usr/bin/env bash
-    # qa's attack: the AI writes chaos tests in QA_DIR, each naming its wrench and invariant.
+    # decree_qa's attack: the AI writes chaos tests in QA_DIR, each naming its wrench and invariant.
     set -euo pipefail
     . ".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh"
     . ".decree/machines/${DECREE_MACHINE}/scripts/qa.sh"
@@ -140,7 +140,7 @@ scripts:
     # staged.
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree export` with no name), so what the run changed in machines/ or scripts/
-    # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
+    # (a decree_infra run's new requirement, a decree_develop run's gate) reaches .decree/plugins/ and is in
     # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
@@ -208,12 +208,12 @@ scripts:
     cat "${DECREE_RUN_DIR}/hold"
     echo "no other run in the work tree's group starts until then (${attention})"
   qa.sh: |
-    # qa's settings and its guard, which qa's scripts source.
+    # decree_qa's settings and its guard, which decree_qa's scripts source.
     #
     # Where the chaos tests live, apart from the project's other tests.
     QA_DIR=tests/chaos
     # The command that runs the chaos suite and exits non-zero if a test fails. qa does not
-    # start until it is set. Once qa has found bugs, run it in develop's gate too, so a
+    # start until it is set. Once decree_qa has found bugs, run it in decree_develop's gate too, so a
     # fixed bug whose test is still marked expected to fail is caught. decree_qa is never
     # edited: a plugin of the project's own that extends it holds its own qa.sh.
     QA_RUN=""
@@ -258,7 +258,7 @@ scripts:
     }
   recon.sh: |
     #!/usr/bin/env bash
-    # qa's recon: the AI lists the attack surface, from the docs and the code, in surface.md.
+    # decree_qa's recon: the AI lists the attack surface, from the docs and the code, in surface.md.
     set -euo pipefail
     . ".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh"
     . ".decree/machines/${DECREE_MACHINE}/scripts/qa.sh"
@@ -276,7 +276,7 @@ scripts:
     qa_check
   report.sh: |
     #!/usr/bin/env bash
-    # qa's report: one message per bug report in bugs/, for the plugin that meets qa's need of
+    # decree_qa's report: one message per bug report in bugs/, for the plugin that meets decree_qa's need of
     # decree_develop (DECREE_NEED_DECREE_DEVELOP: a project maps it to its own plugin that
     # extends decree_develop). Safe to re-run: a report already queued is listed in emitted.txt.
     set -euo pipefail
@@ -291,7 +291,7 @@ scripts:
     done
   run.sh: |
     #!/usr/bin/env bash
-    # qa's run: the chaos suite, into chaos.log. A failing test is a finding, so this exits 0
+    # decree_qa's run: the chaos suite, into chaos.log. A failing test is a finding, so this exits 0
     # either way; only a suite that could not start at all (command not found) is an error.
     set -uo pipefail
     . ".decree/machines/${DECREE_MACHINE}/scripts/qa.sh"
@@ -304,7 +304,7 @@ scripts:
     exit 0
   triage.sh: |
     #!/usr/bin/env bash
-    # qa's triage: the AI sorts each failure into a real bug, a wrong test or acceptable
+    # decree_qa's triage: the AI sorts each failure into a real bug, a wrong test or acceptable
     # behaviour. A bug's tests are marked expected to fail and get one report per root cause in
     # bugs/; wrong tests are rewritten; acceptable ones are removed. The chaos suite must then
     # pass, or the step fails. A failure the docs do not settle is a question in STOP; the run

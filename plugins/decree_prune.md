@@ -16,7 +16,7 @@ machine:
 scripts:
   prune.sh: |
     #!/usr/bin/env bash
-    # prune's only script: delete .decree/runs/<id>/ for every finished run (its last event
+    # decree_prune's only script: delete .decree/runs/<id>/ for every finished run (its last event
     # is `run_finished`) whose `run_finished` is older than PRUNE_OLDER_THAN, a duration
     # (30d, 12h, 90m, 90s; default 30d), and its file in .decree/attention/. Never deleted:
     # a run that is not finished; a child run (its message.md has `parent`) whose parent still

@@ -25,7 +25,7 @@ machine:
 scripts:
   deliver.sh: |
     #!/usr/bin/env bash
-    # newsletter's deliver: copy the run's issue.md to $NEWSLETTER_DIR/<YYYY-MM-DD>.md (-2, -3
+    # decree_newsletter's deliver: copy the run's issue.md to $NEWSLETTER_DIR/<YYYY-MM-DD>.md (-2, -3
     # when that day already has an issue), record every gathered link in $DECREE_STATE_DIR/seen.tsv
     # with the date, and, if NTFY_URL is set, post the issue's first three lines to
     # $NTFY_URL/$NTFY_TOPIC. Safe to re-run: an identical issue is not copied twice, and a link
@@ -246,7 +246,7 @@ scripts:
     one line rather than padding the list.
   write.sh: |
     #!/usr/bin/env bash
-    # newsletter's write: a local model reads taste.md, beside this script, and the run's
+    # decree_newsletter's write: a local model reads taste.md, beside this script, and the run's
     # items.jsonl, and picks and summarises the items worth reading. Writes
     # $DECREE_RUN_DIR/issue.md: a title with the date, then the model's picks as markdown links.
     # With no new items it says so, without calling the model.

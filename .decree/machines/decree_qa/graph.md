@@ -1,6 +1,6 @@
 # decree_qa
 
-Attack the project to make it misbehave, and hand each real bug to develop as a failing test; the AI writes tests only and never fixes code.
+Attack the project to make it misbehave, and hand each real bug to decree_develop as a failing test; the AI writes tests only and never fixes code.
 
 Machine: [machines/decree_qa/machine.yml](machine.yml)
 

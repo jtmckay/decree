@@ -134,7 +134,7 @@ scripts:
     # staged.
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree export` with no name), so what the run changed in machines/ or scripts/
-    # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
+    # (a decree_infra run's new requirement, a decree_develop run's gate) reaches .decree/plugins/ and is in
     # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
@@ -159,7 +159,7 @@ scripts:
     git log -1 --format='committed %h %s'
   fix.sh: |
     #!/usr/bin/env bash
-    # develop's fix: the AI fixes what the gate reported. Like implement, it
+    # decree_develop's fix: the AI fixes what the gate reported. Like implement, it
     # writes STOP instead of guessing.
     set -euo pipefail
     . ".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh"
@@ -193,7 +193,7 @@ scripts:
     stopped || true
   gate.sh: |
     #!/usr/bin/env bash
-    # develop's gate: the project's own checks, also kept in gate.log for fix. It
+    # decree_develop's gate: the project's own checks, also kept in gate.log for fix. It
     # names `pass` if they all pass and `fail` if one fails; a non-zero exit, such
     # as a missing tool, means they could not run, and ends the run without fix.
     # decree_develop's own gate runs nothing: decree_develop is never edited, so a
@@ -228,13 +228,13 @@ scripts:
     fi
   implement.sh: |
     #!/usr/bin/env bash
-    # develop's implement: the AI implements the message in small steps, noting
+    # decree_develop's implement: the AI implements the message in small steps, noting
     # each in progress.md, so a retry continues where the last attempt stopped. If
     # the message is unclear, it writes the question to STOP instead of guessing;
     # the run fails until a person answers it in plan.md, deletes STOP and runs
     # `decree retry`. Its notes live in the root run's folder
     # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
-    # whose steps are develop's scripts shares them.
+    # whose steps are decree_develop's scripts shares them.
     set -euo pipefail
     . ".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh"
 
@@ -311,7 +311,7 @@ scripts:
     .decree/machines/${DECREE_NEED_DECREE_INFRA:-decree_infra}/scripts/run.sh check
   verify.sh: |
     #!/usr/bin/env bash
-    # develop's verify: the AI checks the acceptance criteria and ends its reply
+    # decree_develop's verify: the AI checks the acceptance criteria and ends its reply
     # with `VERDICT: pass` or `VERDICT: fail`; the last such line is the event. A
     # reply without one fails the attempt, so decree asks again. Like implement, it
     # writes STOP instead of guessing. On `fail` it leaves gaps.md, what is missing, for

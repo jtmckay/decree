@@ -1,6 +1,6 @@
 # Standards and prior art
 
-decree 0.5 composes existing, well-specified ideas. Nothing here is new; the value is in the narrow combination. Where decree deviates, the reason is to keep machines small enough to validate statically and to run from bash.
+decree composes existing, well-specified ideas. Nothing here is new; the value is in the narrow combination. Where decree deviates, the reason is to keep machines small enough to validate statically and to run from bash.
 
 | decree concept | Drawn from | What decree takes | Deliberate deviation |
 | --- | --- | --- | --- |
@@ -18,7 +18,7 @@ decree 0.5 composes existing, well-specified ideas. Nothing here is new; the val
 | Inbox claim and writes | Maildir delivery (write to a temp name, `rename` into place); POSIX `rename(2)` atomicity | Readers never see partial files; a rename is the claim. | One directory with dot-prefixed temp names instead of `tmp/`/`new/`/`cur/`. |
 | Run lock | pidfile with `O_EXCL` and `kill(pid, 0)` liveness check | Single owner per run; a stale lock marks a crash. | A stale lock never causes a takeover: the run becomes `interrupted`. |
 | Long-running services | systemd user units (`Conflicts=`, `Restart=`, journald); llama-swap | Supervision, mutual exclusion on a shared GPU, logs. | Outside decree: `onentry` scripts start what a state needs ([Long-running services](../services.md)). |
-| [Durations](machines.md#durations) (`timeout`, `prune --older-than`, `daemon --interval`) | Kubernetes and Go durations (`time.ParseDuration`: `90s`, `10m`, `12h`) | A number followed by its unit, readable where seconds are not (`7d`, not `604800`). | One whole-number term only: no fractions, no combinations such as `1h30m`, and no sub-second units; `d` is added, as Kubernetes and Go have none. |
+| [Durations](machines.md#durations) (`timeout`, `daemon --interval`, `decree_prune`'s `PRUNE_OLDER_THAN`) | Kubernetes and Go durations (`time.ParseDuration`: `90s`, `10m`, `12h`) | A number followed by its unit, readable where seconds are not (`7d`, not `604800`). | One whole-number term only: no fractions, no combinations such as `1h30m`, and no sub-second units; `d` is added, as Kubernetes and Go have none. |
 | Process control | POSIX process groups; SIGTERM, grace period, SIGKILL (as `docker stop`, 10 s default) | Kill the whole script tree on stop or timeout. | None. |
 | Exit codes and events | POSIX exit status; `128 + n` for signals (130 = SIGINT); GitHub Actions' `$GITHUB_OUTPUT` file | 0 is `done`, non-zero is `error`. A script writes outputs to a file whose path is in an environment variable, never to stdout. | One output only: the event name, written to `$DECREE_EVENT_FILE`. |
 | Ids and timestamps | ISO 8601 basic format; RFC 3339 | Sortable, human-readable ids and log times. | 6 hex chars instead of a UUIDv7 (RFC 9562) suffix, to stay readable without a dependency. |

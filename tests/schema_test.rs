@@ -702,7 +702,12 @@ fn a_machine_with_the_schema_line_still_checks() {
     fs::write(&path, format!("{line}\n{text}")).unwrap();
     decree(tmp.path(), "graph");
     decree(tmp.path(), "install");
-    assert!(tmp.path().join(".decree/machines").join(target).is_file());
+    // The path is relative to the machine's own folder, as an editor resolves it.
+    assert!(tmp
+        .path()
+        .join(".decree/machines/hello")
+        .join(target)
+        .is_file());
     assert_eq!(
         decree(tmp.path(), "check"),
         (0, String::new(), String::new())

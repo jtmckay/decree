@@ -35,11 +35,13 @@ Decisions are states of their own, cheapest first: a deterministic `check`, then
 curl -fsSL https://raw.githubusercontent.com/jtmckay/decree/main/install.sh | sh
 ```
 
-This installs the newest stable release from 0.5.0 on (while there is none, the newest beta) as a static Linux x86-64 binary in `$XDG_BIN_HOME` (default `~/.local/bin`), with no sudo, after checking its sha256; run it again to update, or pin a version with `| sh -s -- v0.5.0`. Elsewhere (macOS, ARM), build from a tag: `cargo install --git https://github.com/jtmckay/decree --tag v0.5.0`. crates.io has only an older decree until 0.5.0 is published there, so `cargo install decree` is not this version.
+This installs the newest stable release (never a beta or release candidate while there is a stable one) as a static Linux x86-64 binary in `$XDG_BIN_HOME` (default `~/.local/bin`), with no sudo, after checking its sha256; run it again to update, or pin a version with `| sh -s -- v0.5.0`. Elsewhere (macOS, ARM), build from a tag: `cargo install --git https://github.com/jtmckay/decree --tag v0.5.0`. crates.io has only an older decree until 0.5.0 is published there, so `cargo install decree` is not this version.
 
 decree runs on Linux and macOS.
 
 **Coming from 0.4?** 0.5 is a rewrite, and there is no upgrade path or upgrade tool: finish pending 0.4 work with 0.4 first. 0.5 does not read a 0.4 `.decree/`; what changed is in the [changelog's 0.5.0 entry](CHANGELOG.md#050---2026-10-19).
+
+**Coming from 0.5?** 0.6 groups each machine's files in its own folder, ships the machines `decree init` wrote as official plugins, and runs ordered work as order files: [Converting an existing project](docs/reference/plugins.md#converting-an-existing-project) lists the steps, and the [changelog](CHANGELOG.md) says what to rewrite.
 
 ## Quick start
 
@@ -168,7 +170,7 @@ A message is a markdown file with YAML frontmatter. decree reads and writes only
 
 ```markdown
 ---
-machine: develop            # machines/develop/machine.yml; required
+machine: app_develop        # .decree/machines/app_develop/machine.yml; required
 params:                     # sets the machine's data for this run
   max_rounds: 3
 ---
@@ -204,7 +206,7 @@ description: Build, ask a person to approve, then ship.
 initial: build
 states:
   build:
-    invoke: build               # scripts/deploy/build*, else scripts/build*
+    invoke: build               # .decree/machines/deploy/scripts/build*
     transitions: { done: approval }
   approval:
     invoke:
@@ -247,7 +249,7 @@ Other keys: `onentry` and `onexit` (scripts run on entering or leaving a state, 
 
 ### Schema
 
-decree has a JSON Schema for every file it reads or writes: machines, message frontmatter, `events.jsonl` lines, and a router's `request.json` and `reply.json`. They live in [`schema/v1/`](schema/v1/), published at `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/`, and are versioned: within `v1` changes are additive only ([Versioning](docs/reference/README.md#versioning), [changelog](CHANGELOG.md)). Editors apply the machine schema to `.decree/machines/*.yml` through SchemaStore, or a setting until then, with no line in the file, so VS Code with Red Hat's YAML extension, JetBrains IDEs, or any editor running the YAML language server completes keys, shows what each one means and underlines mistakes as you type ([editors](docs/editors.md)). `decree init` and `decree install` write a local copy to `.decree/schema/v1/`, ignored by git, for agents and offline use: a model reads it as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
+decree has a JSON Schema for every file it reads or writes: machines, message frontmatter, `events.jsonl` lines, and a router's `request.json` and `reply.json`. They live in [`schema/v1/`](schema/v1/), published at `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/`, and are versioned: within `v1` changes are additive only ([Versioning](docs/reference/README.md#versioning), [changelog](CHANGELOG.md)). Editors apply the machine schema to `.decree/machines/*/machine.yml` through SchemaStore, or a setting until then, with no line in the file, so VS Code with Red Hat's YAML extension, JetBrains IDEs, or any editor running the YAML language server completes keys, shows what each one means and underlines mistakes as you type ([editors](docs/editors.md)). `decree init` and `decree install` write a local copy to `.decree/schema/v1/`, ignored by git, for agents and offline use: a model reads it as the contract to write machines against. The schema checks shape; `decree check` also checks that names resolve, targets exist and every state is reachable ([Schema](docs/reference/machines.md#schema)).
 
 ### Routers
 
@@ -257,7 +259,7 @@ A `model` state asks a **router**: an ordinary machine that reads `request.json`
 
 A script is any executable file. decree runs it directly from the project root, so the shebang picks the language.
 
-Script `X` used by machine `M` is the one match of `X` or `X.<ext>` in `.decree/machines/M/scripts/`; there is no other search path. Code several machines share is a library: a machine folder with no `machine.yml`, whose scripts others source by path.
+Script `X` used by machine `M` is the one match of `X` or `X.<ext>` in `.decree/machines/M/scripts/`; there is no other search path. Code several machines share is a library: a plugin (often one with no machine) that the others list in `needs` and whose scripts they source by path ([Resolution](docs/reference/scripts.md#resolution)).
 
 An invoked script's event is `error` on a non-zero exit. On exit 0 it is `done`, unless the script writes an event name to the file `$DECREE_EVENT_FILE` (`echo pass > "$DECREE_EVENT_FILE"`). Output goes to `runs/<id>/<NNNN>-<state>-<script>.log` and is only a log: decree never reads an event from it. Scripts get the run's context in `DECREE_*` variables: `DECREE_MESSAGE`, `DECREE_MACHINE`, `DECREE_STATE`, `DECREE_ATTEMPT`, `DECREE_DATA_<NAME>` and more (`decree help` lists them all). A run's own files go in `$DECREE_RUN_DIR`; what a machine keeps between runs goes in `$DECREE_STATE_DIR` and is declared under the machine's `state_files:`, so the machine file says what it remembers. `state/` holds data, never code: nothing in it is run or sourced, and `decree check` warns when something looks like it is ([State](docs/reference/scripts.md#state)); its helpers, config and data sit beside its scripts in `.decree/machines/<machine>/scripts/`.
 
@@ -269,14 +271,14 @@ An agent a script starts runs with your own configuration, because decree adds n
 
 | Command | What it does |
 | --- | --- |
-| `decree init [--ai AI] [--permissions]` | Create `.decree/`, add the default plugins (`ai`, `order`, `prune`, `skill`) and write the decree skill; list the other official plugins |
+| `decree init [--ai AI] [--permissions]` | Create `.decree/`, add the default plugins (`decree_ai`, `decree_order`, `decree_prune`, `decree_skill`) and write the decree skill; list the other official plugins |
 | `decree install [NAME...\|FILE\|-]` | Install every plugin in `.decree/plugins/` (after a clone, a pull or an upgrade: official plugins become this decree's copy), the named ones (seeding an official one), or a plugin file or `-` for stdin (`curl -fsSL URL \| decree install -`) |
 | `decree install --update [NAME...]` | Fetch each plugin with a `source` from its URL, show the diff and ask before taking it (on a terminal) |
 | `decree list` | The plugins in `.decree/plugins/` (official or own, `extends`, `differs`, install state), the machines no plugin installed, and the official plugins not yet installed |
 | `decree export [NAME]` | Write `.decree/plugins/<name>.md` from an installed copy (for a plugin that extends another, only what differs); with no name, every plugin of your own edited in place. Never an official one |
 | `decree check [--format text\|json\|sarif]` | Validate machines and pending messages; `sarif` for code scanning |
 | `decree graph` | Write a Mermaid diagram per machine, `.decree/machines/<name>/graph.md`, and `.decree/system.md` |
-| `decree daemon --once [--machine M \| --exclude-machine M]` | Start, fire `@reboot` cron files (so `order` runs the order files), deliver replies, continue pending runs and drain `inbox/`, then exit; `--machine` runs only those machines, `--exclude-machine` all but those, so several processes can share one folder |
+| `decree daemon --once [--machine M \| --exclude-machine M]` | Start, fire `@reboot` cron files (so `decree_order` runs the order files), deliver replies, continue pending runs and drain `inbox/`, then exit; `--machine` runs only those machines, `--exclude-machine` all but those, so several processes can share one folder |
 | `decree daemon [--interval D] [--machine M \| --exclude-machine M]` | The same, plus scheduled cron, every `D` (default `2s`), until stopped: what unattended work runs under, since `--once` exits while a run waits for a person |
 | `decree emit [--machine M] [--param K=V]...` | Queue a message from stdin, a body for `M` or a whole message; prints its id |
 | `decree reply ID EVENT [-m NOTE]` | Reply to a run waiting for a person |
@@ -284,7 +286,7 @@ An agent a script starts runs with your own configuration, because decree adds n
 | `decree cancel ID [-m NOTE]` | End a waiting, pending or interrupted run, and the child runs below it, in `failed`; no script runs |
 | `decree pause [-m NOTE]` | Let the runs going now finish their step, then run nothing more until `decree resume`; Ctrl-C interrupts the runs instead |
 | `decree resume` | Go on after `decree pause`; a running daemon needs no restart |
-| `decree status [ID]` | What needs attention, runs by status and queued messages; one run's events |
+| `decree status [ID] [--all]` | What needs attention, runs by status and queued messages (`--all` lists every one); one run's events |
 | `decree status --cron` | Cron files and when each fires next |
 | `decree tail [ID]` | Follow the live output of a run |
 | `decree upgrade` | Print how to upgrade decree: the install line, pinned to a release, and for a `cargo install` copy; then `decree install` in each project, and `decree list` to see which plugins the new version changed. Then it asks before running the install line (`--yes`: without asking) |
@@ -321,19 +323,19 @@ There is no configuration file. Each setting is a convention, a fixed limit or a
 
 | Setting | Instead |
 | --- | --- |
-| Router for a `model` invoke | The machine named `router`, unless the invoke sets `router:` |
+| Router for a `model` invoke | The machine named `decree_router`, unless the invoke sets `router:` |
 | Default machine | None: every message names its `machine:` |
 | Retries | `attempts` in the script invoke, a number or a list of values (`[local, claude]`); default 1 (no retry) |
 | Emit depth | 10, unless `DECREE_MAX_DEPTH` in the shell or `.decree/.env` sets it |
 | Log size | Each script log is capped at 2 MiB |
 | Sharing across projects | A plugin, `.decree/plugins/<name>.md`: one file holding a machine and its scripts (`decree export`, `decree install`) |
 
-A cron file (`.decree/machines/<machine>/cron/<name>.md`, queued by `decree daemon`; `machine:` defaults to the folder's):
+A cron file (`.decree/machines/<machine>/cron/<name>.md`, queued by `decree daemon`; `machine:` defaults to the folder's machine):
 
 ```markdown
 ---
 cron: "0 9 * * 1-5"
-machine: develop
+machine: app_develop
 ---
 # The weekday morning task
 

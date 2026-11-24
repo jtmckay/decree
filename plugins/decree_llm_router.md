@@ -16,7 +16,7 @@ machine:
 scripts:
   ask_llm.sh: |
     #!/usr/bin/env bash
-    # llm_router's only script: one chat call per decision. Posts the request's
+    # decree_llm_router's only script: one chat call per decision. Posts the request's
     # question, options, input and message body to Ollama's /api/chat with
     # `format` set to the request's reply_schema, so the decoder can only write a
     # reply that schema allows: `reason` first, then an `event` that is one of the
@@ -65,5 +65,5 @@ Point a model state's `router:` at it:
     invoke:
       model:
         question: Does this change need a design review?
-        router: llm_router
+        router: decree_llm_router
 ```

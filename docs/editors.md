@@ -14,7 +14,7 @@ decree's entry, for [`src/api/json/catalog.json`](https://github.com/SchemaStore
 {
   "name": "decree machine",
   "description": "decree state machine: a statechart in .decree/machines/ that runs scripts, asks a model or a person, and starts child machines",
-  "fileMatch": ["**/.decree/machines/*.yml", "**/.decree/machines/*.yaml"],
+  "fileMatch": ["**/.decree/machines/*/machine.yml"],
   "url": "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json"
 }
 ```
@@ -29,19 +29,18 @@ The `url` resolves on `main`, where SchemaStore checks it. `docs_test.rs` holds 
 {
   "yaml.schemas": {
     "https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json": [
-      ".decree/machines/*.yml",
-      ".decree/machines/*.yaml"
+      ".decree/machines/*/machine.yml"
     ]
   }
 }
 ```
 
-Offline, map the local copy instead: `"./.decree/schema/v1/machine.schema.json"`. The copy is generated, and `.decree/.gitignore` lists `schema/`; `decree init` and `decree install` write it, so it is there after a clone (`decree install`) and current after an upgrade (`decree install` again; `decree check` warns while the copy is out of date). `decree schema` writes it alone. Other editors that run the YAML language server take the same mapping in their own settings.
+Offline, map the local copy instead: `"./.decree/schema/v1/machine.schema.json"`. The copy is generated, and `.decree/.gitignore` lists `schema/`; `decree init` and `decree install` write it, so it is there after a clone (`decree install`) and current after an upgrade (`decree install` again; `decree check` warns while the copy is out of date). Other editors that run the YAML language server take the same mapping in their own settings.
 
 **Any editor.** The YAML language server also reads a comment at the top of the file. Put it above the machine's `# Graph:` line, after `decree install` has written the local copy it points at:
 
 ```yaml
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# yaml-language-server: $schema=../../schema/v1/machine.schema.json
 # Graph: graph.md
 ```
 
@@ -49,4 +48,4 @@ The path is relative to the machine file. Both ways work, and they can be mixed:
 
 ## Messages and cron files
 
-Migrations, inbox messages and cron files are Markdown with YAML frontmatter. Editors do not check frontmatter against a schema; `decree check` does, and any JSON Schema validator can check it against `message.schema.json`.
+Order files, inbox messages and cron files are Markdown with YAML frontmatter. Editors do not check frontmatter against a schema; `decree check` does, and any JSON Schema validator can check it against `message.schema.json`.

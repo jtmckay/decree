@@ -125,7 +125,7 @@ Before stepping a run, decree writes `<pid> <token>` (the process id, and a toke
 
 ## Order files: run in order at each start
 
-Work that must happen in order, and once (setting a project up, a series of changes), is a machine's order files: `.decree/machines/<machine>/order/*.md`, committed with the project. decree itself runs no order: the official [`order`](plugins.md#official-plugins) plugin, which `decree init` adds, does, at each daemon start (`decree daemon` and `decree daemon --once`) ([D86](../decisions.md#d86-machines-own-their-folders-order-replaces-migrations)). An order file says how something should be, not a step to repeat, so editing it runs it again.
+Work that must happen in order, and once (setting a project up, a series of changes), is a machine's order files: `.decree/machines/<machine>/order/*.md`, committed with the project. decree itself runs no order: the official [`decree_order`](plugins.md#official-plugins) plugin, which `decree init` adds, does, at each daemon start (`decree daemon` and `decree daemon --once`) ([D86](../decisions.md#d86-machines-own-their-folders-order-replaces-migrations)). An order file says how something should be, not a step to repeat, so editing it runs it again.
 
 1. **Order.** Files run one at a time, across every machine's `order/`, in byte order of file name, the machine's name breaking a tie.
 2. **Everything before it first.** A file starts only once `inbox/` is empty, so the follow-ups the file before it emitted have run. A follow-up that ends in `failed` has left `inbox/`, so it holds nothing back.
@@ -142,7 +142,7 @@ Work that must happen in order, and once (setting a project up, a series of chan
 To run a message again (an order file, a run's `message.md`, any saved message), queue a copy as a new inbox run:
 
 ```bash
-decree emit < .decree/machines/develop/order/01-a.md
+decree emit < .decree/machines/app_develop/order/01-a.md
 ```
 
 or copy the file into `inbox/`. Either way the copy keeps its frontmatter and body, and gets decree's own `id`, `state` and `trigger` ([Lifecycle](#lifecycle) step 1), so it is a new run: the order file and `order.git.txt` are untouched. `decree emit --machine <m>` runs it on another machine, and `--param` overrides one param ([decree emit](cli.md)).

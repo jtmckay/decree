@@ -64,7 +64,7 @@ decree check
 decree graph
 ```
 
-`decree daemon --once` then runs it: the `order` plugin, which `decree init` adds, runs each order file at start. It needs three things running: the classifier, Ollama with a coding model, and OpenCode and Claude Code on `PATH`.
+`decree daemon --once` then runs it: the `decree_order` plugin, which `decree init` adds, runs each order file at start. It needs three things running: the classifier, Ollama with a coding model, and OpenCode and Claude Code on `PATH`.
 
 ### The classifier, GLiNER2.5-Decide
 

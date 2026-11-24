@@ -138,14 +138,56 @@ fn anchors(text: &str) -> BTreeSet<String> {
     seen
 }
 
+/// The files whose relative links and anchors must resolve: the Markdown files above,
+/// `CHANGELOG.md`, and the body of each official plugin in `plugins/` (its frontmatter is the
+/// plugin's files, which links on GitHub from wherever they are installed).
+fn linked_files() -> Vec<PathBuf> {
+    let root = repo();
+    let mut all = markdown_files();
+    all.push(root.join("CHANGELOG.md"));
+    for entry in std::fs::read_dir(root.join("plugins")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "md") {
+            all.push(path);
+        }
+    }
+    all.sort();
+    all
+}
+
+/// The text of `file` whose links are checked, with each line's number unchanged: a plugin's
+/// body, its frontmatter blanked; any other file whole.
+fn linked_text(file: &Path) -> String {
+    let text = std::fs::read_to_string(file).unwrap();
+    if !file.starts_with(repo().join("plugins")) {
+        return text;
+    }
+    let mut dashes = 0;
+    text.lines()
+        .map(|line| {
+            if dashes < 2 {
+                if line == "---" {
+                    dashes += 1;
+                }
+                ""
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// AC (A16): every relative link and `#anchor` in `README.md`, `SECURITY.md`, `CHANGELOG.md`,
+/// `docs/`, the examples' READMEs and the official plugins' bodies resolves.
 #[test]
 fn relative_markdown_links_resolve() {
     let root = repo();
     let mut broken = Vec::new();
-    let files = markdown_files();
-    assert!(files.len() > 10, "found only {files:?}");
+    let files = linked_files();
+    assert!(files.len() > 30, "found only {files:?}");
     for file in &files {
-        let text = std::fs::read_to_string(file).unwrap();
+        let text = linked_text(file);
         for (line_no, line) in prose_lines(&text) {
             for target in link_targets(line) {
                 if target.is_empty() || target.contains("://") || target.starts_with("mailto:") {
@@ -233,13 +275,13 @@ fn the_schemastore_entry_names_the_machine_schema() {
     assert!(entry["description"].as_str().is_some_and(|d| !d.is_empty()));
     assert_eq!(
         entry["fileMatch"],
-        serde_json::json!(["**/.decree/machines/*.yml", "**/.decree/machines/*.yaml"])
+        serde_json::json!(["**/.decree/machines/*/machine.yml"])
     );
     assert_eq!(entry["url"], id);
 
     assert_eq!(
         blocks[1]["yaml.schemas"][id],
-        serde_json::json!([".decree/machines/*.yml", ".decree/machines/*.yaml"])
+        serde_json::json!([".decree/machines/*/machine.yml"])
     );
 }
 
@@ -526,7 +568,8 @@ fn hold_is_named_only_in_history() {
 
 /// AC (A08): no file is under a `.decree/lib/` outside `tests/fixtures/`, and the docs never
 /// mention `DECREE_LIB` or `.decree/lib`, nor `lib` at all (`lib.rs` aside) but for the one
-/// line in the scripts reference; `CHANGELOG.md` and `docs/decisions.md` keep the history.
+/// line in the scripts reference and the step that converts a 0.5 project's `lib/` (A16);
+/// `CHANGELOG.md` and `docs/decisions.md` keep the history.
 #[test]
 fn lib_is_gone_from_the_repository_and_the_docs() {
     let root = repo();
@@ -558,17 +601,26 @@ fn lib_is_gone_from_the_repository_and_the_docs() {
             continue;
         }
         let text = std::fs::read_to_string(&file).unwrap();
-        for (n, line) in text.lines().enumerate() {
+        for line in text.lines() {
             if line.contains("DECREE_LIB") || line.contains(".decree/lib") || word.is_match(line) {
-                found.push(format!("{rel}:{}: {line}", n + 1));
+                found.push(format!("{rel}: {line}"));
             }
         }
     }
     assert_eq!(
         found,
-        ["docs/reference/scripts.md:141: A project may keep code its machines share in any folder \
-          it likes (`lib/`, `tools/`); decree does not look at it. To share it as decree files, \
-          make it a library machine ([Resolution](#resolution))."],
+        [
+            "docs/reference/plugins.md: 1. Move each `machines/<name>.yml` to \
+             `machines/<name>/machine.yml`, `scripts/<name>/` to `machines/<name>/scripts/` (a flat \
+             `scripts/<file>` into each machine that runs it), `store/<name>/` to \
+             `machines/<name>/state/` (and `store:` to `state_files:`), each cron file to \
+             `machines/<machine>/cron/`, and each file in `lib/` beside the scripts that use it, \
+             changing each path to it to its new path from the project root; delete `graph/` \
+             (`decree graph` writes each machine's `graph.md`).",
+            "docs/reference/scripts.md: A project may keep code its machines share in any folder \
+             it likes (`lib/`, `tools/`); decree does not look at it. To share it as decree files, \
+             make it a library machine ([Resolution](#resolution)).",
+        ],
         "{}",
         found.join("\n")
     );

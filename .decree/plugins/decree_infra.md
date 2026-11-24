@@ -30,7 +30,7 @@ machine:
 scripts:
   apply.sh: |
     #!/usr/bin/env bash
-    # infra's apply: install what every machine's requirements declare and is missing.
+    # decree_infra's apply: install what every machine's requirements declare and is missing.
     exec ".decree/machines/${DECREE_MACHINE}/scripts/run.sh" apply
   clean_tree.sh: |
     #!/usr/bin/env bash
@@ -107,7 +107,7 @@ scripts:
     # staged.
     # First it exports every plugin whose installed copy differs from its plugin file
     # (`decree export` with no name), so what the run changed in machines/ or scripts/
-    # (an infra run's new requirement, a develop run's gate) reaches .decree/plugins/ and is in
+    # (a decree_infra run's new requirement, a decree_develop run's gate) reaches .decree/plugins/ and is in
     # this one commit; git ignores the installed machines/. A failed run exports nothing: `keep`
     # leaves its edits in the installed copy, where a retry builds on them.
     set -euo pipefail
@@ -132,7 +132,7 @@ scripts:
     git log -1 --format='committed %h %s'
   declare.sh: |
     #!/usr/bin/env bash
-    # infra's declare: the AI changes this machine's scripts/requirements to meet the message, and
+    # decree_infra's declare: the AI changes this machine's scripts/requirements to meet the message, and
     # installs nothing; apply does. If the change needs a choice the message does not make,
     # it writes the question to STOP instead of guessing; the run fails until a person
     # answers it in plan.md, deletes STOP and runs `decree retry`.
@@ -219,7 +219,7 @@ scripts:
     }
   requirements: |
     # What this project's environment needs, one resource per line, in order: a line may rely
-    # on the lines above it. `run.sh check` reports each (develop's precheck runs it);
+    # on the lines above it. `run.sh check` reports each (decree_develop's precheck runs it);
     # `run.sh apply` installs what is missing and checks it again (the infra machine runs it,
     # and so can a fresh checkout or CI). Each kind is kinds/<kind>.sh. Another machine may
     # keep its own requirements beside its scripts; run.sh checks them after these.
@@ -236,7 +236,7 @@ scripts:
     # Check or apply each line of every machine's requirements, as Ansible applies a play:
     # `check` reports each resource ok or missing and changes nothing; `apply` installs a
     # missing one and checks it again (changed), and stops at the first that fails, naming it.
-    # The requirements are one list: infra's own first, then each other
+    # The requirements are one list: decree_infra's own first, then each other
     # .decree/machines/<machine>/scripts/requirements in name order; a line already checked
     # (the same kind, name, version and source, as a plugin and the one it extends both
     # declare) is checked once. Each line reported ends with the file it came from. A kind is

@@ -1,5 +1,7 @@
 # Code review of `src/` (0.5)
 
+This is a record of a review of decree 0.5's source, kept as history: the files, lines, commands and machine shapes below are as they were then, and many have since changed or gone ([changelog](../CHANGELOG.md)).
+
 A review of `src/` after the 0.5 rewrite, which fourteen migrations built and several reworked. Each finding below is **fixed** (behaviour unchanged, the black-box tests in `tests/` are the safety net) or **kept**, with the reason. Lines of fixed findings refer to the tree before the review (commit `faedf99`); lines of kept findings refer to the tree after it.
 
 ## Modules

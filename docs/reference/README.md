@@ -5,15 +5,16 @@ decree runs durable state-machine workflows from plain files: every run is an ap
 | File | Subject |
 | --- | --- |
 | [messages.md](messages.md) | Frontmatter, parsing, the lifecycle of a message, replies, the run lock, order files, cron files |
-| [machines.md](machines.md) | Examples, `invoke`, keys, state, the SCXML subset, rules, the machine schema, validation V1–V21, M2–M3 and E1 |
-| [scripts.md](scripts.md) | Resolution, execution, environment (`.decree/.env`, a machine's `env_file`), a machine's files beside its scripts, the store, run-directory files, events from an invoke |
+| [machines.md](machines.md) | Examples, `invoke`, keys, state, concurrency, the SCXML subset, rules, the machine schema, validation V1–V21, M2–M3, E1 and P1–P3 |
+| [scripts.md](scripts.md) | Resolution, execution, environment (`.decree/.env`, a machine's `env_file`), a machine's files beside its scripts, declared environment, state, run-directory files, events from an invoke |
 | [runs.md](runs.md) | The step loop, `check`, `model` and routers, sub-machines, `reply`, `events.jsonl` |
 | [cli.md](cli.md) | Every command and its exit codes |
+| [plugins.md](plugins.md) | The plugin file, official plugins, `extends`, needs, `source`, installing, converting a 0.5 project |
 | [graph.md](graph.md) | `decree graph`: the Mermaid documents and how to view them |
 | [observability.md](observability.md) | Shipping `events.jsonl` and script logs to Loki; traces: W3C Trace Context, `TRACEPARENT` and `traces.jsonl` for the OpenTelemetry Collector |
 | [standards.md](standards.md) | The standards and prior art decree draws from, and where it deviates |
 
-Related guides: [routers](../routers.md) (router machines for other models), [services](../services.md) (long-running services next to decree) and an [escalation ladder](../escalation.md) for `develop` (rounds with a cheap agent, then Claude, then a person). What changed between releases is in the [changelog](../../CHANGELOG.md); the files below are versioned as [Versioning](#versioning) says.
+Related guides: [routers](../routers.md) (router machines for other models), [services](../services.md) (long-running services next to decree) and an [escalation ladder](../escalation.md) for a develop machine (rounds with a cheap agent, then Claude, then a person). What changed between releases is in the [changelog](../../CHANGELOG.md); the files below are versioned as [Versioning](#versioning) says.
 
 ## Terms
 
@@ -88,7 +89,7 @@ Each building block has its own directory in `.decree/`:
     .event                          # the running invoke's DECREE_EVENT_FILE, deleted once read (scripts.md)
     hold                            # written by a script (keep): the run's attention file holds its machine's group (cli.md, Attention)
   plugins/<machine name>.md         # committed: any of a machine, its scripts, cron files, state and order seeds as one file, installed by `decree install` into machines/<name>/ (plugins.md)
-  machines/<machine name>/          # one folder per machine, its domain
+  machines/<machine name>/          # one folder per machine, holding everything it owns
     machine.yml                     # the statechart (machines.md); installed from plugins/, so git ignores it
     scripts/<name>                  # its executables; optional extension: verify.sh (scripts.md)
     scripts/*                       # also its helpers, config and data, which decree never runs (scripts.md, A machine's files)
@@ -126,7 +127,7 @@ The daemon poll interval is the `decree daemon --interval` flag.
 
 ## Schemas
 
-Every file decree reads or writes, and every document a command prints with `--format json`, has a JSON Schema (draft 2020-12). Their single source is [`schema/v1/`](../../schema/v1/) at the root of the decree repository, compiled into decree, so the published files and the binary's are the same bytes. Each schema's `$id` is its raw URL there, `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/<path>` (such as `…/schema/v1/cli/check.schema.json`), which resolves once 0.5 is on `main`; editors find the machine schema through SchemaStore ([editors.md](../editors.md)). `decree init` and every `decree install` that succeeds write a local copy into `.decree/schema/v1/`, for agents and offline use, and remove anything else in `.decree/schema/`; `init`'s `.gitignore` lists `schema/`. When `.decree/schema/` exists, `decree check` warns when a file there is missing, out of date, or one decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds); with no folder it says nothing. Every property has a description taken from this reference.
+Every file decree reads or writes, and every document a command prints with `--format json`, has a JSON Schema (draft 2020-12). Their single source is [`schema/v1/`](../../schema/v1/) at the root of the decree repository, compiled into decree, so the published files and the binary's are the same bytes. Each schema's `$id` is its raw URL there, `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/<path>` (such as `…/schema/v1/cli/check.schema.json`); editors find the machine schema through SchemaStore ([editors.md](../editors.md)). `decree init` and every `decree install` that succeeds write a local copy into `.decree/schema/v1/`, for agents and offline use, and remove anything else in `.decree/schema/`; `init`'s `.gitignore` lists `schema/`. When `.decree/schema/` exists, `decree check` warns when a file there is missing, out of date, or one decree does not write (such as the unversioned `schema/machine.schema.json` of earlier 0.5 builds); with no folder it says nothing. Every property has a description taken from this reference.
 
 | Schema | Covers | Documented in |
 | --- | --- | --- |
@@ -137,7 +138,7 @@ Every file decree reads or writes, and every document a command prints with `--f
 | `attention.schema.json` | The frontmatter of a file decree writes in `.decree/attention/`, for a run that needs a person. A `.md` file there that does not match it holds the queue. | [cli.md](cli.md#attention) |
 | `plugin.schema.json` | The frontmatter of a plugin, `plugins/<name>.md`. | [plugins.md](plugins.md) |
 | `reply.schema.json` | The general shape of a router's `reply.json`. The `reply_schema` in each request stays the exact schema for that request. | [runs.md](runs.md#model) |
-| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `reply`, `retry`, `cancel`, `pause` and `resume` (one file, `pause`), `graph`, `upgrade`, `install`, `list` and `export`. `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
+| `cli/<command>.schema.json` | The document `decree <command> --format json` prints, for `check`, `status`, `emit`, `reply`, `retry`, `cancel`, `pause` and `resume` (one file, `pause`), `graph`, `upgrade`, and `install`, `list` and `export` (one file, `plugin`). `status`'s `events` refer to `events.schema.json`. | [cli.md](cli.md#machine-readable-output) |
 
 The schemas describe shape; `decree check` stays the authority for meaning. The events, request and reply schemas list every field decree writes and allow no other, so decree's tests catch a field the reference does not document. A consumer should still ignore fields and event types it does not know, because `v1` may gain them.
 

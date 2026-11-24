@@ -15,7 +15,7 @@ description: Run one script.
 initial: greet
 states:
   greet:
-    invoke: greet                  # runs scripts/greet (or machines/hello/scripts/greet)
+    invoke: greet                  # runs .decree/machines/hello/scripts/greet*
     transitions: { done: done }    # exit 0 -> done; non-zero -> failed, implicitly
   done:   { final: true }
   failed: { final: true }          # every machine has one
@@ -254,13 +254,7 @@ state_files:
 
 Each name is a file or folder directly in the state folder; its description says what it is and which states read or write it. `decree graph` shows the names in a note on the machine, `state_files: seen.tsv` ([Graph](graph.md)).
 
-What goes in the state folder is what the machine itself reads back in a later run: what it has seen, sent or counted. What does not: a run's own files (`$DECREE_RUN_DIR`), a machine's helpers, config and data, which sit beside its scripts in `scripts/` ([A machine's files](scripts.md#a-machines-files)), and outputs for people, such as an issue, a report or a video, which go wherever the user wants them.
-
-The state folder survives runs, installs and the `decree_prune` plugin. It is not committed, but a file whose name holds `.git.` before its extension is ([D86](../decisions.md#d86-machines-own-their-folders-order-replaces-migrations)): what the project should share, such as the `decree_order` plugin's `order.git.txt`, is committed with the work it records.
-
-`state/` holds data, never code: records, queues and the project's content, which its runs and people write. Nothing in it is run, sourced, `eval`ed or loaded as code, by decree or by any script; code and the settings that choose what runs (rules like lease's, a gate, a list of folders to write) are scripts, which a plugin ships in `scripts/` and a project changes with its own plugin that extends it. `state/` is the folder runs and people are expected to write, and may be writable where `machines/` is mounted read-only, so code there would run without anyone having read it as a plugin file ([D99](../decisions.md#d99-official-plugins-are-decree_-and-never-edited-a-project-extends-one)).
-
-`decree check` warns, without failing, about a file or folder in `state/` that `state_files:` does not declare, about a file in `state/` with an execute bit or a `#!` line, and about a script line that runs or sources a path under `state/` (a heuristic over the text: [State](scripts.md#state)). Nothing else is enforced: a script that writes outside its state folder is not detectable.
+What goes in the state folder is what the machine itself reads back in a later run: what it has seen, sent or counted. [State](scripts.md#state) says what else goes where, which files in it are committed, that it holds data and never code, and what `decree check` warns about.
 
 ## Concurrency
 
@@ -270,7 +264,7 @@ Runs of different machines execute at once, and a machine says how many of its o
 concurrency: 4          # at the machine's root: four of its runs at once
 ```
 
-Machines that must not run beside each other, such as those editing one git work tree, name one `concurrency_group`: they share its slots, so at most `concurrency` runs of all of them execute at once. Every machine of a group gives the same `concurrency` (V14), 1 by default, which makes the group a mutex, as GitHub Actions' `concurrency.group` is. The official `develop` (and its variants), `qa` and `infra` are in group `worktree`.
+Machines that must not run beside each other, such as those editing one git work tree, name one `concurrency_group`: they share its slots, so at most `concurrency` runs of all of them execute at once. Every machine of a group gives the same `concurrency` (V14), 1 by default, which makes the group a mutex, as GitHub Actions' `concurrency.group` is. The official `decree_develop` (and its variants), `decree_qa` and `decree_infra` are in group `worktree`, and so is a plugin that extends one.
 
 A child run takes a slot of its own machine (or group), waiting for one while its parent keeps its own; a run of this process waiting for a slot goes before a new message is claimed. A child that waited (for a reply, a timer) and then finishes leaves its parent `pending`, and the dispatcher continues the parent in a run of its own holding its own slot, as any pending run. So a wait for a slot always runs from parent to child, and V20 forbids any cycle of invokes between slots, counting each group as one (lock ordering): no two runs ever wait for each other's slot.
 
@@ -328,17 +322,17 @@ Unknown keys fail validation everywhere: at the root, in a state, a `data` entry
 
 decree has a JSON Schema (draft 2020-12) for every file it reads or writes ([Schemas](README.md#schemas)): among them `machine.schema.json` for machine files and `message.schema.json` for message frontmatter ([messages.md](messages.md)). They are compiled into decree and published at a stable URL, `https://raw.githubusercontent.com/jtmckay/decree/main/schema/v1/machine.schema.json` for the machine schema. `decree init` and `decree install` write a local copy into `.decree/schema/v1/`; the copy is optional and ignored by git, and `decree check` warns that it is missing or out of date only when `.decree/schema/` exists. Every property has a description taken from this reference, and the schemas carry examples, so they are one precise contract for people, editors and models alike.
 
-**Editors.** Machines carry no schema line. Editors that read SchemaStore, such as VS Code with the YAML extension by Red Hat and JetBrains IDEs, apply the machine schema to `.decree/machines/*.yml` by path, then complete keys, show each key's description on hover, and underline a misspelled key or a wrong value as you type. Until decree's entry is in SchemaStore, or offline, map the schema in your editor's settings, or put the per-file line above a machine's `# Graph:` line; both ways work ([editors.md](../editors.md)):
+**Editors.** Machines carry no schema line. Editors that read SchemaStore, such as VS Code with the YAML extension by Red Hat and JetBrains IDEs, apply the machine schema to `.decree/machines/*/machine.yml` by path, then complete keys, show each key's description on hover, and underline a misspelled key or a wrong value as you type. Until decree's entry is in SchemaStore, or offline, map the schema in your editor's settings, or put the per-file line above a machine's `# Graph:` line; both ways work ([editors.md](../editors.md)):
 
 ```text
-# yaml-language-server: $schema=../schema/v1/machine.schema.json
+# yaml-language-server: $schema=../../schema/v1/machine.schema.json
 ```
 
 That path is relative to the machine file, so it needs the local copy, which `decree install` writes. The language server does not read Markdown, so message frontmatter is checked by `decree check`, or by any JSON Schema validator given `message.schema.json`.
 
 **Models.** A model that writes or edits a machine reads `.decree/schema/v1/machine.schema.json` first, writes against it, and runs `decree check` after.
 
-**What the schema checks** is everything about one file's shape: its keys and their types, required keys and unknown keys (V19, including each shape migration 71 replaced), each `invoke` kind and its short forms, transitions in short and long form (with `true:` and `false:` keys read as the event names), conditions with exactly one subject and one operator that subject takes and a value of the right type (V10), the name patterns (V1, V2, V18, script and machine names), the ranges of `min_confidence` and `confidence` values (V10, V16), the root-level final state `failed` (V5), which keys each kind of state may have (V6, V7, `type: internal` only on a compound state for V17), the options of a `model` or `reply` state (at least two, each with a `description`, none reserved; V8, V18), `true` and `false` rather than `yes` and `no` on a `check` state (V8), `data` defaults of their `type`, with `enum` a non-empty list of distinct strings on `string` data only, and `store` names and their non-empty descriptions (V14). A message has one of two shapes: a message that names its `machine`, or a reply with `to` and `event`.
+**What the schema checks** is everything about one file's shape: its keys and their types, required keys and unknown keys (V19, including each shape an earlier format used), each `invoke` kind and its short forms, transitions in short and long form (with `true:` and `false:` keys read as the event names), conditions with exactly one subject and one operator that subject takes and a value of the right type (V10), the name patterns (V1, V2, V18, script and machine names), the ranges of `min_confidence` and `confidence` values (V10, V16), the root-level final state `failed` (V5), which keys each kind of state may have (V6, V7, `type: internal` only on a compound state for V17), the options of a `model` or `reply` state (at least two, each with a `description`, none reserved; V8, V18), `true` and `false` rather than `yes` and `no` on a `check` state (V8), `data` defaults of their `type`, with `enum` a non-empty list of distinct strings on `string` data only, and `store` names and their non-empty descriptions (V14). A message has one of two shapes: a message that names its `machine`, or a reply with `to` and `event`.
 
 **What only `decree check` checks** is what a schema of one file cannot see: whether a name resolves (`initial` V3, targets V4, `output` V9, the `data`, `visits` and `confidence` a condition names and the types it compares V10, that a `data` default is one of its `enum` values V14, scripts V12, `emits` V13, `router`, `machine` and `params` V16, a message's machine and params M2–M3), that `name` equals the file stem (V1), that state ids are unique across nesting levels (V2), reachability (V11), `done.state.<id>` handling (V15), events handled through an ancestor (V8), that an internal transition targets a descendant (V17), cycles (V20), overlapping events (V21), that a regular expression compiles in the `regex` crate's syntax (V10), that a cron file has a `cron:` expression that parses or is `@reboot` (M3), that the `.env` files are valid dotenv files (E1), and that a value written `1.0` is not an int (JSON Schema counts it as an integer).
 

@@ -19,7 +19,7 @@ machine:
 scripts:
   ask.sh: |
     #!/usr/bin/env bash
-    # router's only script. Reads the request decree wrote, asks an AI CLI, and
+    # decree_router's only script. Reads the request decree wrote, asks an AI CLI, and
     # writes the reply. The CLI is, most specific first: the run's data entry `ai_cli`
     # (DECREE_DATA_AI_CLI), else AI_CLI (in .decree/.env, or the shell decree runs in),
     # else the first of claude, opencode and copilot found on PATH, as ai.sh picks it.
