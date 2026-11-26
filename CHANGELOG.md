@@ -4,6 +4,8 @@ All notable changes to decree are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-25
+
 ### Fixed
 
 - `DECREE_ROOT_RUN_DIR` is the folder of the run that started the piece of work, not of the run with no parent ([scripts.md](docs/reference/scripts.md#environment), [Sub-machines](docs/reference/runs.md#sub-machines)). Following every `parent` made each order file's run share the `decree_order` run's folder, and each message a script emits share its emitter's, so `decree_develop`'s `progress.md`, `plan.md`, `gaps.md`, `gate.log` and `STOP` carried from one order file to the next and between the develop runs `decree_qa` queues: a later run took an earlier one's notes for its own unfinished attempt, and one `STOP` (a usage limit, a question) stopped them all. Now a child of a `machine` or `model` invoke still shares its parent's root, as escalation rounds need, but a run queued with `decree emit` and the child of a `machine: { message }` invoke, as an order file's run is, are each their own root. The parent's `waiting` event for such a child names the file (`message`, `events.schema.json`). A run waiting or interrupted across the upgrade continues with its own folder as its root, so its notes from before (in the `decree_order` run's or its emitter's folder) are not there, and develop plans again.
@@ -194,6 +196,7 @@ The entries below are the changes made to the 0.5 contract since migration 70 (`
 - The documents and examples agree with decree 0.5 again, and `tests/docs_api_test.rs` keeps them so (migration 87): the reference's settings table names "Retries" instead of 0.4's `max_retries`; `docs/services.md`'s systemd example uses `use_comfy` and `use_ollama`, as `examples/tmux-services/` does; a claimed message gains `id` and `trigger`, not `parent` (README, `decree help`); `events.jsonl` puts `run_id` and `machine` on every line, but `state` only on events about a state (README, `examples/feature/` and `examples/observability/`, which also named a `router` event type that does not exist); `decree graph` takes no machine argument (`examples/feature/`, `graph.md`); a script names its event in `$DECREE_EVENT_FILE` rather than printing it (the `feature` machine's comment, the skill); the skill lists V1–V21 and warns about stale schemas too; `decree graph` and `decree tail` document their exit code 1; three error messages in `cli.md` and `graph.md` render as code again; `docs/routers.md`'s `local_model` fragment shows its options; and `runs.md` shows four recorded `events.jsonl` lines.
 - `develop`'s `verify` can fail: it asks the AI to end its reply with `VERDICT: pass` or `VERDICT: fail` and names that event, and a reply without one fails the attempt. It asked the AI to exit 1, but `claude -p` exits 0 whatever the model concludes, so `verify` always passed (migration 96).
 
-[Unreleased]: https://github.com/jtmckay/decree/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jtmckay/decree/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/jtmckay/decree/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jtmckay/decree/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jtmckay/decree/releases/tag/v0.5.0
