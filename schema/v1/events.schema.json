@@ -408,6 +408,10 @@
         "child": {
           "type": "string",
           "description": "The child run waited for (a sub-machine or a router)."
+        },
+        "message": {
+          "type": "string",
+          "description": "For a `machine: { message }` invoke, the message file the child runs, in this run's folder. Such a child starts work of its own: it is its own root run (`DECREE_ROOT_RUN_DIR`)."
         }
       }
     },

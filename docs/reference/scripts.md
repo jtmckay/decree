@@ -63,7 +63,7 @@ A variable can come from four places. When two set the same name, the first in t
 | `DECREE_EVENT_FILE` | For a script invoke: absolute path of `runs/<id>/.event`, created empty before each attempt, where the script names its event ([Events from an invoke](#events-from-an-invoke)). Empty for `onentry` and `onexit` scripts and the `notify` script of a `reply` state, which produce no events. |
 | `DECREE_PARENT` | In a child run: the parent run's id. Empty otherwise. |
 | `DECREE_PARENT_RUN_DIR` | In a child run: absolute path of the parent run's directory, `runs/<parent>/`. Empty otherwise. |
-| `DECREE_ROOT_RUN_DIR` | Absolute path of the directory of the run at the top of the chain, the run with no parent: in a grandchild, the grandparent's. In a top-level run it equals `DECREE_RUN_DIR`. |
+| `DECREE_ROOT_RUN_DIR` | Absolute path of the directory of the root run: the run that started this piece of work. A child run of a `machine` or `model` invoke helps its parent's work, so its root is its parent's: in a grandchild, the grandparent's. A run that starts work of its own is its own root, though it may have a `parent`: a top-level run, a message a script queued with `decree emit`, and the child of a `machine: { message }` invoke, such as an order file's run ([Sub-machines](runs.md#sub-machines)). There it equals `DECREE_RUN_DIR`. |
 | `DECREE_REQUEST` | In a router run: absolute path of the request JSON ([Model](runs.md#model)). Empty otherwise. |
 | `DECREE_REPLY` | In a router run: absolute path where the reply JSON must be written. Empty otherwise. |
 | `DECREE_WAIT_ID` | For the `notify` script of a `reply` state: the wait id a reply must name. Empty otherwise. |
@@ -210,7 +210,7 @@ printf '%s\t%s\n' "$link" "$(date +%F)" >> "$seen"
 
 ## Run-directory files
 
-Scripts that hand work to one another, or to a person, do it through files in the root run's folder, `DECREE_ROOT_RUN_DIR`: in a top-level run that is `DECREE_RUN_DIR`, and in a child run the folder of the run at the top of its chain, so a child machine whose steps are `decree_develop`'s scripts shares their notes ([Escalation ladder](../escalation.md)). decree reads none of them but `hold`, and quotes `STOP` and `leftovers` in the run's attention file; they are a convention the official `decree_develop` plugin's scripts follow, and a script of your own can too:
+Scripts that hand work to one another, or to a person, do it through files in the root run's folder, `DECREE_ROOT_RUN_DIR`: in a run that started its own work that is `DECREE_RUN_DIR`, and in a child run of a `machine` or `model` invoke its root run's folder, so a child machine whose steps are `decree_develop`'s scripts shares their notes ([Escalation ladder](../escalation.md)). Separate pieces of work never share them: each order file's run, and each message a script emits (`decree_qa`'s bug reports), has its own `progress.md` and `STOP`. decree reads none of them but `hold`, and quotes `STOP` and `leftovers` in the run's attention file; they are a convention the official `decree_develop` plugin's scripts follow, and a script of your own can too:
 
 | File | Written by | Meaning |
 | --- | --- | --- |

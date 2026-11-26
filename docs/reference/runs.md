@@ -117,6 +117,7 @@ Options:
 An `invoke: { machine: <name> }` state, and every `model` invoke, runs a **child run**:
 
 - It is an ordinary run in its own folder, `runs/<child id>/`, so its events and logs are separate and it shows in `decree status` and Grafana like any other. Its `message.md` has `machine`, `parent` (the parent run's id), `depth` (the parent's + 1), and `traceparent`: the parent's trace, under the span of the router's `decision` or of the `machine` invoke's wait, so the child's run span nests under it ([Traces](observability.md#traces)). If that would exceed `max_depth`, no child starts: the state's event is `error`, with `router_error: "max_depth <n> reached"` on the `decision` event for `model`, and `error: "max_depth <n> reached"` on the `transition` for `machine`, `trigger: invoke`, any `params`, and the parent message's body.
+- It shares its parent's work, so its `DECREE_ROOT_RUN_DIR` is its parent's root run folder, where scripts keep notes for the whole piece of work ([scripts.md](scripts.md#environment)). A `machine: { message }` child is the exception: it runs a whole message of its own, as an order file's run does, so it starts its own work and is its own root. Its parent's `waiting` event says so, naming the file (`message`). A message a script queues with `decree emit` likewise starts its own work, though it has a `parent`.
 - The parent appends a `waiting` event naming the child (`child: <id>`), and the same process steps the child at once. When the child reaches a root final state, decree continues the parent: for a `machine` invoke it appends a `received` event whose event is the child's final state (`failed` becomes `error`); for a router it appends the `decision` event (above). A parent left waiting on a child that has already finished (a crash in between) is `pending`, and continues the same way.
 - If the child pauses (a `reply` inside it), the parent stays `waiting` until the child finishes. If the child is interrupted, the parent waits too; `decree retry` on the child continues both. The child's file in `.decree/attention/` says so; a child that ends in `failed` has none unless it holds the queue, since the parent takes its failure as `error` ([Attention](cli.md#attention)).
 - A child of a machine that a file in `.decree/attention/` holds (its group's, [Attention](cli.md#attention)) does not start: the invoke's event is `error`, its `error` naming the file, and no child run folder is made.
@@ -219,6 +220,7 @@ Every event carries these fields, so each line stands alone in a log pipeline:
 | `options` | list of strings | A `reply` wait | The options, in name order. |
 | `timeout_at` | string or null | A `reply` wait | RFC 3339 deadline from the `reply` invoke's `timeout` (from now) or `timeout_at` (the instant it names), or `null` without either. |
 | `child` | string | A child wait | The child run waited for (a sub-machine or a router). |
+| `message` | string | A `machine: { message }` wait | The message file the child runs, in this run's folder. Such a child is the root of its own work ([Sub-machines](#sub-machines)). |
 
 **`received`**: an external event arrived for a waiting run.
 

@@ -149,8 +149,8 @@ pub struct RunInfo {
     pub parent: Option<String>,
     /// `DECREE_PARENT_RUN_DIR`: in a child run, the absolute path of the parent's folder.
     pub parent_run_dir: Option<PathBuf>,
-    /// `DECREE_ROOT_RUN_DIR`: the folder of the run at the top of the chain, the run with
-    /// no parent; `run_dir` itself in a top-level run.
+    /// `DECREE_ROOT_RUN_DIR`: the folder of the root run, the run that started this piece
+    /// of work (`Context::root_run`); `run_dir` itself in a run that started its own.
     pub root_run_dir: PathBuf,
     /// `DECREE_RUN_ATTEMPT`: 1, plus one for each `decree retry` of the run.
     pub run_attempt: u32,

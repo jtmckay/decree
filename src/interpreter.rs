@@ -30,8 +30,8 @@ use serde_json::{json, Value};
 
 use crate::cond::{self, CondError};
 use crate::events::{
-    claim_event, current_state, is_transition, read_events, run_attempt, text, visits, Event,
-    EVENTS_FILE,
+    claim_event, current_state, is_transition, is_type, read_events, run_attempt, text, visits,
+    Event, EVENTS_FILE,
 };
 use crate::layout::MESSAGE_FILE;
 use crate::layout::{DECREE_DIR, RUNS_DIR};
@@ -732,7 +732,9 @@ impl Context {
             trigger: trigger.to_string(),
             data: data_env(&m.data, params),
             parent_run_dir: parent.map(|p| self.runs_dir().join(p)),
-            root_run_dir: self.runs_dir().join(self.root_run(run_id, parent)?),
+            root_run_dir: self
+                .runs_dir()
+                .join(self.root_run(run_id, trigger, parent)?),
             parent: parent.map(String::from),
             router,
             max_depth: self.env.max_depth,
@@ -743,16 +745,29 @@ impl Context {
 }
 
 impl Context {
-    /// The run at the top of run `run_id`'s chain, whose parent is `parent`: each run's
-    /// `parent`, followed until a run names none. A parent whose folder is gone (pruned)
-    /// ends the chain.
-    fn root_run(&self, run_id: &str, parent: Option<&str>) -> Result<String, InterpreterError> {
+    /// The root run of run `run_id`, whose `trigger` and `parent` are given: the run whose
+    /// folder is its `DECREE_ROOT_RUN_DIR` (docs/reference/scripts.md, Environment). Each
+    /// run's `parent` is followed while the run is a child run helping its parent's work,
+    /// `trigger: invoke` from a `machine` or `model` invoke. It stops at a run that started
+    /// work of its own: one queued as a message (`emit`, `cron`, `inbox`), and the child of a
+    /// `machine: { message }` invoke, whose parent's `waiting` event names the file it ran.
+    /// A parent whose folder is gone (pruned) ends the chain.
+    fn root_run(
+        &self,
+        run_id: &str,
+        trigger: &str,
+        parent: Option<&str>,
+    ) -> Result<String, InterpreterError> {
         let mut root = run_id.to_string();
+        let mut trigger = trigger.to_string();
         let mut next = parent.map(String::from);
         // A run met twice is a loop. No depth bounds the walk: a run recorded under a higher
         // `max_depth` than today's still finds its root.
         let mut seen = std::collections::HashSet::from([root.clone()]);
         while let Some(id) = next {
+            if trigger != "invoke" || self.ran_as_message(&id, &root)? {
+                break;
+            }
             if !seen.insert(id.clone()) {
                 return Err(InterpreterError::Message {
                     path: self.runs_dir().join(run_id).join(MESSAGE_FILE),
@@ -760,14 +775,29 @@ impl Context {
                 });
             }
             let path = self.runs_dir().join(&id).join(MESSAGE_FILE);
-            next = if path.is_file() {
-                Message::read(&path)?.text("parent").map(String::from)
+            (trigger, next) = if path.is_file() {
+                let message = Message::read(&path)?;
+                (
+                    message.text("trigger").unwrap_or("inbox").to_string(),
+                    message.text("parent").map(String::from),
+                )
             } else {
-                None
+                (String::new(), None)
             };
             root = id;
         }
         Ok(root)
+    }
+
+    /// Whether run `parent` started child run `child` from a message file (`machine: {
+    /// message }`): its `waiting` event for the child names the file.
+    fn ran_as_message(&self, parent: &str, child: &str) -> Result<bool, InterpreterError> {
+        if !self.runs_dir().join(parent).join(EVENTS_FILE).is_file() {
+            return Ok(false);
+        }
+        Ok(self.events(parent)?.iter().any(|e| {
+            is_type(e, "waiting") && text(e, "child") == Some(child) && text(e, "message").is_some()
+        }))
     }
 }
 

@@ -6,6 +6,7 @@ Changes to the schemas in this folder. Within `v1` changes are additive only, bu
 
 ### Added
 
+- `events.schema.json`: a child `waiting` event's `message`, the file a `machine: { message }` invoke runs; such a child is its own root run.
 - `plugin.schema.json`: `extends` (the plugin this one is installed on top of), `source` (the https URL it is published at), a `needs` entry may be a one-key map `{<need>: <plugin>}`, and a `scripts`, `cron`, `state` or `order` path may be `null` in a plugin that extends another. A `name` starting with `decree_` is an official plugin's.
 - `cli/plugin.schema.json`: `sync`'s `restored`: each official plugin whose file or installed copy was not this decree's, archived and replaced with it, with its changes. `list`'s plugins give `extends`, and `state` may be `missing base`. `install`'s status may be `reinstalled`. `export` with no name gives `official`, the official plugins whose installed copy was edited, never exported. The `update` action, what `decree install --update --format json` prints.
 - `cli/check.schema.json`: the rule `P3`, an official plugin that is not this decree's copy.

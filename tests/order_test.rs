@@ -133,6 +133,47 @@ fn order_runs_each_file_once_in_name_order_after_its_follow_ups() {
     assert_eq!((code, log.as_str()), (0, "beta: four\nalpha: five\n"));
 }
 
+/// Each order file's run, and each message one of them emits, is the root of its own
+/// chain: its `DECREE_ROOT_RUN_DIR` is its own folder, so files a script keeps there (as
+/// `decree_develop`'s `progress.md` and `STOP`) are never another file's.
+#[test]
+fn each_order_file_and_each_emitted_message_has_its_own_root_run_folder() {
+    let Some(p) = Project::new() else { return };
+    let script = r##"#!/usr/bin/env bash
+set -e
+line=$(sed -n 's/^# //p' "$DECREE_MESSAGE" | head -1)
+echo "${line}" >> "$DECREE_ROOT_RUN_DIR/progress.md"
+same=no
+[ "$DECREE_ROOT_RUN_DIR" = "$DECREE_RUN_DIR" ] && same=yes
+echo "$DECREE_MACHINE: $line, root is own: $same, progress: $(paste -sd, "$DECREE_ROOT_RUN_DIR/progress.md")" >> "$DECREE_PROJECT_ROOT/log.txt"
+if [ "$line" = emit ]; then echo "# follow-up" | "$DECREE" emit --machine beta > /dev/null; fi
+"##;
+    for m in ["alpha", "beta"] {
+        common::write_script(&p.decree(&format!("machines/{m}/scripts/work.sh")), script);
+    }
+    p.order("alpha", "01-one.md", "# one\n");
+    p.order("alpha", "02-two.md", "# emit\n");
+    p.order("alpha", "03-three.md", "# three\n");
+    let (code, log) = p.start();
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        log,
+        "alpha: one, root is own: yes, progress: one\n\
+         alpha: emit, root is own: yes, progress: emit\n\
+         beta: follow-up, root is own: yes, progress: follow-up\n\
+         alpha: three, root is own: yes, progress: three\n"
+    );
+    // The `decree_order` run's own folder holds none of it.
+    let runs = fs::read_dir(p.decree("runs")).unwrap();
+    for run in runs {
+        let run = run.unwrap().path();
+        let message = fs::read_to_string(run.join("message.md")).unwrap();
+        if message.contains("machine: decree_order") {
+            assert!(!run.join("progress.md").exists(), "{}", run.display());
+        }
+    }
+}
+
 #[test]
 fn order_max_runs_that_many_files_per_start() {
     let Some(p) = Project::new() else { return };

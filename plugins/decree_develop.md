@@ -233,8 +233,8 @@ scripts:
     # the message is unclear, it writes the question to STOP instead of guessing;
     # the run fails until a person answers it in plan.md, deletes STOP and runs
     # `decree retry`. Its notes live in the root run's folder
-    # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run), so a child machine
-    # whose steps are decree_develop's scripts shares them.
+    # ($DECREE_ROOT_RUN_DIR, the run's own unless it is a child run of a machine
+    # invoke), so a child machine whose steps are decree_develop's scripts shares them.
     set -euo pipefail
     . ".decree/machines/${DECREE_NEED_DECREE_AI:-decree_ai}/scripts/ai.sh"
 

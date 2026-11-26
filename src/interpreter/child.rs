@@ -109,7 +109,7 @@ impl Interpreter<'_> {
             (Some(name), _) => self.run_child(s, name, &invoke.params, None, None)?,
             (None, Some(file)) => match self.message_file(file) {
                 Ok((name, params, message)) => {
-                    self.run_child(s, &name, &params, None, Some(&message))?
+                    self.run_child(s, &name, &params, None, Some((file, &message)))?
                 }
                 Err(reason) => return Ok(not_started(reason)),
             },
@@ -182,16 +182,18 @@ impl Interpreter<'_> {
     /// or is interrupted (docs/reference/runs.md, Sub-machines). The child's `message.md` holds `machine`,
     /// `id`, `parent`, `depth`, `trigger: invoke`, any `params` and this run's body; a
     /// `request` is written to its `request.json`, which makes it a router run. With `from`,
-    /// a message file, the child takes its body and its other keys instead. Appends the
-    /// `waiting` event naming the child first. `Err` holds why no child started: its
-    /// `depth` would exceed `max_depth`.
+    /// a message file (its name in this run's folder, and the message), the child takes its
+    /// body and its other keys instead, and starts work of its own: the `waiting` event,
+    /// appended first, names the child and, for `from`, the file, so the child's root run
+    /// is itself (`Context::root_run`). `Err` holds why no child started: its `depth`
+    /// would exceed `max_depth`.
     pub(super) fn run_child(
         &mut self,
         s: usize,
         name: &str,
         params: &serde_norway::Mapping,
         request: Option<&str>,
-        from: Option<&Message>,
+        from: Option<(&str, &Message)>,
     ) -> Result<Result<Child, String>, InterpreterError> {
         let ctx = self.ctx;
         let machine = ctx
@@ -223,10 +225,10 @@ impl Interpreter<'_> {
         };
         let (id, run_dir) = create_run_dir(&ctx.project_root.join(DECREE_DIR))?;
         let parent = self.executor.info().run_id.clone();
-        let body = from.map_or_else(|| self.message_body.clone(), |m| m.body.clone());
+        let body = from.map_or_else(|| self.message_body.clone(), |(_, m)| m.body.clone());
         let mut message = Message::new(body.as_str());
         // A message file's own keys (an `order:`, a title) go with it; decree sets the rest.
-        for (key, value) in from.map(|m| &m.frontmatter).into_iter().flatten() {
+        for (key, value) in from.map(|(_, m)| &m.frontmatter).into_iter().flatten() {
             let owned = matches!(
                 key.as_str(),
                 Some("machine" | "id" | "parent" | "depth" | "trigger" | "params" | "state")
@@ -259,10 +261,11 @@ impl Interpreter<'_> {
             write_replace(&run_dir.join(REQUEST_FILE), request.as_bytes())?;
         }
 
-        self.append(
-            "waiting",
-            json!({ "state": self.machine.nodes[s].id, "child": id }),
-        )?;
+        let mut waiting = json!({ "state": self.machine.nodes[s].id, "child": id });
+        if let Some((file, _)) = from {
+            waiting["message"] = json!(file);
+        }
+        self.append("waiting", waiting)?;
         let executor = ctx.executor(machine, &id, "invoke", params, Some(&parent))?;
         let input = RunInput {
             params: params.clone(),

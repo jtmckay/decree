@@ -1934,6 +1934,8 @@ fn machine_message_invoke_runs_the_file_as_the_child() {
     let p = message_project("name_reject");
     assert_eq!(p.run(), Outcome::Finished("done".into()));
     let child = p.child_id();
+    // The wait names the file, which makes the child the root of its own chain.
+    assert_eq!(p.events_of("waiting")[0]["message"], "next.md");
     let message = fs::read_to_string(p.child_dir(&child).join(MESSAGE_FILE)).unwrap();
     assert!(
         message.starts_with("---\norder: develop/A01-x.md\nmachine: step_child\n"),
@@ -2040,6 +2042,7 @@ fn machine_invoke_runs_a_child_run_in_its_own_folder() {
     let waiting = &p.events_of("waiting")[0];
     assert_eq!(waiting["state"], "build");
     assert!(waiting.get("wait_id").is_none());
+    assert!(waiting.get("message").is_none());
     let received = &p.events_of("received")[0];
     assert_eq!(received["event"], "done");
     assert_eq!(received["child"], json!(child));
