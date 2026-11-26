@@ -5,6 +5,8 @@ edition = "2021"
 description = "Durable state-machine workflows from plain files, for scripts, AI agents and people"
 license = "MIT"
 repository = "https://github.com/jtmckay/decree"
+# Project tooling, not the crate: .claude/ and .github/ link to an installed skill git does not keep.
+exclude = [".claude/", ".github/", ".decree/"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
